@@ -6,6 +6,7 @@ import { LeadModule } from './modules/lead/lead.module';
 import { ContactModule } from './modules/contact/contact.module';
 import { DealModule } from './modules/deal/deal.module';
 import { TaskModule } from './modules/task/task.module';
+import { LocationModule } from './modules/location/location.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { TaskModule } from './modules/task/task.module';
     ContactModule,
     DealModule,
     TaskModule,
+    LocationModule,
   ],
 })
 export class AppModule {}

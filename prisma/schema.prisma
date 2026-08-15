@@ -148,6 +148,9 @@ model Tenant {
   auditLogs     AuditLog[]
   payments      PaymentHistory[]
   featureToggles FeatureToggle[]
+  employeeLocations EmployeeLocation[]
+  branchGeofences   BranchGeofence[]
+  locationTrackingSettings LocationTrackingSetting[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -799,4 +802,84 @@ model FeatureToggle {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, feature])
+}
+
+// ----------------------------------------------------
+// GEO TRACKING & LOCATION MODELS
+// ----------------------------------------------------
+
+enum TrackingType {
+  ATTENDANCE
+  VISIT
+  WORKING_HOURS
+  MANUAL
+}
+
+enum TrackingMode {
+  OFF
+  ATTENDANCE_ONLY
+  DURING_VISIT
+  WORKING_HOURS
+  ACTIVE_TRACKING
+}
+
+enum LocationPermissionStatus {
+  GRANTED
+  DENIED
+  UNAVAILABLE
+}
+
+model EmployeeLocation {
+  id           String       @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  latitude     Float
+  longitude    Float
+  accuracy     Float?
+  address      String?
+  trackingType TrackingType @default(ATTENDANCE)
+  attendanceId String?
+  visitId      String?
+  timestamp    DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([timestamp])
+}
+
+model BranchGeofence {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String
+  city          String?
+  latitude      Float
+  longitude     Float
+  radiusMeters  Float    @default(200.0) // Allowed radius in meters
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([isActive])
+}
+
+model LocationTrackingSetting {
+  id               String                   @id @default(uuid())
+  tenantId         String
+  employeeId       String                   @unique
+  isEnabled        Boolean                  @default(true)
+  trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
+  permissionStatus LocationPermissionStatus @default(GRANTED)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
 }
