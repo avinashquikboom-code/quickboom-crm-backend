@@ -7,6 +7,8 @@ import { ContactModule } from './modules/contact/contact.module';
 import { DealModule } from './modules/deal/deal.module';
 import { TaskModule } from './modules/task/task.module';
 import { LocationModule } from './modules/location/location.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { LocationModule } from './modules/location/location.module';
     DealModule,
     TaskModule,
     LocationModule,
+    PayrollModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

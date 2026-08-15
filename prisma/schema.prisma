@@ -151,6 +151,11 @@ model Tenant {
   employeeLocations EmployeeLocation[]
   branchGeofences   BranchGeofence[]
   locationTrackingSettings LocationTrackingSetting[]
+  departments   Department[]
+  designations  Designation[]
+  employees     Employee[]
+  payrolls      Payroll[]
+  payrollPolicy PayrollPolicy?
 
   @@index([deletedAt])
   @@index([isActive])
@@ -278,6 +283,7 @@ model User {
   createdTickets    SupportTicket[]  @relation("CreatedTickets")
   notifications     Notification[]
   auditLogs         AuditLog[]
+  employee          Employee?
   leadNotes         LeadNote[]
   ticketComments    TicketComment[]
 
@@ -883,3 +889,386 @@ model LocationTrackingSetting {
   @@index([tenantId])
   @@index([employeeId])
 }
+
+// ----------------------------------------------------
+// HRM & PAYROLL MODELS
+// ----------------------------------------------------
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  REMOTE
+  LEAVE
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VisitStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  PROCESSING
+  CALCULATED
+  PENDING_APPROVAL
+  APPROVED
+  GENERATED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum StructureStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  code        String
+  description String?
+  headId      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  designations Designation[]
+  employees    Employee[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Designation {
+  id           String   @id @default(uuid())
+  tenantId     String
+  departmentId String?
+  name         String
+  code         String
+  description  String?
+  level        Int      @default(1)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id])
+  employees  Employee[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Employee {
+  id               String   @id @default(uuid())
+  tenantId         String
+  userId           String?  @unique
+  employeeCode     String
+  firstName        String
+  lastName         String
+  email            String
+  phone            String?
+  gender           String?
+  dob              DateTime?
+  joiningDate      DateTime @default(now())
+  departmentId     String?
+  designationId    String?
+  managerId        String?
+  employmentType   String   @default("FULL_TIME")
+  branch           String   @default("Head Office")
+  address          String?
+  emergencyContact String?
+  bankDetails      Json?
+  documents        Json?
+  status           String   @default("ACTIVE")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user             User?             @relation(fields: [userId], references: [id])
+  department       Department?       @relation(fields: [departmentId], references: [id])
+  designation      Designation?      @relation(fields: [designationId], references: [id])
+  attendances      Attendance[]
+  leaveRequests    LeaveRequest[]
+  remoteRequests   RemoteRequest[]
+  visits           Visit[]
+  salaryStructures SalaryStructure[]
+  payrollItems     PayrollItem[]
+  salarySlips      SalarySlip[]
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@index([email])
+}
+
+model Attendance {
+  id            String           @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  date          DateTime         @default(now())
+  punchIn       DateTime?
+  punchOut      DateTime?
+  workingHours  Float            @default(0.0)
+  breakDuration Float            @default(0.0)
+  status        AttendanceStatus @default(PRESENT)
+  locationIn    String?
+  locationOut   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  employee Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  breaks   AttendanceBreak[]
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([date])
+}
+
+model AttendanceBreak {
+  id           String    @id @default(uuid())
+  attendanceId String
+  breakStart   DateTime  @default(now())
+  breakEnd     DateTime?
+  duration     Float     @default(0.0) // in minutes
+
+  attendance Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  @@index([attendanceId])
+}
+
+model LeaveType {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  name               String
+  code               String
+  daysAllowedPerYear Int      @default(12)
+  isCarryForward     Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  leaveRequests LeaveRequest[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model LeaveRequest {
+  id              String        @id @default(uuid())
+  tenantId        String
+  employeeId      String
+  leaveTypeId     String
+  fromDate        DateTime
+  toDate          DateTime
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model RemoteRequest {
+  id              String        @id @default(uuid())
+  tenantId        String
+  employeeId      String
+  fromDate        DateTime
+  toDate          DateTime
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model Visit {
+  id           String      @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  customerName String
+  purpose      String
+  date         DateTime    @default(now())
+  time         String?
+  location     String
+  latitude     Float?
+  longitude    Float?
+  status       VisitStatus @default(SCHEDULED)
+  notes        String?
+  duration     Float? // in minutes
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model SalaryStructure {
+  id               String          @id @default(uuid())
+  tenantId         String
+  employeeId       String
+  basicSalary      Float
+  hra              Float           @default(0.0)
+  allowances       Float           @default(0.0)
+  specialAllowance Float           @default(0.0)
+  bonus            Float           @default(0.0)
+  commission       Float           @default(0.0)
+  overtime         Float           @default(0.0)
+  otherEarnings    Float           @default(0.0)
+  pf               Float           @default(0.0)
+  esi              Float           @default(0.0)
+  professionalTax  Float           @default(0.0)
+  tds              Float           @default(0.0)
+  otherDeductions  Float           @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  effectiveFrom    DateTime        @default(now())
+  effectiveTo      DateTime?
+  status           StructureStatus @default(ACTIVE)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model Payroll {
+  id              String        @id @default(uuid())
+  tenantId        String
+  month           Int
+  year            Int
+  departmentId    String?
+  status          PayrollStatus @default(DRAFT)
+  grossSalary     Float         @default(0.0)
+  totalDeductions Float         @default(0.0)
+  netSalary       Float         @default(0.0)
+  totalEmployees  Int           @default(0)
+  processedAt     DateTime?
+  approvedAt      DateTime?
+  disbursedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  PayrollItem[]
+
+  @@unique([tenantId, month, year, departmentId])
+  @@index([tenantId])
+}
+
+model PayrollItem {
+  id               String   @id @default(uuid())
+  payrollId        String
+  tenantId         String
+  employeeId       String
+  basicSalary      Float
+  hra              Float    @default(0.0)
+  allowances       Float    @default(0.0)
+  specialAllowance Float    @default(0.0)
+  bonus            Float    @default(0.0)
+  commission       Float    @default(0.0)
+  overtime         Float    @default(0.0)
+  otherEarnings    Float    @default(0.0)
+  pf               Float    @default(0.0)
+  esi              Float    @default(0.0)
+  professionalTax  Float    @default(0.0)
+  tds              Float    @default(0.0)
+  otherDeductions  Float    @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  workingDays      Int      @default(30)
+  presentDays      Int      @default(30)
+  absentDays       Int      @default(0)
+  halfDays         Int      @default(0)
+  paidLeaveDays    Int      @default(0)
+  unpaidLeaveDays  Int      @default(0)
+  wfhDays          Int      @default(0)
+  status           String   @default("GENERATED")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  payroll     Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  salarySlips SalarySlip[]
+
+  @@index([payrollId])
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model SalarySlip {
+  id              String   @id @default(uuid())
+  tenantId        String
+  payrollItemId   String
+  employeeId      String
+  slipNumber      String   @unique
+  payPeriod       String
+  grossSalary     Float
+  totalDeductions Float
+  netSalary       Float
+  pdfUrl          String?
+  generatedAt     DateTime @default(now())
+  status          String   @default("GENERATED")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  payrollItem PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+model PayrollPolicy {
+  id                  String   @id @default(uuid())
+  tenantId            String   @unique
+  workingDaysPerMonth Int      @default(30)
+  lateDeductionRate   Float    @default(0.0)
+  overtimeMultiplier  Float    @default(1.5)
+  pfPercent           Float    @default(12.0)
+  esiPercent          Float    @default(0.75)
+  taxExemptionLimit   Float    @default(300000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
