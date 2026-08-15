@@ -1,0 +1,802 @@
+// QuikBoom Enterprise SaaS CRM Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleType {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  SALES_MANAGER
+  SALES_EXECUTIVE
+  SUPPORT_AGENT
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum SubscriptionBillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL_SENT
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ContactType {
+  CUSTOMER
+  VENDOR
+  PARTNER
+  PROSPECT
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  BANK_TRANSFER
+  CASH
+  CREDIT_CARD
+  OTHER
+}
+
+// ----------------------------------------------------
+// MULTI-TENANCY & SUBSCRIPTION
+// ----------------------------------------------------
+
+model Tenant {
+  id           String    @id @default(uuid())
+  name         String
+  domain       String?   @unique
+  logo         String?
+  phone        String?
+  email        String?
+  address      String?
+  city         String?
+  state        String?
+  country      String?
+  isActive     Boolean   @default(true)
+  storageUsed  BigInt    @default(0) // in bytes
+  userLimit    Int       @default(5)
+  leadLimit    Int       @default(500)
+  storageLimit BigInt    @default(5368709120) // 5GB in bytes
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  users         User[]
+  roles         Role[]
+  subscriptions TenantSubscription[]
+  leads         Lead[]
+  contacts      Contact[]
+  companies     Company[]
+  deals         Deal[]
+  pipelines     Pipeline[]
+  tasks         Task[]
+  products      Product[]
+  quotations    Quotation[]
+  invoices      Invoice[]
+  tickets       SupportTicket[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  payments      PaymentHistory[]
+  featureToggles FeatureToggle[]
+
+  @@index([deletedAt])
+  @@index([isActive])
+}
+
+model Plan {
+  id           String                   @id @default(uuid())
+  name         String                   @unique // Starter, Professional, Business, Enterprise
+  code         String                   @unique
+  description  String?
+  monthlyPrice Float
+  yearlyPrice  Float
+  userLimit    Int
+  leadLimit    Int
+  storageLimit BigInt // in bytes
+  features     Json // Enabled feature list
+  isActive     Boolean                  @default(true)
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  deletedAt    DateTime?
+
+  subscriptions TenantSubscription[]
+
+  @@index([deletedAt])
+}
+
+model TenantSubscription {
+  id           String                   @id @default(uuid())
+  tenantId     String
+  planId       String
+  status       SubscriptionStatus       @default(TRIAL)
+  billingCycle SubscriptionBillingCycle @default(MONTHLY)
+  startDate    DateTime
+  endDate      DateTime
+  trialEndsAt  DateTime?
+  autoRenew    Boolean                  @default(true)
+  couponId     String?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  deletedAt    DateTime?
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   Plan    @relation(fields: [planId], references: [id])
+  coupon Coupon? @relation(fields: [couponId], references: [id])
+
+  payments PaymentHistory[]
+
+  @@index([tenantId])
+  @@index([planId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Coupon {
+  id            String    @id @default(uuid())
+  code          String    @unique
+  discountPct   Float
+  maxRedemptions Int      @default(100)
+  timesRedeemed Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  subscriptions TenantSubscription[]
+
+  @@index([code])
+}
+
+model PaymentHistory {
+  id             String        @id @default(uuid())
+  tenantId       String
+  subscriptionId String?
+  amount         Float
+  currency       String        @default("INR")
+  paymentMethod  PaymentMethod @default(RAZORPAY)
+  paymentId      String? // Razorpay payment ID
+  orderId        String? // Razorpay order ID
+  status         String // SUCCESS, FAILED, PENDING
+  invoiceUrl     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription TenantSubscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+// ----------------------------------------------------
+// USER & RBAC
+// ----------------------------------------------------
+
+model User {
+  id           String    @id @default(uuid())
+  tenantId     String? // Null for Super Admin
+  email        String    @unique
+  phone        String?   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  avatar       String?
+  designation  String?
+  isActive     Boolean   @default(true)
+  isVerified   Boolean   @default(false)
+  otpCode      String?
+  otpExpiresAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  tenant        Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles     UserRole[]
+  refreshTokens RefreshToken[]
+  sessions      Session[]
+
+  assignedLeads     Lead[]           @relation("AssignedLeads")
+  createdLeads      Lead[]           @relation("CreatedLeads")
+  assignedTasks     Task[]           @relation("AssignedTasks")
+  createdTasks      Task[]           @relation("CreatedTasks")
+  assignedTickets   SupportTicket[]  @relation("AssignedTickets")
+  createdTickets    SupportTicket[]  @relation("CreatedTickets")
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  leadNotes         LeadNote[]
+  ticketComments    TicketComment[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([phone])
+  @@index([deletedAt])
+}
+
+model Role {
+  id          String    @id @default(uuid())
+  tenantId    String? // Null for System Roles
+  name        String
+  type        RoleType  @default(CUSTOM)
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  module      String // e.g., LEADS, DEALS, INVOICES
+  action      String // e.g., CREATE, READ, UPDATE, DELETE, MANAGE
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action])
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  ipAddress String?
+  userAgent String?
+  device    String?
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ----------------------------------------------------
+// CRM CORE: LEADS, CONTACTS, COMPANIES, DEALS
+// ----------------------------------------------------
+
+model Lead {
+  id          String       @id @default(uuid())
+  tenantId    String
+  title       String
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  companyName String?
+  source      String       @default("WEBSITE") // WEBSITE, REFERRAL, SOCIAL, DIRECT, OTHER
+  status      LeadStatus   @default(NEW)
+  priority    LeadPriority @default(MEDIUM)
+  value       Float        @default(0)
+  assignedToId String?
+  createdById String
+  convertedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedTo User?  @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  createdBy  User   @relation("CreatedLeads", fields: [createdById], references: [id])
+
+  notes     LeadNote[]
+  timeline  LeadActivityTimeline[]
+  reminders LeadReminder[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([deletedAt])
+}
+
+model LeadNote {
+  id        String   @id @default(uuid())
+  leadId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([leadId])
+}
+
+model LeadActivityTimeline {
+  id          String   @id @default(uuid())
+  leadId      String
+  action      String // e.g. STATUS_CHANGED, NOTE_ADDED, CALL_LOGGED
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadReminder {
+  id          String   @id @default(uuid())
+  leadId      String
+  remindAt    DateTime
+  title       String
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model Company {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  domain    String?
+  industry  String?
+  phone     String?
+  email     String?
+  address   String?
+  city      String?
+  country   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts Contact[]
+  deals    Deal[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+model Contact {
+  id          String      @id @default(uuid())
+  tenantId    String
+  companyId   String?
+  type        ContactType @default(CUSTOMER)
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  designation String?
+  tags        String[]
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company Company? @relation(fields: [companyId], references: [id])
+
+  deals          Deal[]
+  communications CommunicationHistory[]
+  quotations     Quotation[]
+  invoices       Invoice[]
+
+  @@index([tenantId])
+  @@index([companyId])
+  @@index([deletedAt])
+}
+
+model CommunicationHistory {
+  id        String   @id @default(uuid())
+  contactId String
+  type      String // EMAIL, CALL, MEETING, SMS, WHATSAPP
+  summary   String
+  details   String?
+  timestamp DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Pipeline {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  isDefault Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stages PipelineStage[]
+  deals  Deal[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+model PipelineStage {
+  id          String   @id @default(uuid())
+  pipelineId  String
+  name        String
+  order       Int
+  probability Float    @default(50.0) // 0 to 100%
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  deals    Deal[]
+
+  @@index([pipelineId])
+}
+
+model Deal {
+  id              String    @id @default(uuid())
+  tenantId        String
+  pipelineId      String
+  stageId         String
+  contactId       String?
+  companyId       String?
+  title           String
+  amount          Float
+  expectedClosing DateTime?
+  probability     Float     @default(50.0)
+  isWon           Boolean   @default(false)
+  isLost          Boolean   @default(false)
+  lostReason      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline Pipeline      @relation(fields: [pipelineId], references: [id])
+  stage    PipelineStage @relation(fields: [stageId], references: [id])
+  contact  Contact?      @relation(fields: [contactId], references: [id])
+  company  Company?      @relation(fields: [companyId], references: [id])
+
+  quotations Quotation[]
+
+  @@index([tenantId])
+  @@index([pipelineId])
+  @@index([stageId])
+  @@index([deletedAt])
+}
+
+// ----------------------------------------------------
+// TASKS, CALENDAR & PRODUCTS
+// ----------------------------------------------------
+
+model Task {
+  id           String       @id @default(uuid())
+  tenantId     String
+  title        String
+  description  String?
+  status       TaskStatus   @default(PENDING)
+  priority     TaskPriority @default(MEDIUM)
+  dueDate      DateTime?
+  isRecurring  Boolean      @default(false)
+  recurrence   String? // DAILY, WEEKLY, MONTHLY
+  assignedToId String?
+  createdById  String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedTo User?  @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy  User   @relation("CreatedTasks", fields: [createdById], references: [id])
+
+  @@index([tenantId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Product {
+  id          String    @id @default(uuid())
+  tenantId    String
+  name        String
+  sku         String
+  description String?
+  unitPrice   Float
+  currency    String    @default("INR")
+  taxRate     Float     @default(18.0)
+  stock       Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  quotationItems QuotationItem[]
+  invoiceItems   InvoiceItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+model Quotation {
+  id            String          @id @default(uuid())
+  tenantId      String
+  contactId     String
+  dealId        String?
+  quotationNo   String
+  status        QuotationStatus @default(DRAFT)
+  subTotal      Float
+  taxAmount     Float
+  discount      Float           @default(0)
+  totalAmount   Float
+  validUntil    DateTime
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+
+  tenant  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact Contact   @relation(fields: [contactId], references: [id])
+  deal    Deal?     @relation(fields: [dealId], references: [id])
+  items   QuotationItem[]
+  invoices Invoice[]
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([deletedAt])
+}
+
+model QuotationItem {
+  id          String @id @default(uuid())
+  quotationId String
+  productId   String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id])
+}
+
+model Invoice {
+  id          String        @id @default(uuid())
+  tenantId    String
+  contactId   String
+  quotationId String?
+  invoiceNo   String
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime
+  dueDate     DateTime
+  subTotal    Float
+  taxAmount   Float
+  discount    Float         @default(0)
+  totalAmount Float
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact   Contact      @relation(fields: [contactId], references: [id])
+  quotation Quotation?   @relation(fields: [quotationId], references: [id])
+  items     InvoiceItem[]
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model InvoiceItem {
+  id        String @id @default(uuid())
+  invoiceId String
+  productId String
+  quantity  Int
+  unitPrice Float
+  total     Float
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+// ----------------------------------------------------
+// SUPPORT TICKETS
+// ----------------------------------------------------
+
+model SupportTicket {
+  id           String         @id @default(uuid())
+  tenantId     String
+  ticketNo     String
+  subject      String
+  description  String
+  status       TicketStatus   @default(OPEN)
+  priority     TicketPriority @default(MEDIUM)
+  assignedToId String?
+  createdById  String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  deletedAt    DateTime?
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedTo User?  @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  createdBy  User   @relation("CreatedTickets", fields: [createdById], references: [id])
+
+  comments TicketComment[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model TicketComment {
+  id        String   @id @default(uuid())
+  ticketId  String
+  userId    String
+  comment   String
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id])
+
+  @@index([ticketId])
+}
+
+// ----------------------------------------------------
+// NOTIFICATIONS, AUDIT & SUPER ADMIN
+// ----------------------------------------------------
+
+model Notification {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  title     String
+  message   String
+  type      String // LEAD_ASSIGNED, TASK_DUE, PAYMENT_RECEIVED, SYSTEM
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([isRead])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String?
+  userId    String?
+  action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT
+  module    String // LEADS, DEALS, USERS, TENANTS
+  details   Json
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([module])
+}
+
+model FeatureToggle {
+  id        String   @id @default(uuid())
+  tenantId  String
+  feature   String // LEADS, DEALS, INVOICES, WHATSAPP_INTEGRATION
+  isEnabled Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, feature])
+}
