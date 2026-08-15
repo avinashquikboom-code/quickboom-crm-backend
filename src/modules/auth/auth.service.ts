@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -14,12 +15,13 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
-  VerifyOtpDto,
 } from './dto/auth.dto';
 import { RoleType } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -69,7 +71,7 @@ export class AuthService {
           tenantId: tenant.id,
           planId: starterPlan.id,
           startDate: new Date(),
-          endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14-day free trial
+          endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
           trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
           status: 'TRIAL',
         },
@@ -176,7 +178,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    // Revoke old token & generate new pair
     await this.prisma.refreshToken.update({
       where: { id: existingToken.id },
       data: { isRevoked: true },
@@ -198,7 +199,7 @@ export class AuthService {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -208,7 +209,6 @@ export class AuthService {
       },
     });
 
-    // Send email logic (Nodemailer ready)
     return { message: 'Password reset OTP generated successfully', otpMock: otp };
   }
 
@@ -263,7 +263,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      expiresIn: 900, // 15 mins in seconds
+      expiresIn: 900,
     };
   }
 }
