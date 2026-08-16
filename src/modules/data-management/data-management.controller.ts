@@ -11,6 +11,9 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { RoleType } from '@prisma/client';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
@@ -23,7 +26,8 @@ import {
 
 @ApiTags('Admin Data Management')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@Roles(RoleType.SUPER_ADMIN)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
 export class DataManagementController {
