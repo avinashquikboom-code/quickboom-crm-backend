@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Param,
   UseGuards,
   ValidationPipe,
   UsePipes,
@@ -47,12 +48,53 @@ export class DataCaptureController {
   }
 
   /**
-   * GET /api/v1/data-capture/jobs
+   * POST /api/v1/data-capture/:id/import
+   */
+  @Post(':id/import')
+  async importJobToLeads(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') userId: string,
+    @Param('id') jobId: string,
+    @Body() dto: { placeIds?: string[] },
+  ) {
+    return this.dataCaptureService.importToLeads(tenantId, userId, {
+      jobId,
+      placeIds: dto?.placeIds,
+    });
+  }
+
+  /**
+   * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
    * Retrieves past extraction jobs for the tenant
    */
   @Get('jobs')
   async getTenantJobs(@CurrentTenant() tenantId: string) {
     return this.dataCaptureService.getTenantJobs(tenantId);
+  }
+
+  @Get('history')
+  async getTenantHistory(@CurrentTenant() tenantId: string) {
+    return this.dataCaptureService.getTenantJobs(tenantId);
+  }
+
+  /**
+   * GET /api/v1/data-capture/jobs/:id & /api/v1/data-capture/:id
+   * Retrieves single extraction job details and captured places
+   */
+  @Get('jobs/:id')
+  async getJobById(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.dataCaptureService.getJobById(tenantId, id);
+  }
+
+  @Get(':id')
+  async getJobByIdAlias(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.dataCaptureService.getJobById(tenantId, id);
   }
 
   /**

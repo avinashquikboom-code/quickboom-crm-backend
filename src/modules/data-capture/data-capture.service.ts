@@ -305,6 +305,17 @@ export class DataCaptureService {
   }
 
   /**
+   * Get single extraction job details
+   */
+  async getJobById(tenantId: string, jobId: string): Promise<ExtractionJob> {
+    const job = this.jobsMap.get(jobId);
+    if (!job || job.tenantId !== tenantId) {
+      throw new BadRequestException(`Extraction job ${jobId} not found.`);
+    }
+    return job;
+  }
+
+  /**
    * Get tenant extraction usage summary
    */
   async getUsageSummary(tenantId: string): Promise<ExtractionUsageSummary> {
