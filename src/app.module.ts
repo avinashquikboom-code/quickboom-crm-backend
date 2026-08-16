@@ -12,6 +12,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DataCaptureModule } from './modules/data-capture/data-capture.module';
 import { DataManagementModule } from './modules/data-management/data-management.module';
 
+import { AppController } from './app.controller';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -30,5 +32,6 @@ import { DataManagementModule } from './modules/data-management/data-management.
     DataCaptureModule,
     DataManagementModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
