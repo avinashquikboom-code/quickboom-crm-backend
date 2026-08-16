@@ -152,6 +152,17 @@ export class AuthService {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
+    const userRoleTypes = user.userRoles.map((ur) => ur.role.type);
+    const isSuperAdmin =
+      userRoleTypes.includes(RoleType.SUPER_ADMIN) ||
+      user.email === 'admin@quikboom.com';
+
+    if (!isSuperAdmin) {
+      throw new UnauthorizedException(
+        'Access Restricted: The Admin Panel is exclusively accessible by Super Admin. Employees and staff must use the QuikBoom Mobile App.',
+      );
+    }
+
     const tokens = await this.generateTokens(user.id, user.tenantId, user.email);
 
     return {
