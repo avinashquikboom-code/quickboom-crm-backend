@@ -11,7 +11,19 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
-import { CreateLeadDto, CreateLeadNoteDto, UpdateLeadDto } from './dto/lead.dto';
+import {
+  CheckDuplicateDto,
+  CreateLeadDto,
+  CreateLeadNoteDto,
+  CreateProposalDto,
+  FinalCallDto,
+  LogFollowUpDto,
+  ManageVisitDto,
+  RecordPaymentDto,
+  StartWorkDto,
+  UpdateLeadDto,
+  UpdateLeadStatusDto,
+} from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
@@ -34,6 +46,15 @@ export class LeadController {
     return this.leadService.createLead(tenantId, userId, dto);
   }
 
+  @Post('check-duplicate')
+  @ApiOperation({ summary: 'Check if lead already exists by phone, company, or website' })
+  async checkDuplicate(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: CheckDuplicateDto,
+  ) {
+    return this.leadService.checkDuplicate(tenantId, dto);
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get paginated list of leads' })
   @ApiQuery({ name: 'page', required: false })
@@ -49,14 +70,14 @@ export class LeadController {
   ) {
     return this.leadService.getLeads(tenantId, {
       page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 10,
+      limit: limit ? Number(limit) : 50,
       search,
       status,
     });
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get lead details by ID with notes and timeline' })
+  @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
   async findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.leadService.getLeadById(tenantId, id);
   }
@@ -69,6 +90,17 @@ export class LeadController {
     @Body() dto: UpdateLeadDto,
   ) {
     return this.leadService.updateLead(tenantId, id, dto);
+  }
+
+  @Patch(':id/status')
+  @ApiOperation({ summary: 'Update lead stage status with history audit' })
+  async updateStatus(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateLeadStatusDto,
+  ) {
+    return this.leadService.updateStatus(tenantId, id, userId, dto);
   }
 
   @Delete(':id')
@@ -86,5 +118,71 @@ export class LeadController {
     @Body() dto: CreateLeadNoteDto,
   ) {
     return this.leadService.addNote(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/follow-ups')
+  @ApiOperation({ summary: 'Log follow-up call outcome, next follow up, and update status to FOLLOW_UP' })
+  async logFollowUp(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: LogFollowUpDto,
+  ) {
+    return this.leadService.logFollowUp(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/visits')
+  @ApiOperation({ summary: 'Manage field visit: schedule, start (GPS), or complete' })
+  async manageVisit(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ManageVisitDto,
+  ) {
+    return this.leadService.manageVisit(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/proposals')
+  @ApiOperation({ summary: 'Create & send commercial proposal/quotation, move status to PROPOSAL' })
+  async createProposal(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateProposalDto,
+  ) {
+    return this.leadService.createProposal(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/final-call')
+  @ApiOperation({ summary: 'Log final negotiation call, move status to FINAL_CALL or PAYMENT' })
+  async recordFinalCall(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: FinalCallDto,
+  ) {
+    return this.leadService.recordFinalCall(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/payments')
+  @ApiOperation({ summary: 'Record payment verification, move status to PAYMENT' })
+  async recordPayment(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: RecordPaymentDto,
+  ) {
+    return this.leadService.recordPayment(tenantId, id, userId, dto);
+  }
+
+  @Post(':id/start-work')
+  @ApiOperation({ summary: 'Kick off project work, move status to WORK_STARTED' })
+  async startWork(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: StartWorkDto,
+  ) {
+    return this.leadService.startWork(tenantId, id, userId, dto);
   }
 }

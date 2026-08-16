@@ -1,6 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { LeadRepository } from './lead.repository';
-import { CreateLeadDto, CreateLeadNoteDto, UpdateLeadDto } from './dto/lead.dto';
+import {
+  CheckDuplicateDto,
+  CreateLeadDto,
+  CreateLeadNoteDto,
+  CreateProposalDto,
+  FinalCallDto,
+  LogFollowUpDto,
+  ManageVisitDto,
+  RecordPaymentDto,
+  StartWorkDto,
+  UpdateLeadDto,
+  UpdateLeadStatusDto,
+} from './dto/lead.dto';
 
 @Injectable()
 export class LeadService {
@@ -11,9 +23,14 @@ export class LeadService {
     await this.leadRepository.logTimeline(
       lead.id,
       'LEAD_CREATED',
-      `Lead "${lead.title}" was created by user`,
+      `Lead "${lead.title}" was created via ${dto.source || 'WEBSITE'}`,
+      { source: dto.source, value: dto.value },
     );
     return lead;
+  }
+
+  async checkDuplicate(tenantId: string, dto: CheckDuplicateDto) {
+    return this.leadRepository.checkDuplicate(tenantId, dto);
   }
 
   async getLeads(tenantId: string, query: { page?: number; limit?: number; search?: string; status?: string }) {
@@ -39,6 +56,19 @@ export class LeadService {
     return this.getLeadById(tenantId, id);
   }
 
+  async updateStatus(tenantId: string, id: string, userId: string, dto: UpdateLeadStatusDto) {
+    const lead = await this.getLeadById(tenantId, id);
+    await this.leadRepository.updateStatus(
+      tenantId,
+      id,
+      lead.status,
+      dto.status,
+      userId,
+      dto.notes,
+    );
+    return this.getLeadById(tenantId, id);
+  }
+
   async deleteLead(tenantId: string, id: string) {
     await this.getLeadById(tenantId, id);
     return this.leadRepository.softDelete(tenantId, id);
@@ -50,8 +80,38 @@ export class LeadService {
     await this.leadRepository.logTimeline(
       leadId,
       'NOTE_ADDED',
-      `New note added: ${dto.content.substring(0, 30)}...`,
+      `New note added: ${dto.content.substring(0, 40)}...`,
     );
     return note;
+  }
+
+  async logFollowUp(tenantId: string, leadId: string, userId: string, dto: LogFollowUpDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.logFollowUp(tenantId, leadId, userId, dto);
+  }
+
+  async manageVisit(tenantId: string, leadId: string, userId: string, dto: ManageVisitDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.manageVisit(tenantId, leadId, userId, dto);
+  }
+
+  async createProposal(tenantId: string, leadId: string, userId: string, dto: CreateProposalDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.createProposal(tenantId, leadId, userId, dto);
+  }
+
+  async recordFinalCall(tenantId: string, leadId: string, userId: string, dto: FinalCallDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.recordFinalCall(tenantId, leadId, userId, dto);
+  }
+
+  async recordPayment(tenantId: string, leadId: string, userId: string, dto: RecordPaymentDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.recordPayment(tenantId, leadId, userId, dto);
+  }
+
+  async startWork(tenantId: string, leadId: string, userId: string, dto: StartWorkDto) {
+    await this.getLeadById(tenantId, leadId);
+    return this.leadRepository.startWork(tenantId, leadId, userId, dto);
   }
 }

@@ -33,12 +33,19 @@ enum SubscriptionBillingCycle {
 
 enum LeadStatus {
   NEW
+  FOLLOW_UP
   CONTACTED
+  VISIT
   QUALIFIED
+  PROPOSAL
   PROPOSAL_SENT
+  FINAL_CALL
   NEGOTIATION
+  PAYMENT
+  WORK_STARTED
   WON
   LOST
+  CANCELLED
 }
 
 enum LeadPriority {
@@ -377,37 +384,68 @@ model Session {
 // ----------------------------------------------------
 
 model Lead {
-  id          String       @id @default(uuid())
-  tenantId    String
-  title       String
-  firstName   String
-  lastName    String
-  email       String?
-  phone       String?
-  companyName String?
-  source      String       @default("WEBSITE") // WEBSITE, REFERRAL, SOCIAL, DIRECT, OTHER
-  status      LeadStatus   @default(NEW)
-  priority    LeadPriority @default(MEDIUM)
-  value       Float        @default(0)
-  assignedToId String?
-  createdById String
-  convertedAt DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
+  id               String       @id @default(uuid())
+  tenantId         String
+  title            String
+  firstName        String
+  lastName         String
+  email            String?
+  phone            String?
+  companyName      String?
+  website          String?
+  address          String?
+  city             String?
+  state            String?
+  category         String?
+  source           String       @default("WEBSITE") // WEBSITE, REFERRAL, SOCIAL, DIRECT, DATA_CAPTURE, OTHER
+  status           LeadStatus   @default(NEW)
+  priority         LeadPriority @default(MEDIUM)
+  value            Float        @default(0)
+  assignedToId     String?
+  createdById      String
+  nextFollowUpDate DateTime?
+  nextFollowUpTime String?
+  workStartDate    DateTime?
+  workNotes        String?
+  assignedTeam     String?
+  paidAmount       Float?       @default(0)
+  paymentStatus    String?      @default("PENDING")
+  paymentMethod    String?
+  paymentRef       String?
+  convertedAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
 
   tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assignedTo User?  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy  User   @relation("CreatedLeads", fields: [createdById], references: [id])
 
-  notes     LeadNote[]
-  timeline  LeadActivityTimeline[]
-  reminders LeadReminder[]
+  notes         LeadNote[]
+  timeline      LeadActivityTimeline[]
+  reminders     LeadReminder[]
+  statusHistory LeadStatusHistory[]
+  visits        Visit[]
+  quotations    Quotation[]
 
   @@index([tenantId])
   @@index([status])
   @@index([assignedToId])
   @@index([deletedAt])
+}
+
+model LeadStatusHistory {
+  id          String      @id @default(uuid())
+  leadId      String
+  fromStatus  LeadStatus?
+  toStatus    LeadStatus
+  changedById String?
+  notes       String?
+  createdAt   DateTime    @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
 }
 
 model LeadNote {
@@ -637,8 +675,9 @@ model Product {
 model Quotation {
   id            String          @id @default(uuid())
   tenantId      String
-  contactId     String
+  contactId     String?
   dealId        String?
+  leadId        String?
   quotationNo   String
   status        QuotationStatus @default(DRAFT)
   subTotal      Float
@@ -651,14 +690,16 @@ model Quotation {
   updatedAt     DateTime        @updatedAt
   deletedAt     DateTime?
 
-  tenant  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contact Contact   @relation(fields: [contactId], references: [id])
-  deal    Deal?     @relation(fields: [dealId], references: [id])
-  items   QuotationItem[]
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact  Contact?       @relation(fields: [contactId], references: [id])
+  deal     Deal?          @relation(fields: [dealId], references: [id])
+  lead     Lead?          @relation(fields: [leadId], references: [id])
+  items    QuotationItem[]
   invoices Invoice[]
 
   @@index([tenantId])
   @@index([contactId])
+  @@index([leadId])
   @@index([deletedAt])
 }
 
@@ -1114,6 +1155,7 @@ model Visit {
   id           String      @id @default(uuid())
   tenantId     String
   employeeId   String
+  leadId       String?
   customerName String
   purpose      String
   date         DateTime    @default(now())
@@ -1130,9 +1172,11 @@ model Visit {
   updatedAt    DateTime    @updatedAt
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead     Lead?    @relation(fields: [leadId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
+  @@index([leadId])
 }
 
 model SalaryStructure {
