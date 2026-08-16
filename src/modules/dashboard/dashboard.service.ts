@@ -29,7 +29,7 @@ export class DashboardService {
     };
 
     const recentPunchIns = [
-      { id: 'p-1', employee: 'Avinash Magar', employeeId: 'EMP001', office: 'Head Office', punchInTime: '09:12 AM', location: 'Office GPS', status: 'On Time' },
+      { id: 'p-1', employee: 'Demo User', employeeId: 'EMP001', office: 'Head Office', punchInTime: '09:12 AM', location: 'Office GPS', status: 'On Time' },
       { id: 'p-2', employee: 'Rahul Sharma', employeeId: 'EMP002', office: 'Navi Mumbai Branch', punchInTime: '09:26 AM', location: 'Office GPS', status: 'Late by 26m' },
       { id: 'p-3', employee: 'Priya Singh', employeeId: 'EMP003', office: 'Mumbai Central Branch', punchInTime: '09:05 AM', location: 'Office GPS', status: 'On Time' },
     ];
@@ -40,7 +40,7 @@ export class DashboardService {
     ];
 
     const recentActivity = [
-      { id: 'act-1', timestamp: '09:42 AM', title: 'Avinash Magar punched in', office: 'Head Office', category: 'punch' },
+      { id: 'act-1', timestamp: '09:42 AM', title: 'Demo User punched in', office: 'Head Office', category: 'punch' },
       { id: 'act-2', timestamp: '09:45 AM', title: 'Rahul Sharma started break', office: 'Navi Mumbai Branch', category: 'break' },
       { id: 'act-3', timestamp: '10:02 AM', title: 'Priya Singh started client visit to Acme Corp', office: 'Mumbai Central Branch', category: 'visit' },
     ];
