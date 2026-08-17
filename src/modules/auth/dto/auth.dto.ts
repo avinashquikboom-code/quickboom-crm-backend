@@ -19,30 +19,40 @@ export class RegisterTenantDto {
   @IsNotEmpty()
   companyName: string;
 
-  @ApiProperty({ example: 'John' })
+  @ApiPropertyOptional({ example: 'John Doe' })
   @IsString()
-  @IsNotEmpty()
-  firstName: string;
+  @IsOptional()
+  fullName?: string;
 
-  @ApiProperty({ example: 'Doe' })
+  @ApiPropertyOptional({ example: 'John' })
   @IsString()
-  @IsNotEmpty()
-  lastName: string;
+  @IsOptional()
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Doe' })
+  @IsString()
+  @IsOptional()
+  lastName?: string;
 
   @ApiProperty({ example: 'john@acme.com' })
   @IsEmail()
   @IsNotEmpty()
   email: string;
 
-  @ApiProperty({ example: '+1234567890' })
+  @ApiPropertyOptional({ example: '+919876543210' })
   @IsString()
   @IsOptional()
   phone?: string;
 
-  @ApiProperty({ example: 'Password123!' })
+  @ApiPropertyOptional({ example: 'Mumbai' })
   @IsString()
-  @MinLength(6)
-  password: string;
+  @IsOptional()
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'Password123!' })
+  @IsString()
+  @IsOptional()
+  password?: string;
 }
 
 export class RefreshTokenDto {

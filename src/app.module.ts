@@ -11,6 +11,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DataCaptureModule } from './modules/data-capture/data-capture.module';
 import { DataManagementModule } from './modules/data-management/data-management.module';
+import { SubscriptionModule } from './modules/subscription/subscription.module';
 
 import { AppController } from './app.controller';
 
@@ -31,6 +32,7 @@ import { AppController } from './app.controller';
     DashboardModule,
     DataCaptureModule,
     DataManagementModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
 })

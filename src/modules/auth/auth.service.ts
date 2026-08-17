@@ -36,7 +36,19 @@ export class AuthService {
       throw new ConflictException('User with this email already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    // Determine first and last name from fullName or explicit fields
+    let firstName = dto.firstName || '';
+    let lastName = dto.lastName || '';
+    if (dto.fullName && (!firstName || !lastName)) {
+      const parts = dto.fullName.trim().split(/\s+/);
+      firstName = parts[0] || 'Tenant';
+      lastName = parts.slice(1).join(' ') || (dto.companyName ? dto.companyName : 'Admin');
+    }
+    if (!firstName) firstName = 'Tenant';
+    if (!lastName) lastName = 'Admin';
+
+    const rawPassword = dto.password || '123456';
+    const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
     return this.prisma.$transaction(async (tx) => {
       // Create Tenant
@@ -45,6 +57,7 @@ export class AuthService {
           name: dto.companyName,
           email: dto.email,
           phone: dto.phone,
+          city: dto.city,
         },
       });
 
@@ -93,8 +106,8 @@ export class AuthService {
           tenantId: tenant.id,
           email: dto.email,
           phone: dto.phone,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          firstName: firstName,
+          lastName: lastName,
           passwordHash: hashedPassword,
           isVerified: true,
         },

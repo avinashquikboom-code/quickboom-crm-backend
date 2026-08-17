@@ -1,0 +1,22 @@
+export enum SubscriptionBillingCycle {
+  MONTHLY = 'MONTHLY',
+  YEARLY = 'YEARLY',
+}
+
+export enum SubscriptionStatus {
+  TRIAL = 'TRIAL',
+  ACTIVE = 'ACTIVE',
+  PAST_DUE = 'PAST_DUE',
+  CANCELED = 'CANCELED',
+  EXPIRED = 'EXPIRED',
+}
+
+export class CreateOrderDto {
+  planId: string;
+  billingCycle: SubscriptionBillingCycle;
+  paymentMethod?: string;
+}
+
+export class RenewSubscriptionDto {
+  billingCycle?: SubscriptionBillingCycle;
+}
