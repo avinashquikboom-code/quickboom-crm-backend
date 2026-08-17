@@ -1,25 +1,31 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateOrderDto, RenewSubscriptionDto, SubscriptionBillingCycle } from './dto/subscription.dto';
-import { SubscriptionStatus } from '@prisma/client';
+import {
+  SubscriptionBillingCycle,
+  SubscriptionStatus,
+  CreateOrderDto,
+  RenewSubscriptionDto,
+} from './dto/subscription.dto';
 
 @Injectable()
 export class SubscriptionService {
   constructor(private prisma: PrismaService) {}
 
-  private calculateExpiryDate(startDate: Date, billingCycle: SubscriptionBillingCycle): Date {
+  static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle): Date {
     const start = new Date(startDate);
-    if (billingCycle === SubscriptionBillingCycle.MONTHLY) {
+    if (cycle === SubscriptionBillingCycle.MONTHLY) {
+      // 1 calendar month
       const year = start.getFullYear();
       const month = start.getMonth();
       const day = start.getDate();
-      // Target next month
+
       const targetMonth = month + 1;
       const targetYear = year + Math.floor(targetMonth / 12);
       const normalizedMonth = targetMonth % 12;
-      // Get last day of target month to handle overflow (e.g. Jan 31 -> Feb 28)
+
       const lastDayOfTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
       const targetDay = Math.min(day, lastDayOfTargetMonth);
+
       return new Date(targetYear, normalizedMonth, targetDay, start.getHours(), start.getMinutes(), start.getSeconds());
     } else {
       // 12 calendar months (1 year)
@@ -39,60 +45,78 @@ export class SubscriptionService {
     });
 
     if (plans.length === 0) {
-      // Seed standard QuikBoom subscription plans
+      // Seed standard QuikBoom subscription packages
       const standardPlans = [
         {
-          name: 'Starter',
-          code: 'STARTER',
-          description: 'Essential CRM tools for small teams & emerging startups',
-          monthlyPrice: 999,
-          yearlyPrice: 9999,
+          name: 'Basic Package',
+          code: 'BASIC',
+          description: 'Starter Plan for emerging businesses',
+          monthlyPrice: 9999,
+          yearlyPrice: 95990,
           userLimit: 5,
           leadLimit: 500,
-          storageLimit: BigInt(5368709120), // 5GB
+          storageLimit: BigInt(5368709120),
           features: [
-            '5 Users Included',
-            'Lead Management & Stages',
-            'Data Capture Module',
-            'Basic Reports & Analytics',
-            'Mobile App Access',
-            'Standard Email Support',
+            '4 Reels',
+            '3 Creative Posts',
+            '1 Influencer Promotion',
+            '3 Stories',
+            'Social Media Account Management',
+            'Content Writing & Captions',
+            'Trending Hashtags',
+            'Meta Ads Campaign Setup & Management',
+            'Google Ads Campaign Setup & Management',
+            'Monthly Performance Report',
+            'Ads will run only during the content execution period.',
+            'Meta & Google Ads Budget will be paid by the client.',
           ],
         },
         {
-          name: 'Professional',
-          code: 'PROFESSIONAL',
-          description: 'Advanced automation, GPS visits & payroll for scaling teams',
-          monthlyPrice: 2499,
-          yearlyPrice: 24999,
+          name: 'Standard Package',
+          code: 'STANDARD',
+          description: 'Growth Plan for expanding companies',
+          monthlyPrice: 14999,
+          yearlyPrice: 143990,
           userLimit: 25,
           leadLimit: 5000,
-          storageLimit: BigInt(26843545600), // 25GB
+          storageLimit: BigInt(26843545600),
           features: [
-            '25 Users Included',
-            'Complete CRM & Pipeline Management',
-            'GPS Field Visit & Attendance Tracking',
-            'HRM Suite & Payroll Processing',
-            'Custom Lead Stages & Follow-ups',
-            'Priority Support 24/7',
+            '6 Reels',
+            '4 Creative Posts',
+            '2 Influencer Promotions',
+            '5 Stories',
+            'Social Media Account Management',
+            'Trending Hashtags',
+            'Meta Ads Campaign Setup & Management',
+            'Google Ads Campaign Setup & Management',
+            'Monthly Performance Report',
+            'Ads will run only during the content execution period.',
+            'Meta & Google Ads Budget will be paid by the client.',
           ],
         },
         {
-          name: 'Enterprise',
-          code: 'ENTERPRISE',
-          description: 'Maximum limits, unlimited workflows & dedicated infrastructure',
-          monthlyPrice: 5999,
-          yearlyPrice: 59999,
+          name: 'Premium Package',
+          code: 'PREMIUM',
+          description: 'Scale Plan for high-growth enterprises',
+          monthlyPrice: 25999,
+          yearlyPrice: 249590,
           userLimit: 100,
           leadLimit: 50000,
-          storageLimit: BigInt(107374182400), // 100GB
+          storageLimit: BigInt(107374182400),
           features: [
-            'Unlimited Users & Workspaces',
-            'Full CRM, HRM, Payroll & Geo-Tracking',
-            'Dedicated Account Manager',
-            'Custom Feature Toggles & Role Permissions',
-            'Unlimited Cloud Data & Audit Logs',
-            'Custom Integrations & SLA Guarantee',
+            '2 Product Reels',
+            '8 Influencer Reels (Total 10 Reels)',
+            '8 Creative Posts',
+            '30 Stories',
+            'Complete Social Media Management',
+            'Premium Content Strategy & Caption Writing',
+            'Advanced Hashtag Research',
+            'Meta Ads Campaign Setup & Management',
+            'Google Ads Campaign Setup & Management',
+            'Detailed Monthly Analytics Report',
+            'Priority Graphic Designing',
+            'Ads will run throughout the campaign/content execution period.',
+            'Meta & Google Ads Budget will be paid by the client.',
           ],
         },
       ];
@@ -112,89 +136,93 @@ export class SubscriptionService {
       name: p.name,
       code: p.code,
       description: p.description,
-      monthlyPrice: p.monthlyPrice,
-      yearlyPrice: p.yearlyPrice,
+      monthlyPrice: Number(p.monthlyPrice),
+      yearlyPrice: Number(p.yearlyPrice),
       userLimit: p.userLimit,
       leadLimit: p.leadLimit,
-      storageLimit: p.storageLimit.toString(),
-      features: Array.isArray(p.features) ? p.features : [],
-      isRecommended: p.code === 'PROFESSIONAL',
-      currency: 'INR',
+      storageLimitBytes: Number(p.storageLimit),
+      features: p.features,
+      isRecommended: p.code === 'STANDARD',
     }));
   }
 
   async getCurrentSubscription(tenantId: string) {
-    const subscription = await this.prisma.tenantSubscription.findFirst({
-      where: { tenantId, deletedAt: null },
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+
+    const sub = await this.prisma.tenantSubscription.findFirst({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
 
-    if (!subscription) {
-      return {
-        hasActiveSubscription: false,
-        subscription: null,
-      };
+    if (!sub) {
+      return null;
     }
 
-    const now = new Date();
-    const isExpired = subscription.endDate < now || subscription.status === SubscriptionStatus.EXPIRED;
-    const effectiveStatus = isExpired ? SubscriptionStatus.EXPIRED : subscription.status;
+    const isExpired = sub.status === 'EXPIRED' || (sub.endDate && new Date() > new Date(sub.endDate));
 
     return {
-      hasActiveSubscription: !isExpired && subscription.status === SubscriptionStatus.ACTIVE,
-      subscription: {
-        id: subscription.id,
-        tenantId: subscription.tenantId,
-        planId: subscription.planId,
-        planName: subscription.plan.name,
-        planCode: subscription.plan.code,
-        status: effectiveStatus,
-        billingCycle: subscription.billingCycle,
-        startDate: subscription.startDate,
-        endDate: subscription.endDate,
-        price: subscription.billingCycle === 'YEARLY' ? subscription.plan.yearlyPrice : subscription.plan.monthlyPrice,
-        currency: 'INR',
-        autoRenew: subscription.autoRenew,
-        features: Array.isArray(subscription.plan.features) ? subscription.plan.features : [],
-        userLimit: subscription.plan.userLimit,
-        leadLimit: subscription.plan.leadLimit,
-      },
+      id: sub.id,
+      tenantId: sub.tenantId,
+      planId: sub.planId,
+      planName: sub.plan.name,
+      planCode: sub.plan.code,
+      status: isExpired ? SubscriptionStatus.EXPIRED : sub.status,
+      billingCycle: sub.billingCycle || SubscriptionBillingCycle.MONTHLY,
+      startDate: sub.startDate,
+      endDate: sub.endDate,
+      price: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice),
+      userLimit: sub.plan.userLimit,
+      leadLimit: sub.plan.leadLimit,
+      features: sub.plan.features,
+      isExpired,
     };
   }
 
-  async getTenantOrders(tenantId: string) {
+  async getOrders(tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+
     const payments = await this.prisma.paymentHistory.findMany({
-      where: { tenantId, deletedAt: null },
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        subscription: {
-          include: { plan: true },
-        },
-      },
+    });
+
+    const currentSub = await this.prisma.tenantSubscription.findFirst({
+      where: { tenantId },
+      include: { plan: true },
     });
 
     return payments.map((p) => {
-      const planName = p.subscription?.plan?.name || 'Standard Package';
-      const billingCycle = p.subscription?.billingCycle || 'MONTHLY';
+      const isPaid = p.status === 'SUCCESS';
+      const billingCycle = (p.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
+      const baseAmount = Number(p.amount);
+      const taxAmount = Number(p.taxAmount || (baseAmount * 0.18));
+      const totalAmount = Number(p.totalAmount || (baseAmount + taxAmount));
+
       const purchaseDate = p.createdAt;
-      const expiryDate = p.subscription?.endDate || this.calculateExpiryDate(purchaseDate, billingCycle as any);
+      const activationDate = p.createdAt;
+      const expiryDate = SubscriptionService.calculateExpiryDate(purchaseDate, billingCycle);
 
       return {
         id: p.id,
-        orderId: p.orderId || `#QB-${p.id.substring(0, 8).toUpperCase()}`,
-        planName,
+        orderNumber: p.orderNumber || `#QB-${p.id.substring(0, 8).toUpperCase()}`,
+        planId: p.planId || currentSub?.planId || 'plan-standard',
+        planName: p.planName || currentSub?.plan?.name || 'Standard Package',
         billingCycle,
-        amount: p.amount,
-        currency: p.currency || 'INR',
-        paymentStatus: p.status === 'SUCCESS' ? 'PAID' : p.status,
-        paymentMethod: p.paymentMethod,
-        transactionId: p.paymentId || `TXN-${p.id.substring(0, 10).toUpperCase()}`,
+        amount: baseAmount,
+        taxAmount,
+        totalAmount,
+        paymentStatus: isPaid ? 'PAID' : 'PENDING',
+        paymentMethod: p.paymentMethod || 'RAZORPAY',
+        transactionId: p.transactionId || `TXN-${p.id.substring(0, 10).toUpperCase()}`,
         purchaseDate,
-        activationDate: purchaseDate,
+        activationDate,
         expiryDate,
-        features: Array.isArray(p.subscription?.plan?.features) ? p.subscription?.plan?.features : [],
-        invoiceUrl: p.invoiceUrl || `/invoices/${p.id}.pdf`,
+        features: currentSub?.plan?.features || [],
       };
     });
   }
@@ -203,98 +231,125 @@ export class SubscriptionService {
     const plan = await this.prisma.plan.findUnique({
       where: { id: dto.planId },
     });
-
     if (!plan) {
-      throw new NotFoundException('Selected subscription plan not found');
+      throw new NotFoundException('Plan not found');
     }
 
-    const price = dto.billingCycle === SubscriptionBillingCycle.YEARLY ? plan.yearlyPrice : plan.monthlyPrice;
+    const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
+    const basePrice = cycle === SubscriptionBillingCycle.MONTHLY ? Number(plan.monthlyPrice) : Number(plan.yearlyPrice);
+    const tax = basePrice * 0.18;
+    const total = basePrice + tax;
+
     const startDate = new Date();
-    const expiryDate = this.calculateExpiryDate(startDate, dto.billingCycle);
+    const expiryDate = SubscriptionService.calculateExpiryDate(startDate, cycle);
+    const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const transactionId = `TXN-${Date.now().toString().substring(3)}`;
 
     return this.prisma.$transaction(async (tx) => {
-      // Create TenantSubscription
-      const subscription = await tx.tenantSubscription.create({
-        data: {
-          tenantId,
-          planId: plan.id,
-          status: SubscriptionStatus.ACTIVE,
-          billingCycle: dto.billingCycle as any,
-          startDate,
-          endDate: expiryDate,
-          autoRenew: true,
-        },
-        include: { plan: true },
+      // 1. Create or update tenant subscription
+      const existingSub = await tx.tenantSubscription.findFirst({
+        where: { tenantId },
+        orderBy: { createdAt: 'desc' },
       });
 
-      // Update Tenant limits based on new plan
-      await tx.tenant.update({
-        where: { id: tenantId },
-        data: {
-          userLimit: plan.userLimit,
-          leadLimit: plan.leadLimit,
-          storageLimit: plan.storageLimit,
-        },
-      });
+      let updatedSub;
+      if (existingSub) {
+        updatedSub = await tx.tenantSubscription.update({
+          where: { id: existingSub.id },
+          data: {
+            planId: plan.id,
+            status: 'ACTIVE',
+            billingCycle: cycle,
+            startDate,
+            endDate: expiryDate,
+          },
+          include: { plan: true },
+        });
+      } else {
+        updatedSub = await tx.tenantSubscription.create({
+          data: {
+            tenantId,
+            planId: plan.id,
+            status: 'ACTIVE',
+            billingCycle: cycle,
+            startDate,
+            endDate: expiryDate,
+          },
+          include: { plan: true },
+        });
+      }
 
-      const orderNumber = `#QB-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-
-      // Create PaymentHistory record
+      // 2. Create Payment / Order Record
       const payment = await tx.paymentHistory.create({
         data: {
           tenantId,
-          subscriptionId: subscription.id,
-          amount: price,
-          currency: 'INR',
-          paymentMethod: 'RAZORPAY',
-          paymentId: `PAY-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
-          orderId: orderNumber,
+          planId: plan.id,
+          planName: plan.name,
+          orderNumber,
+          billingCycle: cycle,
+          amount: basePrice,
+          taxAmount: tax,
+          totalAmount: total,
           status: 'SUCCESS',
+          paymentMethod: dto.paymentMethod || 'RAZORPAY',
+          transactionId,
         },
       });
 
       return {
-        success: true,
         order: {
           id: payment.id,
-          orderId: orderNumber,
+          orderNumber: payment.orderNumber,
           planId: plan.id,
           planName: plan.name,
-          billingCycle: dto.billingCycle,
-          amount: price,
-          currency: 'INR',
+          billingCycle: cycle,
+          amount: basePrice,
+          taxAmount: tax,
+          totalAmount: total,
           paymentStatus: 'PAID',
+          paymentMethod: dto.paymentMethod || 'RAZORPAY',
+          transactionId,
           purchaseDate: startDate,
           activationDate: startDate,
           expiryDate,
-          features: Array.isArray(plan.features) ? plan.features : [],
+          features: plan.features,
         },
         subscription: {
-          id: subscription.id,
-          status: 'ACTIVE',
+          id: updatedSub.id,
+          tenantId: updatedSub.tenantId,
+          planId: plan.id,
+          planName: plan.name,
+          planCode: plan.code,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: cycle,
           startDate,
           endDate: expiryDate,
-          billingCycle: dto.billingCycle,
+          price: basePrice,
+          userLimit: plan.userLimit,
+          leadLimit: plan.leadLimit,
+          features: plan.features,
+          isExpired: false,
         },
       };
     });
   }
 
   async renewSubscription(tenantId: string, dto: RenewSubscriptionDto) {
-    const currentSub = await this.prisma.tenantSubscription.findFirst({
-      where: { tenantId, deletedAt: null },
+    const sub = await this.prisma.tenantSubscription.findFirst({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
 
-    if (!currentSub) {
-      throw new BadRequestException('No prior subscription found to renew');
+    if (!sub) {
+      throw new NotFoundException('No existing subscription to renew');
     }
 
-    const billingCycle = dto.billingCycle || (currentSub.billingCycle as any);
+    const cycle = dto.billingCycle || (sub.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
     return this.createOrder(tenantId, {
-      planId: currentSub.planId,
-      billingCycle,
+      planId: sub.planId,
+      billingCycle: cycle,
+      paymentMethod: dto.paymentMethod,
     });
   }
 }
