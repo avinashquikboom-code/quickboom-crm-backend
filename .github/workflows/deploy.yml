@@ -1,0 +1,97 @@
+name: Build & Deploy (ECR → EC2)
+
+# Auto-trigger: every push to main runs build + deploy.
+# (Also manually runnable from the Actions tab.)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never let two deploys run at once; cancel an in-flight one on a newer push.
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-south-1
+  # Must match API_ECR_REPOSITORY in deploy/docker/config.sh on the server.
+  ECR_REPOSITORY: qcrm-admin-backend
+  # Path on the server where deploy/docker/ was copied by hand (see deploy/README.md).
+  DEPLOY_DIR: /var/www/docker/qbapp.online
+
+jobs:
+  build-and-deploy:
+    name: Build image, push to ECR, deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- AWS / ECR auth ---------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ---- Build & push image ----------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          SHA_TAG="${GITHUB_SHA::12}"
+          REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${REGISTRY}/${ECR_REPOSITORY}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${REGISTRY}/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_sha }}
+            ${{ steps.meta.outputs.image_latest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- Deploy over SSH --------------------------------------------------
+      # Rewrite the API_IMAGE_TAG line in the server's already-present
+      # config.sh (deploy/ is copied there by hand, not synced by CI — see
+      # deploy/README.md), then run the shared deploy.sh, which redeploys
+      # both the API and the admin panel.
+      - name: Add SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Pin image tag and deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "set -e
+             cd '${DEPLOY_DIR}'
+             chmod +x ./*.sh
+             sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
+             ./deploy.sh"
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`${{ steps.meta.outputs.image_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${GITHUB_SHA::12}\`" >> "$GITHUB_STEP_SUMMARY"

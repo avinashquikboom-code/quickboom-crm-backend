@@ -1,0 +1,24 @@
+# Dependencies (reinstalled inside the image)
+node_modules
+
+# Build output (rebuilt inside the image)
+dist
+coverage
+
+# Local env / secrets — NEVER bake into the image
+.env
+.env.*
+!.env.example
+
+# VCS / CI
+.git
+.github
+
+# Deploy artifacts (live on the server, not in the image)
+deploy
+
+# Editor / OS cruft
+.vscode
+.idea
+.DS_Store
+*.log
