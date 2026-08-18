@@ -70,8 +70,8 @@ jobs:
       # ---- Deploy over SSH --------------------------------------------------
       # Rewrite the API_IMAGE_TAG line in the server's already-present
       # config.sh (deploy/ is copied there by hand, not synced by CI — see
-      # deploy/README.md), then run the shared deploy.sh, which redeploys
-      # both the API and the admin panel.
+      # deploy/README.md), then run backend.sh — ONLY the API container.
+      # admin.sh (admin panel) is untouched by this workflow.
       - name: Add SSH key
         run: |
           mkdir -p ~/.ssh
@@ -87,7 +87,7 @@ jobs:
              cd '${DEPLOY_DIR}'
              chmod +x ./*.sh
              sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-             ./deploy.sh"
+             ./backend.sh"
 
       - name: Deploy summary
         if: always()
