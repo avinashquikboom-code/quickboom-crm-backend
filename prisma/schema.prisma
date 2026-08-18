@@ -244,6 +244,14 @@ model PaymentHistory {
   orderId        String? // Razorpay order ID
   status         String // SUCCESS, FAILED, PENDING
   invoiceUrl     String?
+  // Order snapshot at time of purchase — plan may change/be deleted later.
+  orderNumber   String?
+  planId        String?
+  planName      String?
+  billingCycle  SubscriptionBillingCycle?
+  taxAmount     Float?
+  totalAmount   Float?
+  transactionId String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   deletedAt      DateTime?

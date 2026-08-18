@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { PaymentMethod } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   SubscriptionBillingCycle,
@@ -181,7 +182,7 @@ export class SubscriptionService {
     };
   }
 
-  async getOrders(tenantId: string) {
+  async getTenantOrders(tenantId: string) {
     if (!tenantId) {
       throw new BadRequestException('tenantId is required');
     }
@@ -291,7 +292,7 @@ export class SubscriptionService {
           taxAmount: tax,
           totalAmount: total,
           status: 'SUCCESS',
-          paymentMethod: dto.paymentMethod || 'RAZORPAY',
+          paymentMethod: (dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY,
           transactionId,
         },
       });

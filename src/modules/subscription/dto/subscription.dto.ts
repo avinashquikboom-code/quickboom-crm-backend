@@ -19,4 +19,5 @@ export class CreateOrderDto {
 
 export class RenewSubscriptionDto {
   billingCycle?: SubscriptionBillingCycle;
+  paymentMethod?: string;
 }
