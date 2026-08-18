@@ -17,7 +17,7 @@ env:
   # Must match API_ECR_REPOSITORY in deploy/docker/config.sh on the server.
   ECR_REPOSITORY: qcrm-admin-backend
   # Path on the server where deploy/docker/ was copied by hand (see deploy/README.md).
-  DEPLOY_DIR: /var/www/docker/qbapp.online
+  DEPLOY_DIR: /var/www/qbapp.online
 
 jobs:
   build-and-deploy:
