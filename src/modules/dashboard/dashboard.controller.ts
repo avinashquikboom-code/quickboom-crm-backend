@@ -6,14 +6,14 @@ export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('live')
-  async getLive(@Query('tenantId') tenantIdQuery?: string, @Query('officeId') officeId?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.dashboardService.getLiveMetrics(tenantId, officeId);
+  async getLive(@Query('customerId') customerIdQuery?: string, @Query('officeId') officeId?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.dashboardService.getLiveMetrics(customerId, officeId);
   }
 
   @Get('offices')
-  async getOffices(@Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.dashboardService.getOffices(tenantId);
+  async getOffices(@Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.dashboardService.getOffices(customerId);
   }
 }

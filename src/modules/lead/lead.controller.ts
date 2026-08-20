@@ -25,13 +25,13 @@ import {
   UpdateLeadStatusDto,
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('leads')
 export class LeadController {
   constructor(private readonly leadService: LeadService) {}
@@ -39,20 +39,20 @@ export class LeadController {
   @Post()
   @ApiOperation({ summary: 'Create a new CRM lead' })
   async create(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateLeadDto,
   ) {
-    return this.leadService.createLead(tenantId, userId, dto);
+    return this.leadService.createLead(customerId, userId, dto);
   }
 
   @Post('check-duplicate')
   @ApiOperation({ summary: 'Check if lead already exists by phone, company, or website' })
   async checkDuplicate(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: CheckDuplicateDto,
   ) {
-    return this.leadService.checkDuplicate(tenantId, dto);
+    return this.leadService.checkDuplicate(customerId, dto);
   }
 
   @Get()
@@ -62,13 +62,13 @@ export class LeadController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
   async findAll(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('status') status?: string,
   ) {
-    return this.leadService.getLeads(tenantId, {
+    return this.leadService.getLeads(customerId, {
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 50,
       search,
@@ -78,111 +78,111 @@ export class LeadController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
-  async findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.leadService.getLeadById(tenantId, id);
+  async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.getLeadById(customerId, id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update lead details' })
   async update(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @Body() dto: UpdateLeadDto,
   ) {
-    return this.leadService.updateLead(tenantId, id, dto);
+    return this.leadService.updateLead(customerId, id, dto);
   }
 
   @Patch(':id/status')
   @ApiOperation({ summary: 'Update lead stage status with history audit' })
   async updateStatus(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: UpdateLeadStatusDto,
   ) {
-    return this.leadService.updateStatus(tenantId, id, userId, dto);
+    return this.leadService.updateStatus(customerId, id, userId, dto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Soft delete lead' })
-  async remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.leadService.deleteLead(tenantId, id);
+  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.deleteLead(customerId, id);
   }
 
   @Post(':id/notes')
   @ApiOperation({ summary: 'Add note to lead' })
   async addNote(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateLeadNoteDto,
   ) {
-    return this.leadService.addNote(tenantId, id, userId, dto);
+    return this.leadService.addNote(customerId, id, userId, dto);
   }
 
   @Post(':id/follow-ups')
   @ApiOperation({ summary: 'Log follow-up call outcome, next follow up, and update status to FOLLOW_UP' })
   async logFollowUp(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: LogFollowUpDto,
   ) {
-    return this.leadService.logFollowUp(tenantId, id, userId, dto);
+    return this.leadService.logFollowUp(customerId, id, userId, dto);
   }
 
   @Post(':id/visits')
   @ApiOperation({ summary: 'Manage field visit: schedule, start (GPS), or complete' })
   async manageVisit(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ManageVisitDto,
   ) {
-    return this.leadService.manageVisit(tenantId, id, userId, dto);
+    return this.leadService.manageVisit(customerId, id, userId, dto);
   }
 
   @Post(':id/proposals')
   @ApiOperation({ summary: 'Create & send commercial proposal/quotation, move status to PROPOSAL' })
   async createProposal(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateProposalDto,
   ) {
-    return this.leadService.createProposal(tenantId, id, userId, dto);
+    return this.leadService.createProposal(customerId, id, userId, dto);
   }
 
   @Post(':id/final-call')
   @ApiOperation({ summary: 'Log final negotiation call, move status to FINAL_CALL or PAYMENT' })
   async recordFinalCall(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: FinalCallDto,
   ) {
-    return this.leadService.recordFinalCall(tenantId, id, userId, dto);
+    return this.leadService.recordFinalCall(customerId, id, userId, dto);
   }
 
   @Post(':id/payments')
   @ApiOperation({ summary: 'Record payment verification, move status to PAYMENT' })
   async recordPayment(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: RecordPaymentDto,
   ) {
-    return this.leadService.recordPayment(tenantId, id, userId, dto);
+    return this.leadService.recordPayment(customerId, id, userId, dto);
   }
 
   @Post(':id/start-work')
   @ApiOperation({ summary: 'Kick off project work, move status to WORK_STARTED' })
   async startWork(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: StartWorkDto,
   ) {
-    return this.leadService.startWork(tenantId, id, userId, dto);
+    return this.leadService.startWork(customerId, id, userId, dto);
   }
 }

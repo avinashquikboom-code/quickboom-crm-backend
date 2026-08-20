@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getLiveMetrics(tenantId: string, officeId?: string) {
+  async getLiveMetrics(customerId: string, officeId?: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -55,7 +55,7 @@ export class DashboardService {
     return {
       success: true,
       timestamp: new Date().toISOString(),
-      tenantId,
+      customerId,
       selectedOfficeId: officeId || 'all',
       summary,
       offices,
@@ -66,7 +66,7 @@ export class DashboardService {
     };
   }
 
-  async getOffices(tenantId: string) {
+  async getOffices(customerId: string) {
     return [
       { id: 'all', name: 'All Offices' },
       { id: 'off-1', name: 'Head Office (Bandra)' },

@@ -13,7 +13,7 @@ export class LoginDto {
   password: string;
 }
 
-export class RegisterTenantDto {
+export class RegisterCustomerDto {
   @ApiProperty({ example: 'Acme Corporation' })
   @IsString()
   @IsNotEmpty()

@@ -22,9 +22,9 @@ export class DataManagementService {
 
   /**
    * GET /api/v1/admin/data-management/summary
-   * Fetches real live database record counts for all tenant modules
+   * Fetches real live database record counts for all customer modules
    */
-  async getSummary(tenantId: string) {
+  async getSummary(customerId: string) {
     try {
       const [
         leadsCount,
@@ -46,30 +46,30 @@ export class DataManagementService {
         designationsCount,
         usersCount,
       ] = await Promise.all([
-        this.prisma.lead.count({ where: { tenantId } }),
-        this.prisma.contact.count({ where: { tenantId } }),
-        this.prisma.company.count({ where: { tenantId } }),
-        this.prisma.deal.count({ where: { tenantId } }),
-        this.prisma.task.count({ where: { tenantId } }),
-        this.prisma.attendance.count({ where: { tenantId } }),
+        this.prisma.lead.count({ where: { customerId } }),
+        this.prisma.contact.count({ where: { customerId } }),
+        this.prisma.company.count({ where: { customerId } }),
+        this.prisma.deal.count({ where: { customerId } }),
+        this.prisma.task.count({ where: { customerId } }),
+        this.prisma.attendance.count({ where: { customerId } }),
         this.prisma.attendanceBreak.count({
-          where: { attendance: { tenantId } },
+          where: { attendance: { customerId } },
         }),
-        this.prisma.leaveRequest.count({ where: { tenantId } }),
-        this.prisma.remoteRequest.count({ where: { tenantId } }),
-        this.prisma.visit.count({ where: { tenantId } }),
-        this.prisma.payroll.count({ where: { tenantId } }),
-        this.prisma.salarySlip.count({ where: { tenantId } }),
-        this.prisma.notification.count({ where: { tenantId } }),
-        this.prisma.employeeLocation.count({ where: { tenantId } }),
-        this.prisma.employee.count({ where: { tenantId } }),
-        this.prisma.department.count({ where: { tenantId } }),
-        this.prisma.designation.count({ where: { tenantId } }),
-        this.prisma.user.count({ where: { tenantId } }),
+        this.prisma.leaveRequest.count({ where: { customerId } }),
+        this.prisma.remoteRequest.count({ where: { customerId } }),
+        this.prisma.visit.count({ where: { customerId } }),
+        this.prisma.payroll.count({ where: { customerId } }),
+        this.prisma.salarySlip.count({ where: { customerId } }),
+        this.prisma.notification.count({ where: { customerId } }),
+        this.prisma.employeeLocation.count({ where: { customerId } }),
+        this.prisma.employee.count({ where: { customerId } }),
+        this.prisma.department.count({ where: { customerId } }),
+        this.prisma.designation.count({ where: { customerId } }),
+        this.prisma.user.count({ where: { customerId } }),
       ]);
 
       const lastResetLogs = await this.prisma.auditLog.findMany({
-        where: { tenantId, action: 'DATA_RESET' },
+        where: { customerId, action: 'DATA_RESET' },
         orderBy: { createdAt: 'desc' },
         take: 10,
       });
@@ -119,7 +119,7 @@ export class DataManagementService {
         lastReset: lastResetLogs[0]?.createdAt || null,
       };
     } catch (err: any) {
-      this.logger.error(`Failed to get summary for tenant ${tenantId}: ${err.message}`);
+      this.logger.error(`Failed to get summary for customer ${customerId}: ${err.message}`);
       // Fallback response if database table not yet populated
       return {
         transactional: {
@@ -145,11 +145,11 @@ export class DataManagementService {
 
   /**
    * GET /api/v1/admin/data-management/history
-   * Retrieves data reset audit log history for the tenant
+   * Retrieves data reset audit log history for the customer
    */
-  async getResetHistory(tenantId: string) {
+  async getResetHistory(customerId: string) {
     const logs = await this.prisma.auditLog.findMany({
-      where: { tenantId, action: 'DATA_RESET' },
+      where: { customerId, action: 'DATA_RESET' },
       include: {
         user: {
           select: {
@@ -182,7 +182,7 @@ export class DataManagementService {
    * Resets a single transactional module within a Prisma transaction
    */
   async resetModule(
-    tenantId: string,
+    customerId: string,
     userId: string,
     userRole: string,
     dto: ModuleResetDto,
@@ -202,56 +202,56 @@ export class DataManagementService {
       switch (normModule) {
         case 'crm': {
           // Relational deletion order: Notes -> Reminders -> Timeline -> Tasks -> Deals -> Contacts -> Leads -> Companies
-          await tx.leadNote.deleteMany({ where: { lead: { tenantId } } });
-          await tx.leadReminder.deleteMany({ where: { lead: { tenantId } } });
-          await tx.leadActivityTimeline.deleteMany({ where: { lead: { tenantId } } });
-          const tasks = await tx.task.deleteMany({ where: { tenantId } });
-          const deals = await tx.deal.deleteMany({ where: { tenantId } });
-          const contacts = await tx.contact.deleteMany({ where: { tenantId } });
-          const leads = await tx.lead.deleteMany({ where: { tenantId } });
-          const companies = await tx.company.deleteMany({ where: { tenantId } });
+          await tx.leadNote.deleteMany({ where: { lead: { customerId } } });
+          await tx.leadReminder.deleteMany({ where: { lead: { customerId } } });
+          await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId } } });
+          const tasks = await tx.task.deleteMany({ where: { customerId } });
+          const deals = await tx.deal.deleteMany({ where: { customerId } });
+          const contacts = await tx.contact.deleteMany({ where: { customerId } });
+          const leads = await tx.lead.deleteMany({ where: { customerId } });
+          const companies = await tx.company.deleteMany({ where: { customerId } });
           deletedCount = tasks.count + deals.count + contacts.count + leads.count + companies.count;
           break;
         }
         case 'attendance': {
           // Breaks -> Attendances
           const breaks = await tx.attendanceBreak.deleteMany({
-            where: { attendance: { tenantId } },
+            where: { attendance: { customerId } },
           });
-          const attendances = await tx.attendance.deleteMany({ where: { tenantId } });
+          const attendances = await tx.attendance.deleteMany({ where: { customerId } });
           deletedCount = breaks.count + attendances.count;
           break;
         }
         case 'leave': {
-          const leaves = await tx.leaveRequest.deleteMany({ where: { tenantId } });
+          const leaves = await tx.leaveRequest.deleteMany({ where: { customerId } });
           deletedCount = leaves.count;
           break;
         }
         case 'remote': {
-          const remotes = await tx.remoteRequest.deleteMany({ where: { tenantId } });
+          const remotes = await tx.remoteRequest.deleteMany({ where: { customerId } });
           deletedCount = remotes.count;
           break;
         }
         case 'visits': {
-          const visits = await tx.visit.deleteMany({ where: { tenantId } });
+          const visits = await tx.visit.deleteMany({ where: { customerId } });
           deletedCount = visits.count;
           break;
         }
         case 'payroll': {
           // SalarySlips -> PayrollItems -> Payrolls
-          const slips = await tx.salarySlip.deleteMany({ where: { tenantId } });
-          const items = await tx.payrollItem.deleteMany({ where: { tenantId } });
-          const payrolls = await tx.payroll.deleteMany({ where: { tenantId } });
+          const slips = await tx.salarySlip.deleteMany({ where: { customerId } });
+          const items = await tx.payrollItem.deleteMany({ where: { customerId } });
+          const payrolls = await tx.payroll.deleteMany({ where: { customerId } });
           deletedCount = slips.count + items.count + payrolls.count;
           break;
         }
         case 'notifications': {
-          const notifications = await tx.notification.deleteMany({ where: { tenantId } });
+          const notifications = await tx.notification.deleteMany({ where: { customerId } });
           deletedCount = notifications.count;
           break;
         }
         case 'location': {
-          const locations = await tx.employeeLocation.deleteMany({ where: { tenantId } });
+          const locations = await tx.employeeLocation.deleteMany({ where: { customerId } });
           deletedCount = locations.count;
           break;
         }
@@ -262,7 +262,7 @@ export class DataManagementService {
       // Record in AuditLog
       await tx.auditLog.create({
         data: {
-          tenantId,
+          customerId,
           userId,
           action: 'DATA_RESET',
           module: normModule.toUpperCase(),
@@ -279,7 +279,7 @@ export class DataManagementService {
     });
 
     this.logger.log(
-      `[Data Reset] Tenant ${tenantId}: User ${userId} (${userRole}) reset module ${normModule}. Deleted ${deletedCount} records.`,
+      `[Data Reset] Customer ${customerId}: User ${userId} (${userRole}) reset module ${normModule}. Deleted ${deletedCount} records.`,
     );
 
     return {
@@ -292,10 +292,10 @@ export class DataManagementService {
 
   /**
    * POST /api/v1/admin/data-management/reset/all
-   * Resets all transactional data for the tenant while protecting master data
+   * Resets all transactional data for the customer while protecting master data
    */
   async resetAllTransactional(
-    tenantId: string,
+    customerId: string,
     userId: string,
     userRole: string,
     dto: ResetAllDto,
@@ -310,36 +310,36 @@ export class DataManagementService {
 
     await this.prisma.$transaction(async (tx) => {
       // 1. CRM
-      await tx.leadNote.deleteMany({ where: { lead: { tenantId } } });
-      await tx.leadReminder.deleteMany({ where: { lead: { tenantId } } });
-      await tx.leadActivityTimeline.deleteMany({ where: { lead: { tenantId } } });
-      const tasks = await tx.task.deleteMany({ where: { tenantId } });
-      const deals = await tx.deal.deleteMany({ where: { tenantId } });
-      const contacts = await tx.contact.deleteMany({ where: { tenantId } });
-      const leads = await tx.lead.deleteMany({ where: { tenantId } });
-      const companies = await tx.company.deleteMany({ where: { tenantId } });
+      await tx.leadNote.deleteMany({ where: { lead: { customerId } } });
+      await tx.leadReminder.deleteMany({ where: { lead: { customerId } } });
+      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId } } });
+      const tasks = await tx.task.deleteMany({ where: { customerId } });
+      const deals = await tx.deal.deleteMany({ where: { customerId } });
+      const contacts = await tx.contact.deleteMany({ where: { customerId } });
+      const leads = await tx.lead.deleteMany({ where: { customerId } });
+      const companies = await tx.company.deleteMany({ where: { customerId } });
 
       // 2. Attendance & Breaks
       const breaks = await tx.attendanceBreak.deleteMany({
-        where: { attendance: { tenantId } },
+        where: { attendance: { customerId } },
       });
-      const attendances = await tx.attendance.deleteMany({ where: { tenantId } });
+      const attendances = await tx.attendance.deleteMany({ where: { customerId } });
 
       // 3. Leaves & Remote
-      const leaves = await tx.leaveRequest.deleteMany({ where: { tenantId } });
-      const remotes = await tx.remoteRequest.deleteMany({ where: { tenantId } });
+      const leaves = await tx.leaveRequest.deleteMany({ where: { customerId } });
+      const remotes = await tx.remoteRequest.deleteMany({ where: { customerId } });
 
       // 4. Visits
-      const visits = await tx.visit.deleteMany({ where: { tenantId } });
+      const visits = await tx.visit.deleteMany({ where: { customerId } });
 
       // 5. Payroll
-      const slips = await tx.salarySlip.deleteMany({ where: { tenantId } });
-      const items = await tx.payrollItem.deleteMany({ where: { tenantId } });
-      const payrolls = await tx.payroll.deleteMany({ where: { tenantId } });
+      const slips = await tx.salarySlip.deleteMany({ where: { customerId } });
+      const items = await tx.payrollItem.deleteMany({ where: { customerId } });
+      const payrolls = await tx.payroll.deleteMany({ where: { customerId } });
 
       // 6. Notifications & Locations
-      const notifications = await tx.notification.deleteMany({ where: { tenantId } });
-      const locations = await tx.employeeLocation.deleteMany({ where: { tenantId } });
+      const notifications = await tx.notification.deleteMany({ where: { customerId } });
+      const locations = await tx.employeeLocation.deleteMany({ where: { customerId } });
 
       totalDeleted =
         tasks.count +
@@ -361,7 +361,7 @@ export class DataManagementService {
       // Audit Log
       await tx.auditLog.create({
         data: {
-          tenantId,
+          customerId,
           userId,
           action: 'DATA_RESET',
           module: 'ALL_TRANSACTIONAL',
@@ -369,7 +369,7 @@ export class DataManagementService {
             scope: 'ALL_TRANSACTIONAL',
             recordsDeleted: totalDeleted,
             performedByRole: userRole,
-            reason: dto.reason || 'Admin reset all transactional tenant data',
+            reason: dto.reason || 'Admin reset all transactional customer data',
             status: 'SUCCESS',
           },
         },
@@ -377,7 +377,7 @@ export class DataManagementService {
     });
 
     this.logger.log(
-      `[Data Reset] Tenant ${tenantId}: User ${userId} executed full transactional reset. Total ${totalDeleted} records removed.`,
+      `[Data Reset] Customer ${customerId}: User ${userId} executed full transactional reset. Total ${totalDeleted} records removed.`,
     );
 
     return {
@@ -392,9 +392,9 @@ export class DataManagementService {
    * GET /api/v1/admin/data-management/employees/:employeeId/summary
    * Returns individual employee profile and their isolated transactional data counts
    */
-  async getEmployeeSummary(tenantId: string, employeeId: string) {
+  async getEmployeeSummary(customerId: string, employeeId: string) {
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, tenantId },
+      where: { id: employeeId, customerId },
       include: {
         department: { select: { name: true } },
         designation: { select: { name: true } },
@@ -415,15 +415,15 @@ export class DataManagementService {
       salarySlipsCount,
       locationsCount,
     ] = await Promise.all([
-      this.prisma.attendance.count({ where: { tenantId, employeeId } }),
+      this.prisma.attendance.count({ where: { customerId, employeeId } }),
       this.prisma.attendanceBreak.count({
-        where: { attendance: { tenantId, employeeId } },
+        where: { attendance: { customerId, employeeId } },
       }),
-      this.prisma.leaveRequest.count({ where: { tenantId, employeeId } }),
-      this.prisma.remoteRequest.count({ where: { tenantId, employeeId } }),
-      this.prisma.visit.count({ where: { tenantId, employeeId } }),
-      this.prisma.salarySlip.count({ where: { tenantId, employeeId } }),
-      this.prisma.employeeLocation.count({ where: { tenantId, employeeId } }),
+      this.prisma.leaveRequest.count({ where: { customerId, employeeId } }),
+      this.prisma.remoteRequest.count({ where: { customerId, employeeId } }),
+      this.prisma.visit.count({ where: { customerId, employeeId } }),
+      this.prisma.salarySlip.count({ where: { customerId, employeeId } }),
+      this.prisma.employeeLocation.count({ where: { customerId, employeeId } }),
     ]);
 
     return {
@@ -464,14 +464,14 @@ export class DataManagementService {
    * Resets an individual module for a specific employee
    */
   async resetEmployeeModule(
-    tenantId: string,
+    customerId: string,
     userId: string,
     userRole: string,
     employeeId: string,
     dto: EmployeeModuleResetDto,
   ) {
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, tenantId },
+      where: { id: employeeId, customerId },
     });
 
     if (!employee) {
@@ -493,48 +493,48 @@ export class DataManagementService {
       switch (normModule) {
         case 'attendance': {
           const breaks = await tx.attendanceBreak.deleteMany({
-            where: { attendance: { tenantId, employeeId } },
+            where: { attendance: { customerId, employeeId } },
           });
           const attendances = await tx.attendance.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = breaks.count + attendances.count;
           break;
         }
         case 'leave': {
           const leaves = await tx.leaveRequest.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = leaves.count;
           break;
         }
         case 'remote': {
           const remotes = await tx.remoteRequest.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = remotes.count;
           break;
         }
         case 'visits': {
           const visits = await tx.visit.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = visits.count;
           break;
         }
         case 'payroll': {
           const slips = await tx.salarySlip.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           const items = await tx.payrollItem.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = slips.count + items.count;
           break;
         }
         case 'location': {
           const locations = await tx.employeeLocation.deleteMany({
-            where: { tenantId, employeeId },
+            where: { customerId, employeeId },
           });
           deletedCount = locations.count;
           break;
@@ -545,7 +545,7 @@ export class DataManagementService {
 
       await tx.auditLog.create({
         data: {
-          tenantId,
+          customerId,
           userId,
           action: 'DATA_RESET',
           module: `EMPLOYEE_${normModule.toUpperCase()}`,
@@ -578,14 +578,14 @@ export class DataManagementService {
    * Resets all transactional data for an employee while preserving employee master profile
    */
   async resetEmployeeAllTransactional(
-    tenantId: string,
+    customerId: string,
     userId: string,
     userRole: string,
     employeeId: string,
     dto: EmployeeResetAllDto,
   ) {
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, tenantId },
+      where: { id: employeeId, customerId },
     });
 
     if (!employee) {
@@ -602,28 +602,28 @@ export class DataManagementService {
 
     await this.prisma.$transaction(async (tx) => {
       const breaks = await tx.attendanceBreak.deleteMany({
-        where: { attendance: { tenantId, employeeId } },
+        where: { attendance: { customerId, employeeId } },
       });
       const attendances = await tx.attendance.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const leaves = await tx.leaveRequest.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const remotes = await tx.remoteRequest.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const visits = await tx.visit.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const slips = await tx.salarySlip.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const items = await tx.payrollItem.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
       const locations = await tx.employeeLocation.deleteMany({
-        where: { tenantId, employeeId },
+        where: { customerId, employeeId },
       });
 
       totalDeleted =
@@ -638,7 +638,7 @@ export class DataManagementService {
 
       await tx.auditLog.create({
         data: {
-          tenantId,
+          customerId,
           userId,
           action: 'DATA_RESET',
           module: 'EMPLOYEE_ALL_TRANSACTIONAL',

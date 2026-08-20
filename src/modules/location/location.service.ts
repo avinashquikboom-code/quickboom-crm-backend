@@ -41,17 +41,17 @@ export class LocationService {
 
   // Record employee location update
   async recordLocationUpdate(
-    tenantId: string,
+    customerId: string,
     employeeId: string,
     dto: LocationUpdateDto,
   ) {
     this.logger.log(
-      `Recording location update for employee ${employeeId} in tenant ${tenantId}: lat=${dto.latitude}, lng=${dto.longitude}`,
+      `Recording location update for employee ${employeeId} in customer ${customerId}: lat=${dto.latitude}, lng=${dto.longitude}`,
     );
 
     return this.prisma.employeeLocation.create({
       data: {
-        tenantId,
+        customerId,
         employeeId,
         latitude: dto.latitude,
         longitude: dto.longitude,
@@ -66,9 +66,9 @@ export class LocationService {
   }
 
   // Get active live locations for admin panel
-  async getLiveLocations(tenantId: string) {
+  async getLiveLocations(customerId: string) {
     return this.prisma.employeeLocation.findMany({
-      where: { tenantId },
+      where: { customerId },
       orderBy: { timestamp: 'desc' },
       take: 100,
     });
@@ -76,7 +76,7 @@ export class LocationService {
 
   // Get history timeline for specific employee and date
   async getLocationHistory(
-    tenantId: string,
+    customerId: string,
     employeeId: string,
     date: string,
   ) {
@@ -88,7 +88,7 @@ export class LocationService {
 
     return this.prisma.employeeLocation.findMany({
       where: {
-        tenantId,
+        customerId,
         employeeId,
         timestamp: {
           gte: startDate,
@@ -100,19 +100,19 @@ export class LocationService {
   }
 
   // Branch Geofence Management
-  async getBranchGeofences(tenantId: string) {
+  async getBranchGeofences(customerId: string) {
     return this.prisma.branchGeofence.findMany({
-      where: { tenantId, isActive: true },
+      where: { customerId, isActive: true },
     });
   }
 
   async createBranchGeofence(
-    tenantId: string,
+    customerId: string,
     data: { name: string; city?: string; latitude: number; longitude: number; radiusMeters?: number },
   ) {
     return this.prisma.branchGeofence.create({
       data: {
-        tenantId,
+        customerId,
         name: data.name,
         city: data.city,
         latitude: data.latitude,

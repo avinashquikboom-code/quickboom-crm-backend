@@ -10,11 +10,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RoleType } from '@prisma/client';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
 import {
@@ -26,7 +26,7 @@ import {
 
 @ApiTags('Admin Data Management')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, RolesGuard)
 @Roles(RoleType.SUPER_ADMIN)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
@@ -38,9 +38,9 @@ export class DataManagementController {
    * Real database counts of all transactional & master records
    */
   @Get('summary')
-  @ApiOperation({ summary: 'Get real database record counts for all tenant modules' })
-  async getSummary(@CurrentTenant() tenantId: string) {
-    return this.dataManagementService.getSummary(tenantId);
+  @ApiOperation({ summary: 'Get real database record counts for all customer modules' })
+  async getSummary(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getSummary(customerId);
   }
 
   /**
@@ -49,8 +49,8 @@ export class DataManagementController {
    */
   @Get('history')
   @ApiOperation({ summary: 'Get data reset audit history' })
-  async getHistory(@CurrentTenant() tenantId: string) {
-    return this.dataManagementService.getResetHistory(tenantId);
+  async getHistory(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getResetHistory(customerId);
   }
 
   /**
@@ -60,15 +60,15 @@ export class DataManagementController {
   @Post('reset/module')
   @ApiOperation({ summary: 'Reset a specific module transactional data' })
   async resetModule(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Body() dto: ModuleResetDto,
   ) {
     return this.dataManagementService.resetModule(
-      tenantId,
+      customerId,
       userId,
-      userRole || 'TENANT_ADMIN',
+      userRole || 'CUSTOMER_ADMIN',
       dto,
     );
   }
@@ -78,17 +78,17 @@ export class DataManagementController {
    * Reset all transactional data while preserving master data
    */
   @Post('reset/all')
-  @ApiOperation({ summary: 'Reset all transactional tenant data' })
+  @ApiOperation({ summary: 'Reset all transactional customer data' })
   async resetAll(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Body() dto: ResetAllDto,
   ) {
     return this.dataManagementService.resetAllTransactional(
-      tenantId,
+      customerId,
       userId,
-      userRole || 'TENANT_ADMIN',
+      userRole || 'CUSTOMER_ADMIN',
       dto,
     );
   }
@@ -100,10 +100,10 @@ export class DataManagementController {
   @Get('employees/:employeeId/summary')
   @ApiOperation({ summary: 'Get employee transactional record counts' })
   async getEmployeeSummary(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('employeeId') employeeId: string,
   ) {
-    return this.dataManagementService.getEmployeeSummary(tenantId, employeeId);
+    return this.dataManagementService.getEmployeeSummary(customerId, employeeId);
   }
 
   /**
@@ -113,16 +113,16 @@ export class DataManagementController {
   @Post('employees/:employeeId/reset/module')
   @ApiOperation({ summary: 'Reset specific module records for single employee' })
   async resetEmployeeModule(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Param('employeeId') employeeId: string,
     @Body() dto: EmployeeModuleResetDto,
   ) {
     return this.dataManagementService.resetEmployeeModule(
-      tenantId,
+      customerId,
       userId,
-      userRole || 'TENANT_ADMIN',
+      userRole || 'CUSTOMER_ADMIN',
       employeeId,
       dto,
     );
@@ -135,16 +135,16 @@ export class DataManagementController {
   @Post('employees/:employeeId/reset/all')
   @ApiOperation({ summary: 'Reset all transactional records for single employee' })
   async resetEmployeeAll(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Param('employeeId') employeeId: string,
     @Body() dto: EmployeeResetAllDto,
   ) {
     return this.dataManagementService.resetEmployeeAllTransactional(
-      tenantId,
+      customerId,
       userId,
-      userRole || 'TENANT_ADMIN',
+      userRole || 'CUSTOMER_ADMIN',
       employeeId,
       dto,
     );

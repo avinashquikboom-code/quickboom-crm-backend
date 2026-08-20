@@ -13,20 +13,20 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { ContactService } from './contact.service';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('contacts')
 export class ContactController {
   constructor(private readonly contactService: ContactService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new CRM contact' })
-  async create(@CurrentTenant() tenantId: string, @Body() dto: CreateContactDto) {
-    return this.contactService.create(tenantId, dto);
+  async create(@CurrentCustomer() customerId: string, @Body() dto: CreateContactDto) {
+    return this.contactService.create(customerId, dto);
   }
 
   @Get()
@@ -36,13 +36,13 @@ export class ContactController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'type', required: false })
   async findAll(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('type') type?: string,
   ) {
-    return this.contactService.findAll(tenantId, {
+    return this.contactService.findAll(customerId, {
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 10,
       search,
@@ -52,23 +52,23 @@ export class ContactController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get contact details by ID' })
-  async findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.contactService.findOne(tenantId, id);
+  async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.contactService.findOne(customerId, id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update contact details' })
   async update(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @Body() dto: UpdateContactDto,
   ) {
-    return this.contactService.update(tenantId, id, dto);
+    return this.contactService.update(customerId, id, dto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Soft delete contact' })
-  async remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.contactService.delete(tenantId, id);
+  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.contactService.delete(customerId, id);
   }
 }

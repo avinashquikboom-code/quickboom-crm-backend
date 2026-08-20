@@ -11,7 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import {
   LoginDto,
-  RegisterTenantDto,
+  RegisterCustomerDto,
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
@@ -28,7 +28,7 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  async registerTenant(dto: RegisterTenantDto) {
+  async registerCustomer(dto: RegisterCustomerDto) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -41,18 +41,18 @@ export class AuthService {
     let lastName = dto.lastName || '';
     if (dto.fullName && (!firstName || !lastName)) {
       const parts = dto.fullName.trim().split(/\s+/);
-      firstName = parts[0] || 'Tenant';
+      firstName = parts[0] || 'Customer';
       lastName = parts.slice(1).join(' ') || (dto.companyName ? dto.companyName : 'Admin');
     }
-    if (!firstName) firstName = 'Tenant';
+    if (!firstName) firstName = 'Customer';
     if (!lastName) lastName = 'Admin';
 
     const rawPassword = dto.password || '123456';
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
     return this.prisma.$transaction(async (tx) => {
-      // Create Tenant
-      const tenant = await tx.tenant.create({
+      // Create Customer
+      const customer = await tx.customer.create({
         data: {
           name: dto.companyName,
           email: dto.email,
@@ -79,9 +79,9 @@ export class AuthService {
       }
 
       // Create Subscription
-      await tx.tenantSubscription.create({
+      await tx.customerSubscription.create({
         data: {
-          tenantId: tenant.id,
+          customerId: customer.id,
           planId: starterPlan.id,
           startDate: new Date(),
           endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
@@ -90,20 +90,20 @@ export class AuthService {
         },
       });
 
-      // Create Admin Role for Tenant
+      // Create Admin Role for Customer
       const adminRole = await tx.role.create({
         data: {
-          tenantId: tenant.id,
-          name: 'Tenant Administrator',
-          type: RoleType.TENANT_ADMIN,
-          description: 'Full administrative access to tenant workspace',
+          customerId: customer.id,
+          name: 'Customer Administrator',
+          type: RoleType.CUSTOMER_ADMIN,
+          description: 'Full administrative access to customer workspace',
         },
       });
 
       // Create Admin User
       const user = await tx.user.create({
         data: {
-          tenantId: tenant.id,
+          customerId: customer.id,
           email: dto.email,
           phone: dto.phone,
           firstName: firstName,
@@ -121,7 +121,7 @@ export class AuthService {
         },
       });
 
-      const tokens = await this.generateTokens(user.id, tenant.id, user.email);
+      const tokens = await this.generateTokens(user.id, customer.id, user.email);
 
       return {
         user: {
@@ -129,8 +129,8 @@ export class AuthService {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          tenantId: tenant.id,
-          tenantName: tenant.name,
+          customerId: customer.id,
+          customerName: customer.name,
         },
         tokens,
       };
@@ -141,7 +141,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: {
-        tenant: true,
+        customer: true,
         userRoles: {
           include: { role: true },
         },
@@ -161,7 +161,7 @@ export class AuthService {
       throw new UnauthorizedException('Your account has been deactivated');
     }
 
-    if (user.tenant && !user.tenant.isActive) {
+    if (user.customer && !user.customer.isActive) {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
@@ -176,7 +176,7 @@ export class AuthService {
       );
     }
 
-    const tokens = await this.generateTokens(user.id, user.tenantId, user.email);
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 
     return {
       user: {
@@ -184,8 +184,8 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        tenantId: user.tenantId,
-        tenantName: user.tenant?.name || 'Super Admin',
+        customerId: user.customerId,
+        customerName: user.customer?.name || 'Super Admin',
         roles: user.userRoles.map((ur) => ur.role.type),
       },
       tokens,
@@ -209,7 +209,7 @@ export class AuthService {
 
     return this.generateTokens(
       existingToken.user.id,
-      existingToken.user.tenantId,
+      existingToken.user.customerId,
       existingToken.user.email,
     );
   }
@@ -261,8 +261,8 @@ export class AuthService {
     return { message: 'Password reset successfully' };
   }
 
-  private async generateTokens(userId: string, tenantId: string | null, email: string) {
-    const payload = { sub: userId, tenantId, email };
+  private async generateTokens(userId: string, customerId: string | null, email: string) {
+    const payload = { sub: userId, customerId, email };
 
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get('JWT_SECRET') || 'quikboom_super_secret_jwt_access_key_2026',

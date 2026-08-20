@@ -6,11 +6,11 @@ import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
 export class TaskService {
   constructor(private prisma: PrismaService) {}
 
-  async create(tenantId: string, createdById: string, dto: CreateTaskDto) {
+  async create(customerId: string, createdById: string, dto: CreateTaskDto) {
     return this.prisma.task.create({
       data: {
         ...dto,
-        tenantId,
+        customerId,
         createdById,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
       },
@@ -21,8 +21,8 @@ export class TaskService {
     });
   }
 
-  async findAll(tenantId: string, query: { status?: string; assignedToId?: string }) {
-    const where: any = { tenantId, deletedAt: null };
+  async findAll(customerId: string, query: { status?: string; assignedToId?: string }) {
+    const where: any = { customerId, deletedAt: null };
     if (query.status) where.status = query.status;
     if (query.assignedToId) where.assignedToId = query.assignedToId;
 
@@ -35,9 +35,9 @@ export class TaskService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(customerId: string, id: string) {
     const task = await this.prisma.task.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: { id, customerId, deletedAt: null },
       include: {
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
@@ -50,8 +50,8 @@ export class TaskService {
     return task;
   }
 
-  async update(tenantId: string, id: string, dto: UpdateTaskDto) {
-    await this.findOne(tenantId, id);
+  async update(customerId: string, id: string, dto: UpdateTaskDto) {
+    await this.findOne(customerId, id);
     return this.prisma.task.update({
       where: { id },
       data: {
@@ -61,8 +61,8 @@ export class TaskService {
     });
   }
 
-  async delete(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
+  async delete(customerId: string, id: string) {
+    await this.findOne(customerId, id);
     return this.prisma.task.update({
       where: { id },
       data: { deletedAt: new Date() },

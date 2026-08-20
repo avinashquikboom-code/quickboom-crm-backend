@@ -13,13 +13,13 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { TaskService } from './task.service';
 import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Tasks')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('tasks')
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
@@ -27,11 +27,11 @@ export class TaskController {
   @Post()
   @ApiOperation({ summary: 'Create a new CRM task' })
   async create(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateTaskDto,
   ) {
-    return this.taskService.create(tenantId, userId, dto);
+    return this.taskService.create(customerId, userId, dto);
   }
 
   @Get()
@@ -39,32 +39,32 @@ export class TaskController {
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'assignedToId', required: false })
   async findAll(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Query('status') status?: string,
     @Query('assignedToId') assignedToId?: string,
   ) {
-    return this.taskService.findAll(tenantId, { status, assignedToId });
+    return this.taskService.findAll(customerId, { status, assignedToId });
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get task details by ID' })
-  async findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.taskService.findOne(tenantId, id);
+  async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.taskService.findOne(customerId, id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update task details' })
   async update(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @Body() dto: UpdateTaskDto,
   ) {
-    return this.taskService.update(tenantId, id, dto);
+    return this.taskService.update(customerId, id, dto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Soft delete task' })
-  async remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.taskService.delete(tenantId, id);
+  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.taskService.delete(customerId, id);
   }
 }

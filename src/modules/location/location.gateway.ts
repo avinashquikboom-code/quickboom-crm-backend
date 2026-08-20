@@ -21,26 +21,26 @@ export class LocationGateway {
   private readonly logger = new Logger(LocationGateway.name);
 
   // Broadcast real-time location update to connected Admin clients
-  broadcastLocationUpdate(tenantId: string, locationData: any) {
-    this.logger.log(`Broadcasting location update for tenant ${tenantId}`);
-    this.server.to(`tenant-${tenantId}`).emit('employee.location.updated', locationData);
+  broadcastLocationUpdate(customerId: string, locationData: any) {
+    this.logger.log(`Broadcasting location update for customer ${customerId}`);
+    this.server.to(`customer-${customerId}`).emit('employee.location.updated', locationData);
   }
 
   // Broadcast status change (Punch In/Out, Visit Start/End)
-  broadcastStatusUpdate(tenantId: string, statusData: any) {
-    this.logger.log(`Broadcasting status update for tenant ${tenantId}`);
-    this.server.to(`tenant-${tenantId}`).emit('employee.status.updated', statusData);
+  broadcastStatusUpdate(customerId: string, statusData: any) {
+    this.logger.log(`Broadcasting status update for customer ${customerId}`);
+    this.server.to(`customer-${customerId}`).emit('employee.status.updated', statusData);
   }
 
-  @SubscribeMessage('joinTenantRoom')
-  handleJoinTenantRoom(
+  @SubscribeMessage('joinCustomerRoom')
+  handleJoinCustomerRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { tenantId: string },
+    @MessageBody() data: { customerId: string },
   ) {
-    if (data?.tenantId) {
-      client.join(`tenant-${data.tenantId}`);
-      this.logger.log(`Client ${client.id} joined location room: tenant-${data.tenantId}`);
-      return { event: 'joinedRoom', room: `tenant-${data.tenantId}` };
+    if (data?.customerId) {
+      client.join(`customer-${data.customerId}`);
+      this.logger.log(`Client ${client.id} joined location room: customer-${data.customerId}`);
+      return { event: 'joinedRoom', room: `customer-${data.customerId}` };
     }
   }
 }

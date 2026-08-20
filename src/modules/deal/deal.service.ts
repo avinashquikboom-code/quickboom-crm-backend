@@ -6,11 +6,11 @@ import { CreateDealDto, UpdateDealDto } from './dto/deal.dto';
 export class DealService {
   constructor(private prisma: PrismaService) {}
 
-  async create(tenantId: string, dto: CreateDealDto) {
+  async create(customerId: string, dto: CreateDealDto) {
     return this.prisma.deal.create({
       data: {
         ...dto,
-        tenantId,
+        customerId,
         expectedClosing: dto.expectedClosing ? new Date(dto.expectedClosing) : null,
       },
       include: {
@@ -22,8 +22,8 @@ export class DealService {
     });
   }
 
-  async findAll(tenantId: string, query: { pipelineId?: string; stageId?: string }) {
-    const where: any = { tenantId, deletedAt: null };
+  async findAll(customerId: string, query: { pipelineId?: string; stageId?: string }) {
+    const where: any = { customerId, deletedAt: null };
     if (query.pipelineId) where.pipelineId = query.pipelineId;
     if (query.stageId) where.stageId = query.stageId;
 
@@ -39,9 +39,9 @@ export class DealService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(customerId: string, id: string) {
     const deal = await this.prisma.deal.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: { id, customerId, deletedAt: null },
       include: {
         pipeline: { include: { stages: { orderBy: { order: 'asc' } } } },
         stage: true,
@@ -57,8 +57,8 @@ export class DealService {
     return deal;
   }
 
-  async update(tenantId: string, id: string, dto: UpdateDealDto) {
-    await this.findOne(tenantId, id);
+  async update(customerId: string, id: string, dto: UpdateDealDto) {
+    await this.findOne(customerId, id);
     return this.prisma.deal.update({
       where: { id },
       data: {
@@ -69,8 +69,8 @@ export class DealService {
     });
   }
 
-  async delete(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
+  async delete(customerId: string, id: string) {
+    await this.findOne(customerId, id);
     return this.prisma.deal.update({
       where: { id },
       data: { deletedAt: new Date() },

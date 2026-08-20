@@ -147,13 +147,13 @@ export class SubscriptionService {
     }));
   }
 
-  async getCurrentSubscription(tenantId: string) {
-    if (!tenantId) {
-      throw new BadRequestException('tenantId is required');
+  async getCurrentSubscription(customerId: string) {
+    if (!customerId) {
+      throw new BadRequestException('customerId is required');
     }
 
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { tenantId },
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
@@ -166,7 +166,7 @@ export class SubscriptionService {
 
     return {
       id: sub.id,
-      tenantId: sub.tenantId,
+      customerId: sub.customerId,
       planId: sub.planId,
       planName: sub.plan.name,
       planCode: sub.plan.code,
@@ -182,18 +182,18 @@ export class SubscriptionService {
     };
   }
 
-  async getTenantOrders(tenantId: string) {
-    if (!tenantId) {
-      throw new BadRequestException('tenantId is required');
+  async getCustomerOrders(customerId: string) {
+    if (!customerId) {
+      throw new BadRequestException('customerId is required');
     }
 
     const payments = await this.prisma.paymentHistory.findMany({
-      where: { tenantId },
+      where: { customerId },
       orderBy: { createdAt: 'desc' },
     });
 
-    const currentSub = await this.prisma.tenantSubscription.findFirst({
-      where: { tenantId },
+    const currentSub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId },
       include: { plan: true },
     });
 
@@ -228,7 +228,7 @@ export class SubscriptionService {
     });
   }
 
-  async createOrder(tenantId: string, dto: CreateOrderDto) {
+  async createOrder(customerId: string, dto: CreateOrderDto) {
     const plan = await this.prisma.plan.findUnique({
       where: { id: dto.planId },
     });
@@ -247,15 +247,15 @@ export class SubscriptionService {
     const transactionId = `TXN-${Date.now().toString().substring(3)}`;
 
     return this.prisma.$transaction(async (tx) => {
-      // 1. Create or update tenant subscription
-      const existingSub = await tx.tenantSubscription.findFirst({
-        where: { tenantId },
+      // 1. Create or update customer subscription
+      const existingSub = await tx.customerSubscription.findFirst({
+        where: { customerId },
         orderBy: { createdAt: 'desc' },
       });
 
       let updatedSub;
       if (existingSub) {
-        updatedSub = await tx.tenantSubscription.update({
+        updatedSub = await tx.customerSubscription.update({
           where: { id: existingSub.id },
           data: {
             planId: plan.id,
@@ -267,9 +267,9 @@ export class SubscriptionService {
           include: { plan: true },
         });
       } else {
-        updatedSub = await tx.tenantSubscription.create({
+        updatedSub = await tx.customerSubscription.create({
           data: {
-            tenantId,
+            customerId,
             planId: plan.id,
             status: 'ACTIVE',
             billingCycle: cycle,
@@ -283,7 +283,7 @@ export class SubscriptionService {
       // 2. Create Payment / Order Record
       const payment = await tx.paymentHistory.create({
         data: {
-          tenantId,
+          customerId,
           planId: plan.id,
           planName: plan.name,
           orderNumber,
@@ -317,7 +317,7 @@ export class SubscriptionService {
         },
         subscription: {
           id: updatedSub.id,
-          tenantId: updatedSub.tenantId,
+          customerId: updatedSub.customerId,
           planId: plan.id,
           planName: plan.name,
           planCode: plan.code,
@@ -335,9 +335,9 @@ export class SubscriptionService {
     });
   }
 
-  async renewSubscription(tenantId: string, dto: RenewSubscriptionDto) {
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { tenantId },
+  async renewSubscription(customerId: string, dto: RenewSubscriptionDto) {
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
@@ -347,7 +347,7 @@ export class SubscriptionService {
     }
 
     const cycle = dto.billingCycle || (sub.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
-    return this.createOrder(tenantId, {
+    return this.createOrder(customerId, {
       planId: sub.planId,
       billingCycle: cycle,
       paymentMethod: dto.paymentMethod,

@@ -6,57 +6,57 @@ export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
 
   @Post('calculate')
-  async calculate(@Body() body: { tenantId?: string; month: number; year: number; departmentId?: string }) {
-    const tenantId = body.tenantId || 'default-tenant';
-    return this.payrollService.calculatePayroll(tenantId, body.month, body.year, body.departmentId);
+  async calculate(@Body() body: { customerId?: string; month: number; year: number; departmentId?: string }) {
+    const customerId = body.customerId || 'default-customer';
+    return this.payrollService.calculatePayroll(customerId, body.month, body.year, body.departmentId);
   }
 
   @Post('preview')
-  async preview(@Body() body: { tenantId?: string; month: number; year: number; departmentId?: string }) {
-    const tenantId = body.tenantId || 'default-tenant';
-    return this.payrollService.previewPayroll(tenantId, body.month, body.year, body.departmentId);
+  async preview(@Body() body: { customerId?: string; month: number; year: number; departmentId?: string }) {
+    const customerId = body.customerId || 'default-customer';
+    return this.payrollService.previewPayroll(customerId, body.month, body.year, body.departmentId);
   }
 
   @Post('approve')
-  async approve(@Body() body: { tenantId?: string; payrollId: string }) {
-    const tenantId = body.tenantId || 'default-tenant';
-    return this.payrollService.approvePayroll(tenantId, body.payrollId);
+  async approve(@Body() body: { customerId?: string; payrollId: string }) {
+    const customerId = body.customerId || 'default-customer';
+    return this.payrollService.approvePayroll(customerId, body.payrollId);
   }
 
   @Post('generate')
-  async generate(@Body() body: { tenantId?: string; payrollId: string }) {
-    const tenantId = body.tenantId || 'default-tenant';
-    return this.payrollService.generatePayroll(tenantId, body.payrollId);
+  async generate(@Body() body: { customerId?: string; payrollId: string }) {
+    const customerId = body.customerId || 'default-customer';
+    return this.payrollService.generatePayroll(customerId, body.payrollId);
   }
 
   @Post('disburse')
-  async disburse(@Body() body: { tenantId?: string; payrollId: string }) {
-    const tenantId = body.tenantId || 'default-tenant';
-    return this.payrollService.disbursePayroll(tenantId, body.payrollId);
+  async disburse(@Body() body: { customerId?: string; payrollId: string }) {
+    const customerId = body.customerId || 'default-customer';
+    return this.payrollService.disbursePayroll(customerId, body.payrollId);
   }
 
   @Get()
-  async findAll(@Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.payrollService.getPayrolls(tenantId);
+  async findAll(@Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.payrollService.getPayrolls(customerId);
   }
 
   @Get('slips')
-  async findSlips(@Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.payrollService.getSalarySlips(tenantId);
+  async findSlips(@Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.payrollService.getSalarySlips(customerId);
   }
 
   @Get('slips/:id')
-  async findSlipById(@Param('id') id: string, @Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.payrollService.getSalarySlipById(tenantId, id);
+  async findSlipById(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.payrollService.getSalarySlipById(customerId, id);
   }
 
   @Get('slips/:id/download')
-  async downloadSlip(@Param('id') id: string, @Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    const slip = await this.payrollService.getSalarySlipById(tenantId, id);
+  async downloadSlip(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    const slip = await this.payrollService.getSalarySlipById(customerId, id);
     return {
       message: 'Download salary slip PDF',
       slip,
@@ -65,8 +65,8 @@ export class PayrollController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string, @Query('tenantId') tenantIdQuery?: string) {
-    const tenantId = tenantIdQuery || 'default-tenant';
-    return this.payrollService.getPayrollById(tenantId, id);
+  async findOne(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.payrollService.getPayrollById(customerId, id);
   }
 }

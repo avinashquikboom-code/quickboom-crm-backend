@@ -11,7 +11,7 @@ datasource db {
 
 enum RoleType {
   SUPER_ADMIN
-  TENANT_ADMIN
+  CUSTOMER_ADMIN
   SALES_MANAGER
   SALES_EXECUTIVE
   SUPPORT_AGENT
@@ -118,7 +118,8 @@ enum PaymentMethod {
 // MULTI-TENANCY & SUBSCRIPTION
 // ----------------------------------------------------
 
-model Tenant {
+model Customer {
+  @@map("customers")
   id           String    @id @default(uuid())
   name         String
   domain       String?   @unique
@@ -140,7 +141,7 @@ model Tenant {
 
   users         User[]
   roles         Role[]
-  subscriptions TenantSubscription[]
+  subscriptions CustomerSubscription[]
   leads         Lead[]
   contacts      Contact[]
   companies     Company[]
@@ -184,14 +185,15 @@ model Plan {
   updatedAt    DateTime                 @updatedAt
   deletedAt    DateTime?
 
-  subscriptions TenantSubscription[]
+  subscriptions CustomerSubscription[]
 
   @@index([deletedAt])
 }
 
-model TenantSubscription {
+model CustomerSubscription {
+  @@map("customer_subscriptions")
   id           String                   @id @default(uuid())
-  tenantId     String
+  customerId     String
   planId       String
   status       SubscriptionStatus       @default(TRIAL)
   billingCycle SubscriptionBillingCycle @default(MONTHLY)
@@ -204,13 +206,13 @@ model TenantSubscription {
   updatedAt    DateTime                 @updatedAt
   deletedAt    DateTime?
 
-  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan   Plan    @relation(fields: [planId], references: [id])
   coupon Coupon? @relation(fields: [couponId], references: [id])
 
   payments PaymentHistory[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([planId])
   @@index([status])
   @@index([deletedAt])
@@ -228,14 +230,14 @@ model Coupon {
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
 
-  subscriptions TenantSubscription[]
+  subscriptions CustomerSubscription[]
 
   @@index([code])
 }
 
 model PaymentHistory {
   id             String        @id @default(uuid())
-  tenantId       String
+  customerId       String
   subscriptionId String?
   amount         Float
   currency       String        @default("INR")
@@ -256,10 +258,10 @@ model PaymentHistory {
   updatedAt      DateTime      @updatedAt
   deletedAt      DateTime?
 
-  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  subscription TenantSubscription? @relation(fields: [subscriptionId], references: [id])
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id])
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
@@ -269,7 +271,7 @@ model PaymentHistory {
 
 model User {
   id           String    @id @default(uuid())
-  tenantId     String? // Null for Super Admin
+  customerId     String? // Null for Super Admin
   email        String    @unique
   phone        String?   @unique
   passwordHash String
@@ -285,7 +287,7 @@ model User {
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
 
-  tenant        Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userRoles     UserRole[]
   refreshTokens RefreshToken[]
   sessions      Session[]
@@ -302,7 +304,7 @@ model User {
   leadNotes         LeadNote[]
   ticketComments    TicketComment[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([email])
   @@index([phone])
   @@index([deletedAt])
@@ -310,7 +312,7 @@ model User {
 
 model Role {
   id          String    @id @default(uuid())
-  tenantId    String? // Null for System Roles
+  customerId    String? // Null for System Roles
   name        String
   type        RoleType  @default(CUSTOM)
   description String?
@@ -318,11 +320,11 @@ model Role {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userRoles       UserRole[]
   rolePermissions RolePermission[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
@@ -393,7 +395,7 @@ model Session {
 
 model Lead {
   id               String       @id @default(uuid())
-  tenantId         String
+  customerId         String
   title            String
   firstName        String
   lastName         String
@@ -425,7 +427,7 @@ model Lead {
   updatedAt        DateTime     @updatedAt
   deletedAt        DateTime?
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   assignedTo User?  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy  User   @relation("CreatedLeads", fields: [createdById], references: [id])
 
@@ -436,7 +438,7 @@ model Lead {
   visits        Visit[]
   quotations    Quotation[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([status])
   @@index([assignedToId])
   @@index([deletedAt])
@@ -498,7 +500,7 @@ model LeadReminder {
 
 model Company {
   id        String    @id @default(uuid())
-  tenantId  String
+  customerId  String
   name      String
   domain    String?
   industry  String?
@@ -511,17 +513,17 @@ model Company {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contacts Contact[]
   deals    Deal[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
 model Contact {
   id          String      @id @default(uuid())
-  tenantId    String
+  customerId    String
   companyId   String?
   type        ContactType @default(CUSTOMER)
   firstName   String
@@ -535,7 +537,7 @@ model Contact {
   updatedAt   DateTime    @updatedAt
   deletedAt   DateTime?
 
-  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   company Company? @relation(fields: [companyId], references: [id])
 
   deals          Deal[]
@@ -543,7 +545,7 @@ model Contact {
   quotations     Quotation[]
   invoices       Invoice[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([companyId])
   @@index([deletedAt])
 }
@@ -563,18 +565,18 @@ model CommunicationHistory {
 
 model Pipeline {
   id        String    @id @default(uuid())
-  tenantId  String
+  customerId  String
   name      String
   isDefault Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   stages PipelineStage[]
   deals  Deal[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
@@ -595,7 +597,7 @@ model PipelineStage {
 
 model Deal {
   id              String    @id @default(uuid())
-  tenantId        String
+  customerId        String
   pipelineId      String
   stageId         String
   contactId       String?
@@ -611,7 +613,7 @@ model Deal {
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
-  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   pipeline Pipeline      @relation(fields: [pipelineId], references: [id])
   stage    PipelineStage @relation(fields: [stageId], references: [id])
   contact  Contact?      @relation(fields: [contactId], references: [id])
@@ -619,7 +621,7 @@ model Deal {
 
   quotations Quotation[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([pipelineId])
   @@index([stageId])
   @@index([deletedAt])
@@ -631,7 +633,7 @@ model Deal {
 
 model Task {
   id           String       @id @default(uuid())
-  tenantId     String
+  customerId     String
   title        String
   description  String?
   status       TaskStatus   @default(PENDING)
@@ -645,11 +647,11 @@ model Task {
   updatedAt    DateTime     @updatedAt
   deletedAt    DateTime?
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   assignedTo User?  @relation("AssignedTasks", fields: [assignedToId], references: [id])
   createdBy  User   @relation("CreatedTasks", fields: [createdById], references: [id])
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([assignedToId])
   @@index([status])
   @@index([deletedAt])
@@ -657,7 +659,7 @@ model Task {
 
 model Product {
   id          String    @id @default(uuid())
-  tenantId    String
+  customerId    String
   name        String
   sku         String
   description String?
@@ -670,19 +672,19 @@ model Product {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   quotationItems QuotationItem[]
   invoiceItems   InvoiceItem[]
 
-  @@unique([tenantId, sku])
-  @@index([tenantId])
+  @@unique([customerId, sku])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
 model Quotation {
   id            String          @id @default(uuid())
-  tenantId      String
+  customerId      String
   contactId     String?
   dealId        String?
   leadId        String?
@@ -698,14 +700,14 @@ model Quotation {
   updatedAt     DateTime        @updatedAt
   deletedAt     DateTime?
 
-  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact  Contact?       @relation(fields: [contactId], references: [id])
   deal     Deal?          @relation(fields: [dealId], references: [id])
   lead     Lead?          @relation(fields: [leadId], references: [id])
   items    QuotationItem[]
   invoices Invoice[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([contactId])
   @@index([leadId])
   @@index([deletedAt])
@@ -725,7 +727,7 @@ model QuotationItem {
 
 model Invoice {
   id          String        @id @default(uuid())
-  tenantId    String
+  customerId    String
   contactId   String
   quotationId String?
   invoiceNo   String
@@ -741,12 +743,12 @@ model Invoice {
   updatedAt   DateTime      @updatedAt
   deletedAt   DateTime?
 
-  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact   Contact      @relation(fields: [contactId], references: [id])
   quotation Quotation?   @relation(fields: [quotationId], references: [id])
   items     InvoiceItem[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([contactId])
   @@index([status])
   @@index([deletedAt])
@@ -770,7 +772,7 @@ model InvoiceItem {
 
 model SupportTicket {
   id           String         @id @default(uuid())
-  tenantId     String
+  customerId     String
   ticketNo     String
   subject      String
   description  String
@@ -782,13 +784,13 @@ model SupportTicket {
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   assignedTo User?  @relation("AssignedTickets", fields: [assignedToId], references: [id])
   createdBy  User   @relation("CreatedTickets", fields: [createdById], references: [id])
 
   comments TicketComment[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([status])
   @@index([deletedAt])
 }
@@ -812,7 +814,7 @@ model TicketComment {
 
 model Notification {
   id        String   @id @default(uuid())
-  tenantId  String
+  customerId  String
   userId    String
   title     String
   message   String
@@ -821,17 +823,17 @@ model Notification {
   data      Json?
   createdAt DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([userId])
   @@index([isRead])
 }
 
 model AuditLog {
   id        String   @id @default(uuid())
-  tenantId  String?
+  customerId  String?
   userId    String?
   action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT
   module    String // LEADS, DEALS, USERS, TENANTS
@@ -839,24 +841,24 @@ model AuditLog {
   ipAddress String?
   createdAt DateTime @default(now())
 
-  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   user   User?   @relation(fields: [userId], references: [id])
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([userId])
   @@index([module])
 }
 
 model FeatureToggle {
   id        String   @id @default(uuid())
-  tenantId  String
+  customerId  String
   feature   String // LEADS, DEALS, INVOICES, WHATSAPP_INTEGRATION
   isEnabled Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, feature])
+  @@unique([customerId, feature])
 }
 
 // ----------------------------------------------------
@@ -886,7 +888,7 @@ enum LocationPermissionStatus {
 
 model EmployeeLocation {
   id           String       @id @default(uuid())
-  tenantId     String
+  customerId     String
   employeeId   String
   latitude     Float
   longitude    Float
@@ -898,16 +900,16 @@ model EmployeeLocation {
   timestamp    DateTime     @default(now())
   createdAt    DateTime     @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
   @@index([timestamp])
 }
 
 model BranchGeofence {
   id            String   @id @default(uuid())
-  tenantId      String
+  customerId      String
   name          String
   city          String?
   latitude      Float
@@ -917,15 +919,15 @@ model BranchGeofence {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([isActive])
 }
 
 model LocationTrackingSetting {
   id               String                   @id @default(uuid())
-  tenantId         String
+  customerId         String
   employeeId       String                   @unique
   isEnabled        Boolean                  @default(true)
   trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
@@ -933,9 +935,9 @@ model LocationTrackingSetting {
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
@@ -984,7 +986,7 @@ enum StructureStatus {
 
 model Department {
   id          String   @id @default(uuid())
-  tenantId    String
+  customerId    String
   name        String
   code        String
   description String?
@@ -993,17 +995,17 @@ model Department {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   designations Designation[]
   employees    Employee[]
 
-  @@unique([tenantId, code])
-  @@index([tenantId])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model Designation {
   id           String   @id @default(uuid())
-  tenantId     String
+  customerId     String
   departmentId String?
   name         String
   code         String
@@ -1013,17 +1015,17 @@ model Designation {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department Department? @relation(fields: [departmentId], references: [id])
   employees  Employee[]
 
-  @@unique([tenantId, code])
-  @@index([tenantId])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model Employee {
   id               String   @id @default(uuid())
-  tenantId         String
+  customerId         String
   userId           String?  @unique
   employeeCode     String
   firstName        String
@@ -1046,7 +1048,7 @@ model Employee {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
   user             User?             @relation(fields: [userId], references: [id])
   department       Department?       @relation(fields: [departmentId], references: [id])
   designation      Designation?      @relation(fields: [designationId], references: [id])
@@ -1058,14 +1060,14 @@ model Employee {
   payrollItems     PayrollItem[]
   salarySlips      SalarySlip[]
 
-  @@unique([tenantId, employeeCode])
-  @@index([tenantId])
+  @@unique([customerId, employeeCode])
+  @@index([customerId])
   @@index([email])
 }
 
 model Attendance {
   id            String           @id @default(uuid())
-  tenantId      String
+  customerId      String
   employeeId    String
   date          DateTime         @default(now())
   punchIn       DateTime?
@@ -1081,7 +1083,7 @@ model Attendance {
   employee Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   breaks   AttendanceBreak[]
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
   @@index([date])
 }
@@ -1100,7 +1102,7 @@ model AttendanceBreak {
 
 model LeaveType {
   id                 String   @id @default(uuid())
-  tenantId           String
+  customerId           String
   name               String
   code               String
   daysAllowedPerYear Int      @default(12)
@@ -1111,13 +1113,13 @@ model LeaveType {
 
   leaveRequests LeaveRequest[]
 
-  @@unique([tenantId, code])
-  @@index([tenantId])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model LeaveRequest {
   id              String        @id @default(uuid())
-  tenantId        String
+  customerId        String
   employeeId      String
   leaveTypeId     String
   fromDate        DateTime
@@ -1134,13 +1136,13 @@ model LeaveRequest {
   employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model RemoteRequest {
   id              String        @id @default(uuid())
-  tenantId        String
+  customerId        String
   employeeId      String
   fromDate        DateTime
   toDate          DateTime
@@ -1155,13 +1157,13 @@ model RemoteRequest {
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model Visit {
   id           String      @id @default(uuid())
-  tenantId     String
+  customerId     String
   employeeId   String
   leadId       String?
   customerName String
@@ -1182,14 +1184,14 @@ model Visit {
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   lead     Lead?    @relation(fields: [leadId], references: [id])
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
   @@index([leadId])
 }
 
 model SalaryStructure {
   id               String          @id @default(uuid())
-  tenantId         String
+  customerId         String
   employeeId       String
   basicSalary      Float
   hra              Float           @default(0.0)
@@ -1215,13 +1217,13 @@ model SalaryStructure {
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model Payroll {
   id              String        @id @default(uuid())
-  tenantId        String
+  customerId        String
   month           Int
   year            Int
   departmentId    String?
@@ -1236,17 +1238,17 @@ model Payroll {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   items  PayrollItem[]
 
-  @@unique([tenantId, month, year, departmentId])
-  @@index([tenantId])
+  @@unique([customerId, month, year, departmentId])
+  @@index([customerId])
 }
 
 model PayrollItem {
   id               String   @id @default(uuid())
   payrollId        String
-  tenantId         String
+  customerId         String
   employeeId       String
   basicSalary      Float
   hra              Float    @default(0.0)
@@ -1280,13 +1282,13 @@ model PayrollItem {
   salarySlips SalarySlip[]
 
   @@index([payrollId])
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model SalarySlip {
   id              String   @id @default(uuid())
-  tenantId        String
+  customerId        String
   payrollItemId   String
   employeeId      String
   slipNumber      String   @unique
@@ -1303,13 +1305,13 @@ model SalarySlip {
   payrollItem PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
   employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model PayrollPolicy {
   id                  String   @id @default(uuid())
-  tenantId            String   @unique
+  customerId            String   @unique
   workingDaysPerMonth Int      @default(30)
   lateDeductionRate   Float    @default(0.0)
   overtimeMultiplier  Float    @default(1.5)
@@ -1319,8 +1321,8 @@ model PayrollPolicy {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
+  @@index([customerId])
 }
 

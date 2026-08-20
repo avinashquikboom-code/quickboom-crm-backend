@@ -22,7 +22,7 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Access denied');
     }
 
-    if (user.roles?.includes(RoleType.SUPER_ADMIN) || user.roles?.includes(RoleType.TENANT_ADMIN)) {
+    if (user.roles?.includes(RoleType.SUPER_ADMIN) || user.roles?.includes(RoleType.CUSTOMER_ADMIN)) {
       return true;
     }
 

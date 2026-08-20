@@ -13,7 +13,7 @@ async function main() {
   });
 
   if (!existingUser) {
-    const tenant = await prisma.tenant.create({
+    const customer = await prisma.customer.create({
       data: {
         name: 'QuikBoom Enterprise Workspace',
         email,
@@ -36,9 +36,9 @@ async function main() {
       },
     });
 
-    await prisma.tenantSubscription.create({
+    await prisma.customerSubscription.create({
       data: {
-        tenantId: tenant.id,
+        customerId: customer.id,
         planId: starterPlan.id,
         startDate: new Date(),
         endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
@@ -48,16 +48,16 @@ async function main() {
 
     const adminRole = await prisma.role.create({
       data: {
-        tenantId: tenant.id,
-        name: 'Tenant Administrator',
-        type: RoleType.TENANT_ADMIN,
+        customerId: customer.id,
+        name: 'Customer Administrator',
+        type: RoleType.CUSTOMER_ADMIN,
         description: 'Full administrative access',
       },
     });
 
     const user = await prisma.user.create({
       data: {
-        tenantId: tenant.id,
+        customerId: customer.id,
         email,
         phone: '+1-555-0100',
         firstName: 'Demo',
@@ -74,7 +74,7 @@ async function main() {
       },
     });
 
-    console.log(`✅ Seeded QuikBoom Enterprise Tenant & Admin (${email} / ${password})`);
+    console.log(`✅ Seeded QuikBoom Enterprise Customer & Admin (${email} / ${password})`);
   } else {
     await prisma.user.update({
       where: { id: existingUser.id },

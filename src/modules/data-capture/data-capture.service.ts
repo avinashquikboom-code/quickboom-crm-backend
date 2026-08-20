@@ -10,7 +10,7 @@ import { CapturedPlace, ExtractionJob, ExtractionUsageSummary } from './interfac
 export class DataCaptureService {
   private readonly logger = new Logger(DataCaptureService.name);
   private readonly jobsMap = new Map<string, ExtractionJob>();
-  private readonly tenantJobsList = new Map<string, string[]>(); // tenantId -> jobIds[]
+  private readonly customerJobsList = new Map<string, string[]>(); // customerId -> jobIds[]
 
   // Field mask explicitly selecting only required fields (NO WILDCARD)
   private readonly googleFieldMask = [
@@ -40,7 +40,7 @@ export class DataCaptureService {
    * Endpoint: POST https://places.googleapis.com/v1/places:searchText
    */
   async extractPlaces(
-    tenantId: string,
+    customerId: string,
     userId: string,
     dto: ExtractPlacesDto,
   ): Promise<{
@@ -113,7 +113,7 @@ export class DataCaptureService {
             googleMapsUrl: p.googleMapsUri || undefined,
             businessStatus: p.businessStatus || 'OPERATIONAL',
             capturedAt: new Date(),
-            tenantId,
+            customerId,
             capturedBy: userId,
             extractionJobId: jobId,
           }));
@@ -138,7 +138,7 @@ export class DataCaptureService {
         'GOOGLE_MAPS_API_KEY is not set. Generating realistic verified Places dataset for sandbox test.',
       );
       googleApiRequests = Math.ceil(requestedResults / 20);
-      allPlaces = this.generateSandboxPlaces(dto.keyword, dto.location, requestedResults, tenantId, userId, jobId);
+      allPlaces = this.generateSandboxPlaces(dto.keyword, dto.location, requestedResults, customerId, userId, jobId);
     }
 
     const capturedResults = allPlaces.length;
@@ -146,7 +146,7 @@ export class DataCaptureService {
     // Record extraction job for usage tracking and lead import
     const jobRecord: ExtractionJob = {
       jobId,
-      tenantId,
+      customerId,
       userId,
       keyword: dto.keyword,
       location: dto.location,
@@ -158,8 +158,8 @@ export class DataCaptureService {
     };
 
     this.jobsMap.set(jobId, jobRecord);
-    const existingTenantJobs = this.tenantJobsList.get(tenantId) || [];
-    this.tenantJobsList.set(tenantId, [jobId, ...existingTenantJobs]);
+    const existingCustomerJobs = this.customerJobsList.get(customerId) || [];
+    this.customerJobsList.set(customerId, [jobId, ...existingCustomerJobs]);
 
     return {
       jobId,
@@ -177,7 +177,7 @@ export class DataCaptureService {
    * Import extracted prospects into CRM Leads with 3-tier duplicate detection
    */
   async importToLeads(
-    tenantId: string,
+    customerId: string,
     userId: string,
     dto: ImportToLeadsDto,
   ): Promise<{
@@ -188,7 +188,7 @@ export class DataCaptureService {
     message: string;
   }> {
     const job = this.jobsMap.get(dto.jobId);
-    if (!job || job.tenantId !== tenantId) {
+    if (!job || job.customerId !== customerId) {
       throw new BadRequestException('Extraction job not found or expired.');
     }
 
@@ -200,9 +200,9 @@ export class DataCaptureService {
       throw new BadRequestException('No places selected for lead import.');
     }
 
-    // Retrieve existing leads for the tenant to run duplicate detection
+    // Retrieve existing leads for the customer to run duplicate detection
     const existingLeads = await this.prisma.lead.findMany({
-      where: { tenantId, deletedAt: null },
+      where: { customerId, deletedAt: null },
       select: {
         id: true,
         title: true,
@@ -246,7 +246,7 @@ export class DataCaptureService {
       // Create new Lead in CRM
       const createdLead = await this.prisma.lead.create({
         data: {
-          tenantId,
+          customerId,
           title: place.businessName,
           firstName: place.businessName.split(' ')[0] || 'Business',
           lastName: place.businessName.split(' ').slice(1).join(' ') || 'Contact',
@@ -297,36 +297,36 @@ export class DataCaptureService {
   }
 
   /**
-   * Get extraction history for tenant
+   * Get extraction history for customer
    */
-  async getTenantJobs(tenantId: string): Promise<ExtractionJob[]> {
-    const jobIds = this.tenantJobsList.get(tenantId) || [];
+  async getCustomerJobs(customerId: string): Promise<ExtractionJob[]> {
+    const jobIds = this.customerJobsList.get(customerId) || [];
     return jobIds.map((id) => this.jobsMap.get(id)!).filter(Boolean);
   }
 
   /**
    * Get single extraction job details
    */
-  async getJobById(tenantId: string, jobId: string): Promise<ExtractionJob> {
+  async getJobById(customerId: string, jobId: string): Promise<ExtractionJob> {
     const job = this.jobsMap.get(jobId);
-    if (!job || job.tenantId !== tenantId) {
+    if (!job || job.customerId !== customerId) {
       throw new BadRequestException(`Extraction job ${jobId} not found.`);
     }
     return job;
   }
 
   /**
-   * Get tenant extraction usage summary
+   * Get customer extraction usage summary
    */
-  async getUsageSummary(tenantId: string): Promise<ExtractionUsageSummary> {
-    const jobs = await this.getTenantJobs(tenantId);
+  async getUsageSummary(customerId: string): Promise<ExtractionUsageSummary> {
+    const jobs = await this.getCustomerJobs(customerId);
     const totalExtractions = jobs.length;
     const totalLeadsCaptured = jobs.reduce((sum, j) => sum + j.capturedResults, 0);
     const totalGoogleApiCalls = jobs.reduce((sum, j) => sum + j.googleApiRequests, 0);
     const quotaLimit = 1000;
 
     return {
-      tenantId,
+      customerId,
       totalExtractions,
       totalLeadsCaptured,
       totalGoogleApiCalls,
@@ -342,7 +342,7 @@ export class DataCaptureService {
     keyword: string,
     location: string,
     count: number,
-    tenantId: string,
+    customerId: string,
     userId: string,
     jobId: string,
   ): CapturedPlace[] {
@@ -386,7 +386,7 @@ export class DataCaptureService {
         googleMapsUrl: `https://maps.google.com/?cid=${placeId}`,
         businessStatus: 'OPERATIONAL',
         capturedAt: new Date(),
-        tenantId,
+        customerId,
         capturedBy: userId,
         extractionJobId: jobId,
       });

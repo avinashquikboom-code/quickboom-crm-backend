@@ -13,14 +13,14 @@ export interface CapturedPlace {
   googleMapsUrl?: string;
   businessStatus?: string;
   capturedAt: Date;
-  tenantId: string;
+  customerId: string;
   capturedBy: string;
   extractionJobId: string;
 }
 
 export interface ExtractionJob {
   jobId: string;
-  tenantId: string;
+  customerId: string;
   userId: string;
   keyword: string;
   location: string;
@@ -32,7 +32,7 @@ export interface ExtractionJob {
 }
 
 export interface ExtractionUsageSummary {
-  tenantId: string;
+  customerId: string;
   totalExtractions: number;
   totalLeadsCaptured: number;
   totalGoogleApiCalls: number;

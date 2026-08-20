@@ -9,8 +9,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SubscriptionService } from './subscription.service';
 import { CreateOrderDto, RenewSubscriptionDto } from './dto/subscription.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @ApiTags('Subscriptions & Plans')
 @Controller('api/v1')
@@ -24,40 +24,40 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/current')
-  @UseGuards(JwtAuthGuard, TenantGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current tenant subscription status' })
-  async getCurrentSubscription(@CurrentTenant() tenantId: string) {
-    return this.subscriptionService.getCurrentSubscription(tenantId);
+  @ApiOperation({ summary: 'Get current customer subscription status' })
+  async getCurrentSubscription(@CurrentCustomer() customerId: string) {
+    return this.subscriptionService.getCurrentSubscription(customerId);
   }
 
   @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard, TenantGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get tenant purchase and order history' })
-  async getTenantOrders(@CurrentTenant() tenantId: string) {
-    return this.subscriptionService.getTenantOrders(tenantId);
+  @ApiOperation({ summary: 'Get customer purchase and order history' })
+  async getCustomerOrders(@CurrentCustomer() customerId: string) {
+    return this.subscriptionService.getCustomerOrders(customerId);
   }
 
   @Post('subscriptions/order')
-  @UseGuards(JwtAuthGuard, TenantGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new plan subscription order' })
   async createOrder(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: CreateOrderDto,
   ) {
-    return this.subscriptionService.createOrder(tenantId, dto);
+    return this.subscriptionService.createOrder(customerId, dto);
   }
 
   @Post('subscriptions/renew')
-  @UseGuards(JwtAuthGuard, TenantGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Renew current tenant subscription' })
+  @ApiOperation({ summary: 'Renew current customer subscription' })
   async renewSubscription(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: RenewSubscriptionDto,
   ) {
-    return this.subscriptionService.renewSubscription(tenantId, dto);
+    return this.subscriptionService.renewSubscription(customerId, dto);
   }
 }

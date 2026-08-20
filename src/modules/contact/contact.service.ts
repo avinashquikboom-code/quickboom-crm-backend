@@ -6,22 +6,22 @@ import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 export class ContactService {
   constructor(private prisma: PrismaService) {}
 
-  async create(tenantId: string, dto: CreateContactDto) {
+  async create(customerId: string, dto: CreateContactDto) {
     return this.prisma.contact.create({
       data: {
         ...dto,
-        tenantId,
+        customerId,
       },
       include: { company: true },
     });
   }
 
-  async findAll(tenantId: string, query: { page?: number; limit?: number; search?: string; type?: string }) {
+  async findAll(customerId: string, query: { page?: number; limit?: number; search?: string; type?: string }) {
     const page = query.page || 1;
     const limit = query.limit || 10;
     const skip = (page - 1) * limit;
 
-    const where: any = { tenantId, deletedAt: null };
+    const where: any = { customerId, deletedAt: null };
     if (query.type) where.type = query.type;
     if (query.search) {
       where.OR = [
@@ -48,9 +48,9 @@ export class ContactService {
     };
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(customerId: string, id: string) {
     const contact = await this.prisma.contact.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: { id, customerId, deletedAt: null },
       include: {
         company: true,
         communications: { orderBy: { timestamp: 'desc' } },
@@ -65,8 +65,8 @@ export class ContactService {
     return contact;
   }
 
-  async update(tenantId: string, id: string, dto: UpdateContactDto) {
-    await this.findOne(tenantId, id);
+  async update(customerId: string, id: string, dto: UpdateContactDto) {
+    await this.findOne(customerId, id);
     return this.prisma.contact.update({
       where: { id },
       data: dto,
@@ -74,8 +74,8 @@ export class ContactService {
     });
   }
 
-  async delete(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
+  async delete(customerId: string, id: string) {
+    await this.findOne(customerId, id);
     return this.prisma.contact.update({
       where: { id },
       data: { deletedAt: new Date() },

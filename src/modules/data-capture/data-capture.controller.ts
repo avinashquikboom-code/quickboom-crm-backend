@@ -9,14 +9,14 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { TenantGuard } from '../../common/guards/tenant.guard';
-import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
 import { ExtractPlacesDto, ImportToLeadsDto } from './dto/data-capture.dto';
 
 @Controller('data-capture')
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
   constructor(private readonly dataCaptureService: DataCaptureService) {}
@@ -27,11 +27,11 @@ export class DataCaptureController {
    */
   @Post('extract')
   async extractPlaces(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ExtractPlacesDto,
   ) {
-    return this.dataCaptureService.extractPlaces(tenantId, userId, dto);
+    return this.dataCaptureService.extractPlaces(customerId, userId, dto);
   }
 
   /**
@@ -40,11 +40,11 @@ export class DataCaptureController {
    */
   @Post('import-to-leads')
   async importToLeads(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ImportToLeadsDto,
   ) {
-    return this.dataCaptureService.importToLeads(tenantId, userId, dto);
+    return this.dataCaptureService.importToLeads(customerId, userId, dto);
   }
 
   /**
@@ -52,12 +52,12 @@ export class DataCaptureController {
    */
   @Post(':id/import')
   async importJobToLeads(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Param('id') jobId: string,
     @Body() dto: { placeIds?: string[] },
   ) {
-    return this.dataCaptureService.importToLeads(tenantId, userId, {
+    return this.dataCaptureService.importToLeads(customerId, userId, {
       jobId,
       placeIds: dto?.placeIds,
     });
@@ -65,16 +65,16 @@ export class DataCaptureController {
 
   /**
    * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
-   * Retrieves past extraction jobs for the tenant
+   * Retrieves past extraction jobs for the customer
    */
   @Get('jobs')
-  async getTenantJobs(@CurrentTenant() tenantId: string) {
-    return this.dataCaptureService.getTenantJobs(tenantId);
+  async getCustomerJobs(@CurrentCustomer() customerId: string) {
+    return this.dataCaptureService.getCustomerJobs(customerId);
   }
 
   @Get('history')
-  async getTenantHistory(@CurrentTenant() tenantId: string) {
-    return this.dataCaptureService.getTenantJobs(tenantId);
+  async getCustomerHistory(@CurrentCustomer() customerId: string) {
+    return this.dataCaptureService.getCustomerJobs(customerId);
   }
 
   /**
@@ -83,18 +83,18 @@ export class DataCaptureController {
    */
   @Get('jobs/:id')
   async getJobById(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
   ) {
-    return this.dataCaptureService.getJobById(tenantId, id);
+    return this.dataCaptureService.getJobById(customerId, id);
   }
 
   @Get(':id')
   async getJobByIdAlias(
-    @CurrentTenant() tenantId: string,
+    @CurrentCustomer() customerId: string,
     @Param('id') id: string,
   ) {
-    return this.dataCaptureService.getJobById(tenantId, id);
+    return this.dataCaptureService.getJobById(customerId, id);
   }
 
   /**
@@ -102,7 +102,7 @@ export class DataCaptureController {
    * Retrieves extraction quota and Google Places API consumption metrics
    */
   @Get('usage')
-  async getUsageSummary(@CurrentTenant() tenantId: string) {
-    return this.dataCaptureService.getUsageSummary(tenantId);
+  async getUsageSummary(@CurrentCustomer() customerId: string) {
+    return this.dataCaptureService.getUsageSummary(customerId);
   }
 }

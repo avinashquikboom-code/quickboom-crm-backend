@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { AuthService } from './auth.service';
 import {
   LoginDto,
-  RegisterTenantDto,
+  RegisterCustomerDto,
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
@@ -21,10 +21,10 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Register a new Tenant and Tenant Admin' })
-  @ApiResponse({ status: 210, description: 'Tenant created successfully' })
-  async register(@Body() dto: RegisterTenantDto) {
-    return this.authService.registerTenant(dto);
+  @ApiOperation({ summary: 'Register a new Customer and Customer Admin' })
+  @ApiResponse({ status: 210, description: 'Customer created successfully' })
+  async register(@Body() dto: RegisterCustomerDto) {
+    return this.authService.registerCustomer(dto);
   }
 
   @Public()

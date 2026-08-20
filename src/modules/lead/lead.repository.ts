@@ -17,13 +17,13 @@ import { LeadStatus } from '@prisma/client';
 export class LeadRepository {
   constructor(private prisma: PrismaService) {}
 
-  async create(tenantId: string, createdById: string, dto: CreateLeadDto) {
+  async create(customerId: string, createdById: string, dto: CreateLeadDto) {
     const status = dto.status || LeadStatus.NEW;
     const lead = await this.prisma.lead.create({
       data: {
         ...dto,
         status,
-        tenantId,
+        customerId,
         createdById,
       },
       include: {
@@ -50,13 +50,13 @@ export class LeadRepository {
     return lead;
   }
 
-  async checkDuplicate(tenantId: string, dto: CheckDuplicateDto) {
+  async checkDuplicate(customerId: string, dto: CheckDuplicateDto) {
     const normPhone = (dto.phone || '').replace(/\D/g, '');
     const cleanCompany = (dto.companyName || '').toLowerCase().trim();
     const cleanWebsite = (dto.website || '').toLowerCase().trim().replace(/^https?:\/\//, '');
 
     const candidates = await this.prisma.lead.findMany({
-      where: { tenantId, deletedAt: null },
+      where: { customerId, deletedAt: null },
       select: {
         id: true,
         title: true,
@@ -99,13 +99,13 @@ export class LeadRepository {
     };
   }
 
-  async findAll(tenantId: string, options: { page?: number; limit?: number; search?: string; status?: string }) {
+  async findAll(customerId: string, options: { page?: number; limit?: number; search?: string; status?: string }) {
     const page = options.page || 1;
     const limit = options.limit || 50;
     const skip = (page - 1) * limit;
 
     const where: any = {
-      tenantId,
+      customerId,
       deletedAt: null,
     };
 
@@ -150,9 +150,9 @@ export class LeadRepository {
     };
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(customerId: string, id: string) {
     return this.prisma.lead.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: { id, customerId, deletedAt: null },
       include: {
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
@@ -172,15 +172,15 @@ export class LeadRepository {
     });
   }
 
-  async update(tenantId: string, id: string, dto: UpdateLeadDto) {
+  async update(customerId: string, id: string, dto: UpdateLeadDto) {
     return this.prisma.lead.updateMany({
-      where: { id, tenantId, deletedAt: null },
+      where: { id, customerId, deletedAt: null },
       data: dto,
     });
   }
 
   async updateStatus(
-    tenantId: string,
+    customerId: string,
     id: string,
     fromStatus: LeadStatus | null,
     toStatus: LeadStatus,
@@ -210,9 +210,9 @@ export class LeadRepository {
     );
   }
 
-  async softDelete(tenantId: string, id: string) {
+  async softDelete(customerId: string, id: string) {
     return this.prisma.lead.updateMany({
-      where: { id, tenantId },
+      where: { id, customerId },
       data: { deletedAt: new Date() },
     });
   }
@@ -230,7 +230,7 @@ export class LeadRepository {
     });
   }
 
-  async logFollowUp(tenantId: string, leadId: string, userId: string, dto: LogFollowUpDto) {
+  async logFollowUp(customerId: string, leadId: string, userId: string, dto: LogFollowUpDto) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return null;
 
@@ -269,10 +269,10 @@ export class LeadRepository {
       },
     );
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  async manageVisit(tenantId: string, leadId: string, userId: string, dto: ManageVisitDto) {
+  async manageVisit(customerId: string, leadId: string, userId: string, dto: ManageVisitDto) {
     const lead = await this.prisma.lead.findUnique({
       where: { id: leadId },
     });
@@ -280,7 +280,7 @@ export class LeadRepository {
 
     // Find employee linked to user, or fallback
     const employee = await this.prisma.employee.findFirst({
-      where: { tenantId, userId },
+      where: { customerId, userId },
     });
     const employeeId = employee?.id || lead.assignedToId || userId;
 
@@ -288,9 +288,9 @@ export class LeadRepository {
       const visitDate = dto.date ? new Date(dto.date) : new Date();
       const createdVisit = await this.prisma.visit.create({
         data: {
-          tenantId,
+          customerId,
           leadId,
-          employeeId: employee?.id || (await this.getOrCreateFallbackEmployee(tenantId, userId)),
+          employeeId: employee?.id || (await this.getOrCreateFallbackEmployee(customerId, userId)),
           customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
           purpose: dto.purpose || 'Client Meeting & Demo',
           date: visitDate,
@@ -349,7 +349,7 @@ export class LeadRepository {
       }
 
       await this.updateStatus(
-        tenantId,
+        customerId,
         leadId,
         lead.status,
         LeadStatus.VISIT,
@@ -365,10 +365,10 @@ export class LeadRepository {
       );
     }
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  async createProposal(tenantId: string, leadId: string, userId: string, dto: CreateProposalDto) {
+  async createProposal(customerId: string, leadId: string, userId: string, dto: CreateProposalDto) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return null;
 
@@ -377,7 +377,7 @@ export class LeadRepository {
 
     const quotation = await this.prisma.quotation.create({
       data: {
-        tenantId,
+        customerId,
         leadId,
         quotationNo: propNo,
         status: 'SENT',
@@ -416,10 +416,10 @@ export class LeadRepository {
       { proposalNo: propNo, totalAmount: dto.totalAmount, quotationId: quotation.id },
     );
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  async recordFinalCall(tenantId: string, leadId: string, userId: string, dto: FinalCallDto) {
+  async recordFinalCall(customerId: string, leadId: string, userId: string, dto: FinalCallDto) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return null;
 
@@ -456,10 +456,10 @@ export class LeadRepository {
       },
     );
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  async recordPayment(tenantId: string, leadId: string, userId: string, dto: RecordPaymentDto) {
+  async recordPayment(customerId: string, leadId: string, userId: string, dto: RecordPaymentDto) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return null;
 
@@ -497,10 +497,10 @@ export class LeadRepository {
       },
     );
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  async startWork(tenantId: string, leadId: string, userId: string, dto: StartWorkDto) {
+  async startWork(customerId: string, leadId: string, userId: string, dto: StartWorkDto) {
     const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return null;
 
@@ -537,16 +537,16 @@ export class LeadRepository {
       },
     );
 
-    return this.findOne(tenantId, leadId);
+    return this.findOne(customerId, leadId);
   }
 
-  private async getOrCreateFallbackEmployee(tenantId: string, userId: string): Promise<string> {
-    const existing = await this.prisma.employee.findFirst({ where: { tenantId } });
+  private async getOrCreateFallbackEmployee(customerId: string, userId: string): Promise<string> {
+    const existing = await this.prisma.employee.findFirst({ where: { customerId } });
     if (existing) return existing.id;
 
     const fallback = await this.prisma.employee.create({
       data: {
-        tenantId,
+        customerId,
         employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
         firstName: 'CRM',
         lastName: 'Executive',

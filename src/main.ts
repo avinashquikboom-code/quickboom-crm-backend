@@ -38,10 +38,10 @@ async function bootstrap() {
   // Swagger OpenAPI Setup
   const config = new DocumentBuilder()
     .setTitle('QuikBoom SaaS CRM API')
-    .setDescription('Enterprise Multi-Tenant SaaS CRM Platform REST API')
+    .setDescription('Enterprise Multi-Customer SaaS CRM Platform REST API')
     .setVersion('1.0')
     .addBearerAuth()
-    .addApiKey({ type: 'apiKey', name: 'x-tenant-id', in: 'header' }, 'x-tenant-id')
+    .addApiKey({ type: 'apiKey', name: 'x-customer-id', in: 'header' }, 'x-customer-id')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
