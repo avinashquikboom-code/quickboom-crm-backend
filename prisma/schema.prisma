@@ -1,5 +1,3 @@
-// QuikBoom Enterprise SaaS CRM Prisma Schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,6 +5,1173 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id                       Int                       @id @default(autoincrement())
+  name                     String
+  domain                   String?                   @unique
+  logo                     String?
+  phone                    String?
+  email                    String?
+  address                  String?
+  city                     String?
+  state                    String?
+  country                  String?
+  isActive                 Boolean                   @default(true)
+  storageUsed              BigInt                    @default(0)
+  userLimit                Int                       @default(5)
+  leadLimit                Int                       @default(500)
+  storageLimit             BigInt                    @default(5368709120)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  deletedAt                DateTime?
+  auditLogs                AuditLog[]
+  branchGeofences          BranchGeofence[]
+  companies                Company[]
+  contacts                 Contact[]
+  deals                    Deal[]
+  departments              Department[]
+  designations             Designation[]
+  employees                Employee[]
+  employeeLocations        EmployeeLocation[]
+  featureToggles           FeatureToggle[]
+  invoices                 Invoice[]
+  leads                    Lead[]
+  locationTrackingSettings LocationTrackingSetting[]
+  notifications            Notification[]
+  payments                 PaymentHistory[]
+  payrolls                 Payroll[]
+  payrollPolicy            PayrollPolicy?
+  pipelines                Pipeline[]
+  planEntitlements         PlanEntitlement[]
+  products                 Product[]
+  quotations               Quotation[]
+  roles                    Role[]
+  tickets                  SupportTicket[]
+  tasks                    Task[]
+  teams                    Team[]
+  users                    User[]
+  works                    Work[]
+  subscriptions            CustomerSubscription[]
+
+  @@index([deletedAt])
+  @@index([isActive])
+  @@map("customers")
+}
+
+model Plan {
+  id            Int                    @id @default(autoincrement())
+  name          String                 @unique
+  code          String                 @unique
+  description   String?
+  monthlyPrice  Float
+  yearlyPrice   Float
+  userLimit     Int
+  leadLimit     Int
+  storageLimit  BigInt
+  features      Json
+  isActive      Boolean                @default(true)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  deletedAt     DateTime?
+  subscriptions CustomerSubscription[]
+
+  @@index([deletedAt])
+}
+
+model CustomerSubscription {
+  id                 Int                      @id @default(autoincrement())
+  customerId         Int
+  planId             Int
+  status             SubscriptionStatus       @default(TRIAL)
+  billingCycle       SubscriptionBillingCycle @default(MONTHLY)
+  startDate          DateTime
+  endDate            DateTime
+  trialEndsAt        DateTime?
+  autoRenew          Boolean                  @default(true)
+  couponId           Int?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  deletedAt          DateTime?
+  customFeatures     Json?
+  customLeadLimit    Int?
+  customPrice        Float?
+  customStorageLimit BigInt?
+  customUserLimit    Int?
+  payments           PaymentHistory[]
+  coupon             Coupon?                  @relation(fields: [couponId], references: [id])
+  customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan               Plan                     @relation(fields: [planId], references: [id])
+
+  @@index([customerId])
+  @@index([planId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("customer_subscriptions")
+}
+
+model Coupon {
+  id             Int                    @id @default(autoincrement())
+  code           String                 @unique
+  discountPct    Float
+  maxRedemptions Int                    @default(100)
+  timesRedeemed  Int                    @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  deletedAt      DateTime?
+  subscriptions  CustomerSubscription[]
+
+  @@index([code])
+}
+
+model PaymentHistory {
+  id             Int                       @id @default(autoincrement())
+  customerId     Int
+  subscriptionId Int?
+  amount         Float
+  currency       String                    @default("INR")
+  paymentMethod  PaymentMethod             @default(RAZORPAY)
+  paymentId      String?
+  orderId        String?
+  status         String
+  invoiceUrl     String?
+  orderNumber    String?
+  planId         Int?
+  planName       String?
+  billingCycle   SubscriptionBillingCycle?
+  taxAmount      Float?
+  totalAmount    Float?
+  transactionId  String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  deletedAt      DateTime?
+  customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id])
+
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model User {
+  id              Int             @id @default(autoincrement())
+  customerId      Int?
+  email           String          @unique
+  phone           String?         @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  avatar          String?
+  designation     String?
+  isActive        Boolean         @default(true)
+  isVerified      Boolean         @default(false)
+  otpCode         String?
+  otpExpiresAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  auditLogs       AuditLog[]
+  employee        Employee?
+  assignedLeads   Lead[]          @relation("AssignedLeads")
+  createdLeads    Lead[]          @relation("CreatedLeads")
+  leadNotes       LeadNote[]
+  notifications   Notification[]
+  refreshTokens   RefreshToken[]
+  sessions        Session[]
+  assignedTickets SupportTicket[] @relation("AssignedTickets")
+  createdTickets  SupportTicket[] @relation("CreatedTickets")
+  assignedTasks   Task[]          @relation("AssignedTasks")
+  createdTasks    Task[]          @relation("CreatedTasks")
+  ticketComments  TicketComment[]
+  customer        Customer?       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
+
+  @@index([customerId])
+  @@index([email])
+  @@index([phone])
+  @@index([deletedAt])
+}
+
+model Role {
+  id              Int              @id @default(autoincrement())
+  customerId      Int?
+  name            String
+  type            RoleType         @default(CUSTOM)
+  description     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model Permission {
+  id              Int              @id @default(autoincrement())
+  module          String
+  action          String
+  description     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  rolePermissions RolePermission[]
+
+  @@unique([module, action])
+}
+
+model UserRole {
+  userId Int
+  roleId Int
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  ipAddress String?
+  userAgent String?
+  device    String?
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Lead {
+  id               Int                    @id @default(autoincrement())
+  customerId       Int
+  title            String
+  firstName        String
+  lastName         String
+  email            String?
+  phone            String?
+  companyName      String?
+  website          String?
+  address          String?
+  city             String?
+  state            String?
+  category         String?
+  source           String                 @default("WEBSITE")
+  status           LeadStatus             @default(NEW)
+  priority         LeadPriority           @default(MEDIUM)
+  value            Float                  @default(0)
+  assignedToId     Int?
+  createdById      Int
+  nextFollowUpDate DateTime?
+  nextFollowUpTime String?
+  workStartDate    DateTime?
+  workNotes        String?
+  assignedTeam     String?
+  paidAmount       Float?                 @default(0)
+  paymentStatus    String?                @default("PENDING")
+  paymentMethod    String?
+  paymentRef       String?
+  convertedAt      DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  deletedAt        DateTime?
+  assignedTo       User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  createdBy        User                   @relation("CreatedLeads", fields: [createdById], references: [id])
+  customer         Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  timeline         LeadActivityTimeline[]
+  notes            LeadNote[]
+  reminders        LeadReminder[]
+  statusHistory    LeadStatusHistory[]
+  quotations       Quotation[]
+  visits           Visit[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([deletedAt])
+}
+
+model LeadStatusHistory {
+  id          Int         @id @default(autoincrement())
+  leadId      Int
+  fromStatus  LeadStatus?
+  toStatus    LeadStatus
+  changedById Int?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadNote {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  userId    Int
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([leadId])
+}
+
+model LeadActivityTimeline {
+  id          Int      @id @default(autoincrement())
+  leadId      Int
+  action      String
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadReminder {
+  id          Int      @id @default(autoincrement())
+  leadId      Int
+  remindAt    DateTime
+  title       String
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model Company {
+  id         Int       @id @default(autoincrement())
+  customerId Int
+  name       String
+  domain     String?
+  industry   String?
+  phone      String?
+  email      String?
+  address    String?
+  city       String?
+  country    String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contacts   Contact[]
+  deals      Deal[]
+
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model Contact {
+  id             Int                    @id @default(autoincrement())
+  customerId     Int
+  companyId      Int?
+  type           ContactType            @default(CUSTOMER)
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  designation    String?
+  tags           String[]
+  notes          String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  deletedAt      DateTime?
+  communications CommunicationHistory[]
+  company        Company?               @relation(fields: [companyId], references: [id])
+  customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deals          Deal[]
+  invoices       Invoice[]
+  quotations     Quotation[]
+
+  @@index([customerId])
+  @@index([companyId])
+  @@index([deletedAt])
+}
+
+model CommunicationHistory {
+  id        Int      @id @default(autoincrement())
+  contactId Int
+  type      String
+  summary   String
+  details   String?
+  timestamp DateTime @default(now())
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Pipeline {
+  id         Int             @id @default(autoincrement())
+  customerId Int
+  name       String
+  isDefault  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  deletedAt  DateTime?
+  deals      Deal[]
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  stages     PipelineStage[]
+
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model PipelineStage {
+  id          Int      @id @default(autoincrement())
+  pipelineId  Int
+  name        String
+  order       Int
+  probability Float    @default(50.0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deals       Deal[]
+  pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  @@index([pipelineId])
+}
+
+model Deal {
+  id              Int           @id @default(autoincrement())
+  customerId      Int
+  pipelineId      Int
+  stageId         Int
+  contactId       Int?
+  companyId       Int?
+  title           String
+  amount          Float
+  expectedClosing DateTime?
+  probability     Float         @default(50.0)
+  isWon           Boolean       @default(false)
+  isLost          Boolean       @default(false)
+  lostReason      String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  company         Company?      @relation(fields: [companyId], references: [id])
+  contact         Contact?      @relation(fields: [contactId], references: [id])
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])
+  stage           PipelineStage @relation(fields: [stageId], references: [id])
+  quotations      Quotation[]
+
+  @@index([customerId])
+  @@index([pipelineId])
+  @@index([stageId])
+  @@index([deletedAt])
+}
+
+model Task {
+  id           Int          @id @default(autoincrement())
+  customerId   Int
+  title        String
+  description  String?
+  status       TaskStatus   @default(PENDING)
+  priority     TaskPriority @default(MEDIUM)
+  dueDate      DateTime?
+  isRecurring  Boolean      @default(false)
+  recurrence   String?
+  assignedToId Int?
+  createdById  Int
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+  assignedTo   User?        @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy    User         @relation("CreatedTasks", fields: [createdById], references: [id])
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Product {
+  id             Int             @id @default(autoincrement())
+  customerId     Int
+  name           String
+  sku            String
+  description    String?
+  unitPrice      Float
+  currency       String          @default("INR")
+  taxRate        Float           @default(18.0)
+  stock          Int             @default(0)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deletedAt      DateTime?
+  invoiceItems   InvoiceItem[]
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationItems QuotationItem[]
+
+  @@unique([customerId, sku])
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model Quotation {
+  id          Int             @id @default(autoincrement())
+  customerId  Int
+  contactId   Int?
+  dealId      Int?
+  leadId      Int?
+  quotationNo String
+  status      QuotationStatus @default(DRAFT)
+  subTotal    Float
+  taxAmount   Float
+  discount    Float           @default(0)
+  totalAmount Float
+  validUntil  DateTime
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  invoices    Invoice[]
+  contact     Contact?        @relation(fields: [contactId], references: [id])
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deal        Deal?           @relation(fields: [dealId], references: [id])
+  lead        Lead?           @relation(fields: [leadId], references: [id])
+  items       QuotationItem[]
+
+  @@index([customerId])
+  @@index([contactId])
+  @@index([leadId])
+  @@index([deletedAt])
+}
+
+model QuotationItem {
+  id          Int       @id @default(autoincrement())
+  quotationId Int
+  productId   Int
+  quantity    Int
+  unitPrice   Float
+  total       Float
+  product     Product   @relation(fields: [productId], references: [id])
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id          Int           @id @default(autoincrement())
+  customerId  Int
+  contactId   Int
+  quotationId Int?
+  invoiceNo   String
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime
+  dueDate     DateTime
+  subTotal    Float
+  taxAmount   Float
+  discount    Float         @default(0)
+  totalAmount Float
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  contact     Contact       @relation(fields: [contactId], references: [id])
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotation   Quotation?    @relation(fields: [quotationId], references: [id])
+  items       InvoiceItem[]
+
+  @@index([customerId])
+  @@index([contactId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model InvoiceItem {
+  id        Int     @id @default(autoincrement())
+  invoiceId Int
+  productId Int
+  quantity  Int
+  unitPrice Float
+  total     Float
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model SupportTicket {
+  id           Int             @id @default(autoincrement())
+  customerId   Int
+  ticketNo     String
+  subject      String
+  description  String
+  status       TicketStatus    @default(OPEN)
+  priority     TicketPriority  @default(MEDIUM)
+  assignedToId Int?
+  createdById  Int
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  deletedAt    DateTime?
+  assignedTo   User?           @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  createdBy    User            @relation("CreatedTickets", fields: [createdById], references: [id])
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  comments     TicketComment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model TicketComment {
+  id        Int           @id @default(autoincrement())
+  ticketId  Int
+  userId    Int
+  comment   String
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id])
+
+  @@index([ticketId])
+}
+
+model Notification {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  userId     Int
+  title      String
+  message    String
+  type       String
+  isRead     Boolean  @default(false)
+  data       Json?
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([userId])
+  @@index([isRead])
+}
+
+model AuditLog {
+  id         Int       @id @default(autoincrement())
+  customerId Int?
+  userId     Int?
+  action     String
+  module     String
+  details    Json
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user       User?     @relation(fields: [userId], references: [id])
+
+  @@index([customerId])
+  @@index([userId])
+  @@index([module])
+}
+
+model FeatureToggle {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  feature    String
+  isEnabled  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, feature])
+}
+
+model EmployeeLocation {
+  id           Int          @id @default(autoincrement())
+  customerId   Int
+  employeeId   Int
+  latitude     Float
+  longitude    Float
+  accuracy     Float?
+  address      String?
+  trackingType TrackingType @default(ATTENDANCE)
+  attendanceId Int?
+  visitId      Int?
+  timestamp    DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([timestamp])
+}
+
+model BranchGeofence {
+  id           Int      @id @default(autoincrement())
+  customerId   Int
+  name         String
+  city         String?
+  latitude     Float
+  longitude    Float
+  radiusMeters Float    @default(200.0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([isActive])
+}
+
+model LocationTrackingSetting {
+  id               Int                      @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int                      @unique
+  isEnabled        Boolean                  @default(true)
+  trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
+  permissionStatus LocationPermissionStatus @default(GRANTED)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  customer         Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model Department {
+  id           Int           @id @default(autoincrement())
+  customerId   Int
+  name         String
+  code         String
+  description  String?
+  headId       Int?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  designations Designation[]
+  employees    Employee[]
+
+  @@unique([customerId, code])
+  @@index([customerId])
+}
+
+model Designation {
+  id           Int         @id @default(autoincrement())
+  customerId   Int
+  departmentId Int?
+  name         String
+  code         String
+  description  String?
+  level        Int         @default(1)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department   Department? @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+
+  @@unique([customerId, code])
+  @@index([customerId])
+}
+
+model Employee {
+  id               Int               @id @default(autoincrement())
+  customerId       Int
+  userId           Int?              @unique
+  employeeCode     String
+  firstName        String
+  lastName         String
+  email            String
+  phone            String?
+  gender           String?
+  dob              DateTime?
+  joiningDate      DateTime          @default(now())
+  departmentId     Int?
+  designationId    Int?
+  managerId        Int?
+  employmentType   String            @default("FULL_TIME")
+  branch           String            @default("Head Office")
+  address          String?
+  emergencyContact String?
+  bankDetails      Json?
+  documents        Json?
+  status           String            @default("ACTIVE")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  attendances      Attendance[]
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department       Department?       @relation(fields: [departmentId], references: [id])
+  designation      Designation?      @relation(fields: [designationId], references: [id])
+  user             User?             @relation(fields: [userId], references: [id])
+  leaveRequests    LeaveRequest[]
+  payrollItems     PayrollItem[]
+  remoteRequests   RemoteRequest[]
+  salarySlips      SalarySlip[]
+  salaryStructures SalaryStructure[]
+  teamMembers      TeamMember[]
+  visits           Visit[]
+  works            Work[]
+  workTasks        WorkTask[]
+
+  @@unique([customerId, employeeCode])
+  @@index([customerId])
+  @@index([email])
+}
+
+model Attendance {
+  id            Int               @id @default(autoincrement())
+  customerId    Int
+  employeeId    Int
+  date          DateTime          @default(now())
+  punchIn       DateTime?
+  punchOut      DateTime?
+  workingHours  Float             @default(0.0)
+  breakDuration Float             @default(0.0)
+  status        AttendanceStatus  @default(PRESENT)
+  locationIn    String?
+  locationOut   String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  employee      Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  breaks        AttendanceBreak[]
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([date])
+}
+
+model AttendanceBreak {
+  id           Int        @id @default(autoincrement())
+  attendanceId Int
+  breakStart   DateTime   @default(now())
+  breakEnd     DateTime?
+  duration     Float      @default(0.0)
+  attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  @@index([attendanceId])
+}
+
+model LeaveType {
+  id                 Int            @id @default(autoincrement())
+  customerId         Int
+  name               String
+  code               String
+  daysAllowedPerYear Int            @default(12)
+  isCarryForward     Boolean        @default(false)
+  isActive           Boolean        @default(true)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  leaveRequests      LeaveRequest[]
+
+  @@unique([customerId, code])
+  @@index([customerId])
+}
+
+model LeaveRequest {
+  id              Int           @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  leaveTypeId     Int
+  fromDate        DateTime
+  toDate          DateTime
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType       LeaveType     @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model RemoteRequest {
+  id              Int           @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  fromDate        DateTime
+  toDate          DateTime
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model Visit {
+  id           Int         @id @default(autoincrement())
+  customerId   Int
+  employeeId   Int
+  leadId       Int?
+  customerName String
+  purpose      String
+  date         DateTime    @default(now())
+  time         String?
+  location     String
+  latitude     Float?
+  longitude    Float?
+  status       VisitStatus @default(SCHEDULED)
+  notes        String?
+  duration     Float?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  employee     Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead         Lead?       @relation(fields: [leadId], references: [id])
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([leadId])
+}
+
+model SalaryStructure {
+  id               Int             @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  basicSalary      Float
+  hra              Float           @default(0.0)
+  allowances       Float           @default(0.0)
+  specialAllowance Float           @default(0.0)
+  bonus            Float           @default(0.0)
+  commission       Float           @default(0.0)
+  overtime         Float           @default(0.0)
+  otherEarnings    Float           @default(0.0)
+  pf               Float           @default(0.0)
+  esi              Float           @default(0.0)
+  professionalTax  Float           @default(0.0)
+  tds              Float           @default(0.0)
+  otherDeductions  Float           @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  effectiveFrom    DateTime        @default(now())
+  effectiveTo      DateTime?
+  status           StructureStatus @default(ACTIVE)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model Payroll {
+  id              Int           @id @default(autoincrement())
+  customerId      Int
+  month           Int
+  year            Int
+  departmentId    Int?
+  status          PayrollStatus @default(DRAFT)
+  grossSalary     Float         @default(0.0)
+  totalDeductions Float         @default(0.0)
+  netSalary       Float         @default(0.0)
+  totalEmployees  Int           @default(0)
+  processedAt     DateTime?
+  approvedAt      DateTime?
+  disbursedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items           PayrollItem[]
+
+  @@unique([customerId, month, year, departmentId])
+  @@index([customerId])
+}
+
+model PayrollItem {
+  id               Int          @id @default(autoincrement())
+  payrollId        Int
+  customerId       Int
+  employeeId       Int
+  basicSalary      Float
+  hra              Float        @default(0.0)
+  allowances       Float        @default(0.0)
+  specialAllowance Float        @default(0.0)
+  bonus            Float        @default(0.0)
+  commission       Float        @default(0.0)
+  overtime         Float        @default(0.0)
+  otherEarnings    Float        @default(0.0)
+  pf               Float        @default(0.0)
+  esi              Float        @default(0.0)
+  professionalTax  Float        @default(0.0)
+  tds              Float        @default(0.0)
+  otherDeductions  Float        @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  workingDays      Int          @default(30)
+  presentDays      Int          @default(30)
+  absentDays       Int          @default(0)
+  halfDays         Int          @default(0)
+  paidLeaveDays    Int          @default(0)
+  unpaidLeaveDays  Int          @default(0)
+  wfhDays          Int          @default(0)
+  status           String       @default("GENERATED")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  employee         Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payroll          Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  salarySlips      SalarySlip[]
+
+  @@index([payrollId])
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model SalarySlip {
+  id              Int         @id @default(autoincrement())
+  customerId      Int
+  payrollItemId   Int
+  employeeId      Int
+  slipNumber      String      @unique
+  payPeriod       String
+  grossSalary     Float
+  totalDeductions Float
+  netSalary       Float
+  pdfUrl          String?
+  generatedAt     DateTime    @default(now())
+  status          String      @default("GENERATED")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payrollItem     PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+}
+
+model PayrollPolicy {
+  id                  Int      @id @default(autoincrement())
+  customerId          Int      @unique
+  workingDaysPerMonth Int      @default(30)
+  lateDeductionRate   Float    @default(0.0)
+  overtimeMultiplier  Float    @default(1.5)
+  pfPercent           Float    @default(12.0)
+  esiPercent          Float    @default(0.75)
+  taxExemptionLimit   Float    @default(300000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model Team {
+  id          Int          @id @default(autoincrement())
+  customerId  Int
+  name        String
+  description String?
+  leaderId    Int?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  members     TeamMember[]
+  works       Work[]
+
+  @@index([customerId])
+}
+
+model TeamMember {
+  id         Int      @id @default(autoincrement())
+  teamId     Int
+  employeeId Int
+  role       String   @default("MEMBER")
+  joinedAt   DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, employeeId])
+  @@index([teamId])
+  @@index([employeeId])
+}
+
+model PlanEntitlement {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  planId       Int?
+  serviceName  String
+  totalQty     Int       @default(0)
+  usedQty      Int       @default(0)
+  scheduledQty Int       @default(0)
+  validUntil   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  works        Work[]
+
+  @@index([customerId])
+}
+
+model Work {
+  id            Int              @id @default(autoincrement())
+  customerId    Int
+  planId        Int?
+  entitlementId Int?
+  teamId        Int?
+  assignedToId  Int?
+  workType      WorkType         @default(REELS_SHOOT)
+  title         String
+  description   String?
+  scheduledDate DateTime         @default(now())
+  scheduledTime String?
+  status        WorkStatus       @default(SCHEDULED)
+  priority      WorkPriority     @default(MEDIUM)
+  notes         String?
+  outputUrl     String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  assignedTo    Employee?        @relation(fields: [assignedToId], references: [id])
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
+  team          Team?            @relation(fields: [teamId], references: [id])
+  tasks         WorkTask[]
+
+  @@index([customerId])
+  @@index([teamId])
+  @@index([assignedToId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+model WorkTask {
+  id           Int        @id @default(autoincrement())
+  workId       Int
+  title        String
+  stepOrder    Int        @default(1)
+  assignedToId Int?
+  status       TaskStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  assignedTo   Employee?  @relation(fields: [assignedToId], references: [id])
+  work         Work       @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@index([workId])
+  @@index([assignedToId])
 }
 
 enum RoleType {
@@ -115,765 +1280,6 @@ enum PaymentMethod {
   OTHER
 }
 
-// ----------------------------------------------------
-// MULTI-TENANCY & SUBSCRIPTION
-// ----------------------------------------------------
-
-model Customer {
-  @@map("customers")
-  id           Int       @id @default(autoincrement())
-  name         String
-  domain       String?   @unique
-  logo         String?
-  phone        String?
-  email        String?
-  address      String?
-  city         String?
-  state        String?
-  country      String?
-  isActive     Boolean   @default(true)
-  storageUsed  BigInt    @default(0) // in bytes
-  userLimit    Int       @default(5)
-  leadLimit    Int       @default(500)
-  storageLimit BigInt    @default(5368709120) // 5GB in bytes
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  deletedAt    DateTime?
-
-  users         User[]
-  roles         Role[]
-  subscriptions CustomerSubscription[]
-  leads         Lead[]
-  contacts      Contact[]
-  companies     Company[]
-  deals         Deal[]
-  pipelines     Pipeline[]
-  tasks         Task[]
-  products      Product[]
-  quotations    Quotation[]
-  invoices      Invoice[]
-  tickets       SupportTicket[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  payments      PaymentHistory[]
-  featureToggles FeatureToggle[]
-  employeeLocations EmployeeLocation[]
-  branchGeofences   BranchGeofence[]
-  locationTrackingSettings LocationTrackingSetting[]
-  departments   Department[]
-  designations  Designation[]
-  employees     Employee[]
-  payrolls      Payroll[]
-  payrollPolicy PayrollPolicy?
-  teams         Team[]
-  planEntitlements PlanEntitlement[]
-  works         Work[]
-
-  @@index([deletedAt])
-  @@index([isActive])
-}
-
-model Plan {
-  id           Int                      @id @default(autoincrement())
-  name         String                   @unique // Starter, Professional, Business, Enterprise
-  code         String                   @unique
-  description  String?
-  monthlyPrice Float
-  yearlyPrice  Float
-  userLimit    Int
-  leadLimit    Int
-  storageLimit BigInt // in bytes
-  features     Json // Enabled feature list
-  isActive     Boolean                  @default(true)
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  deletedAt    DateTime?
-
-  subscriptions CustomerSubscription[]
-
-  @@index([deletedAt])
-}
-
-model CustomerSubscription {
-  @@map("customer_subscriptions")
-  id           Int                      @id @default(autoincrement())
-  customerId   Int
-  planId       Int
-  status       SubscriptionStatus       @default(TRIAL)
-  billingCycle SubscriptionBillingCycle @default(MONTHLY)
-  startDate    DateTime
-  endDate      DateTime
-  trialEndsAt  DateTime?
-  autoRenew    Boolean                  @default(true)
-  couponId     Int?
-  customPrice  Float?
-  customFeatures Json?
-  customUserLimit Int?
-  customLeadLimit Int?
-  customStorageLimit BigInt?
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  deletedAt    DateTime?
-
-  customer Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  plan   Plan        @relation(fields: [planId], references: [id])
-  coupon Coupon?     @relation(fields: [couponId], references: [id])
-
-  payments PaymentHistory[]
-
-  @@index([customerId])
-  @@index([planId])
-  @@index([status])
-  @@index([deletedAt])
-}
-
-model Coupon {
-  id            Int       @id @default(autoincrement())
-  code          String    @unique
-  discountPct   Float
-  maxRedemptions Int      @default(100)
-  timesRedeemed Int       @default(0)
-  expiresAt     DateTime?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  deletedAt     DateTime?
-
-  subscriptions CustomerSubscription[]
-
-  @@index([code])
-}
-
-model PaymentHistory {
-  id             Int           @id @default(autoincrement())
-  customerId     Int
-  subscriptionId Int?
-  amount         Float
-  currency       String        @default("INR")
-  paymentMethod  PaymentMethod @default(RAZORPAY)
-  paymentId      String? // Razorpay payment ID
-  orderId        String? // Razorpay order ID
-  status         String // SUCCESS, FAILED, PENDING
-  invoiceUrl     String?
-  // Order snapshot at time of purchase — plan may change/be deleted later.
-  orderNumber   String?
-  planId        Int?
-  planName      String?
-  billingCycle  SubscriptionBillingCycle?
-  taxAmount     Float?
-  totalAmount   Float?
-  transactionId String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
-
-  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id])
-
-  @@index([customerId])
-  @@index([deletedAt])
-}
-
-// ----------------------------------------------------
-// USER & RBAC
-// ----------------------------------------------------
-
-model User {
-  id           Int       @id @default(autoincrement())
-  customerId   Int? // Null for Super Admin
-  email        String    @unique
-  phone        String?   @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  avatar       String?
-  designation  String?
-  isActive     Boolean   @default(true)
-  isVerified   Boolean   @default(false)
-  otpCode      String?
-  otpExpiresAt DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  deletedAt    DateTime?
-
-  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userRoles     UserRole[]
-  refreshTokens RefreshToken[]
-  sessions      Session[]
-
-  assignedLeads     Lead[]           @relation("AssignedLeads")
-  createdLeads      Lead[]           @relation("CreatedLeads")
-  assignedTasks     Task[]           @relation("AssignedTasks")
-  createdTasks      Task[]           @relation("CreatedTasks")
-  assignedTickets   SupportTicket[]  @relation("AssignedTickets")
-  createdTickets    SupportTicket[]  @relation("CreatedTickets")
-  notifications     Notification[]
-  auditLogs         AuditLog[]
-  employee          Employee?
-  leadNotes         LeadNote[]
-  ticketComments    TicketComment[]
-
-  @@index([customerId])
-  @@index([email])
-  @@index([phone])
-  @@index([deletedAt])
-}
-
-model Role {
-  id          Int       @id @default(autoincrement())
-  customerId  Int? // Null for System Roles
-  name        String
-  type        RoleType  @default(CUSTOM)
-  description String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
-
-  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userRoles       UserRole[]
-  rolePermissions RolePermission[]
-
-  @@index([customerId])
-  @@index([deletedAt])
-}
-
-model Permission {
-  id          Int      @id @default(autoincrement())
-  module      String // e.g., LEADS, DEALS, INVOICES
-  action      String // e.g., CREATE, READ, UPDATE, DELETE, MANAGE
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  rolePermissions RolePermission[]
-
-  @@unique([module, action])
-}
-
-model UserRole {
-  userId Int
-  roleId Int
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@id([userId, roleId])
-}
-
-model RolePermission {
-  roleId       Int
-  permissionId Int
-
-  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
-}
-
-model RefreshToken {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  token     String   @unique
-  expiresAt DateTime
-  isRevoked Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([token])
-}
-
-model Session {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  ipAddress String?
-  userAgent String?
-  device    String?
-  lastSeen  DateTime @default(now())
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-// ----------------------------------------------------
-// CRM CORE: LEADS, CONTACTS, COMPANIES, DEALS
-// ----------------------------------------------------
-
-model Lead {
-  id               Int          @id @default(autoincrement())
-  customerId       Int
-  title            String
-  firstName        String
-  lastName         String
-  email            String?
-  phone            String?
-  companyName      String?
-  website          String?
-  address          String?
-  city             String?
-  state            String?
-  category         String?
-  source           String       @default("WEBSITE")
-  status           LeadStatus   @default(NEW)
-  priority         LeadPriority @default(MEDIUM)
-  value            Float        @default(0)
-  assignedToId     Int?
-  createdById      Int
-  nextFollowUpDate DateTime?
-  nextFollowUpTime String?
-  workStartDate    DateTime?
-  workNotes        String?
-  assignedTeam     String?
-  paidAmount       Float?       @default(0)
-  paymentStatus    String?      @default("PENDING")
-  paymentMethod    String?
-  paymentRef       String?
-  convertedAt      DateTime?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-  deletedAt        DateTime?
-
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  assignedTo User?    @relation("AssignedLeads", fields: [assignedToId], references: [id])
-  createdBy  User     @relation("CreatedLeads", fields: [createdById], references: [id])
-
-  notes         LeadNote[]
-  timeline      LeadActivityTimeline[]
-  reminders     LeadReminder[]
-  statusHistory LeadStatusHistory[]
-  visits        Visit[]
-  quotations    Quotation[]
-
-  @@index([customerId])
-  @@index([status])
-  @@index([assignedToId])
-  @@index([deletedAt])
-}
-
-model LeadStatusHistory {
-  id          Int         @id @default(autoincrement())
-  leadId      Int
-  fromStatus  LeadStatus?
-  toStatus    LeadStatus
-  changedById Int?
-  notes       String?
-  createdAt   DateTime    @default(now())
-
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@index([leadId])
-}
-
-model LeadNote {
-  id        Int      @id @default(autoincrement())
-  leadId    Int
-  userId    Int
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([leadId])
-}
-
-model LeadActivityTimeline {
-  id          Int      @id @default(autoincrement())
-  leadId      Int
-  action      String
-  description String
-  metadata    Json?
-  createdAt   DateTime @default(now())
-
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@index([leadId])
-}
-
-model LeadReminder {
-  id          Int      @id @default(autoincrement())
-  leadId      Int
-  remindAt    DateTime
-  title       String
-  isCompleted Boolean  @default(false)
-  createdAt   DateTime @default(now())
-
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@index([leadId])
-}
-
-model Company {
-  id        Int       @id @default(autoincrement())
-  customerId Int
-  name      String
-  domain    String?
-  industry  String?
-  phone     String?
-  email     String?
-  address   String?
-  city      String?
-  country   String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  contacts Contact[]
-  deals    Deal[]
-
-  @@index([customerId])
-  @@index([deletedAt])
-}
-
-model Contact {
-  id          Int         @id @default(autoincrement())
-  customerId  Int
-  companyId   Int?
-  type        ContactType @default(CUSTOMER)
-  firstName   String
-  lastName    String
-  email       String?
-  phone       String?
-  designation String?
-  tags        String[]
-  notes       String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  deletedAt   DateTime?
-
-  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  company Company?     @relation(fields: [companyId], references: [id])
-
-  deals          Deal[]
-  communications CommunicationHistory[]
-  quotations     Quotation[]
-  invoices       Invoice[]
-
-  @@index([customerId])
-  @@index([companyId])
-  @@index([deletedAt])
-}
-
-model CommunicationHistory {
-  id        Int      @id @default(autoincrement())
-  contactId Int
-  type      String
-  summary   String
-  details   String?
-  timestamp DateTime @default(now())
-
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-
-  @@index([contactId])
-}
-
-model Pipeline {
-  id        Int       @id @default(autoincrement())
-  customerId Int
-  name      String
-  isDefault Boolean   @default(false)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  customer Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  stages PipelineStage[]
-  deals  Deal[]
-
-  @@index([customerId])
-  @@index([deletedAt])
-}
-
-model PipelineStage {
-  id          Int      @id @default(autoincrement())
-  pipelineId  Int
-  name        String
-  order       Int
-  probability Float    @default(50.0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
-  deals    Deal[]
-
-  @@index([pipelineId])
-}
-
-model Deal {
-  id              Int       @id @default(autoincrement())
-  customerId      Int
-  pipelineId      Int
-  stageId         Int
-  contactId       Int?
-  companyId       Int?
-  title           String
-  amount          Float
-  expectedClosing DateTime?
-  probability     Float     @default(50.0)
-  isWon           Boolean   @default(false)
-  isLost          Boolean   @default(false)
-  lostReason      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
-
-  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  pipeline Pipeline      @relation(fields: [pipelineId], references: [id])
-  stage    PipelineStage @relation(fields: [stageId], references: [id])
-  contact  Contact?      @relation(fields: [contactId], references: [id])
-  company  Company?      @relation(fields: [companyId], references: [id])
-
-  quotations Quotation[]
-
-  @@index([customerId])
-  @@index([pipelineId])
-  @@index([stageId])
-  @@index([deletedAt])
-}
-
-// ----------------------------------------------------
-// TASKS, CALENDAR & PRODUCTS
-// ----------------------------------------------------
-
-model Task {
-  id           Int          @id @default(autoincrement())
-  customerId   Int
-  title        String
-  description  String?
-  status       TaskStatus   @default(PENDING)
-  priority     TaskPriority @default(MEDIUM)
-  dueDate      DateTime?
-  isRecurring  Boolean      @default(false)
-  recurrence   String?
-  assignedToId Int?
-  createdById  Int
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  deletedAt    DateTime?
-
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  assignedTo User?    @relation("AssignedTasks", fields: [assignedToId], references: [id])
-  createdBy  User     @relation("CreatedTasks", fields: [createdById], references: [id])
-
-  @@index([customerId])
-  @@index([assignedToId])
-  @@index([status])
-  @@index([deletedAt])
-}
-
-model Product {
-  id          Int       @id @default(autoincrement())
-  customerId  Int
-  name        String
-  sku         String
-  description String?
-  unitPrice   Float
-  currency    String    @default("INR")
-  taxRate     Float     @default(18.0)
-  stock       Int       @default(0)
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  quotationItems QuotationItem[]
-  invoiceItems   InvoiceItem[]
-
-  @@unique([customerId, sku])
-  @@index([customerId])
-  @@index([deletedAt])
-}
-
-model Quotation {
-  id            Int             @id @default(autoincrement())
-  customerId    Int
-  contactId     Int?
-  dealId        Int?
-  leadId        Int?
-  quotationNo   String
-  status        QuotationStatus @default(DRAFT)
-  subTotal      Float
-  taxAmount     Float
-  discount      Float           @default(0)
-  totalAmount   Float
-  validUntil    DateTime
-  notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  deletedAt     DateTime?
-
-  customer Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  contact  Contact?         @relation(fields: [contactId], references: [id])
-  deal     Deal?            @relation(fields: [dealId], references: [id])
-  lead     Lead?            @relation(fields: [leadId], references: [id])
-  items    QuotationItem[]
-  invoices Invoice[]
-
-  @@index([customerId])
-  @@index([contactId])
-  @@index([leadId])
-  @@index([deletedAt])
-}
-
-model QuotationItem {
-  id          Int       @id @default(autoincrement())
-  quotationId Int
-  productId   Int
-  quantity    Int
-  unitPrice   Float
-  total       Float
-
-  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  product   Product   @relation(fields: [productId], references: [id])
-}
-
-model Invoice {
-  id          Int           @id @default(autoincrement())
-  customerId  Int
-  contactId   Int
-  quotationId Int?
-  invoiceNo   String
-  status      InvoiceStatus @default(DRAFT)
-  issueDate   DateTime
-  dueDate     DateTime
-  subTotal    Float
-  taxAmount   Float
-  discount    Float         @default(0)
-  totalAmount Float
-  notes       String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
-
-  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  contact   Contact          @relation(fields: [contactId], references: [id])
-  quotation Quotation?       @relation(fields: [quotationId], references: [id])
-  items     InvoiceItem[]
-
-  @@index([customerId])
-  @@index([contactId])
-  @@index([status])
-  @@index([deletedAt])
-}
-
-model InvoiceItem {
-  id        Int     @id @default(autoincrement())
-  invoiceId Int
-  productId Int
-  quantity  Int
-  unitPrice Float
-  total     Float
-
-  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
-}
-
-// ----------------------------------------------------
-// SUPPORT TICKETS
-// ----------------------------------------------------
-
-model SupportTicket {
-  id           Int            @id @default(autoincrement())
-  customerId   Int
-  ticketNo     String
-  subject      String
-  description  String
-  status       TicketStatus   @default(OPEN)
-  priority     TicketPriority @default(MEDIUM)
-  assignedToId Int?
-  createdById  Int
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  deletedAt    DateTime?
-
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  assignedTo User?    @relation("AssignedTickets", fields: [assignedToId], references: [id])
-  createdBy  User     @relation("CreatedTickets", fields: [createdById], references: [id])
-
-  comments TicketComment[]
-
-  @@index([customerId])
-  @@index([status])
-  @@index([deletedAt])
-}
-
-model TicketComment {
-  id        Int      @id @default(autoincrement())
-  ticketId  Int
-  userId    Int
-  comment   String
-  createdAt DateTime @default(now())
-
-  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  user   User          @relation(fields: [userId], references: [id])
-
-  @@index([ticketId])
-}
-
-// ----------------------------------------------------
-// NOTIFICATIONS, AUDIT & SUPER ADMIN
-// ----------------------------------------------------
-
-model Notification {
-  id        Int      @id @default(autoincrement())
-  customerId Int
-  userId    Int
-  title     String
-  message   String
-  type      String
-  isRead    Boolean  @default(false)
-  data      Json?
-  createdAt DateTime @default(now())
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([userId])
-  @@index([isRead])
-}
-
-model AuditLog {
-  id        Int      @id @default(autoincrement())
-  customerId Int?
-  userId    Int?
-  action    String
-  module    String
-  details   Json
-  ipAddress String?
-  createdAt DateTime @default(now())
-
-  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  user   User?       @relation(fields: [userId], references: [id])
-
-  @@index([customerId])
-  @@index([userId])
-  @@index([module])
-}
-
-model FeatureToggle {
-  id        Int      @id @default(autoincrement())
-  customerId Int
-  feature   String
-  isEnabled Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@unique([customerId, feature])
-}
-
-// ----------------------------------------------------
-// GEO TRACKING & LOCATION MODELS
-// ----------------------------------------------------
-
 enum TrackingType {
   ATTENDANCE
   VISIT
@@ -894,65 +1300,6 @@ enum LocationPermissionStatus {
   DENIED
   UNAVAILABLE
 }
-
-model EmployeeLocation {
-  id           Int          @id @default(autoincrement())
-  customerId   Int
-  employeeId   Int
-  latitude     Float
-  longitude    Float
-  accuracy     Float?
-  address      String?
-  trackingType TrackingType @default(ATTENDANCE)
-  attendanceId Int?
-  visitId      Int?
-  timestamp    DateTime     @default(now())
-  createdAt    DateTime     @default(now())
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([employeeId])
-  @@index([timestamp])
-}
-
-model BranchGeofence {
-  id            Int      @id @default(autoincrement())
-  customerId    Int
-  name          String
-  city          String?
-  latitude      Float
-  longitude     Float
-  radiusMeters  Float    @default(200.0)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([isActive])
-}
-
-model LocationTrackingSetting {
-  id               Int                      @id @default(autoincrement())
-  customerId       Int
-  employeeId       Int                      @unique
-  isEnabled        Boolean                  @default(true)
-  trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
-  permissionStatus LocationPermissionStatus @default(GRANTED)
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-// ----------------------------------------------------
-// HRM & PAYROLL MODELS
-// ----------------------------------------------------
 
 enum AttendanceStatus {
   PRESENT
@@ -993,355 +1340,6 @@ enum StructureStatus {
   INACTIVE
 }
 
-model Department {
-  id          Int      @id @default(autoincrement())
-  customerId  Int
-  name        String
-  code        String
-  description String?
-  headId      Int?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  designations Designation[]
-  employees    Employee[]
-
-  @@unique([customerId, code])
-  @@index([customerId])
-}
-
-model Designation {
-  id           Int      @id @default(autoincrement())
-  customerId   Int
-  departmentId Int?
-  name         String
-  code         String
-  description  String?
-  level        Int      @default(1)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  department Department?     @relation(fields: [departmentId], references: [id])
-  employees  Employee[]
-
-  @@unique([customerId, code])
-  @@index([customerId])
-}
-
-model Employee {
-  id               Int      @id @default(autoincrement())
-  customerId       Int
-  userId           Int?     @unique
-  employeeCode     String
-  firstName        String
-  lastName         String
-  email            String
-  phone            String?
-  gender           String?
-  dob              DateTime?
-  joiningDate      DateTime @default(now())
-  departmentId     Int?
-  designationId    Int?
-  managerId        Int?
-  employmentType   String   @default("FULL_TIME")
-  branch           String   @default("Head Office")
-  address          String?
-  emergencyContact String?
-  bankDetails      Json?
-  documents        Json?
-  status           String   @default("ACTIVE")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  user             User?                 @relation(fields: [userId], references: [id])
-  department       Department?           @relation(fields: [departmentId], references: [id])
-  designation      Designation?          @relation(fields: [designationId], references: [id])
-  attendances      Attendance[]
-  leaveRequests    LeaveRequest[]
-  remoteRequests   RemoteRequest[]
-  visits           Visit[]
-  salaryStructures SalaryStructure[]
-  payrollItems     PayrollItem[]
-  salarySlips      SalarySlip[]
-  teamMembers      TeamMember[]
-  works            Work[]
-  workTasks        WorkTask[]
-
-  @@unique([customerId, employeeCode])
-  @@index([customerId])
-  @@index([email])
-}
-
-model Attendance {
-  id            Int              @id @default(autoincrement())
-  customerId    Int
-  employeeId    Int
-  date          DateTime         @default(now())
-  punchIn       DateTime?
-  punchOut      DateTime?
-  workingHours  Float            @default(0.0)
-  breakDuration Float            @default(0.0)
-  status        AttendanceStatus @default(PRESENT)
-  locationIn    String?
-  locationOut   String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-
-  employee Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  breaks   AttendanceBreak[]
-
-  @@index([customerId])
-  @@index([employeeId])
-  @@index([date])
-}
-
-model AttendanceBreak {
-  id           Int       @id @default(autoincrement())
-  attendanceId Int
-  breakStart   DateTime  @default(now())
-  breakEnd     DateTime?
-  duration     Float     @default(0.0)
-
-  attendance Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
-
-  @@index([attendanceId])
-}
-
-model LeaveType {
-  id                 Int      @id @default(autoincrement())
-  customerId         Int
-  name               String
-  code               String
-  daysAllowedPerYear Int      @default(12)
-  isCarryForward     Boolean  @default(false)
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  leaveRequests LeaveRequest[]
-
-  @@unique([customerId, code])
-  @@index([customerId])
-}
-
-model LeaveRequest {
-  id              Int           @id @default(autoincrement())
-  customerId      Int
-  employeeId      Int
-  leaveTypeId     Int
-  fromDate        DateTime
-  toDate          DateTime
-  days            Int           @default(1)
-  reason          String?
-  attachmentUrl   String?
-  status          RequestStatus @default(PENDING)
-  rejectionReason String?
-  approvedById    Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
-
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-model RemoteRequest {
-  id              Int           @id @default(autoincrement())
-  customerId      Int
-  employeeId      Int
-  fromDate        DateTime
-  toDate          DateTime
-  days            Int           @default(1)
-  reason          String?
-  attachmentUrl   String?
-  status          RequestStatus @default(PENDING)
-  rejectionReason String?
-  approvedById    Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-model Visit {
-  id           Int         @id @default(autoincrement())
-  customerId   Int
-  employeeId   Int
-  leadId       Int?
-  customerName String
-  purpose      String
-  date         DateTime    @default(now())
-  time         String?
-  location     String
-  latitude     Float?
-  longitude    Float?
-  status       VisitStatus @default(SCHEDULED)
-  notes        String?
-  duration     Float?
-  startedAt    DateTime?
-  completedAt  DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  lead     Lead?    @relation(fields: [leadId], references: [id])
-
-  @@index([customerId])
-  @@index([employeeId])
-  @@index([leadId])
-}
-
-model SalaryStructure {
-  id               Int             @id @default(autoincrement())
-  customerId       Int
-  employeeId       Int
-  basicSalary      Float
-  hra              Float           @default(0.0)
-  allowances       Float           @default(0.0)
-  specialAllowance Float           @default(0.0)
-  bonus            Float           @default(0.0)
-  commission       Float           @default(0.0)
-  overtime         Float           @default(0.0)
-  otherEarnings    Float           @default(0.0)
-  pf               Float           @default(0.0)
-  esi              Float           @default(0.0)
-  professionalTax  Float           @default(0.0)
-  tds              Float           @default(0.0)
-  otherDeductions  Float           @default(0.0)
-  grossSalary      Float
-  totalDeductions  Float
-  netSalary        Float
-  effectiveFrom    DateTime        @default(now())
-  effectiveTo      DateTime?
-  status           StructureStatus @default(ACTIVE)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-model Payroll {
-  id              Int           @id @default(autoincrement())
-  customerId      Int
-  month           Int
-  year            Int
-  departmentId    Int?
-  status          PayrollStatus @default(DRAFT)
-  grossSalary     Float         @default(0.0)
-  totalDeductions Float         @default(0.0)
-  netSalary       Float         @default(0.0)
-  totalEmployees  Int           @default(0)
-  processedAt     DateTime?
-  approvedAt      DateTime?
-  disbursedAt     DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  items  PayrollItem[]
-
-  @@unique([customerId, month, year, departmentId])
-  @@index([customerId])
-}
-
-model PayrollItem {
-  id               Int      @id @default(autoincrement())
-  payrollId        Int
-  customerId       Int
-  employeeId       Int
-  basicSalary      Float
-  hra              Float    @default(0.0)
-  allowances       Float    @default(0.0)
-  specialAllowance Float    @default(0.0)
-  bonus            Float    @default(0.0)
-  commission       Float    @default(0.0)
-  overtime         Float    @default(0.0)
-  otherEarnings    Float    @default(0.0)
-  pf               Float    @default(0.0)
-  esi              Float    @default(0.0)
-  professionalTax  Float    @default(0.0)
-  tds              Float    @default(0.0)
-  otherDeductions  Float    @default(0.0)
-  grossSalary      Float
-  totalDeductions  Float
-  netSalary        Float
-  workingDays      Int      @default(30)
-  presentDays      Int      @default(30)
-  absentDays       Int      @default(0)
-  halfDays         Int      @default(0)
-  paidLeaveDays    Int      @default(0)
-  unpaidLeaveDays  Int      @default(0)
-  wfhDays          Int      @default(0)
-  status           String   @default("GENERATED")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  payroll     Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
-  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  salarySlips SalarySlip[]
-
-  @@index([payrollId])
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-model SalarySlip {
-  id              Int      @id @default(autoincrement())
-  customerId      Int
-  payrollItemId   Int
-  employeeId      Int
-  slipNumber      String   @unique
-  payPeriod       String
-  grossSalary     Float
-  totalDeductions Float
-  netSalary       Float
-  pdfUrl          String?
-  generatedAt     DateTime @default(now())
-  status          String   @default("GENERATED")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  payrollItem PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-  @@index([employeeId])
-}
-
-model PayrollPolicy {
-  id                  Int      @id @default(autoincrement())
-  customerId          Int      @unique
-  workingDaysPerMonth Int      @default(30)
-  lateDeductionRate   Float    @default(0.0)
-  overtimeMultiplier  Float    @default(1.5)
-  pfPercent           Float    @default(12.0)
-  esiPercent          Float    @default(0.75)
-  taxExemptionLimit   Float    @default(300000)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId])
-}
-
-// ----------------------------------------------------
-// TEAMS, WORK & SSM ENTITLEMENTS
-// ----------------------------------------------------
-
 enum WorkType {
   REELS_SHOOT
   VIDEO_EDITING
@@ -1365,104 +1363,4 @@ enum WorkPriority {
   MEDIUM
   HIGH
   URGENT
-}
-
-model Team {
-  id          Int      @id @default(autoincrement())
-  customerId  Int
-  name        String
-  description String?
-  leaderId    Int?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  customer Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  members  TeamMember[]
-  works    Work[]
-
-  @@index([customerId])
-}
-
-model TeamMember {
-  id         Int      @id @default(autoincrement())
-  teamId     Int
-  employeeId Int
-  role       String   @default("MEMBER")
-  joinedAt   DateTime @default(now())
-
-  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@unique([teamId, employeeId])
-  @@index([teamId])
-  @@index([employeeId])
-}
-
-model PlanEntitlement {
-  id           Int       @id @default(autoincrement())
-  customerId   Int
-  planId       Int?
-  serviceName  String
-  totalQty     Int       @default(0)
-  usedQty      Int       @default(0)
-  scheduledQty Int       @default(0)
-  validUntil   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  works    Work[]
-
-  @@index([customerId])
-}
-
-model Work {
-  id            Int          @id @default(autoincrement())
-  customerId    Int
-  planId        Int?
-  entitlementId Int?
-  teamId        Int?
-  assignedToId  Int?
-  workType      WorkType     @default(REELS_SHOOT)
-  title         String
-  description   String?
-  scheduledDate DateTime     @default(now())
-  scheduledTime String?
-  status        WorkStatus   @default(SCHEDULED)
-  priority      WorkPriority @default(MEDIUM)
-  notes         String?
-  outputUrl     String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-
-  customer    Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  entitlement PlanEntitlement? @relation(fields: [entitlementId], references: [id])
-  team        Team?            @relation(fields: [teamId], references: [id])
-  assignedTo  Employee?        @relation(fields: [assignedToId], references: [id])
-  tasks       WorkTask[]
-
-  @@index([customerId])
-  @@index([teamId])
-  @@index([assignedToId])
-  @@index([scheduledDate])
-  @@index([status])
-}
-
-model WorkTask {
-  id           Int        @id @default(autoincrement())
-  workId       Int
-  title        String
-  stepOrder    Int        @default(1)
-  assignedToId Int?
-  status       TaskStatus @default(PENDING)
-  notes        String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  work       Work      @relation(fields: [workId], references: [id], onDelete: Cascade)
-  assignedTo Employee? @relation(fields: [assignedToId], references: [id])
-
-  @@index([workId])
-  @@index([assignedToId])
 }
