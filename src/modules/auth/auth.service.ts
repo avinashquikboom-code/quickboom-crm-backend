@@ -166,13 +166,16 @@ export class AuthService {
     }
 
     const userRoleTypes = user.userRoles.map((ur) => ur.role.type);
-    const isSuperAdmin =
+    const isAllowedAdmin =
       userRoleTypes.includes(RoleType.SUPER_ADMIN) ||
+      userRoleTypes.includes(RoleType.CUSTOMER_ADMIN) ||
+      userRoleTypes.includes(RoleType.TENANT_ADMIN) ||
+      userRoleTypes.includes(RoleType.SALES_MANAGER) ||
       user.email === 'admin@quikboom.com';
 
-    if (!isSuperAdmin) {
+    if (!isAllowedAdmin) {
       throw new UnauthorizedException(
-        'Access Restricted: The Admin Panel is exclusively accessible by Super Admin. Employees and staff must use the QuikBoom Mobile App.',
+        'Access Restricted: The Admin Panel is exclusively accessible by Company Administrators. Employees and staff must use the QuikBoom Mobile App.',
       );
     }
 
