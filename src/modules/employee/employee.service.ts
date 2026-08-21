@@ -330,4 +330,144 @@ export class EmployeeService {
       location: a.locationIn || 'Office GPS',
     }));
   }
+
+  async getLiveAttendance(customerId?: number | string, isSuperAdmin = false) {
+    const whereEmp: any = { status: 'ACTIVE' };
+    const whereCust: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      whereEmp.customerId = numCustomerId;
+      whereCust.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for live attendance access');
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [employees, todayAttendances, todayLeaves] = await Promise.all([
+      this.prisma.employee.findMany({
+        where: whereEmp,
+        include: { department: true, designation: true },
+        orderBy: { firstName: 'asc' },
+      }),
+      this.prisma.attendance.findMany({
+        where: {
+          ...whereCust,
+          date: { gte: todayStart, lte: todayEnd },
+        },
+        include: {
+          breaks: { orderBy: { breakStart: 'desc' } },
+        },
+      }),
+      this.prisma.leaveRequest.findMany({
+        where: {
+          ...whereCust,
+          fromDate: { lte: todayEnd },
+          toDate: { gte: todayStart },
+          status: 'APPROVED',
+        },
+        include: { leaveType: true },
+      }),
+    ]);
+
+    const attendanceMap = new Map<number, typeof todayAttendances[0]>();
+    for (const att of todayAttendances) {
+      attendanceMap.set(att.employeeId, att);
+    }
+
+    const leaveMap = new Map<number, typeof todayLeaves[0]>();
+    for (const leave of todayLeaves) {
+      leaveMap.set(leave.employeeId, leave);
+    }
+
+    let presentCount = 0;
+    let onBreakCount = 0;
+    let onLeaveCount = 0;
+    let absentCount = 0;
+    let checkedOutCount = 0;
+
+    const liveRecords = employees.map((emp) => {
+      const att = attendanceMap.get(emp.id);
+      const leave = leaveMap.get(emp.id);
+
+      let status = 'ABSENT';
+      let punchInStr: string | null = null;
+      let punchOutStr: string | null = null;
+      let breakStartStr: string | null = null;
+      let breakDurationMinutes = 0;
+      let totalWorkingHours = '0h 0m';
+
+      if (leave) {
+        status = 'ON_LEAVE';
+        onLeaveCount++;
+      } else if (att) {
+        if (att.punchIn) {
+          punchInStr = att.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        if (att.punchOut) {
+          punchOutStr = att.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          status = 'CHECKED_OUT';
+          checkedOutCount++;
+        } else {
+          // Check if currently on break
+          const activeBreak = att.breaks.find((b) => !b.breakEnd);
+          if (activeBreak) {
+            status = 'ON_BREAK';
+            onBreakCount++;
+            breakStartStr = activeBreak.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } else {
+            status = 'WORKING';
+            presentCount++;
+          }
+        }
+
+        const totalBreakMins = att.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+        breakDurationMinutes = Math.round(totalBreakMins);
+        const hours = Math.floor(att.workingHours || 0);
+        const mins = Math.round(((att.workingHours || 0) - hours) * 60);
+        totalWorkingHours = `${hours}h ${mins}m`;
+      } else {
+        status = 'ABSENT';
+        absentCount++;
+      }
+
+      return {
+        id: emp.id,
+        customerId: emp.customerId,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`,
+        role: emp.designation?.name || 'Staff',
+        department: emp.department?.name || 'General',
+        status,
+        punchInTime: punchInStr,
+        punchOutTime: punchOutStr,
+        breakStartTime: breakStartStr,
+        breakDuration: `${breakDurationMinutes}m`,
+        totalWorkingHours,
+        location: att?.locationIn || 'Office GPS',
+        leaveType: leave?.leaveType?.name || null,
+        leaveReason: leave?.reason || null,
+      };
+    });
+
+    return {
+      summary: {
+        totalEmployees: employees.length,
+        presentCount,
+        onBreakCount,
+        onLeaveCount,
+        absentCount,
+        checkedOutCount,
+        attendancePercentage:
+          employees.length > 0
+            ? Math.round(((presentCount + onBreakCount) / employees.length) * 100)
+            : 0,
+      },
+      records: liveRecords,
+    };
+  }
 }

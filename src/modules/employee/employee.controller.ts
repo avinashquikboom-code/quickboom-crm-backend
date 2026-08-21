@@ -99,6 +99,19 @@ export class EmployeeController {
     return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin);
   }
 
+  @Get('hrm/live-attendance')
+  @ApiOperation({ summary: 'Get real-time employee attendance, breaks, and leave live data' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async getLiveAttendance(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single employee details' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
