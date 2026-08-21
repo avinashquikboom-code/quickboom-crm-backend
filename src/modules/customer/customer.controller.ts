@@ -40,6 +40,24 @@ export class CustomerController {
     return this.customerService.findOne(id);
   }
 
+  @Get(':id/plan')
+  @ApiOperation({ summary: 'Get current plan and customization details for customer' })
+  async getCustomerPlan(@Param('id') id: string) {
+    return this.customerService.getCustomerPlan(id);
+  }
+
+  @Get(':id/plan/history')
+  @ApiOperation({ summary: 'Get customer subscription assignment history' })
+  async getCustomerPlanHistory(@Param('id') id: string) {
+    return this.customerService.getCustomerPlanHistory(id);
+  }
+
+  @Post(':id/customize-plan')
+  @ApiOperation({ summary: 'Customize and assign subscription plan for customer' })
+  async customizePlan(@Param('id') id: string, @Body() dto: any) {
+    return this.customerService.customizeCustomerPlan(id, dto);
+  }
+
   @Post()
   @ApiOperation({ summary: 'Create new customer' })
   async create(@Body() dto: CreateCustomerDto) {

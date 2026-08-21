@@ -206,6 +206,11 @@ model CustomerSubscription {
   trialEndsAt  DateTime?
   autoRenew    Boolean                  @default(true)
   couponId     Int?
+  customPrice  Float?
+  customFeatures Json?
+  customUserLimit Int?
+  customLeadLimit Int?
+  customStorageLimit BigInt?
   createdAt    DateTime                 @default(now())
   updatedAt    DateTime                 @updatedAt
   deletedAt    DateTime?

@@ -2,6 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
+  Param,
   Body,
   UseGuards,
 } from '@nestjs/common';
@@ -21,6 +24,24 @@ export class SubscriptionController {
   @ApiOperation({ summary: 'Get all available subscription plans with monthly and yearly pricing' })
   async getPlans() {
     return this.subscriptionService.getPlans();
+  }
+
+  @Post('plans')
+  @ApiOperation({ summary: 'Create new subscription plan' })
+  async createPlan(@Body() dto: any) {
+    return this.subscriptionService.createPlan(dto);
+  }
+
+  @Patch('plans/:id')
+  @ApiOperation({ summary: 'Update existing subscription plan' })
+  async updatePlan(@Param('id') id: string, @Body() dto: any) {
+    return this.subscriptionService.updatePlan(id, dto);
+  }
+
+  @Delete('plans/:id')
+  @ApiOperation({ summary: 'Deactivate subscription plan' })
+  async deletePlan(@Param('id') id: string) {
+    return this.subscriptionService.deletePlan(id);
   }
 
   @Get('subscriptions/current')

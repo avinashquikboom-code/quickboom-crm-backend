@@ -165,6 +165,20 @@ export class SubscriptionService {
 
     const isExpired = sub.status === 'EXPIRED' || (sub.endDate && new Date() > new Date(sub.endDate));
 
+    const effectivePrice = sub.customPrice !== null && sub.customPrice !== undefined
+      ? Number(sub.customPrice)
+      : (sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice));
+
+    const effectiveUserLimit = sub.customUserLimit !== null && sub.customUserLimit !== undefined
+      ? sub.customUserLimit
+      : sub.plan.userLimit;
+
+    const effectiveLeadLimit = sub.customLeadLimit !== null && sub.customLeadLimit !== undefined
+      ? sub.customLeadLimit
+      : sub.plan.leadLimit;
+
+    const effectiveFeatures = sub.customFeatures || sub.plan.features;
+
     return {
       id: sub.id,
       customerId: sub.customerId,
@@ -175,10 +189,13 @@ export class SubscriptionService {
       billingCycle: sub.billingCycle || SubscriptionBillingCycle.MONTHLY,
       startDate: sub.startDate,
       endDate: sub.endDate,
-      price: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice),
-      userLimit: sub.plan.userLimit,
-      leadLimit: sub.plan.leadLimit,
-      features: sub.plan.features,
+      price: effectivePrice,
+      basePrice: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice),
+      customPrice: sub.customPrice !== null ? Number(sub.customPrice) : null,
+      isCustomized: sub.customPrice !== null || Boolean(sub.customFeatures) || Boolean(sub.customUserLimit),
+      userLimit: effectiveUserLimit,
+      leadLimit: effectiveLeadLimit,
+      features: effectiveFeatures,
       isExpired,
     };
   }
@@ -357,5 +374,91 @@ export class SubscriptionService {
       billingCycle: cycle,
       paymentMethod: dto.paymentMethod,
     });
+  }
+
+  async createPlan(dto: {
+    name: string;
+    code?: string;
+    description?: string;
+    monthlyPrice: number;
+    yearlyPrice?: number;
+    userLimit?: number;
+    leadLimit?: number;
+    storageLimitBytes?: number;
+    features?: string[];
+  }) {
+    const code = dto.code || dto.name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const monthlyPrice = Number(dto.monthlyPrice) || 0;
+    const yearlyPrice = dto.yearlyPrice ? Number(dto.yearlyPrice) : monthlyPrice * 10;
+    const userLimit = Number(dto.userLimit) || 20;
+    const leadLimit = Number(dto.leadLimit) || 1000;
+    const storageLimit = dto.storageLimitBytes ? BigInt(dto.storageLimitBytes) : BigInt(10737418240);
+    const features = Array.isArray(dto.features) ? dto.features : ['CRM', 'HRM', 'Payroll Automation'];
+
+    const plan = await this.prisma.plan.create({
+      data: {
+        name: dto.name,
+        code,
+        description: dto.description || '',
+        monthlyPrice,
+        yearlyPrice,
+        userLimit,
+        leadLimit,
+        storageLimit,
+        features,
+        isActive: true,
+      },
+    });
+
+    return {
+      id: plan.id,
+      name: plan.name,
+      code: plan.code,
+      description: plan.description,
+      monthlyPrice: Number(plan.monthlyPrice),
+      yearlyPrice: Number(plan.yearlyPrice),
+      userLimit: plan.userLimit,
+      leadLimit: plan.leadLimit,
+      features: plan.features,
+    };
+  }
+
+  async updatePlan(id: number | string, dto: any) {
+    const planId = Number(id);
+    const updateData: any = {};
+    if (dto.name) updateData.name = dto.name;
+    if (dto.description !== undefined) updateData.description = dto.description;
+    if (dto.monthlyPrice !== undefined) updateData.monthlyPrice = Number(dto.monthlyPrice);
+    if (dto.yearlyPrice !== undefined) updateData.yearlyPrice = Number(dto.yearlyPrice);
+    if (dto.userLimit !== undefined) updateData.userLimit = Number(dto.userLimit);
+    if (dto.leadLimit !== undefined) updateData.leadLimit = Number(dto.leadLimit);
+    if (dto.features !== undefined) updateData.features = dto.features;
+    if (dto.isActive !== undefined) updateData.isActive = Boolean(dto.isActive);
+
+    const plan = await this.prisma.plan.update({
+      where: { id: planId },
+      data: updateData,
+    });
+
+    return {
+      id: plan.id,
+      name: plan.name,
+      code: plan.code,
+      description: plan.description,
+      monthlyPrice: Number(plan.monthlyPrice),
+      yearlyPrice: Number(plan.yearlyPrice),
+      userLimit: plan.userLimit,
+      leadLimit: plan.leadLimit,
+      features: plan.features,
+    };
+  }
+
+  async deletePlan(id: number | string) {
+    const planId = Number(id);
+    await this.prisma.plan.update({
+      where: { id: planId },
+      data: { isActive: false, deletedAt: new Date() },
+    });
+    return { success: true, message: `Plan ${planId} deactivated` };
   }
 }
