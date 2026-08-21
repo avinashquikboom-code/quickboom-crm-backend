@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "RoleType" AS ENUM ('SUPER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER', 'SALES_EXECUTIVE', 'SUPPORT_AGENT', 'CUSTOM');
+CREATE TYPE "RoleType" AS ENUM ('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER', 'SALES_EXECUTIVE', 'SUPPORT_AGENT', 'CUSTOM');
 
 -- CreateEnum
 CREATE TYPE "SubscriptionStatus" AS ENUM ('TRIAL', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'EXPIRED');
@@ -61,9 +61,18 @@ CREATE TYPE "PayrollStatus" AS ENUM ('DRAFT', 'PROCESSING', 'CALCULATED', 'PENDI
 -- CreateEnum
 CREATE TYPE "StructureStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 
+-- CreateEnum
+CREATE TYPE "WorkType" AS ENUM ('REELS_SHOOT', 'VIDEO_EDITING', 'POST_DESIGN', 'STORY_DESIGN', 'UPLOADING', 'INFLUENCER_PROMO', 'ADS_MANAGEMENT');
+
+-- CreateEnum
+CREATE TYPE "WorkStatus" AS ENUM ('SCHEDULED', 'IN_PROGRESS', 'UNDER_REVIEW', 'COMPLETED', 'CANCELLED');
+
+-- CreateEnum
+CREATE TYPE "WorkPriority" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'URGENT');
+
 -- CreateTable
-CREATE TABLE "Tenant" (
-    "id" TEXT NOT NULL,
+CREATE TABLE "customers" (
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "domain" TEXT,
     "logo" TEXT,
@@ -82,12 +91,12 @@ CREATE TABLE "Tenant" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
 
-    CONSTRAINT "Tenant_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "customers_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Plan" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "description" TEXT,
@@ -106,27 +115,27 @@ CREATE TABLE "Plan" (
 );
 
 -- CreateTable
-CREATE TABLE "TenantSubscription" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "planId" TEXT NOT NULL,
+CREATE TABLE "customer_subscriptions" (
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "planId" INTEGER NOT NULL,
     "status" "SubscriptionStatus" NOT NULL DEFAULT 'TRIAL',
     "billingCycle" "SubscriptionBillingCycle" NOT NULL DEFAULT 'MONTHLY',
     "startDate" TIMESTAMP(3) NOT NULL,
     "endDate" TIMESTAMP(3) NOT NULL,
     "trialEndsAt" TIMESTAMP(3),
     "autoRenew" BOOLEAN NOT NULL DEFAULT true,
-    "couponId" TEXT,
+    "couponId" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
 
-    CONSTRAINT "TenantSubscription_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "customer_subscriptions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Coupon" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "code" TEXT NOT NULL,
     "discountPct" DOUBLE PRECISION NOT NULL,
     "maxRedemptions" INTEGER NOT NULL DEFAULT 100,
@@ -142,9 +151,9 @@ CREATE TABLE "Coupon" (
 
 -- CreateTable
 CREATE TABLE "PaymentHistory" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "subscriptionId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "subscriptionId" INTEGER,
     "amount" DOUBLE PRECISION NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'INR',
     "paymentMethod" "PaymentMethod" NOT NULL DEFAULT 'RAZORPAY',
@@ -153,7 +162,7 @@ CREATE TABLE "PaymentHistory" (
     "status" TEXT NOT NULL,
     "invoiceUrl" TEXT,
     "orderNumber" TEXT,
-    "planId" TEXT,
+    "planId" INTEGER,
     "planName" TEXT,
     "billingCycle" "SubscriptionBillingCycle",
     "taxAmount" DOUBLE PRECISION,
@@ -168,8 +177,8 @@ CREATE TABLE "PaymentHistory" (
 
 -- CreateTable
 CREATE TABLE "User" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER,
     "email" TEXT NOT NULL,
     "phone" TEXT,
     "passwordHash" TEXT NOT NULL,
@@ -190,8 +199,8 @@ CREATE TABLE "User" (
 
 -- CreateTable
 CREATE TABLE "Role" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER,
     "name" TEXT NOT NULL,
     "type" "RoleType" NOT NULL DEFAULT 'CUSTOM',
     "description" TEXT,
@@ -204,7 +213,7 @@ CREATE TABLE "Role" (
 
 -- CreateTable
 CREATE TABLE "Permission" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "module" TEXT NOT NULL,
     "action" TEXT NOT NULL,
     "description" TEXT,
@@ -216,24 +225,24 @@ CREATE TABLE "Permission" (
 
 -- CreateTable
 CREATE TABLE "UserRole" (
-    "userId" TEXT NOT NULL,
-    "roleId" TEXT NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "roleId" INTEGER NOT NULL,
 
     CONSTRAINT "UserRole_pkey" PRIMARY KEY ("userId","roleId")
 );
 
 -- CreateTable
 CREATE TABLE "RolePermission" (
-    "roleId" TEXT NOT NULL,
-    "permissionId" TEXT NOT NULL,
+    "roleId" INTEGER NOT NULL,
+    "permissionId" INTEGER NOT NULL,
 
     CONSTRAINT "RolePermission_pkey" PRIMARY KEY ("roleId","permissionId")
 );
 
 -- CreateTable
 CREATE TABLE "RefreshToken" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
     "token" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "isRevoked" BOOLEAN NOT NULL DEFAULT false,
@@ -244,8 +253,8 @@ CREATE TABLE "RefreshToken" (
 
 -- CreateTable
 CREATE TABLE "Session" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
     "ipAddress" TEXT,
     "userAgent" TEXT,
     "device" TEXT,
@@ -257,8 +266,8 @@ CREATE TABLE "Session" (
 
 -- CreateTable
 CREATE TABLE "Lead" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "title" TEXT NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -274,8 +283,8 @@ CREATE TABLE "Lead" (
     "status" "LeadStatus" NOT NULL DEFAULT 'NEW',
     "priority" "LeadPriority" NOT NULL DEFAULT 'MEDIUM',
     "value" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "assignedToId" TEXT,
-    "createdById" TEXT NOT NULL,
+    "assignedToId" INTEGER,
+    "createdById" INTEGER NOT NULL,
     "nextFollowUpDate" TIMESTAMP(3),
     "nextFollowUpTime" TEXT,
     "workStartDate" TIMESTAMP(3),
@@ -295,11 +304,11 @@ CREATE TABLE "Lead" (
 
 -- CreateTable
 CREATE TABLE "LeadStatusHistory" (
-    "id" TEXT NOT NULL,
-    "leadId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "leadId" INTEGER NOT NULL,
     "fromStatus" "LeadStatus",
     "toStatus" "LeadStatus" NOT NULL,
-    "changedById" TEXT,
+    "changedById" INTEGER,
     "notes" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -308,9 +317,9 @@ CREATE TABLE "LeadStatusHistory" (
 
 -- CreateTable
 CREATE TABLE "LeadNote" (
-    "id" TEXT NOT NULL,
-    "leadId" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "leadId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
     "content" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -320,8 +329,8 @@ CREATE TABLE "LeadNote" (
 
 -- CreateTable
 CREATE TABLE "LeadActivityTimeline" (
-    "id" TEXT NOT NULL,
-    "leadId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "leadId" INTEGER NOT NULL,
     "action" TEXT NOT NULL,
     "description" TEXT NOT NULL,
     "metadata" JSONB,
@@ -332,8 +341,8 @@ CREATE TABLE "LeadActivityTimeline" (
 
 -- CreateTable
 CREATE TABLE "LeadReminder" (
-    "id" TEXT NOT NULL,
-    "leadId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "leadId" INTEGER NOT NULL,
     "remindAt" TIMESTAMP(3) NOT NULL,
     "title" TEXT NOT NULL,
     "isCompleted" BOOLEAN NOT NULL DEFAULT false,
@@ -344,8 +353,8 @@ CREATE TABLE "LeadReminder" (
 
 -- CreateTable
 CREATE TABLE "Company" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "domain" TEXT,
     "industry" TEXT,
@@ -363,9 +372,9 @@ CREATE TABLE "Company" (
 
 -- CreateTable
 CREATE TABLE "Contact" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "companyId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "companyId" INTEGER,
     "type" "ContactType" NOT NULL DEFAULT 'CUSTOMER',
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -383,8 +392,8 @@ CREATE TABLE "Contact" (
 
 -- CreateTable
 CREATE TABLE "CommunicationHistory" (
-    "id" TEXT NOT NULL,
-    "contactId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "contactId" INTEGER NOT NULL,
     "type" TEXT NOT NULL,
     "summary" TEXT NOT NULL,
     "details" TEXT,
@@ -395,8 +404,8 @@ CREATE TABLE "CommunicationHistory" (
 
 -- CreateTable
 CREATE TABLE "Pipeline" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -408,8 +417,8 @@ CREATE TABLE "Pipeline" (
 
 -- CreateTable
 CREATE TABLE "PipelineStage" (
-    "id" TEXT NOT NULL,
-    "pipelineId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "pipelineId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "order" INTEGER NOT NULL,
     "probability" DOUBLE PRECISION NOT NULL DEFAULT 50.0,
@@ -421,12 +430,12 @@ CREATE TABLE "PipelineStage" (
 
 -- CreateTable
 CREATE TABLE "Deal" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "pipelineId" TEXT NOT NULL,
-    "stageId" TEXT NOT NULL,
-    "contactId" TEXT,
-    "companyId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "pipelineId" INTEGER NOT NULL,
+    "stageId" INTEGER NOT NULL,
+    "contactId" INTEGER,
+    "companyId" INTEGER,
     "title" TEXT NOT NULL,
     "amount" DOUBLE PRECISION NOT NULL,
     "expectedClosing" TIMESTAMP(3),
@@ -443,8 +452,8 @@ CREATE TABLE "Deal" (
 
 -- CreateTable
 CREATE TABLE "Task" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
     "status" "TaskStatus" NOT NULL DEFAULT 'PENDING',
@@ -452,8 +461,8 @@ CREATE TABLE "Task" (
     "dueDate" TIMESTAMP(3),
     "isRecurring" BOOLEAN NOT NULL DEFAULT false,
     "recurrence" TEXT,
-    "assignedToId" TEXT,
-    "createdById" TEXT NOT NULL,
+    "assignedToId" INTEGER,
+    "createdById" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
@@ -463,8 +472,8 @@ CREATE TABLE "Task" (
 
 -- CreateTable
 CREATE TABLE "Product" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "sku" TEXT NOT NULL,
     "description" TEXT,
@@ -482,11 +491,11 @@ CREATE TABLE "Product" (
 
 -- CreateTable
 CREATE TABLE "Quotation" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "contactId" TEXT,
-    "dealId" TEXT,
-    "leadId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "contactId" INTEGER,
+    "dealId" INTEGER,
+    "leadId" INTEGER,
     "quotationNo" TEXT NOT NULL,
     "status" "QuotationStatus" NOT NULL DEFAULT 'DRAFT',
     "subTotal" DOUBLE PRECISION NOT NULL,
@@ -504,9 +513,9 @@ CREATE TABLE "Quotation" (
 
 -- CreateTable
 CREATE TABLE "QuotationItem" (
-    "id" TEXT NOT NULL,
-    "quotationId" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "quotationId" INTEGER NOT NULL,
+    "productId" INTEGER NOT NULL,
     "quantity" INTEGER NOT NULL,
     "unitPrice" DOUBLE PRECISION NOT NULL,
     "total" DOUBLE PRECISION NOT NULL,
@@ -516,10 +525,10 @@ CREATE TABLE "QuotationItem" (
 
 -- CreateTable
 CREATE TABLE "Invoice" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "contactId" TEXT NOT NULL,
-    "quotationId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "contactId" INTEGER NOT NULL,
+    "quotationId" INTEGER,
     "invoiceNo" TEXT NOT NULL,
     "status" "InvoiceStatus" NOT NULL DEFAULT 'DRAFT',
     "issueDate" TIMESTAMP(3) NOT NULL,
@@ -538,9 +547,9 @@ CREATE TABLE "Invoice" (
 
 -- CreateTable
 CREATE TABLE "InvoiceItem" (
-    "id" TEXT NOT NULL,
-    "invoiceId" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "invoiceId" INTEGER NOT NULL,
+    "productId" INTEGER NOT NULL,
     "quantity" INTEGER NOT NULL,
     "unitPrice" DOUBLE PRECISION NOT NULL,
     "total" DOUBLE PRECISION NOT NULL,
@@ -550,15 +559,15 @@ CREATE TABLE "InvoiceItem" (
 
 -- CreateTable
 CREATE TABLE "SupportTicket" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "ticketNo" TEXT NOT NULL,
     "subject" TEXT NOT NULL,
     "description" TEXT NOT NULL,
     "status" "TicketStatus" NOT NULL DEFAULT 'OPEN',
     "priority" "TicketPriority" NOT NULL DEFAULT 'MEDIUM',
-    "assignedToId" TEXT,
-    "createdById" TEXT NOT NULL,
+    "assignedToId" INTEGER,
+    "createdById" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
@@ -568,9 +577,9 @@ CREATE TABLE "SupportTicket" (
 
 -- CreateTable
 CREATE TABLE "TicketComment" (
-    "id" TEXT NOT NULL,
-    "ticketId" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "ticketId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
     "comment" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -579,9 +588,9 @@ CREATE TABLE "TicketComment" (
 
 -- CreateTable
 CREATE TABLE "Notification" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
     "title" TEXT NOT NULL,
     "message" TEXT NOT NULL,
     "type" TEXT NOT NULL,
@@ -594,9 +603,9 @@ CREATE TABLE "Notification" (
 
 -- CreateTable
 CREATE TABLE "AuditLog" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT,
-    "userId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER,
+    "userId" INTEGER,
     "action" TEXT NOT NULL,
     "module" TEXT NOT NULL,
     "details" JSONB NOT NULL,
@@ -608,8 +617,8 @@ CREATE TABLE "AuditLog" (
 
 -- CreateTable
 CREATE TABLE "FeatureToggle" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "feature" TEXT NOT NULL,
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -619,16 +628,16 @@ CREATE TABLE "FeatureToggle" (
 
 -- CreateTable
 CREATE TABLE "EmployeeLocation" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "latitude" DOUBLE PRECISION NOT NULL,
     "longitude" DOUBLE PRECISION NOT NULL,
     "accuracy" DOUBLE PRECISION,
     "address" TEXT,
     "trackingType" "TrackingType" NOT NULL DEFAULT 'ATTENDANCE',
-    "attendanceId" TEXT,
-    "visitId" TEXT,
+    "attendanceId" INTEGER,
+    "visitId" INTEGER,
     "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -637,8 +646,8 @@ CREATE TABLE "EmployeeLocation" (
 
 -- CreateTable
 CREATE TABLE "BranchGeofence" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "city" TEXT,
     "latitude" DOUBLE PRECISION NOT NULL,
@@ -653,9 +662,9 @@ CREATE TABLE "BranchGeofence" (
 
 -- CreateTable
 CREATE TABLE "LocationTrackingSetting" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "trackingMode" "TrackingMode" NOT NULL DEFAULT 'ATTENDANCE_ONLY',
     "permissionStatus" "LocationPermissionStatus" NOT NULL DEFAULT 'GRANTED',
@@ -667,12 +676,12 @@ CREATE TABLE "LocationTrackingSetting" (
 
 -- CreateTable
 CREATE TABLE "Department" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "description" TEXT,
-    "headId" TEXT,
+    "headId" INTEGER,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -682,9 +691,9 @@ CREATE TABLE "Department" (
 
 -- CreateTable
 CREATE TABLE "Designation" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "departmentId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "departmentId" INTEGER,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "description" TEXT,
@@ -698,9 +707,9 @@ CREATE TABLE "Designation" (
 
 -- CreateTable
 CREATE TABLE "Employee" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "userId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "userId" INTEGER,
     "employeeCode" TEXT NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -709,9 +718,9 @@ CREATE TABLE "Employee" (
     "gender" TEXT,
     "dob" TIMESTAMP(3),
     "joiningDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "departmentId" TEXT,
-    "designationId" TEXT,
-    "managerId" TEXT,
+    "departmentId" INTEGER,
+    "designationId" INTEGER,
+    "managerId" INTEGER,
     "employmentType" TEXT NOT NULL DEFAULT 'FULL_TIME',
     "branch" TEXT NOT NULL DEFAULT 'Head Office',
     "address" TEXT,
@@ -727,9 +736,9 @@ CREATE TABLE "Employee" (
 
 -- CreateTable
 CREATE TABLE "Attendance" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "punchIn" TIMESTAMP(3),
     "punchOut" TIMESTAMP(3),
@@ -746,8 +755,8 @@ CREATE TABLE "Attendance" (
 
 -- CreateTable
 CREATE TABLE "AttendanceBreak" (
-    "id" TEXT NOT NULL,
-    "attendanceId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "attendanceId" INTEGER NOT NULL,
     "breakStart" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "breakEnd" TIMESTAMP(3),
     "duration" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -757,8 +766,8 @@ CREATE TABLE "AttendanceBreak" (
 
 -- CreateTable
 CREATE TABLE "LeaveType" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "daysAllowedPerYear" INTEGER NOT NULL DEFAULT 12,
@@ -772,10 +781,10 @@ CREATE TABLE "LeaveType" (
 
 -- CreateTable
 CREATE TABLE "LeaveRequest" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
-    "leaveTypeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
+    "leaveTypeId" INTEGER NOT NULL,
     "fromDate" TIMESTAMP(3) NOT NULL,
     "toDate" TIMESTAMP(3) NOT NULL,
     "days" INTEGER NOT NULL DEFAULT 1,
@@ -783,7 +792,7 @@ CREATE TABLE "LeaveRequest" (
     "attachmentUrl" TEXT,
     "status" "RequestStatus" NOT NULL DEFAULT 'PENDING',
     "rejectionReason" TEXT,
-    "approvedById" TEXT,
+    "approvedById" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -792,9 +801,9 @@ CREATE TABLE "LeaveRequest" (
 
 -- CreateTable
 CREATE TABLE "RemoteRequest" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "fromDate" TIMESTAMP(3) NOT NULL,
     "toDate" TIMESTAMP(3) NOT NULL,
     "days" INTEGER NOT NULL DEFAULT 1,
@@ -802,7 +811,7 @@ CREATE TABLE "RemoteRequest" (
     "attachmentUrl" TEXT,
     "status" "RequestStatus" NOT NULL DEFAULT 'PENDING',
     "rejectionReason" TEXT,
-    "approvedById" TEXT,
+    "approvedById" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -811,10 +820,10 @@ CREATE TABLE "RemoteRequest" (
 
 -- CreateTable
 CREATE TABLE "Visit" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
-    "leadId" TEXT,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
+    "leadId" INTEGER,
     "customerName" TEXT NOT NULL,
     "purpose" TEXT NOT NULL,
     "date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -835,9 +844,9 @@ CREATE TABLE "Visit" (
 
 -- CreateTable
 CREATE TABLE "SalaryStructure" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "basicSalary" DOUBLE PRECISION NOT NULL,
     "hra" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "allowances" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -865,11 +874,11 @@ CREATE TABLE "SalaryStructure" (
 
 -- CreateTable
 CREATE TABLE "Payroll" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "month" INTEGER NOT NULL,
     "year" INTEGER NOT NULL,
-    "departmentId" TEXT,
+    "departmentId" INTEGER,
     "status" "PayrollStatus" NOT NULL DEFAULT 'DRAFT',
     "grossSalary" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "totalDeductions" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -886,10 +895,10 @@ CREATE TABLE "Payroll" (
 
 -- CreateTable
 CREATE TABLE "PayrollItem" (
-    "id" TEXT NOT NULL,
-    "payrollId" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "payrollId" INTEGER NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "basicSalary" DOUBLE PRECISION NOT NULL,
     "hra" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "allowances" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -922,10 +931,10 @@ CREATE TABLE "PayrollItem" (
 
 -- CreateTable
 CREATE TABLE "SalarySlip" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "payrollItemId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "payrollItemId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
     "slipNumber" TEXT NOT NULL,
     "payPeriod" TEXT NOT NULL,
     "grossSalary" DOUBLE PRECISION NOT NULL,
@@ -942,8 +951,8 @@ CREATE TABLE "SalarySlip" (
 
 -- CreateTable
 CREATE TABLE "PayrollPolicy" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
     "workingDaysPerMonth" INTEGER NOT NULL DEFAULT 30,
     "lateDeductionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     "overtimeMultiplier" DOUBLE PRECISION NOT NULL DEFAULT 1.5,
@@ -956,14 +965,93 @@ CREATE TABLE "PayrollPolicy" (
     CONSTRAINT "PayrollPolicy_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "Tenant_domain_key" ON "Tenant"("domain");
+-- CreateTable
+CREATE TABLE "Team" (
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "leaderId" INTEGER,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Team_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TeamMember" (
+    "id" SERIAL NOT NULL,
+    "teamId" INTEGER NOT NULL,
+    "employeeId" INTEGER NOT NULL,
+    "role" TEXT NOT NULL DEFAULT 'MEMBER',
+    "joinedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TeamMember_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PlanEntitlement" (
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "planId" INTEGER,
+    "serviceName" TEXT NOT NULL,
+    "totalQty" INTEGER NOT NULL DEFAULT 0,
+    "usedQty" INTEGER NOT NULL DEFAULT 0,
+    "scheduledQty" INTEGER NOT NULL DEFAULT 0,
+    "validUntil" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PlanEntitlement_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Work" (
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "planId" INTEGER,
+    "entitlementId" INTEGER,
+    "teamId" INTEGER,
+    "assignedToId" INTEGER,
+    "workType" "WorkType" NOT NULL DEFAULT 'REELS_SHOOT',
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "scheduledDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "scheduledTime" TEXT,
+    "status" "WorkStatus" NOT NULL DEFAULT 'SCHEDULED',
+    "priority" "WorkPriority" NOT NULL DEFAULT 'MEDIUM',
+    "notes" TEXT,
+    "outputUrl" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Work_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "WorkTask" (
+    "id" SERIAL NOT NULL,
+    "workId" INTEGER NOT NULL,
+    "title" TEXT NOT NULL,
+    "stepOrder" INTEGER NOT NULL DEFAULT 1,
+    "assignedToId" INTEGER,
+    "status" "TaskStatus" NOT NULL DEFAULT 'PENDING',
+    "notes" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WorkTask_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateIndex
-CREATE INDEX "Tenant_deletedAt_idx" ON "Tenant"("deletedAt");
+CREATE UNIQUE INDEX "customers_domain_key" ON "customers"("domain");
 
 -- CreateIndex
-CREATE INDEX "Tenant_isActive_idx" ON "Tenant"("isActive");
+CREATE INDEX "customers_deletedAt_idx" ON "customers"("deletedAt");
+
+-- CreateIndex
+CREATE INDEX "customers_isActive_idx" ON "customers"("isActive");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Plan_name_key" ON "Plan"("name");
@@ -975,16 +1063,16 @@ CREATE UNIQUE INDEX "Plan_code_key" ON "Plan"("code");
 CREATE INDEX "Plan_deletedAt_idx" ON "Plan"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "TenantSubscription_tenantId_idx" ON "TenantSubscription"("tenantId");
+CREATE INDEX "customer_subscriptions_customerId_idx" ON "customer_subscriptions"("customerId");
 
 -- CreateIndex
-CREATE INDEX "TenantSubscription_planId_idx" ON "TenantSubscription"("planId");
+CREATE INDEX "customer_subscriptions_planId_idx" ON "customer_subscriptions"("planId");
 
 -- CreateIndex
-CREATE INDEX "TenantSubscription_status_idx" ON "TenantSubscription"("status");
+CREATE INDEX "customer_subscriptions_status_idx" ON "customer_subscriptions"("status");
 
 -- CreateIndex
-CREATE INDEX "TenantSubscription_deletedAt_idx" ON "TenantSubscription"("deletedAt");
+CREATE INDEX "customer_subscriptions_deletedAt_idx" ON "customer_subscriptions"("deletedAt");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Coupon_code_key" ON "Coupon"("code");
@@ -993,7 +1081,7 @@ CREATE UNIQUE INDEX "Coupon_code_key" ON "Coupon"("code");
 CREATE INDEX "Coupon_code_idx" ON "Coupon"("code");
 
 -- CreateIndex
-CREATE INDEX "PaymentHistory_tenantId_idx" ON "PaymentHistory"("tenantId");
+CREATE INDEX "PaymentHistory_customerId_idx" ON "PaymentHistory"("customerId");
 
 -- CreateIndex
 CREATE INDEX "PaymentHistory_deletedAt_idx" ON "PaymentHistory"("deletedAt");
@@ -1005,7 +1093,7 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 CREATE UNIQUE INDEX "User_phone_key" ON "User"("phone");
 
 -- CreateIndex
-CREATE INDEX "User_tenantId_idx" ON "User"("tenantId");
+CREATE INDEX "User_customerId_idx" ON "User"("customerId");
 
 -- CreateIndex
 CREATE INDEX "User_email_idx" ON "User"("email");
@@ -1017,7 +1105,7 @@ CREATE INDEX "User_phone_idx" ON "User"("phone");
 CREATE INDEX "User_deletedAt_idx" ON "User"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "Role_tenantId_idx" ON "Role"("tenantId");
+CREATE INDEX "Role_customerId_idx" ON "Role"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Role_deletedAt_idx" ON "Role"("deletedAt");
@@ -1038,7 +1126,7 @@ CREATE INDEX "RefreshToken_token_idx" ON "RefreshToken"("token");
 CREATE INDEX "Session_userId_idx" ON "Session"("userId");
 
 -- CreateIndex
-CREATE INDEX "Lead_tenantId_idx" ON "Lead"("tenantId");
+CREATE INDEX "Lead_customerId_idx" ON "Lead"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Lead_status_idx" ON "Lead"("status");
@@ -1062,13 +1150,13 @@ CREATE INDEX "LeadActivityTimeline_leadId_idx" ON "LeadActivityTimeline"("leadId
 CREATE INDEX "LeadReminder_leadId_idx" ON "LeadReminder"("leadId");
 
 -- CreateIndex
-CREATE INDEX "Company_tenantId_idx" ON "Company"("tenantId");
+CREATE INDEX "Company_customerId_idx" ON "Company"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Company_deletedAt_idx" ON "Company"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "Contact_tenantId_idx" ON "Contact"("tenantId");
+CREATE INDEX "Contact_customerId_idx" ON "Contact"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Contact_companyId_idx" ON "Contact"("companyId");
@@ -1080,7 +1168,7 @@ CREATE INDEX "Contact_deletedAt_idx" ON "Contact"("deletedAt");
 CREATE INDEX "CommunicationHistory_contactId_idx" ON "CommunicationHistory"("contactId");
 
 -- CreateIndex
-CREATE INDEX "Pipeline_tenantId_idx" ON "Pipeline"("tenantId");
+CREATE INDEX "Pipeline_customerId_idx" ON "Pipeline"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Pipeline_deletedAt_idx" ON "Pipeline"("deletedAt");
@@ -1089,7 +1177,7 @@ CREATE INDEX "Pipeline_deletedAt_idx" ON "Pipeline"("deletedAt");
 CREATE INDEX "PipelineStage_pipelineId_idx" ON "PipelineStage"("pipelineId");
 
 -- CreateIndex
-CREATE INDEX "Deal_tenantId_idx" ON "Deal"("tenantId");
+CREATE INDEX "Deal_customerId_idx" ON "Deal"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Deal_pipelineId_idx" ON "Deal"("pipelineId");
@@ -1101,7 +1189,7 @@ CREATE INDEX "Deal_stageId_idx" ON "Deal"("stageId");
 CREATE INDEX "Deal_deletedAt_idx" ON "Deal"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "Task_tenantId_idx" ON "Task"("tenantId");
+CREATE INDEX "Task_customerId_idx" ON "Task"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Task_assignedToId_idx" ON "Task"("assignedToId");
@@ -1113,16 +1201,16 @@ CREATE INDEX "Task_status_idx" ON "Task"("status");
 CREATE INDEX "Task_deletedAt_idx" ON "Task"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "Product_tenantId_idx" ON "Product"("tenantId");
+CREATE INDEX "Product_customerId_idx" ON "Product"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Product_deletedAt_idx" ON "Product"("deletedAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Product_tenantId_sku_key" ON "Product"("tenantId", "sku");
+CREATE UNIQUE INDEX "Product_customerId_sku_key" ON "Product"("customerId", "sku");
 
 -- CreateIndex
-CREATE INDEX "Quotation_tenantId_idx" ON "Quotation"("tenantId");
+CREATE INDEX "Quotation_customerId_idx" ON "Quotation"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Quotation_contactId_idx" ON "Quotation"("contactId");
@@ -1134,7 +1222,7 @@ CREATE INDEX "Quotation_leadId_idx" ON "Quotation"("leadId");
 CREATE INDEX "Quotation_deletedAt_idx" ON "Quotation"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "Invoice_tenantId_idx" ON "Invoice"("tenantId");
+CREATE INDEX "Invoice_customerId_idx" ON "Invoice"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Invoice_contactId_idx" ON "Invoice"("contactId");
@@ -1146,7 +1234,7 @@ CREATE INDEX "Invoice_status_idx" ON "Invoice"("status");
 CREATE INDEX "Invoice_deletedAt_idx" ON "Invoice"("deletedAt");
 
 -- CreateIndex
-CREATE INDEX "SupportTicket_tenantId_idx" ON "SupportTicket"("tenantId");
+CREATE INDEX "SupportTicket_customerId_idx" ON "SupportTicket"("customerId");
 
 -- CreateIndex
 CREATE INDEX "SupportTicket_status_idx" ON "SupportTicket"("status");
@@ -1158,7 +1246,7 @@ CREATE INDEX "SupportTicket_deletedAt_idx" ON "SupportTicket"("deletedAt");
 CREATE INDEX "TicketComment_ticketId_idx" ON "TicketComment"("ticketId");
 
 -- CreateIndex
-CREATE INDEX "Notification_tenantId_idx" ON "Notification"("tenantId");
+CREATE INDEX "Notification_customerId_idx" ON "Notification"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Notification_userId_idx" ON "Notification"("userId");
@@ -1167,7 +1255,7 @@ CREATE INDEX "Notification_userId_idx" ON "Notification"("userId");
 CREATE INDEX "Notification_isRead_idx" ON "Notification"("isRead");
 
 -- CreateIndex
-CREATE INDEX "AuditLog_tenantId_idx" ON "AuditLog"("tenantId");
+CREATE INDEX "AuditLog_customerId_idx" ON "AuditLog"("customerId");
 
 -- CreateIndex
 CREATE INDEX "AuditLog_userId_idx" ON "AuditLog"("userId");
@@ -1176,10 +1264,10 @@ CREATE INDEX "AuditLog_userId_idx" ON "AuditLog"("userId");
 CREATE INDEX "AuditLog_module_idx" ON "AuditLog"("module");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "FeatureToggle_tenantId_feature_key" ON "FeatureToggle"("tenantId", "feature");
+CREATE UNIQUE INDEX "FeatureToggle_customerId_feature_key" ON "FeatureToggle"("customerId", "feature");
 
 -- CreateIndex
-CREATE INDEX "EmployeeLocation_tenantId_idx" ON "EmployeeLocation"("tenantId");
+CREATE INDEX "EmployeeLocation_customerId_idx" ON "EmployeeLocation"("customerId");
 
 -- CreateIndex
 CREATE INDEX "EmployeeLocation_employeeId_idx" ON "EmployeeLocation"("employeeId");
@@ -1188,7 +1276,7 @@ CREATE INDEX "EmployeeLocation_employeeId_idx" ON "EmployeeLocation"("employeeId
 CREATE INDEX "EmployeeLocation_timestamp_idx" ON "EmployeeLocation"("timestamp");
 
 -- CreateIndex
-CREATE INDEX "BranchGeofence_tenantId_idx" ON "BranchGeofence"("tenantId");
+CREATE INDEX "BranchGeofence_customerId_idx" ON "BranchGeofence"("customerId");
 
 -- CreateIndex
 CREATE INDEX "BranchGeofence_isActive_idx" ON "BranchGeofence"("isActive");
@@ -1197,37 +1285,37 @@ CREATE INDEX "BranchGeofence_isActive_idx" ON "BranchGeofence"("isActive");
 CREATE UNIQUE INDEX "LocationTrackingSetting_employeeId_key" ON "LocationTrackingSetting"("employeeId");
 
 -- CreateIndex
-CREATE INDEX "LocationTrackingSetting_tenantId_idx" ON "LocationTrackingSetting"("tenantId");
+CREATE INDEX "LocationTrackingSetting_customerId_idx" ON "LocationTrackingSetting"("customerId");
 
 -- CreateIndex
 CREATE INDEX "LocationTrackingSetting_employeeId_idx" ON "LocationTrackingSetting"("employeeId");
 
 -- CreateIndex
-CREATE INDEX "Department_tenantId_idx" ON "Department"("tenantId");
+CREATE INDEX "Department_customerId_idx" ON "Department"("customerId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Department_tenantId_code_key" ON "Department"("tenantId", "code");
+CREATE UNIQUE INDEX "Department_customerId_code_key" ON "Department"("customerId", "code");
 
 -- CreateIndex
-CREATE INDEX "Designation_tenantId_idx" ON "Designation"("tenantId");
+CREATE INDEX "Designation_customerId_idx" ON "Designation"("customerId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Designation_tenantId_code_key" ON "Designation"("tenantId", "code");
+CREATE UNIQUE INDEX "Designation_customerId_code_key" ON "Designation"("customerId", "code");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Employee_userId_key" ON "Employee"("userId");
 
 -- CreateIndex
-CREATE INDEX "Employee_tenantId_idx" ON "Employee"("tenantId");
+CREATE INDEX "Employee_customerId_idx" ON "Employee"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Employee_email_idx" ON "Employee"("email");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Employee_tenantId_employeeCode_key" ON "Employee"("tenantId", "employeeCode");
+CREATE UNIQUE INDEX "Employee_customerId_employeeCode_key" ON "Employee"("customerId", "employeeCode");
 
 -- CreateIndex
-CREATE INDEX "Attendance_tenantId_idx" ON "Attendance"("tenantId");
+CREATE INDEX "Attendance_customerId_idx" ON "Attendance"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Attendance_employeeId_idx" ON "Attendance"("employeeId");
@@ -1239,25 +1327,25 @@ CREATE INDEX "Attendance_date_idx" ON "Attendance"("date");
 CREATE INDEX "AttendanceBreak_attendanceId_idx" ON "AttendanceBreak"("attendanceId");
 
 -- CreateIndex
-CREATE INDEX "LeaveType_tenantId_idx" ON "LeaveType"("tenantId");
+CREATE INDEX "LeaveType_customerId_idx" ON "LeaveType"("customerId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "LeaveType_tenantId_code_key" ON "LeaveType"("tenantId", "code");
+CREATE UNIQUE INDEX "LeaveType_customerId_code_key" ON "LeaveType"("customerId", "code");
 
 -- CreateIndex
-CREATE INDEX "LeaveRequest_tenantId_idx" ON "LeaveRequest"("tenantId");
+CREATE INDEX "LeaveRequest_customerId_idx" ON "LeaveRequest"("customerId");
 
 -- CreateIndex
 CREATE INDEX "LeaveRequest_employeeId_idx" ON "LeaveRequest"("employeeId");
 
 -- CreateIndex
-CREATE INDEX "RemoteRequest_tenantId_idx" ON "RemoteRequest"("tenantId");
+CREATE INDEX "RemoteRequest_customerId_idx" ON "RemoteRequest"("customerId");
 
 -- CreateIndex
 CREATE INDEX "RemoteRequest_employeeId_idx" ON "RemoteRequest"("employeeId");
 
 -- CreateIndex
-CREATE INDEX "Visit_tenantId_idx" ON "Visit"("tenantId");
+CREATE INDEX "Visit_customerId_idx" ON "Visit"("customerId");
 
 -- CreateIndex
 CREATE INDEX "Visit_employeeId_idx" ON "Visit"("employeeId");
@@ -1266,22 +1354,22 @@ CREATE INDEX "Visit_employeeId_idx" ON "Visit"("employeeId");
 CREATE INDEX "Visit_leadId_idx" ON "Visit"("leadId");
 
 -- CreateIndex
-CREATE INDEX "SalaryStructure_tenantId_idx" ON "SalaryStructure"("tenantId");
+CREATE INDEX "SalaryStructure_customerId_idx" ON "SalaryStructure"("customerId");
 
 -- CreateIndex
 CREATE INDEX "SalaryStructure_employeeId_idx" ON "SalaryStructure"("employeeId");
 
 -- CreateIndex
-CREATE INDEX "Payroll_tenantId_idx" ON "Payroll"("tenantId");
+CREATE INDEX "Payroll_customerId_idx" ON "Payroll"("customerId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Payroll_tenantId_month_year_departmentId_key" ON "Payroll"("tenantId", "month", "year", "departmentId");
+CREATE UNIQUE INDEX "Payroll_customerId_month_year_departmentId_key" ON "Payroll"("customerId", "month", "year", "departmentId");
 
 -- CreateIndex
 CREATE INDEX "PayrollItem_payrollId_idx" ON "PayrollItem"("payrollId");
 
 -- CreateIndex
-CREATE INDEX "PayrollItem_tenantId_idx" ON "PayrollItem"("tenantId");
+CREATE INDEX "PayrollItem_customerId_idx" ON "PayrollItem"("customerId");
 
 -- CreateIndex
 CREATE INDEX "PayrollItem_employeeId_idx" ON "PayrollItem"("employeeId");
@@ -1290,37 +1378,73 @@ CREATE INDEX "PayrollItem_employeeId_idx" ON "PayrollItem"("employeeId");
 CREATE UNIQUE INDEX "SalarySlip_slipNumber_key" ON "SalarySlip"("slipNumber");
 
 -- CreateIndex
-CREATE INDEX "SalarySlip_tenantId_idx" ON "SalarySlip"("tenantId");
+CREATE INDEX "SalarySlip_customerId_idx" ON "SalarySlip"("customerId");
 
 -- CreateIndex
 CREATE INDEX "SalarySlip_employeeId_idx" ON "SalarySlip"("employeeId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PayrollPolicy_tenantId_key" ON "PayrollPolicy"("tenantId");
+CREATE UNIQUE INDEX "PayrollPolicy_customerId_key" ON "PayrollPolicy"("customerId");
 
 -- CreateIndex
-CREATE INDEX "PayrollPolicy_tenantId_idx" ON "PayrollPolicy"("tenantId");
+CREATE INDEX "PayrollPolicy_customerId_idx" ON "PayrollPolicy"("customerId");
+
+-- CreateIndex
+CREATE INDEX "Team_customerId_idx" ON "Team"("customerId");
+
+-- CreateIndex
+CREATE INDEX "TeamMember_teamId_idx" ON "TeamMember"("teamId");
+
+-- CreateIndex
+CREATE INDEX "TeamMember_employeeId_idx" ON "TeamMember"("employeeId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "TeamMember_teamId_employeeId_key" ON "TeamMember"("teamId", "employeeId");
+
+-- CreateIndex
+CREATE INDEX "PlanEntitlement_customerId_idx" ON "PlanEntitlement"("customerId");
+
+-- CreateIndex
+CREATE INDEX "Work_customerId_idx" ON "Work"("customerId");
+
+-- CreateIndex
+CREATE INDEX "Work_teamId_idx" ON "Work"("teamId");
+
+-- CreateIndex
+CREATE INDEX "Work_assignedToId_idx" ON "Work"("assignedToId");
+
+-- CreateIndex
+CREATE INDEX "Work_scheduledDate_idx" ON "Work"("scheduledDate");
+
+-- CreateIndex
+CREATE INDEX "Work_status_idx" ON "Work"("status");
+
+-- CreateIndex
+CREATE INDEX "WorkTask_workId_idx" ON "WorkTask"("workId");
+
+-- CreateIndex
+CREATE INDEX "WorkTask_assignedToId_idx" ON "WorkTask"("assignedToId");
 
 -- AddForeignKey
-ALTER TABLE "TenantSubscription" ADD CONSTRAINT "TenantSubscription_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "TenantSubscription" ADD CONSTRAINT "TenantSubscription_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "TenantSubscription" ADD CONSTRAINT "TenantSubscription_couponId_fkey" FOREIGN KEY ("couponId") REFERENCES "Coupon"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_couponId_fkey" FOREIGN KEY ("couponId") REFERENCES "Coupon"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PaymentHistory" ADD CONSTRAINT "PaymentHistory_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "PaymentHistory" ADD CONSTRAINT "PaymentHistory_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PaymentHistory" ADD CONSTRAINT "PaymentHistory_subscriptionId_fkey" FOREIGN KEY ("subscriptionId") REFERENCES "TenantSubscription"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "PaymentHistory" ADD CONSTRAINT "PaymentHistory_subscriptionId_fkey" FOREIGN KEY ("subscriptionId") REFERENCES "customer_subscriptions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "User" ADD CONSTRAINT "User_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "User" ADD CONSTRAINT "User_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Role" ADD CONSTRAINT "Role_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Role" ADD CONSTRAINT "Role_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "UserRole" ADD CONSTRAINT "UserRole_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1341,7 +1465,7 @@ ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY
 ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Lead" ADD CONSTRAINT "Lead_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Lead" ADD CONSTRAINT "Lead_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Lead" ADD CONSTRAINT "Lead_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1365,10 +1489,10 @@ ALTER TABLE "LeadActivityTimeline" ADD CONSTRAINT "LeadActivityTimeline_leadId_f
 ALTER TABLE "LeadReminder" ADD CONSTRAINT "LeadReminder_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "Lead"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Company" ADD CONSTRAINT "Company_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Company" ADD CONSTRAINT "Company_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Contact" ADD CONSTRAINT "Contact_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Contact" ADD CONSTRAINT "Contact_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Contact" ADD CONSTRAINT "Contact_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1377,13 +1501,13 @@ ALTER TABLE "Contact" ADD CONSTRAINT "Contact_companyId_fkey" FOREIGN KEY ("comp
 ALTER TABLE "CommunicationHistory" ADD CONSTRAINT "CommunicationHistory_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Pipeline" ADD CONSTRAINT "Pipeline_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Pipeline" ADD CONSTRAINT "Pipeline_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PipelineStage" ADD CONSTRAINT "PipelineStage_pipelineId_fkey" FOREIGN KEY ("pipelineId") REFERENCES "Pipeline"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Deal" ADD CONSTRAINT "Deal_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Deal" ADD CONSTRAINT "Deal_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Deal" ADD CONSTRAINT "Deal_pipelineId_fkey" FOREIGN KEY ("pipelineId") REFERENCES "Pipeline"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1398,7 +1522,7 @@ ALTER TABLE "Deal" ADD CONSTRAINT "Deal_contactId_fkey" FOREIGN KEY ("contactId"
 ALTER TABLE "Deal" ADD CONSTRAINT "Deal_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Task" ADD CONSTRAINT "Task_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Task" ADD CONSTRAINT "Task_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Task" ADD CONSTRAINT "Task_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1407,10 +1531,10 @@ ALTER TABLE "Task" ADD CONSTRAINT "Task_assignedToId_fkey" FOREIGN KEY ("assigne
 ALTER TABLE "Task" ADD CONSTRAINT "Task_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Product" ADD CONSTRAINT "Product_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Quotation" ADD CONSTRAINT "Quotation_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Quotation" ADD CONSTRAINT "Quotation_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Quotation" ADD CONSTRAINT "Quotation_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1428,7 +1552,7 @@ ALTER TABLE "QuotationItem" ADD CONSTRAINT "QuotationItem_quotationId_fkey" FORE
 ALTER TABLE "QuotationItem" ADD CONSTRAINT "QuotationItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1443,7 +1567,7 @@ ALTER TABLE "InvoiceItem" ADD CONSTRAINT "InvoiceItem_invoiceId_fkey" FOREIGN KE
 ALTER TABLE "InvoiceItem" ADD CONSTRAINT "InvoiceItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "SupportTicket" ADD CONSTRAINT "SupportTicket_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "SupportTicket" ADD CONSTRAINT "SupportTicket_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SupportTicket" ADD CONSTRAINT "SupportTicket_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1458,40 +1582,40 @@ ALTER TABLE "TicketComment" ADD CONSTRAINT "TicketComment_ticketId_fkey" FOREIGN
 ALTER TABLE "TicketComment" ADD CONSTRAINT "TicketComment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Notification" ADD CONSTRAINT "Notification_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "FeatureToggle" ADD CONSTRAINT "FeatureToggle_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "FeatureToggle" ADD CONSTRAINT "FeatureToggle_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "EmployeeLocation" ADD CONSTRAINT "EmployeeLocation_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "EmployeeLocation" ADD CONSTRAINT "EmployeeLocation_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "BranchGeofence" ADD CONSTRAINT "BranchGeofence_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "BranchGeofence" ADD CONSTRAINT "BranchGeofence_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LocationTrackingSetting" ADD CONSTRAINT "LocationTrackingSetting_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LocationTrackingSetting" ADD CONSTRAINT "LocationTrackingSetting_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Department" ADD CONSTRAINT "Department_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Department" ADD CONSTRAINT "Department_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Designation" ADD CONSTRAINT "Designation_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Designation" ADD CONSTRAINT "Designation_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Designation" ADD CONSTRAINT "Designation_departmentId_fkey" FOREIGN KEY ("departmentId") REFERENCES "Department"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Employee" ADD CONSTRAINT "Employee_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Employee" ADD CONSTRAINT "Employee_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Employee" ADD CONSTRAINT "Employee_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1527,7 +1651,7 @@ ALTER TABLE "Visit" ADD CONSTRAINT "Visit_leadId_fkey" FOREIGN KEY ("leadId") RE
 ALTER TABLE "SalaryStructure" ADD CONSTRAINT "SalaryStructure_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Payroll" ADD CONSTRAINT "Payroll_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Payroll" ADD CONSTRAINT "Payroll_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayrollItem" ADD CONSTRAINT "PayrollItem_payrollId_fkey" FOREIGN KEY ("payrollId") REFERENCES "Payroll"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1542,4 +1666,34 @@ ALTER TABLE "SalarySlip" ADD CONSTRAINT "SalarySlip_payrollItemId_fkey" FOREIGN 
 ALTER TABLE "SalarySlip" ADD CONSTRAINT "SalarySlip_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PayrollPolicy" ADD CONSTRAINT "PayrollPolicy_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "PayrollPolicy" ADD CONSTRAINT "PayrollPolicy_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Team" ADD CONSTRAINT "Team_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TeamMember" ADD CONSTRAINT "TeamMember_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TeamMember" ADD CONSTRAINT "TeamMember_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PlanEntitlement" ADD CONSTRAINT "PlanEntitlement_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Work" ADD CONSTRAINT "Work_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Work" ADD CONSTRAINT "Work_entitlementId_fkey" FOREIGN KEY ("entitlementId") REFERENCES "PlanEntitlement"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Work" ADD CONSTRAINT "Work_teamId_fkey" FOREIGN KEY ("teamId") REFERENCES "Team"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Work" ADD CONSTRAINT "Work_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "Employee"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "WorkTask" ADD CONSTRAINT "WorkTask_workId_fkey" FOREIGN KEY ("workId") REFERENCES "Work"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "WorkTask" ADD CONSTRAINT "WorkTask_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "Employee"("id") ON DELETE SET NULL ON UPDATE CASCADE;
