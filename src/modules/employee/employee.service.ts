@@ -1,23 +1,66 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
+
+export interface FindAllEmployeesParams {
+  customerId?: number | string;
+  isSuperAdmin?: boolean;
+  search?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface EmployeeFindOneParams {
+  id: number | string;
+  customerId?: number | string;
+  isSuperAdmin?: boolean;
+}
+
+export interface CreateEmployeeParams {
+  customerId: number | string;
+  dto: CreateEmployeeDto;
+}
+
+export interface UpdateEmployeeParams {
+  id: number | string;
+  customerId?: number | string;
+  isSuperAdmin?: boolean;
+  dto: UpdateEmployeeDto;
+}
 
 @Injectable()
 export class EmployeeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: number | string, search?: string, status?: string, page = 1, limit = 50) {
-    const numCustomerId = Number(customerId);
+  async findAll(params: FindAllEmployeesParams) {
+    const { customerId, isSuperAdmin, search, status, page = 1, limit = 50 } = params;
     const skip = (page - 1) * limit;
-    const where: any = { customerId: numCustomerId };
+    const where: any = {};
+
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) {
+        throw new BadRequestException('Invalid customerId provided');
+      }
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for employee access');
+    }
 
     if (status) where.status = status;
-    if (search) {
+    if (search && search.trim().length > 0) {
+      const trimmedSearch = search.trim();
       where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { employeeCode: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: trimmedSearch, mode: 'insensitive' } },
+        { lastName: { contains: trimmedSearch, mode: 'insensitive' } },
+        { email: { contains: trimmedSearch, mode: 'insensitive' } },
+        { employeeCode: { contains: trimmedSearch, mode: 'insensitive' } },
       ];
     }
 
@@ -37,8 +80,11 @@ export class EmployeeService {
 
     const formatted = items.map((e) => ({
       id: e.id,
+      customerId: e.customerId,
       employeeId: e.employeeCode,
       name: `${e.firstName} ${e.lastName}`,
+      firstName: e.firstName,
+      lastName: e.lastName,
       email: e.email,
       phone: e.phone || '+91 98765 43210',
       designation: e.designation?.name || 'SSM Specialist',
@@ -59,11 +105,27 @@ export class EmployeeService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async findOne(params: EmployeeFindOneParams) {
+    const { id, customerId, isSuperAdmin } = params;
     const numId = Number(id);
+    if (isNaN(numId)) {
+      throw new BadRequestException('Invalid employee ID');
+    }
+
+    const where: any = { id: numId };
+
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) {
+        throw new BadRequestException('Invalid customerId provided');
+      }
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for employee access');
+    }
+
     const employee = await this.prisma.employee.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where,
       include: {
         department: true,
         designation: true,
@@ -78,6 +140,7 @@ export class EmployeeService {
 
     return {
       id: employee.id,
+      customerId: employee.customerId,
       employeeId: employee.employeeCode,
       name: `${employee.firstName} ${employee.lastName}`,
       firstName: employee.firstName,
@@ -93,8 +156,14 @@ export class EmployeeService {
     };
   }
 
-  async create(customerId: number | string, dto: CreateEmployeeDto) {
+  async create(params: CreateEmployeeParams) {
+    const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      throw new BadRequestException('Valid customerId is required');
+    }
+
+    // Verify or create department scoped to the authenticated customer
     let department = await this.prisma.department.findFirst({
       where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
     });
@@ -108,6 +177,7 @@ export class EmployeeService {
       });
     }
 
+    // Verify or create designation scoped to the authenticated customer
     let designation = await this.prisma.designation.findFirst({
       where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
     });
@@ -135,30 +205,51 @@ export class EmployeeService {
         designationId: designation.id,
         status: 'ACTIVE',
       },
+      include: {
+        department: true,
+        designation: true,
+      },
     });
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateEmployeeDto) {
+  async update(params: UpdateEmployeeParams) {
+    const { id, customerId, isSuperAdmin, dto } = params;
+    // Strict ownership verification: ensure employee exists and belongs to customer
+    await this.findOne({ id, customerId, isSuperAdmin });
+
     const numId = Number(id);
-    await this.findOne(customerId, numId);
     return this.prisma.employee.update({
       where: { id: numId },
       data: dto,
+      include: {
+        department: true,
+        designation: true,
+      },
     });
   }
 
-  async remove(customerId: number | string, id: number | string) {
+  async remove(params: EmployeeFindOneParams) {
+    const { id, customerId, isSuperAdmin } = params;
+    // Strict ownership verification: ensure employee exists and belongs to customer
+    await this.findOne({ id, customerId, isSuperAdmin });
+
     const numId = Number(id);
-    await this.findOne(customerId, numId);
     return this.prisma.employee.update({
       where: { id: numId },
       data: { status: 'INACTIVE' },
     });
   }
 
-  async getLeaves(customerId?: number | string) {
-    const numCustomerId = Number(customerId);
-    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+  async getLeaves(customerId?: number | string, isSuperAdmin = false) {
+    const where: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for leaves access');
+    }
+
     const leaves = await this.prisma.leaveRequest.findMany({
       where,
       include: { employee: true, leaveType: true },
@@ -167,6 +258,7 @@ export class EmployeeService {
 
     return leaves.map((l) => ({
       id: String(l.id),
+      customerId: l.customerId,
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Employee',
       employeeId: l.employee?.employeeCode || 'EMP-001',
       leaveType: l.leaveType?.name || 'Casual Leave',
@@ -179,9 +271,16 @@ export class EmployeeService {
     }));
   }
 
-  async getRemoteRequests(customerId?: number | string) {
-    const numCustomerId = Number(customerId);
-    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+  async getRemoteRequests(customerId?: number | string, isSuperAdmin = false) {
+    const where: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for remote requests access');
+    }
+
     const requests = await this.prisma.remoteRequest.findMany({
       where,
       include: { employee: true },
@@ -190,6 +289,7 @@ export class EmployeeService {
 
     return requests.map((r) => ({
       id: String(r.id),
+      customerId: r.customerId,
       employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName}` : 'Employee',
       employeeId: r.employee?.employeeCode || 'EMP-001',
       requestType: 'WORK_FROM_HOME',
@@ -200,9 +300,16 @@ export class EmployeeService {
     }));
   }
 
-  async getAttendance(customerId?: number | string) {
-    const numCustomerId = Number(customerId);
-    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+  async getAttendance(customerId?: number | string, isSuperAdmin = false) {
+    const where: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for attendance access');
+    }
+
     const records = await this.prisma.attendance.findMany({
       where,
       include: { employee: true },
@@ -212,6 +319,7 @@ export class EmployeeService {
 
     return records.map((a) => ({
       id: String(a.id),
+      customerId: a.customerId,
       employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Employee',
       employeeId: a.employee?.employeeCode || 'EMP-001',
       date: a.date ? a.date.toISOString().split('T')[0] : '2026-08-21',

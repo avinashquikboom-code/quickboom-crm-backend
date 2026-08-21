@@ -9,6 +9,10 @@ export class CustomerGuard implements CanActivate {
 
     // Super Admins bypass customer isolation check
     if (user && user.roles?.includes(RoleType.SUPER_ADMIN)) {
+      const explicitCustomerId = request.headers['x-customer-id'] || request.query?.customerId;
+      if (explicitCustomerId) {
+        request.customerId = Number(explicitCustomerId);
+      }
       return true;
     }
 
@@ -19,11 +23,11 @@ export class CustomerGuard implements CanActivate {
       throw new ForbiddenException('User does not belong to any customer');
     }
 
-    if (headerCustomerId && headerCustomerId !== userCustomerId) {
+    if (headerCustomerId && Number(headerCustomerId) !== Number(userCustomerId)) {
       throw new ForbiddenException('Cross-customer access forbidden');
     }
 
-    request.customerId = userCustomerId;
+    request.customerId = Number(userCustomerId);
     return true;
   }
 }
