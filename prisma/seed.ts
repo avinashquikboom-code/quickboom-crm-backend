@@ -8,80 +8,67 @@ async function main() {
   const password = '123456';
   const hashedPassword = await bcrypt.hash(password, 10);
 
+  // 1. Ensure SUPER_ADMIN role exists
+  let superAdminRole = await prisma.role.findFirst({
+    where: { type: RoleType.SUPER_ADMIN },
+  });
+
+  if (!superAdminRole) {
+    superAdminRole = await prisma.role.create({
+      data: {
+        name: 'Super Administrator',
+        type: RoleType.SUPER_ADMIN,
+        description: 'Full administrative platform access',
+      },
+    });
+  }
+
+  // 2. Find or Create User
   const existingUser = await prisma.user.findUnique({
     where: { email },
   });
 
-  if (!existingUser) {
-    const customer = await prisma.customer.create({
+  let user = existingUser;
+
+  if (!user) {
+    user = await prisma.user.create({
       data: {
-        name: 'QuikBoom Enterprise Workspace',
         email,
         phone: '+1-555-0100',
-      },
-    });
-
-    const starterPlan = await prisma.plan.upsert({
-      where: { code: 'STARTER' },
-      update: {},
-      create: {
-        name: 'Starter Plan',
-        code: 'STARTER',
-        monthlyPrice: 29.0,
-        yearlyPrice: 290.0,
-        userLimit: 5,
-        leadLimit: 500,
-        storageLimit: BigInt(5368709120),
-        features: ['LEADS', 'CONTACTS', 'DEALS', 'TASKS'],
-      },
-    });
-
-    await prisma.customerSubscription.create({
-      data: {
-        customerId: customer.id,
-        planId: starterPlan.id,
-        startDate: new Date(),
-        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-        status: 'ACTIVE',
-      },
-    });
-
-    const adminRole = await prisma.role.create({
-      data: {
-        customerId: customer.id,
-        name: 'Customer Administrator',
-        type: RoleType.CUSTOMER_ADMIN,
-        description: 'Full administrative access',
-      },
-    });
-
-    const user = await prisma.user.create({
-      data: {
-        customerId: customer.id,
-        email,
-        phone: '+1-555-0100',
-        firstName: 'Demo',
-        lastName: 'User',
+        firstName: 'Super',
+        lastName: 'Admin',
         passwordHash: hashedPassword,
         isVerified: true,
       },
     });
-
-    await prisma.userRole.create({
-      data: {
-        userId: user.id,
-        roleId: adminRole.id,
-      },
-    });
-
-    console.log(`✅ Seeded QuikBoom Enterprise Customer & Admin (${email} / ${password})`);
+    console.log(`✅ Created Super Admin user (${email} / ${password})`);
   } else {
     await prisma.user.update({
-      where: { id: existingUser.id },
+      where: { id: user.id },
       data: { passwordHash: hashedPassword },
     });
-    console.log(`✅ Updated password for ${email} to ${password}`);
+    console.log(`✅ Updated password for Super Admin user (${email})`);
   }
+
+  // 3. Assign SUPER_ADMIN role to user
+  await prisma.userRole.deleteMany({
+    where: { userId: user.id },
+  });
+
+  await prisma.userRole.create({
+    data: {
+      userId: user.id,
+      roleId: superAdminRole.id,
+    },
+  });
+
+  // 4. Update any existing roles named 'Customer Administrator' to avoid stale states
+  await prisma.role.updateMany({
+    where: { name: 'Customer Administrator' },
+    data: { type: RoleType.SUPER_ADMIN },
+  });
+
+  console.log(`✅ Assigned role SUPER_ADMIN to ${email}`);
 }
 
 main()
