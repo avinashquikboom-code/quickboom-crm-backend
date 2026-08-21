@@ -76,4 +76,22 @@ export class EmployeeController {
     const customerId = customerIdQuery || 'default-customer';
     return this.employeeService.remove(customerId, id);
   }
+
+  @Get('hrm/leaves')
+  @ApiOperation({ summary: 'Get employee leave requests' })
+  async getLeaves(@Query('customerId') customerIdQuery?: string) {
+    return this.employeeService.getLeaves(customerIdQuery);
+  }
+
+  @Get('hrm/remote-requests')
+  @ApiOperation({ summary: 'Get remote work requests' })
+  async getRemoteRequests(@Query('customerId') customerIdQuery?: string) {
+    return this.employeeService.getRemoteRequests(customerIdQuery);
+  }
+
+  @Get('hrm/attendance')
+  @ApiOperation({ summary: 'Get employee attendance logs' })
+  async getAttendance(@Query('customerId') customerIdQuery?: string) {
+    return this.employeeService.getAttendance(customerIdQuery);
+  }
 }

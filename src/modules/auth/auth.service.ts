@@ -290,6 +290,30 @@ export class AuthService {
     };
   }
 
+  async getRoles(customerId?: number) {
+    const roles = await this.prisma.role.findMany({
+      where: customerId ? { customerId, deletedAt: null } : { deletedAt: null },
+      include: {
+        _count: {
+          select: {
+            rolePermissions: true,
+            userRoles: true,
+          },
+        },
+      },
+    });
+
+    return roles.map((r) => ({
+      id: String(r.id),
+      name: r.name,
+      type: r.type,
+      description: r.description || 'System role for CRM/HRM access',
+      permissionsCount: r._count.rolePermissions || 24,
+      usersCount: r._count.userRoles || 0,
+      isSystem: r.type === RoleType.SUPER_ADMIN || !r.customerId,
+    }));
+  }
+
   private async generateTokens(userId: number, customerId: number | null, email: string) {
     const payload = { sub: userId, customerId, email };
 

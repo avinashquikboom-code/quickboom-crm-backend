@@ -155,4 +155,71 @@ export class EmployeeService {
       data: { status: 'INACTIVE' },
     });
   }
+
+  async getLeaves(customerId?: number | string) {
+    const numCustomerId = Number(customerId);
+    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const leaves = await this.prisma.leaveRequest.findMany({
+      where,
+      include: { employee: true, leaveType: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return leaves.map((l) => ({
+      id: String(l.id),
+      employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Employee',
+      employeeId: l.employee?.employeeCode || 'EMP-001',
+      leaveType: l.leaveType?.name || 'Casual Leave',
+      fromDate: l.fromDate ? l.fromDate.toISOString().split('T')[0] : '2026-08-20',
+      toDate: l.toDate ? l.toDate.toISOString().split('T')[0] : '2026-08-22',
+      totalDays: l.days || 1,
+      reason: l.reason || 'Leave request',
+      status: l.status,
+      appliedOn: l.createdAt ? l.createdAt.toISOString().split('T')[0] : '2026-08-15',
+    }));
+  }
+
+  async getRemoteRequests(customerId?: number | string) {
+    const numCustomerId = Number(customerId);
+    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const requests = await this.prisma.remoteRequest.findMany({
+      where,
+      include: { employee: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return requests.map((r) => ({
+      id: String(r.id),
+      employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName}` : 'Employee',
+      employeeId: r.employee?.employeeCode || 'EMP-001',
+      requestType: 'WORK_FROM_HOME',
+      date: r.fromDate ? r.fromDate.toISOString().split('T')[0] : '2026-08-21',
+      reason: r.reason || 'Remote work request',
+      status: r.status,
+      appliedOn: r.createdAt ? r.createdAt.toISOString().split('T')[0] : '2026-08-15',
+    }));
+  }
+
+  async getAttendance(customerId?: number | string) {
+    const numCustomerId = Number(customerId);
+    const where = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const records = await this.prisma.attendance.findMany({
+      where,
+      include: { employee: true },
+      orderBy: { date: 'desc' },
+      take: 50,
+    });
+
+    return records.map((a) => ({
+      id: String(a.id),
+      employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Employee',
+      employeeId: a.employee?.employeeCode || 'EMP-001',
+      date: a.date ? a.date.toISOString().split('T')[0] : '2026-08-21',
+      punchIn: a.punchIn ? a.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '09:00 AM',
+      punchOut: a.punchOut ? a.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '06:00 PM',
+      workingHours: a.workingHours ? `${a.workingHours}h` : '8h',
+      status: a.status,
+      location: a.locationIn || 'Office GPS',
+    }));
+  }
 }

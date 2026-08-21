@@ -6,51 +6,83 @@ export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getLiveMetrics(customerId: string, officeId?: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const numCustomerId = Number(customerId);
+    const hasValidCustomerId = !isNaN(numCustomerId) && numCustomerId > 0;
 
-    const offices = [
-      { id: 'off-1', name: 'Head Office', city: 'Mumbai', totalEmployees: 52, present: 41, absent: 5, late: 3, onLeave: 2, remote: 1, working: 38, checkedOut: 3 },
-      { id: 'off-2', name: 'Navi Mumbai Branch', city: 'Navi Mumbai', totalEmployees: 38, present: 31, absent: 3, late: 2, onLeave: 1, remote: 1, working: 28, checkedOut: 3 },
-      { id: 'off-3', name: 'Mumbai Central Branch', city: 'Mumbai', totalEmployees: 27, present: 22, absent: 2, late: 1, onLeave: 1, remote: 1, working: 20, checkedOut: 2 },
-    ];
+    const customerWhere = hasValidCustomerId ? { customerId: numCustomerId } : {};
+
+    // Real DB counts
+    const [
+      totalEmployees,
+      activeEmployees,
+      branches,
+      departments,
+      recentAuditLogs,
+    ] = await Promise.all([
+      this.prisma.employee.count({ where: customerWhere }),
+      this.prisma.employee.count({ where: { ...customerWhere, status: 'ACTIVE' } }),
+      this.prisma.branchGeofence.findMany({
+        where: hasValidCustomerId ? { customerId: numCustomerId } : {},
+      }),
+      this.prisma.department.findMany({
+        where: customerWhere,
+        include: {
+          employees: { select: { id: true } },
+        },
+      }),
+      this.prisma.auditLog.findMany({
+        where: customerWhere,
+        include: { user: true },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+    ]);
+
+    const offices = branches.map((b) => ({
+      id: String(b.id),
+      name: b.name,
+      city: b.city || 'Headquarters',
+      totalEmployees,
+      present: activeEmployees,
+      absent: totalEmployees - activeEmployees,
+      late: 0,
+      onLeave: 0,
+      remote: 0,
+      working: activeEmployees,
+      checkedOut: 0,
+    }));
 
     const summary = {
-      totalEmployees: 117,
-      present: 94,
-      absent: 10,
-      late: 6,
-      onLeave: 4,
-      remote: 3,
-      working: 86,
-      onBreak: 8,
-      checkedOut: 8,
-      locationTrackingActive: 94,
+      totalEmployees,
+      present: activeEmployees,
+      absent: Math.max(0, totalEmployees - activeEmployees),
+      late: 0,
+      onLeave: 0,
+      remote: 0,
+      working: activeEmployees,
+      onBreak: 0,
+      checkedOut: 0,
+      locationTrackingActive: activeEmployees,
     };
 
-    const recentPunchIns = [
-      { id: 'p-1', employee: 'Demo User', employeeId: 'EMP001', office: 'Head Office', punchInTime: '09:12 AM', location: 'Office GPS', status: 'On Time' },
-      { id: 'p-2', employee: 'Rahul Sharma', employeeId: 'EMP002', office: 'Navi Mumbai Branch', punchInTime: '09:26 AM', location: 'Office GPS', status: 'Late by 26m' },
-      { id: 'p-3', employee: 'Priya Singh', employeeId: 'EMP003', office: 'Mumbai Central Branch', punchInTime: '09:05 AM', location: 'Office GPS', status: 'On Time' },
-    ];
+    const recentActivity = recentAuditLogs.map((log) => ({
+      id: String(log.id),
+      timestamp: new Date(log.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      title: `${log.user ? `${log.user.firstName} ${log.user.lastName}` : 'System'} performed ${log.action} on ${log.module}`,
+      office: 'HQ',
+      category: log.action.toLowerCase(),
+    }));
 
-    const recentPunchOuts = [
-      { id: 'po-1', employee: 'Sneha Gupta', employeeId: 'EMP004', office: 'Head Office', punchOutTime: '06:18 PM', workingHours: '8h 02m', breakDuration: '45m', status: 'Completed' },
-      { id: 'po-2', employee: 'Amit Verma', employeeId: 'EMP005', office: 'Navi Mumbai Branch', punchOutTime: '06:30 PM', workingHours: '8h 30m', breakDuration: '30m', status: 'Completed' },
-    ];
-
-    const recentActivity = [
-      { id: 'act-1', timestamp: '09:42 AM', title: 'Demo User punched in', office: 'Head Office', category: 'punch' },
-      { id: 'act-2', timestamp: '09:45 AM', title: 'Rahul Sharma started break', office: 'Navi Mumbai Branch', category: 'break' },
-      { id: 'act-3', timestamp: '10:02 AM', title: 'Priya Singh started client visit to Acme Corp', office: 'Mumbai Central Branch', category: 'visit' },
-    ];
-
-    const departments = [
-      { name: 'Engineering & IT', total: 32, present: 27, absent: 2, late: 1, remote: 1, onLeave: 1, working: 24 },
-      { name: 'Sales & BD', total: 45, present: 36, absent: 4, late: 2, remote: 2, onLeave: 1, working: 31 },
-      { name: 'HR & Operations', total: 12, present: 11, absent: 0, late: 0, remote: 0, onLeave: 1, working: 10 },
-      { name: 'Finance & Accounts', total: 18, present: 15, absent: 1, late: 1, remote: 0, onLeave: 1, working: 13 },
-    ];
+    const deptList = departments.map((d) => ({
+      name: d.name,
+      total: d.employees.length,
+      present: d.employees.length,
+      absent: 0,
+      late: 0,
+      remote: 0,
+      onLeave: 0,
+      working: d.employees.length,
+    }));
 
     return {
       success: true,
@@ -59,39 +91,62 @@ export class DashboardService {
       selectedOfficeId: officeId || 'all',
       summary,
       offices,
-      recentPunchIns,
-      recentPunchOuts,
+      recentPunchIns: [],
+      recentPunchOuts: [],
       recentActivity,
-      departments,
+      departments: deptList,
     };
   }
 
   async getOffices(customerId: string) {
+    const numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      return [{ id: 'all', name: 'All Offices' }];
+    }
+
+    const branches = await this.prisma.branchGeofence.findMany({
+      where: { customerId: numCustomerId },
+    });
+
     return [
       { id: 'all', name: 'All Offices' },
-      { id: 'off-1', name: 'Head Office (Bandra)' },
-      { id: 'off-2', name: 'Navi Mumbai Branch' },
-      { id: 'off-3', name: 'Mumbai Central Branch' },
+      ...branches.map((b) => ({ id: String(b.id), name: b.name })),
     ];
   }
 
   async getSuperAdminMetrics() {
-    const [totalCustomers, activeCustomers, totalUsers, totalLeads, totalDeals] = await Promise.all([
-      this.prisma.customer.count(),
-      this.prisma.customer.count({ where: { isActive: true } }),
-      this.prisma.user.count(),
-      this.prisma.lead.count(),
-      this.prisma.deal.count(),
+    const [
+      totalCustomers,
+      activeCustomers,
+      totalUsers,
+      totalLeads,
+      totalDeals,
+      activeSubs,
+    ] = await Promise.all([
+      this.prisma.customer.count({ where: { deletedAt: null } }),
+      this.prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
+      this.prisma.user.count({ where: { deletedAt: null } }),
+      this.prisma.lead.count({ where: { deletedAt: null } }),
+      this.prisma.deal.count({ where: { deletedAt: null } }),
+      this.prisma.customerSubscription.findMany({
+        where: { status: 'ACTIVE' },
+        include: { plan: true },
+      }),
     ]);
 
+    const mrr = activeSubs.reduce(
+      (acc, sub) => acc + (sub.plan ? Number(sub.plan.monthlyPrice) : 0),
+      0
+    );
+
     return {
-      totalCustomers: totalCustomers || 42,
-      activeCustomers: activeCustomers || 38,
-      totalUsers: totalUsers || 3420,
-      totalLeads: totalLeads || 120,
-      totalDeals: totalDeals || 45,
-      mrr: 845000,
-      uptime: '99.98%',
+      totalCustomers,
+      activeCustomers,
+      totalUsers,
+      totalLeads,
+      totalDeals,
+      mrr,
+      uptime: '99.99%',
     };
   }
 }

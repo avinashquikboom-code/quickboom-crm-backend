@@ -75,4 +75,12 @@ export class AuthController {
   async getMe(@CurrentUser() user: any) {
     return this.authService.getProfile(user.id || user.userId);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles')
+  @ApiOperation({ summary: 'Get all database roles' })
+  async getRoles(@CurrentUser() user: any) {
+    return this.authService.getRoles(user.customerId);
+  }
 }
