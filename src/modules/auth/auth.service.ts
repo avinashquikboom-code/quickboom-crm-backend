@@ -142,6 +142,7 @@ export class AuthService {
       where: { email: dto.email },
       include: {
         customer: true,
+        employee: true,
         userRoles: {
           include: { role: true },
         },
@@ -165,19 +166,8 @@ export class AuthService {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
-    const userRoleTypes = user.userRoles.map((ur) => ur.role.type);
-    const isAllowedAdmin =
-      userRoleTypes.includes(RoleType.SUPER_ADMIN) ||
-      userRoleTypes.includes(RoleType.CUSTOMER_ADMIN) ||
-      userRoleTypes.includes(RoleType.TENANT_ADMIN) ||
-      userRoleTypes.includes(RoleType.SALES_MANAGER) ||
-      user.email === 'admin@quikboom.com';
-
-    if (!isAllowedAdmin) {
-      throw new UnauthorizedException(
-        'Access Restricted: The Admin Panel is exclusively accessible by Company Administrators. Employees and staff must use the QuikBoom Mobile App.',
-      );
-    }
+    const primaryRole = user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
+    const roles = user.userRoles.map((ur) => ur.role.type);
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 
@@ -189,9 +179,10 @@ export class AuthService {
         firstName: user.firstName,
         lastName: user.lastName,
         customerId: user.customerId,
-        customerName: user.customer?.name || 'Super Admin',
-        role: user.userRoles[0]?.role?.type || 'CUSTOMER_ADMIN',
-        roles: user.userRoles.map((ur) => ur.role.type),
+        customerName: user.customer?.name || (user.customerId ? 'Enterprise Workspace' : 'Super Admin'),
+        role: primaryRole,
+        roles: roles.length > 0 ? roles : [primaryRole],
+        employeeId: user.employee?.id || null,
       },
       tokens,
     };
