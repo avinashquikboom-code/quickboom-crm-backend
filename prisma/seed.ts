@@ -45,9 +45,13 @@ async function main() {
   } else {
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: hashedPassword },
+      data: {
+        firstName: 'Super',
+        lastName: 'Admin',
+        passwordHash: hashedPassword,
+      },
     });
-    console.log(`✅ Updated password for Super Admin user (${email})`);
+    console.log(`✅ Updated name to Super Admin and refreshed credentials for (${email})`);
   }
 
   // 3. Assign SUPER_ADMIN role to user

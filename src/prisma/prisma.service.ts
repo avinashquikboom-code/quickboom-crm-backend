@@ -66,6 +66,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
           this.logger.log(`Synced role for ${adminUser.email} to SUPER_ADMIN`);
         }
+
+        // Ensure name is 'Super Admin'
+        if (adminUser.firstName !== 'Super' || adminUser.lastName !== 'Admin') {
+          await this.user.update({
+            where: { id: adminUser.id },
+            data: { firstName: 'Super', lastName: 'Admin' },
+          });
+          this.logger.log(`Updated user name for ${adminUser.email} to Super Admin`);
+        }
       }
     } catch (err) {
       this.logger.warn(`ensureSuperAdminRole caught non-fatal warning: ${err?.message || err}`);
