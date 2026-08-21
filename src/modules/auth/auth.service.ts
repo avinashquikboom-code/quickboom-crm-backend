@@ -261,6 +261,38 @@ export class AuthService {
     return { message: 'Password reset successfully' };
   }
 
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        customer: true,
+        userRoles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const roles = user.userRoles.map((ur) => ur.role.type);
+
+    return {
+      id: user.id,
+      email: user.email,
+      phone: user.phone,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      customerId: user.customerId,
+      customerName: user.customer?.name || 'Enterprise Workspace',
+      roles,
+      createdAt: user.createdAt,
+    };
+  }
+
   private async generateTokens(userId: string, customerId: string | null, email: string) {
     const payload = { sub: userId, customerId, email };
 

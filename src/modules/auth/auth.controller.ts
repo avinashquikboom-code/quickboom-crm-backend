@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -62,10 +62,17 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @Post('me')
-  @HttpCode(HttpStatus.OK)
+  @Get('profile')
   @ApiOperation({ summary: 'Get current logged-in user profile' })
   async getProfile(@CurrentUser() user: any) {
-    return user;
+    return this.authService.getProfile(user.id || user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('me')
+  @ApiOperation({ summary: 'Get current user identity' })
+  async getMe(@CurrentUser() user: any) {
+    return this.authService.getProfile(user.id || user.userId);
   }
 }

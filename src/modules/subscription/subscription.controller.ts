@@ -13,7 +13,7 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @ApiTags('Subscriptions & Plans')
-@Controller('api/v1')
+@Controller()
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 

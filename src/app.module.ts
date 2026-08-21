@@ -12,6 +12,15 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DataCaptureModule } from './modules/data-capture/data-capture.module';
 import { DataManagementModule } from './modules/data-management/data-management.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
+import { CustomerModule } from './modules/customer/customer.module';
+import { WorkModule } from './modules/work/work.module';
+import { EmployeeModule } from './modules/employee/employee.module';
+import { TeamModule } from './modules/team/team.module';
+import { VisitModule } from './modules/visit/visit.module';
+import { InvoiceModule } from './modules/invoice/invoice.module';
+import { ReportModule } from './modules/report/report.module';
+import { NotificationModule } from './modules/notification/notification.module';
+import { AuditLogModule } from './modules/audit-log/audit-log.module';
 
 import { AppController } from './app.controller';
 
@@ -23,6 +32,16 @@ import { AppController } from './app.controller';
     }),
     PrismaModule,
     AuthModule,
+    CustomerModule,
+    SubscriptionModule,
+    WorkModule,
+    EmployeeModule,
+    TeamModule,
+    VisitModule,
+    InvoiceModule,
+    ReportModule,
+    NotificationModule,
+    AuditLogModule,
     LeadModule,
     ContactModule,
     DealModule,
@@ -32,7 +51,6 @@ import { AppController } from './app.controller';
     DashboardModule,
     DataCaptureModule,
     DataManagementModule,
-    SubscriptionModule,
   ],
   controllers: [AppController],
 })

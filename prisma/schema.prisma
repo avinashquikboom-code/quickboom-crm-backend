@@ -164,6 +164,9 @@ model Customer {
   employees     Employee[]
   payrolls      Payroll[]
   payrollPolicy PayrollPolicy?
+  teams         Team[]
+  planEntitlements PlanEntitlement[]
+  works         Work[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1059,6 +1062,9 @@ model Employee {
   salaryStructures SalaryStructure[]
   payrollItems     PayrollItem[]
   salarySlips      SalarySlip[]
+  teamMembers      TeamMember[]
+  works            Work[]
+  workTasks        WorkTask[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1325,4 +1331,134 @@ model PayrollPolicy {
 
   @@index([customerId])
 }
+
+// ----------------------------------------------------
+// TEAMS, WORK & SSM ENTITLEMENTS
+// ----------------------------------------------------
+
+enum WorkType {
+  REELS_SHOOT
+  VIDEO_EDITING
+  POST_DESIGN
+  STORY_DESIGN
+  UPLOADING
+  INFLUENCER_PROMO
+  ADS_MANAGEMENT
+}
+
+enum WorkStatus {
+  SCHEDULED
+  IN_PROGRESS
+  UNDER_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Team {
+  id          String   @id @default(uuid())
+  customerId  String
+  name        String
+  description String?
+  leaderId    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  members  TeamMember[]
+  works    Work[]
+
+  @@index([customerId])
+}
+
+model TeamMember {
+  id         String   @id @default(uuid())
+  teamId     String
+  employeeId String
+  role       String   @default("MEMBER")
+  joinedAt   DateTime @default(now())
+
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, employeeId])
+  @@index([teamId])
+  @@index([employeeId])
+}
+
+model PlanEntitlement {
+  id           String    @id @default(uuid())
+  customerId   String
+  planId       String?
+  serviceName  String
+  totalQty     Int       @default(0)
+  usedQty      Int       @default(0)
+  scheduledQty Int       @default(0)
+  validUntil   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  works    Work[]
+
+  @@index([customerId])
+}
+
+model Work {
+  id            String       @id @default(uuid())
+  customerId    String
+  planId        String?
+  entitlementId String?
+  teamId        String?
+  assignedToId  String?
+  workType      WorkType     @default(REELS_SHOOT)
+  title         String
+  description   String?
+  scheduledDate DateTime     @default(now())
+  scheduledTime String?
+  status        WorkStatus   @default(SCHEDULED)
+  priority      WorkPriority @default(MEDIUM)
+  notes         String?
+  outputUrl     String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  customer    Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  entitlement PlanEntitlement? @relation(fields: [entitlementId], references: [id])
+  team        Team?            @relation(fields: [teamId], references: [id])
+  assignedTo  Employee?        @relation(fields: [assignedToId], references: [id])
+  tasks       WorkTask[]
+
+  @@index([customerId])
+  @@index([teamId])
+  @@index([assignedToId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+model WorkTask {
+  id           String     @id @default(uuid())
+  workId       String
+  title        String
+  stepOrder    Int        @default(1)
+  assignedToId String?
+  status       TaskStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  work       Work      @relation(fields: [workId], references: [id], onDelete: Cascade)
+  assignedTo Employee? @relation(fields: [assignedToId], references: [id])
+
+  @@index([workId])
+  @@index([assignedToId])
+}
+
 

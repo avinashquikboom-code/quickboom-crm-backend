@@ -16,4 +16,9 @@ export class DashboardController {
     const customerId = customerIdQuery || 'default-customer';
     return this.dashboardService.getOffices(customerId);
   }
+
+  @Get('super-admin')
+  async getSuperAdmin() {
+    return this.dashboardService.getSuperAdminMetrics();
+  }
 }
