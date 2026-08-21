@@ -5,11 +5,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class PayrollService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async calculatePayroll(customerId: string, month: number, year: number, departmentId?: string) {
+  async calculatePayroll(customerId: number | string, month: number, year: number, departmentId?: number | string) {
+    const numCustomerId = Number(customerId);
+    const numDeptId = departmentId ? Number(departmentId) : undefined;
     // 1. Fetch active employees
-    const whereClause: any = { customerId, status: 'ACTIVE' };
-    if (departmentId) {
-      whereClause.departmentId = departmentId;
+    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
+    if (numDeptId) {
+      whereClause.departmentId = numDeptId;
     }
 
     const employees = await this.prisma.employee.findMany({
@@ -29,16 +31,16 @@ export class PayrollService {
 
     // 2. Fetch or create Payroll record
     let payroll = await this.prisma.payroll.findFirst({
-      where: { customerId, month, year, departmentId: departmentId || null },
+      where: { customerId: numCustomerId, month, year, departmentId: numDeptId || null },
     });
 
     if (!payroll) {
       payroll = await this.prisma.payroll.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           month,
           year,
-          departmentId: departmentId || null,
+          departmentId: numDeptId || null,
           status: 'CALCULATED',
         },
       });
@@ -76,7 +78,7 @@ export class PayrollService {
 
       itemsData.push({
         payrollId: payroll.id,
-        customerId,
+        customerId: numCustomerId,
         employeeId: emp.id,
         basicSalary: basic,
         hra,
@@ -129,10 +131,12 @@ export class PayrollService {
     return updatedPayroll;
   }
 
-  async previewPayroll(customerId: string, month: number, year: number, departmentId?: string) {
-    const whereClause: any = { customerId, status: 'ACTIVE' };
-    if (departmentId) {
-      whereClause.departmentId = departmentId;
+  async previewPayroll(customerId: number | string, month: number, year: number, departmentId?: number | string) {
+    const numCustomerId = Number(customerId);
+    const numDeptId = departmentId ? Number(departmentId) : undefined;
+    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
+    if (numDeptId) {
+      whereClause.departmentId = numDeptId;
     }
 
     const employees = await this.prisma.employee.findMany({
@@ -156,16 +160,17 @@ export class PayrollService {
         id: e.id,
         code: e.employeeCode,
         name: `${e.firstName} ${e.lastName}`,
-        department: e.departmentId || 'Engineering',
+        department: e.departmentId ? String(e.departmentId) : 'Engineering',
         basic: e.salaryStructures[0]?.basicSalary || 35000,
         net: e.salaryStructures[0]?.netSalary || 56500,
       })),
     };
   }
 
-  async approvePayroll(customerId: string, payrollId: string) {
+  async approvePayroll(customerId: number | string, payrollId: number | string) {
+    const numPayrollId = Number(payrollId);
     return this.prisma.payroll.update({
-      where: { id: payrollId },
+      where: { id: numPayrollId },
       data: {
         status: 'APPROVED',
         approvedAt: new Date(),
@@ -173,9 +178,11 @@ export class PayrollService {
     });
   }
 
-  async generatePayroll(customerId: string, payrollId: string) {
+  async generatePayroll(customerId: number | string, payrollId: number | string) {
+    const numCustomerId = Number(customerId);
+    const numPayrollId = Number(payrollId);
     const payroll = await this.prisma.payroll.findUnique({
-      where: { id: payrollId },
+      where: { id: numPayrollId },
       include: { items: true },
     });
 
@@ -187,7 +194,7 @@ export class PayrollService {
     const payPeriod = `${monthNames[payroll.month]} ${payroll.year}`;
 
     for (const item of payroll.items) {
-      const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.slice(0, 5).toUpperCase()}`;
+      const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
       
       const existing = await this.prisma.salarySlip.findFirst({
         where: { payrollItemId: item.id },
@@ -196,7 +203,7 @@ export class PayrollService {
       if (!existing) {
         await this.prisma.salarySlip.create({
           data: {
-            customerId,
+            customerId: numCustomerId,
             payrollItemId: item.id,
             employeeId: item.employeeId,
             slipNumber: slipNum,
@@ -211,16 +218,17 @@ export class PayrollService {
     }
 
     return this.prisma.payroll.update({
-      where: { id: payrollId },
+      where: { id: numPayrollId },
       data: {
         status: 'GENERATED',
       },
     });
   }
 
-  async disbursePayroll(customerId: string, payrollId: string) {
+  async disbursePayroll(customerId: number | string, payrollId: number | string) {
+    const numPayrollId = Number(payrollId);
     return this.prisma.payroll.update({
-      where: { id: payrollId },
+      where: { id: numPayrollId },
       data: {
         status: 'PAID',
         disbursedAt: new Date(),
@@ -228,9 +236,10 @@ export class PayrollService {
     });
   }
 
-  async getPayrolls(customerId: string) {
+  async getPayrolls(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return this.prisma.payroll.findMany({
-      where: { customerId },
+      where: { customerId: numCustomerId },
       orderBy: { createdAt: 'desc' },
       include: {
         items: true,
@@ -238,9 +247,11 @@ export class PayrollService {
     });
   }
 
-  async getPayrollById(customerId: string, id: string) {
+  async getPayrollById(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     return this.prisma.payroll.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         items: {
           include: {
@@ -252,9 +263,10 @@ export class PayrollService {
     });
   }
 
-  async getSalarySlips(customerId: string) {
+  async getSalarySlips(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return this.prisma.salarySlip.findMany({
-      where: { customerId },
+      where: { customerId: numCustomerId },
       orderBy: { generatedAt: 'desc' },
       include: {
         employee: true,
@@ -262,9 +274,11 @@ export class PayrollService {
     });
   }
 
-  async getSalarySlipById(customerId: string, id: string) {
+  async getSalarySlipById(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     return this.prisma.salarySlip.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         employee: true,
         payrollItem: true,

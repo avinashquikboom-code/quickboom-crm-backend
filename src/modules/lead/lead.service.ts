@@ -18,7 +18,7 @@ import {
 export class LeadService {
   constructor(private readonly leadRepository: LeadRepository) {}
 
-  async createLead(customerId: string, userId: string, dto: CreateLeadDto) {
+  async createLead(customerId: number | string, userId: number | string, dto: CreateLeadDto) {
     const lead = await this.leadRepository.create(customerId, userId, dto);
     await this.leadRepository.logTimeline(
       lead.id,
@@ -29,15 +29,15 @@ export class LeadService {
     return lead;
   }
 
-  async checkDuplicate(customerId: string, dto: CheckDuplicateDto) {
+  async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto) {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
-  async getLeads(customerId: string, query: { page?: number; limit?: number; search?: string; status?: string }) {
+  async getLeads(customerId: number | string, query: { page?: number; limit?: number; search?: string; status?: string }) {
     return this.leadRepository.findAll(customerId, query);
   }
 
-  async getLeadById(customerId: string, id: string) {
+  async getLeadById(customerId: number | string, id: number | string) {
     const lead = await this.leadRepository.findOne(customerId, id);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
@@ -45,7 +45,7 @@ export class LeadService {
     return lead;
   }
 
-  async updateLead(customerId: string, id: string, dto: UpdateLeadDto) {
+  async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
     await this.getLeadById(customerId, id);
     await this.leadRepository.update(customerId, id, dto);
     await this.leadRepository.logTimeline(
@@ -56,7 +56,7 @@ export class LeadService {
     return this.getLeadById(customerId, id);
   }
 
-  async updateStatus(customerId: string, id: string, userId: string, dto: UpdateLeadStatusDto) {
+  async updateStatus(customerId: number | string, id: number | string, userId: number | string, dto: UpdateLeadStatusDto) {
     const lead = await this.getLeadById(customerId, id);
     await this.leadRepository.updateStatus(
       customerId,
@@ -69,12 +69,12 @@ export class LeadService {
     return this.getLeadById(customerId, id);
   }
 
-  async deleteLead(customerId: string, id: string) {
+  async deleteLead(customerId: number | string, id: number | string) {
     await this.getLeadById(customerId, id);
     return this.leadRepository.softDelete(customerId, id);
   }
 
-  async addNote(customerId: string, leadId: string, userId: string, dto: CreateLeadNoteDto) {
+  async addNote(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateLeadNoteDto) {
     await this.getLeadById(customerId, leadId);
     const note = await this.leadRepository.addNote(leadId, userId, dto.content);
     await this.leadRepository.logTimeline(
@@ -85,32 +85,32 @@ export class LeadService {
     return note;
   }
 
-  async logFollowUp(customerId: string, leadId: string, userId: string, dto: LogFollowUpDto) {
+  async logFollowUp(customerId: number | string, leadId: number | string, userId: number | string, dto: LogFollowUpDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.logFollowUp(customerId, leadId, userId, dto);
   }
 
-  async manageVisit(customerId: string, leadId: string, userId: string, dto: ManageVisitDto) {
+  async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.manageVisit(customerId, leadId, userId, dto);
   }
 
-  async createProposal(customerId: string, leadId: string, userId: string, dto: CreateProposalDto) {
+  async createProposal(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateProposalDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.createProposal(customerId, leadId, userId, dto);
   }
 
-  async recordFinalCall(customerId: string, leadId: string, userId: string, dto: FinalCallDto) {
+  async recordFinalCall(customerId: number | string, leadId: number | string, userId: number | string, dto: FinalCallDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.recordFinalCall(customerId, leadId, userId, dto);
   }
 
-  async recordPayment(customerId: string, leadId: string, userId: string, dto: RecordPaymentDto) {
+  async recordPayment(customerId: number | string, leadId: number | string, userId: number | string, dto: RecordPaymentDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.recordPayment(customerId, leadId, userId, dto);
   }
 
-  async startWork(customerId: string, leadId: string, userId: string, dto: StartWorkDto) {
+  async startWork(customerId: number | string, leadId: number | string, userId: number | string, dto: StartWorkDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.startWork(customerId, leadId, userId, dto);
   }

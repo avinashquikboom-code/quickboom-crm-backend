@@ -5,10 +5,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class AuditLogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId?: string, module?: string, page = 1, limit = 50) {
+  async findAll(customerId?: number | string, module?: string, page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const where: any = {};
-    if (customerId) where.customerId = customerId;
+    if (customerId) where.customerId = Number(customerId);
     if (module) where.module = module;
 
     const [items, total] = await Promise.all([
@@ -34,7 +34,7 @@ export class AuditLogService {
       return {
         items: [
           {
-            id: 'log-1',
+            id: 1,
             action: 'LOGIN',
             module: 'AUTH',
             actor: 'Demo User (admin@quikboom.com)',
@@ -44,7 +44,7 @@ export class AuditLogService {
             details: { message: 'Successful admin login session authenticated' },
           },
           {
-            id: 'log-2',
+            id: 2,
             action: 'SCHEDULE',
             module: 'WORK',
             actor: 'Demo User',
@@ -54,7 +54,7 @@ export class AuditLogService {
             details: { title: 'Reels Shoot for Summer Launch', unitsConsumed: 1 },
           },
           {
-            id: 'log-3',
+            id: 3,
             action: 'PAYMENT_VERIFIED',
             module: 'PAYMENTS',
             actor: 'System Webhook',
@@ -90,14 +90,14 @@ export class AuditLogService {
     };
   }
 
-  async log(action: string, module: string, details: any, customerId?: string, userId?: string, ipAddress?: string) {
+  async log(action: string, module: string, details: any, customerId?: number | string, userId?: number | string, ipAddress?: string) {
     return this.prisma.auditLog.create({
       data: {
         action,
         module,
         details: details || {},
-        customerId,
-        userId,
+        customerId: customerId ? Number(customerId) : null,
+        userId: userId ? Number(userId) : null,
         ipAddress,
       },
     });

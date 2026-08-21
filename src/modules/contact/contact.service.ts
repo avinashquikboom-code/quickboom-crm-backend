@@ -6,22 +6,25 @@ import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 export class ContactService {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: string, dto: CreateContactDto) {
+  async create(customerId: number | string, dto: CreateContactDto) {
+    const numCustomerId = Number(customerId);
     return this.prisma.contact.create({
       data: {
         ...dto,
-        customerId,
+        companyId: dto.companyId ? Number(dto.companyId) : undefined,
+        customerId: numCustomerId,
       },
       include: { company: true },
     });
   }
 
-  async findAll(customerId: string, query: { page?: number; limit?: number; search?: string; type?: string }) {
+  async findAll(customerId: number | string, query: { page?: number; limit?: number; search?: string; type?: string }) {
+    const numCustomerId = Number(customerId);
     const page = query.page || 1;
     const limit = query.limit || 10;
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId, deletedAt: null };
+    const where: any = { customerId: numCustomerId, deletedAt: null };
     if (query.type) where.type = query.type;
     if (query.search) {
       where.OR = [
@@ -48,9 +51,11 @@ export class ContactService {
     };
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const contact = await this.prisma.contact.findFirst({
-      where: { id, customerId, deletedAt: null },
+      where: { id: numId, customerId: numCustomerId, deletedAt: null },
       include: {
         company: true,
         communications: { orderBy: { timestamp: 'desc' } },
@@ -65,19 +70,24 @@ export class ContactService {
     return contact;
   }
 
-  async update(customerId: string, id: string, dto: UpdateContactDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateContactDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.contact.update({
-      where: { id },
-      data: dto,
+      where: { id: numId },
+      data: {
+        ...dto,
+        companyId: dto.companyId ? Number(dto.companyId) : undefined,
+      } as any,
       include: { company: true },
     });
   }
 
-  async delete(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async delete(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.contact.update({
-      where: { id },
+      where: { id: numId },
       data: { deletedAt: new Date() },
     });
   }

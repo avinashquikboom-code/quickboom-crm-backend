@@ -6,9 +6,10 @@ import { CreateTeamDto, AddTeamMemberDto } from './dto/team.dto';
 export class TeamService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: string) {
+  async findAll(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return this.prisma.team.findMany({
-      where: { customerId, isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
       include: {
         members: {
           include: {
@@ -25,9 +26,11 @@ export class TeamService {
     });
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const team = await this.prisma.team.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         members: {
           include: {
@@ -48,14 +51,15 @@ export class TeamService {
     return team;
   }
 
-  async create(customerId: string, dto: CreateTeamDto) {
+  async create(customerId: number | string, dto: CreateTeamDto) {
+    const numCustomerId = Number(customerId);
     return this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           name: dto.name,
           description: dto.description,
-          leaderId: dto.leaderId,
+          leaderId: dto.leaderId ? Number(dto.leaderId) : null,
         },
       });
 
@@ -63,7 +67,7 @@ export class TeamService {
         await tx.teamMember.createMany({
           data: dto.memberIds.map((empId) => ({
             teamId: team.id,
-            employeeId: empId,
+            employeeId: Number(empId),
           })),
           skipDuplicates: true,
         });
@@ -73,29 +77,33 @@ export class TeamService {
     });
   }
 
-  async addMember(teamId: string, dto: AddTeamMemberDto) {
+  async addMember(teamId: number | string, dto: AddTeamMemberDto) {
+    const numTeamId = Number(teamId);
+    const numEmployeeId = Number(dto.employeeId);
     return this.prisma.teamMember.upsert({
       where: {
         teamId_employeeId: {
-          teamId,
-          employeeId: dto.employeeId,
+          teamId: numTeamId,
+          employeeId: numEmployeeId,
         },
       },
       update: { role: dto.role || 'MEMBER' },
       create: {
-        teamId,
-        employeeId: dto.employeeId,
+        teamId: numTeamId,
+        employeeId: numEmployeeId,
         role: dto.role || 'MEMBER',
       },
     });
   }
 
-  async removeMember(teamId: string, employeeId: string) {
+  async removeMember(teamId: number | string, employeeId: number | string) {
+    const numTeamId = Number(teamId);
+    const numEmployeeId = Number(employeeId);
     return this.prisma.teamMember.delete({
       where: {
         teamId_employeeId: {
-          teamId,
-          employeeId,
+          teamId: numTeamId,
+          employeeId: numEmployeeId,
         },
       },
     });

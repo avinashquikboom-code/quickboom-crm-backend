@@ -177,8 +177,8 @@ export class DataCaptureService {
    * Import extracted prospects into CRM Leads with 3-tier duplicate detection
    */
   async importToLeads(
-    customerId: string,
-    userId: string,
+    customerId: number | string,
+    userId: number | string,
     dto: ImportToLeadsDto,
   ): Promise<{
     totalRequested: number;
@@ -187,8 +187,10 @@ export class DataCaptureService {
     duplicateNames: string[];
     message: string;
   }> {
+    const numCustomerId = Number(customerId);
+    const numUserId = Number(userId);
     const job = this.jobsMap.get(dto.jobId);
-    if (!job || job.customerId !== customerId) {
+    if (!job || Number(job.customerId) !== numCustomerId) {
       throw new BadRequestException('Extraction job not found or expired.');
     }
 
@@ -202,7 +204,7 @@ export class DataCaptureService {
 
     // Retrieve existing leads for the customer to run duplicate detection
     const existingLeads = await this.prisma.lead.findMany({
-      where: { customerId, deletedAt: null },
+      where: { customerId: numCustomerId, deletedAt: null },
       select: {
         id: true,
         title: true,
@@ -218,8 +220,8 @@ export class DataCaptureService {
 
     for (const place of placesToImport) {
       // 1st Priority Check: Google Place ID in existing notes/metadata
-      const isPlaceIdDuplicate = existingLeads.some((l) =>
-        l.notes.some((n) => n.content.includes(`googlePlaceId:${place.googlePlaceId}`)),
+      const isPlaceIdDuplicate = existingLeads.some((l: any) =>
+        (l.notes || []).some((n: any) => n.content.includes(`googlePlaceId:${place.googlePlaceId}`)),
       );
 
       // 2nd Priority Check: Business Name + Phone
@@ -246,7 +248,7 @@ export class DataCaptureService {
       // Create new Lead in CRM
       const createdLead = await this.prisma.lead.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           title: place.businessName,
           firstName: place.businessName.split(' ')[0] || 'Business',
           lastName: place.businessName.split(' ').slice(1).join(' ') || 'Contact',
@@ -256,7 +258,7 @@ export class DataCaptureService {
           status: 'NEW',
           priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
           value: 0,
-          createdById: userId,
+          createdById: numUserId,
         },
       });
 
@@ -264,7 +266,7 @@ export class DataCaptureService {
       await this.prisma.leadNote.create({
         data: {
           leadId: createdLead.id,
-          userId,
+          userId: numUserId,
           content: `[GOOGLE_PLACES_METADATA]\ngooglePlaceId:${place.googlePlaceId}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}`,
         },
       });

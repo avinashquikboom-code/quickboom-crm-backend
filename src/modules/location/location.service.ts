@@ -41,34 +41,37 @@ export class LocationService {
 
   // Record employee location update
   async recordLocationUpdate(
-    customerId: string,
-    employeeId: string,
+    customerId: number | string,
+    employeeId: number | string,
     dto: LocationUpdateDto,
   ) {
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
     this.logger.log(
       `Recording location update for employee ${employeeId} in customer ${customerId}: lat=${dto.latitude}, lng=${dto.longitude}`,
     );
 
     return this.prisma.employeeLocation.create({
       data: {
-        customerId,
-        employeeId,
+        customerId: numCustomerId,
+        employeeId: numEmployeeId,
         latitude: dto.latitude,
         longitude: dto.longitude,
         accuracy: dto.accuracy ?? 10.0,
         address: dto.address,
         trackingType: (dto.trackingType as any) || 'ATTENDANCE',
-        attendanceId: dto.attendanceId,
-        visitId: dto.visitId,
+        attendanceId: dto.attendanceId ? Number(dto.attendanceId) : null,
+        visitId: dto.visitId ? Number(dto.visitId) : null,
         timestamp: dto.timestamp ? new Date(dto.timestamp) : new Date(),
       },
     });
   }
 
   // Get active live locations for admin panel
-  async getLiveLocations(customerId: string) {
+  async getLiveLocations(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return this.prisma.employeeLocation.findMany({
-      where: { customerId },
+      where: { customerId: numCustomerId },
       orderBy: { timestamp: 'desc' },
       take: 100,
     });
@@ -76,10 +79,12 @@ export class LocationService {
 
   // Get history timeline for specific employee and date
   async getLocationHistory(
-    customerId: string,
-    employeeId: string,
+    customerId: number | string,
+    employeeId: number | string,
     date: string,
   ) {
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
     const startDate = new Date(date);
     startDate.setHours(0, 0, 0, 0);
 
@@ -88,8 +93,8 @@ export class LocationService {
 
     return this.prisma.employeeLocation.findMany({
       where: {
-        customerId,
-        employeeId,
+        customerId: numCustomerId,
+        employeeId: numEmployeeId,
         timestamp: {
           gte: startDate,
           lte: endDate,
@@ -100,19 +105,21 @@ export class LocationService {
   }
 
   // Branch Geofence Management
-  async getBranchGeofences(customerId: string) {
+  async getBranchGeofences(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return this.prisma.branchGeofence.findMany({
-      where: { customerId, isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
     });
   }
 
   async createBranchGeofence(
-    customerId: string,
+    customerId: number | string,
     data: { name: string; city?: string; latitude: number; longitude: number; radiusMeters?: number },
   ) {
+    const numCustomerId = Number(customerId);
     return this.prisma.branchGeofence.create({
       data: {
-        customerId,
+        customerId: numCustomerId,
         name: data.name,
         city: data.city,
         latitude: data.latitude,

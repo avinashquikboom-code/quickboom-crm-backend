@@ -84,9 +84,10 @@ export class CustomerService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: number | string) {
+    const numericId = Number(id);
     const customer = await this.prisma.customer.findUnique({
-      where: { id },
+      where: { id: numericId },
       include: {
         subscriptions: {
           include: {
@@ -147,18 +148,20 @@ export class CustomerService {
     });
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
-    await this.findOne(id);
+  async update(id: number | string, dto: UpdateCustomerDto) {
+    const numericId = Number(id);
+    await this.findOne(numericId);
     return this.prisma.customer.update({
-      where: { id },
+      where: { id: numericId },
       data: dto,
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: number | string) {
+    const numericId = Number(id);
+    await this.findOne(numericId);
     return this.prisma.customer.update({
-      where: { id },
+      where: { id: numericId },
       data: {
         isActive: false,
         deletedAt: new Date(),

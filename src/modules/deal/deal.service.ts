@@ -6,11 +6,16 @@ import { CreateDealDto, UpdateDealDto } from './dto/deal.dto';
 export class DealService {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: string, dto: CreateDealDto) {
+  async create(customerId: number | string, dto: CreateDealDto) {
+    const numCustomerId = Number(customerId);
     return this.prisma.deal.create({
       data: {
         ...dto,
-        customerId,
+        pipelineId: Number(dto.pipelineId),
+        stageId: Number(dto.stageId),
+        contactId: dto.contactId ? Number(dto.contactId) : undefined,
+        companyId: dto.companyId ? Number(dto.companyId) : undefined,
+        customerId: numCustomerId,
         expectedClosing: dto.expectedClosing ? new Date(dto.expectedClosing) : null,
       },
       include: {
@@ -22,10 +27,11 @@ export class DealService {
     });
   }
 
-  async findAll(customerId: string, query: { pipelineId?: string; stageId?: string }) {
-    const where: any = { customerId, deletedAt: null };
-    if (query.pipelineId) where.pipelineId = query.pipelineId;
-    if (query.stageId) where.stageId = query.stageId;
+  async findAll(customerId: number | string, query: { pipelineId?: number | string; stageId?: number | string }) {
+    const numCustomerId = Number(customerId);
+    const where: any = { customerId: numCustomerId, deletedAt: null };
+    if (query.pipelineId) where.pipelineId = Number(query.pipelineId);
+    if (query.stageId) where.stageId = Number(query.stageId);
 
     return this.prisma.deal.findMany({
       where,
@@ -39,9 +45,11 @@ export class DealService {
     });
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const deal = await this.prisma.deal.findFirst({
-      where: { id, customerId, deletedAt: null },
+      where: { id: numId, customerId: numCustomerId, deletedAt: null },
       include: {
         pipeline: { include: { stages: { orderBy: { order: 'asc' } } } },
         stage: true,
@@ -57,22 +65,28 @@ export class DealService {
     return deal;
   }
 
-  async update(customerId: string, id: string, dto: UpdateDealDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateDealDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.deal.update({
-      where: { id },
+      where: { id: numId },
       data: {
         ...dto,
+        pipelineId: dto.pipelineId ? Number(dto.pipelineId) : undefined,
+        stageId: dto.stageId ? Number(dto.stageId) : undefined,
+        contactId: dto.contactId ? Number(dto.contactId) : undefined,
+        companyId: dto.companyId ? Number(dto.companyId) : undefined,
         expectedClosing: dto.expectedClosing ? new Date(dto.expectedClosing) : undefined,
-      },
+      } as any,
       include: { stage: true, pipeline: true },
     });
   }
 
-  async delete(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async delete(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.deal.update({
-      where: { id },
+      where: { id: numId },
       data: { deletedAt: new Date() },
     });
   }

@@ -266,9 +266,10 @@ export class AuthService {
     return { message: 'Password reset successfully' };
   }
 
-  async getProfile(userId: string) {
+  async getProfile(userId: number | string) {
+    const numericUserId = Number(userId);
     const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: numericUserId },
       include: {
         customer: true,
         userRoles: {
@@ -298,7 +299,7 @@ export class AuthService {
     };
   }
 
-  private async generateTokens(userId: string, customerId: string | null, email: string) {
+  private async generateTokens(userId: number, customerId: number | null, email: string) {
     const payload = { sub: userId, customerId, email };
 
     const accessToken = this.jwtService.sign(payload, {

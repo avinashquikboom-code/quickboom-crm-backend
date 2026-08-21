@@ -6,12 +6,15 @@ import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
 export class TaskService {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: string, createdById: string, dto: CreateTaskDto) {
+  async create(customerId: number | string, createdById: number | string, dto: CreateTaskDto) {
+    const numCustomerId = Number(customerId);
+    const numCreatedById = Number(createdById);
     return this.prisma.task.create({
       data: {
         ...dto,
-        customerId,
-        createdById,
+        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : null,
+        customerId: numCustomerId,
+        createdById: numCreatedById,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
       },
       include: {
@@ -21,10 +24,11 @@ export class TaskService {
     });
   }
 
-  async findAll(customerId: string, query: { status?: string; assignedToId?: string }) {
-    const where: any = { customerId, deletedAt: null };
+  async findAll(customerId: number | string, query: { status?: string; assignedToId?: number | string }) {
+    const numCustomerId = Number(customerId);
+    const where: any = { customerId: numCustomerId, deletedAt: null };
     if (query.status) where.status = query.status;
-    if (query.assignedToId) where.assignedToId = query.assignedToId;
+    if (query.assignedToId) where.assignedToId = Number(query.assignedToId);
 
     return this.prisma.task.findMany({
       where,
@@ -35,9 +39,11 @@ export class TaskService {
     });
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const task = await this.prisma.task.findFirst({
-      where: { id, customerId, deletedAt: null },
+      where: { id: numId, customerId: numCustomerId, deletedAt: null },
       include: {
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
@@ -50,21 +56,24 @@ export class TaskService {
     return task;
   }
 
-  async update(customerId: string, id: string, dto: UpdateTaskDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateTaskDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.task.update({
-      where: { id },
+      where: { id: numId },
       data: {
         ...dto,
+        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
       },
     });
   }
 
-  async delete(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async delete(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.task.update({
-      where: { id },
+      where: { id: numId },
       data: { deletedAt: new Date() },
     });
   }

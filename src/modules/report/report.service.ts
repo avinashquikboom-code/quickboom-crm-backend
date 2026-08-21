@@ -5,7 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class ReportService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAttendanceReport(customerId: string) {
+  async getAttendanceReport(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     return {
       presentRate: '94.2%',
       averageWorkingHours: '8h 15m',
@@ -22,9 +23,10 @@ export class ReportService {
     };
   }
 
-  async getRevenueReport(customerId: string) {
+  async getRevenueReport(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     const totalInvoices = await this.prisma.invoice.aggregate({
-      where: { customerId },
+      where: { customerId: numCustomerId },
       _sum: { totalAmount: true },
       _count: true,
     });
@@ -38,11 +40,12 @@ export class ReportService {
     };
   }
 
-  async getWorkReport(customerId: string) {
+  async getWorkReport(customerId: number | string) {
+    const numCustomerId = Number(customerId);
     const [scheduled, inProgress, completed] = await Promise.all([
-      this.prisma.work.count({ where: { customerId, status: 'SCHEDULED' } }),
-      this.prisma.work.count({ where: { customerId, status: 'IN_PROGRESS' } }),
-      this.prisma.work.count({ where: { customerId, status: 'COMPLETED' } }),
+      this.prisma.work.count({ where: { customerId: numCustomerId, status: 'SCHEDULED' } }),
+      this.prisma.work.count({ where: { customerId: numCustomerId, status: 'IN_PROGRESS' } }),
+      this.prisma.work.count({ where: { customerId: numCustomerId, status: 'COMPLETED' } }),
     ]);
 
     return {

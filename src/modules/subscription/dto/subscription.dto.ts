@@ -12,7 +12,7 @@ export enum SubscriptionStatus {
 }
 
 export class CreateOrderDto {
-  planId: string;
+  planId: number | string;
   billingCycle: SubscriptionBillingCycle;
   paymentMethod?: string;
 }

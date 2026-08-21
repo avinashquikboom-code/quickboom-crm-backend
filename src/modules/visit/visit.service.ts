@@ -7,9 +7,10 @@ import { VisitStatus } from '@prisma/client';
 export class VisitService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: string, status?: VisitStatus, page = 1, limit = 50) {
+  async findAll(customerId: number | string, status?: VisitStatus, page = 1, limit = 50) {
+    const numCustomerId = Number(customerId);
     const skip = (page - 1) * limit;
-    const where: any = { customerId };
+    const where: any = { customerId: numCustomerId };
 
     if (status) where.status = status;
 
@@ -51,9 +52,11 @@ export class VisitService {
     };
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const visit = await this.prisma.visit.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         employee: true,
       },
@@ -66,11 +69,12 @@ export class VisitService {
     return visit;
   }
 
-  async create(customerId: string, dto: CreateVisitDto) {
+  async create(customerId: number | string, dto: CreateVisitDto) {
+    const numCustomerId = Number(customerId);
     return this.prisma.visit.create({
       data: {
-        customerId,
-        employeeId: dto.employeeId,
+        customerId: numCustomerId,
+        employeeId: Number(dto.employeeId),
         customerName: dto.customerName,
         purpose: dto.purpose,
         date: new Date(dto.date),
@@ -84,18 +88,20 @@ export class VisitService {
     });
   }
 
-  async update(customerId: string, id: string, dto: UpdateVisitDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateVisitDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.visit.update({
-      where: { id },
+      where: { id: numId },
       data: dto,
     });
   }
 
-  async remove(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async remove(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.visit.update({
-      where: { id },
+      where: { id: numId },
       data: { status: VisitStatus.CANCELLED },
     });
   }

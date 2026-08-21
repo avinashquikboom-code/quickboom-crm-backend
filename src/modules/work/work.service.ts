@@ -11,9 +11,10 @@ import { WorkType, WorkStatus, TaskStatus } from '@prisma/client';
 export class WorkService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: string, status?: WorkStatus, workType?: WorkType, page = 1, limit = 50) {
+  async findAll(customerId: number | string, status?: WorkStatus, workType?: WorkType, page = 1, limit = 50) {
+    const numCustomerId = Number(customerId);
     const skip = (page - 1) * limit;
-    const where: any = { customerId };
+    const where: any = { customerId: numCustomerId };
 
     if (status) where.status = status;
     if (workType) where.workType = workType;
@@ -49,9 +50,11 @@ export class WorkService {
     };
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const work = await this.prisma.work.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         team: true,
         assignedTo: true,
@@ -72,10 +75,11 @@ export class WorkService {
     return work;
   }
 
-  async create(customerId: string, dto: CreateWorkDto) {
+  async create(customerId: number | string, dto: CreateWorkDto) {
+    const numCustomerId = Number(customerId);
     // 1. Verify Customer & Active Subscription
     const subscription = await this.prisma.customerSubscription.findFirst({
-      where: { customerId, status: 'ACTIVE' },
+      where: { customerId: numCustomerId, status: 'ACTIVE' },
       include: { plan: true },
     });
 
@@ -88,14 +92,14 @@ export class WorkService {
 
     // 2. Entitlement verification
     let entitlement = await this.prisma.planEntitlement.findFirst({
-      where: { customerId, serviceName },
+      where: { customerId: numCustomerId, serviceName },
     });
 
     if (!entitlement) {
       const defaultQty = serviceName === 'Reels' ? 4 : 8;
       entitlement = await this.prisma.planEntitlement.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           planId: subscription.planId,
           serviceName,
           totalQty: defaultQty,
@@ -119,11 +123,11 @@ export class WorkService {
 
       const work = await tx.work.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           planId: subscription.planId,
           entitlementId: entitlement.id,
-          teamId: dto.teamId,
-          assignedToId: dto.assignedToId,
+          teamId: dto.teamId ? Number(dto.teamId) : null,
+          assignedToId: dto.assignedToId ? Number(dto.assignedToId) : null,
           workType: dto.workType,
           title: dto.title,
           description: dto.description,
@@ -159,11 +163,12 @@ export class WorkService {
     });
   }
 
-  async update(customerId: string, id: string, dto: UpdateWorkDto) {
-    const existing = await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateWorkDto) {
+    const numId = Number(id);
+    const existing = await this.findOne(customerId, numId);
 
     const updated = await this.prisma.work.update({
-      where: { id },
+      where: { id: numId },
       data: dto,
       include: {
         tasks: true,
@@ -184,8 +189,9 @@ export class WorkService {
     return updated;
   }
 
-  async getCalendar(customerId: string, dateFrom?: string, dateTo?: string) {
-    const where: any = { customerId };
+  async getCalendar(customerId: number | string, dateFrom?: string, dateTo?: string) {
+    const numCustomerId = Number(customerId);
+    const where: any = { customerId: numCustomerId };
     if (dateFrom && dateTo) {
       where.scheduledDate = {
         gte: new Date(dateFrom),

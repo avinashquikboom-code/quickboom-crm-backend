@@ -6,9 +6,10 @@ import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 export class EmployeeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: string, search?: string, status?: string, page = 1, limit = 50) {
+  async findAll(customerId: number | string, search?: string, status?: string, page = 1, limit = 50) {
+    const numCustomerId = Number(customerId);
     const skip = (page - 1) * limit;
-    const where: any = { customerId };
+    const where: any = { customerId: numCustomerId };
 
     if (status) where.status = status;
     if (search) {
@@ -58,9 +59,11 @@ export class EmployeeService {
     };
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const employee = await this.prisma.employee.findFirst({
-      where: { id, customerId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         department: true,
         designation: true,
@@ -90,14 +93,15 @@ export class EmployeeService {
     };
   }
 
-  async create(customerId: string, dto: CreateEmployeeDto) {
+  async create(customerId: number | string, dto: CreateEmployeeDto) {
+    const numCustomerId = Number(customerId);
     let department = await this.prisma.department.findFirst({
-      where: { customerId, name: dto.departmentName || 'Media & Production' },
+      where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
     });
     if (!department) {
       department = await this.prisma.department.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           name: dto.departmentName || 'Media & Production',
           code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
         },
@@ -105,12 +109,12 @@ export class EmployeeService {
     }
 
     let designation = await this.prisma.designation.findFirst({
-      where: { customerId, name: dto.designationName || 'Photographer' },
+      where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
     });
     if (!designation) {
       designation = await this.prisma.designation.create({
         data: {
-          customerId,
+          customerId: numCustomerId,
           name: dto.designationName || 'Photographer',
           code: (dto.designationName || 'PHT').substring(0, 4).toUpperCase(),
           departmentId: department.id,
@@ -120,7 +124,7 @@ export class EmployeeService {
 
     return this.prisma.employee.create({
       data: {
-        customerId,
+        customerId: numCustomerId,
         employeeCode: dto.employeeCode,
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -134,18 +138,20 @@ export class EmployeeService {
     });
   }
 
-  async update(customerId: string, id: string, dto: UpdateEmployeeDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateEmployeeDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.employee.update({
-      where: { id },
+      where: { id: numId },
       data: dto,
     });
   }
 
-  async remove(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async remove(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.employee.update({
-      where: { id },
+      where: { id: numId },
       data: { status: 'INACTIVE' },
     });
   }

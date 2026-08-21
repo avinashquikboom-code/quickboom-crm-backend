@@ -7,9 +7,10 @@ import { InvoiceStatus } from '@prisma/client';
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: string, status?: InvoiceStatus, page = 1, limit = 50) {
+  async findAll(customerId: number | string, status?: InvoiceStatus, page = 1, limit = 50) {
+    const numCustomerId = Number(customerId);
     const skip = (page - 1) * limit;
-    const where: any = { customerId, deletedAt: null };
+    const where: any = { customerId: numCustomerId, deletedAt: null };
 
     if (status) where.status = status;
 
@@ -48,9 +49,11 @@ export class InvoiceService {
     };
   }
 
-  async findOne(customerId: string, id: string) {
+  async findOne(customerId: number | string, id: number | string) {
+    const numCustomerId = Number(customerId);
+    const numId = Number(id);
     const invoice = await this.prisma.invoice.findFirst({
-      where: { id, customerId, deletedAt: null },
+      where: { id: numId, customerId: numCustomerId, deletedAt: null },
       include: {
         contact: true,
         items: true,
@@ -64,11 +67,12 @@ export class InvoiceService {
     return invoice;
   }
 
-  async create(customerId: string, dto: CreateInvoiceDto) {
+  async create(customerId: number | string, dto: CreateInvoiceDto) {
+    const numCustomerId = Number(customerId);
     return this.prisma.invoice.create({
       data: {
-        customerId,
-        contactId: dto.contactId,
+        customerId: numCustomerId,
+        contactId: Number(dto.contactId),
         invoiceNo: dto.invoiceNo,
         issueDate: new Date(dto.issueDate),
         dueDate: new Date(dto.dueDate),
@@ -81,18 +85,20 @@ export class InvoiceService {
     });
   }
 
-  async update(customerId: string, id: string, dto: UpdateInvoiceDto) {
-    await this.findOne(customerId, id);
+  async update(customerId: number | string, id: number | string, dto: UpdateInvoiceDto) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.invoice.update({
-      where: { id },
-      data: dto,
+      where: { id: numId },
+      data: dto as any,
     });
   }
 
-  async remove(customerId: string, id: string) {
-    await this.findOne(customerId, id);
+  async remove(customerId: number | string, id: number | string) {
+    const numId = Number(id);
+    await this.findOne(customerId, numId);
     return this.prisma.invoice.update({
-      where: { id },
+      where: { id: numId },
       data: { deletedAt: new Date(), status: InvoiceStatus.CANCELLED },
     });
   }
