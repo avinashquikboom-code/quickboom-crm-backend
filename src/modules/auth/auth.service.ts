@@ -185,10 +185,12 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
+        phone: user.phone || null,
         firstName: user.firstName,
         lastName: user.lastName,
         customerId: user.customerId,
         customerName: user.customer?.name || 'Super Admin',
+        role: user.userRoles[0]?.role?.type || 'CUSTOMER_ADMIN',
         roles: user.userRoles.map((ur) => ur.role.type),
       },
       tokens,
