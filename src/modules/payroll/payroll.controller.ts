@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
 
-@Controller('api/v1/admin/payroll')
+@Controller('admin/payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
 
