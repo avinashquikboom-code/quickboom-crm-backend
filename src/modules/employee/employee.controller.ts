@@ -28,10 +28,13 @@ export class EmployeeController {
   constructor(private readonly employeeService: EmployeeService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get paginated list of employees' })
+  @ApiOperation({ summary: 'Get paginated list of employees with live attendance, office, break, and leave data' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'branch', required: false })
+  @ApiQuery({ name: 'attendanceStatus', required: false })
+  @ApiQuery({ name: 'date', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
@@ -40,6 +43,9 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('branch') branch?: string,
+    @Query('attendanceStatus') attendanceStatus?: string,
+    @Query('date') date?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -55,9 +61,25 @@ export class EmployeeController {
       isSuperAdmin,
       search,
       status,
+      branch,
+      attendanceStatus,
+      date,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
+  }
+
+  @Get('hrm/offices')
+  @ApiOperation({ summary: 'Get list of real branches/offices for filtering' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async getOffices(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.employeeService.getOffices(targetCustomerId, isSuperAdmin);
   }
 
   @Get('hrm/leaves')
@@ -89,31 +111,39 @@ export class EmployeeController {
   @Get('hrm/attendance')
   @ApiOperation({ summary: 'Get employee attendance logs' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'branch', required: false })
   async getAttendance(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
+    @Query('date') date?: string,
+    @Query('branch') branch?: string,
   ) {
     const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin);
+    return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin, { date, branch });
   }
 
   @Get('hrm/live-attendance')
   @ApiOperation({ summary: 'Get real-time employee attendance, breaks, and leave live data' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  @ApiQuery({ name: 'branch', required: false })
+  @ApiQuery({ name: 'date', required: false })
   async getLiveAttendance(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
+    @Query('branch') branch?: string,
+    @Query('date') date?: string,
   ) {
     const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin);
+    return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin, branch, date);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get single employee details' })
+  @ApiOperation({ summary: 'Get single employee details with attendance, breaks, and leaves' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
   async findOne(
     @Param('id') id: string,

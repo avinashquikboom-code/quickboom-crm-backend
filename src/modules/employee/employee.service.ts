@@ -12,6 +12,9 @@ export interface FindAllEmployeesParams {
   isSuperAdmin?: boolean;
   search?: string;
   status?: string;
+  branch?: string;
+  attendanceStatus?: string;
+  date?: string;
   page?: number;
   limit?: number;
 }
@@ -39,7 +42,17 @@ export class EmployeeService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(params: FindAllEmployeesParams) {
-    const { customerId, isSuperAdmin, search, status, page = 1, limit = 50 } = params;
+    const {
+      customerId,
+      isSuperAdmin,
+      search,
+      status,
+      branch,
+      attendanceStatus,
+      date,
+      page = 1,
+      limit = 50,
+    } = params;
     const skip = (page - 1) * limit;
     const where: any = {};
 
@@ -53,7 +66,9 @@ export class EmployeeService {
       throw new ForbiddenException('customerId is required for employee access');
     }
 
-    if (status) where.status = status;
+    if (status && status !== 'ALL') where.status = status;
+    if (branch && branch !== 'ALL') where.branch = branch;
+
     if (search && search.trim().length > 0) {
       const trimmedSearch = search.trim();
       where.OR = [
@@ -61,8 +76,16 @@ export class EmployeeService {
         { lastName: { contains: trimmedSearch, mode: 'insensitive' } },
         { email: { contains: trimmedSearch, mode: 'insensitive' } },
         { employeeCode: { contains: trimmedSearch, mode: 'insensitive' } },
+        { branch: { contains: trimmedSearch, mode: 'insensitive' } },
       ];
     }
+
+    // Determine target date window (midnight to 23:59:59)
+    const targetDate = date ? new Date(date) : new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
 
     const [items, total] = await Promise.all([
       this.prisma.employee.findMany({
@@ -73,29 +96,136 @@ export class EmployeeService {
         include: {
           department: true,
           designation: true,
+          attendances: {
+            where: {
+              date: { gte: startOfDay, lte: endOfDay },
+            },
+            include: {
+              breaks: { orderBy: { breakStart: 'asc' } },
+            },
+            take: 1,
+          },
+          leaveRequests: {
+            where: {
+              fromDate: { lte: endOfDay },
+              toDate: { gte: startOfDay },
+              status: 'APPROVED',
+            },
+            include: { leaveType: true },
+            take: 1,
+          },
         },
       }),
       this.prisma.employee.count({ where }),
     ]);
 
-    const formatted = items.map((e) => ({
-      id: e.id,
-      customerId: e.customerId,
-      employeeId: e.employeeCode,
-      name: `${e.firstName} ${e.lastName}`,
-      firstName: e.firstName,
-      lastName: e.lastName,
-      email: e.email,
-      phone: e.phone || '+91 98765 43210',
-      designation: e.designation?.name || 'SSM Specialist',
-      department: e.department?.name || 'Media & Production',
-      branch: e.branch || 'Head Office',
-      status: e.status,
-      joiningDate: e.joiningDate,
-    }));
+    const formatted = items.map((e) => {
+      const att = e.attendances && e.attendances.length > 0 ? e.attendances[0] : null;
+      const leave = e.leaveRequests && e.leaveRequests.length > 0 ? e.leaveRequests[0] : null;
+
+      let displayStatus = 'Absent';
+      let checkInStr: string | null = null;
+      let checkOutStr: string | null = null;
+      let workingHoursStr = '0h 0m';
+      let totalBreakMinutes = 0;
+      let isCurrentlyOnBreak = false;
+      let activeBreakStartStr: string | null = null;
+
+      if (leave) {
+        displayStatus = 'On Leave';
+      } else if (att) {
+        if (att.punchIn) {
+          checkInStr = att.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        if (att.punchOut) {
+          checkOutStr = att.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          displayStatus = 'Checked Out';
+        } else {
+          // Check if currently on break
+          const openBreak = att.breaks.find((b) => !b.breakEnd);
+          if (openBreak) {
+            displayStatus = 'On Break';
+            isCurrentlyOnBreak = true;
+            activeBreakStartStr = openBreak.breakStart.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          } else {
+            displayStatus = att.status === 'LATE' ? 'Late' : (att.status === 'HALF_DAY' ? 'Half Day' : 'Present');
+          }
+        }
+
+        const breakMins = att.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+        totalBreakMinutes = Math.round(breakMins);
+
+        const hours = Math.floor(att.workingHours || 0);
+        const mins = Math.round(((att.workingHours || 0) - hours) * 60);
+        workingHoursStr = `${hours}h ${mins}m`;
+      } else {
+        displayStatus = 'Absent';
+      }
+
+      return {
+        id: e.id,
+        customerId: e.customerId,
+        employeeId: e.employeeCode,
+        name: `${e.firstName} ${e.lastName}`,
+        firstName: e.firstName,
+        lastName: e.lastName,
+        email: e.email,
+        phone: e.phone || '+91 98765 43210',
+        designation: e.designation?.name || 'Staff',
+        department: e.department?.name || 'General',
+        branch: e.branch || 'Head Office',
+        office: e.branch || 'Head Office',
+        status: e.status,
+        joiningDate: e.joiningDate,
+        attendance: {
+          status: displayStatus,
+          rawStatus: att?.status || (leave ? 'ON_LEAVE' : 'ABSENT'),
+          checkIn: checkInStr,
+          checkOut: checkOutStr || (att?.punchIn && !att?.punchOut ? 'Not Checked Out' : null),
+          workingHours: workingHoursStr,
+          breaksToday: att?.breaks ? att.breaks.length : 0,
+          totalBreak: `${totalBreakMinutes} min`,
+          totalBreakMinutes,
+          isCurrentlyOnBreak,
+          activeBreakStart: activeBreakStartStr,
+          location: att?.locationIn || 'Office GPS',
+          leave: leave
+            ? {
+                isOnLeave: true,
+                leaveType: leave.leaveType?.name || 'Approved Leave',
+                approvalStatus: leave.status,
+                days: leave.days || 1,
+                reason: leave.reason || 'Personal / Annual Leave',
+                startDate: leave.fromDate.toISOString().split('T')[0],
+                endDate: leave.toDate.toISOString().split('T')[0],
+              }
+            : {
+                isOnLeave: false,
+                leaveType: null,
+                approvalStatus: null,
+                days: null,
+                reason: null,
+                startDate: null,
+                endDate: null,
+              },
+        },
+      };
+    });
+
+    // Optional attendance status filter in memory if specified
+    const finalItems = attendanceStatus && attendanceStatus !== 'ALL'
+      ? formatted.filter(
+          (f) =>
+            f.attendance.status.toLowerCase() === attendanceStatus.toLowerCase() ||
+            f.attendance.rawStatus.toLowerCase() === attendanceStatus.toLowerCase(),
+        )
+      : formatted;
 
     return {
-      items: formatted,
+      items: finalItems,
       meta: {
         total,
         page,
@@ -124,18 +254,86 @@ export class EmployeeService {
       throw new ForbiddenException('customerId is required for employee access');
     }
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
     const employee = await this.prisma.employee.findFirst({
       where,
       include: {
         department: true,
         designation: true,
-        attendances: { take: 5, orderBy: { date: 'desc' } },
-        works: { take: 5, orderBy: { scheduledDate: 'desc' } },
+        attendances: {
+          orderBy: { date: 'desc' },
+          take: 30,
+          include: {
+            breaks: { orderBy: { breakStart: 'asc' } },
+          },
+        },
+        leaveRequests: {
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: { leaveType: true },
+        },
+        works: { take: 10, orderBy: { scheduledDate: 'desc' } },
       },
     });
 
     if (!employee) {
       throw new NotFoundException(`Employee with ID ${id} not found`);
+    }
+
+    // Today's attendance
+    const todayAtt = (employee.attendances || []).find((a) => {
+      const d = new Date(a.date);
+      return d >= todayStart && d <= todayEnd;
+    });
+
+    const activeLeave = (employee.leaveRequests || []).find((l) => {
+      return (
+        l.status === 'APPROVED' &&
+        new Date(l.fromDate) <= todayEnd &&
+        new Date(l.toDate) >= todayStart
+      );
+    });
+
+    let todayStatus = 'Absent';
+    let checkInStr: string | null = null;
+    let checkOutStr: string | null = null;
+    let workingHoursStr = '0h 0m';
+    let totalBreakMinutes = 0;
+    let isCurrentlyOnBreak = false;
+    let activeBreakStartStr: string | null = null;
+
+    if (activeLeave) {
+      todayStatus = 'On Leave';
+    } else if (todayAtt) {
+      if (todayAtt.punchIn) {
+        checkInStr = todayAtt.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      if (todayAtt.punchOut) {
+        checkOutStr = todayAtt.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        todayStatus = 'Checked Out';
+      } else {
+        const openBreak = todayAtt.breaks.find((b) => !b.breakEnd);
+        if (openBreak) {
+          todayStatus = 'On Break';
+          isCurrentlyOnBreak = true;
+          activeBreakStartStr = openBreak.breakStart.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        } else {
+          todayStatus = todayAtt.status === 'LATE' ? 'Late' : (todayAtt.status === 'HALF_DAY' ? 'Half Day' : 'Present');
+        }
+      }
+
+      const breakMins = todayAtt.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+      totalBreakMinutes = Math.round(breakMins);
+      const hours = Math.floor(todayAtt.workingHours || 0);
+      const mins = Math.round(((todayAtt.workingHours || 0) - hours) * 60);
+      workingHoursStr = `${hours}h ${mins}m`;
     }
 
     return {
@@ -146,13 +344,282 @@ export class EmployeeService {
       firstName: employee.firstName,
       lastName: employee.lastName,
       email: employee.email,
-      phone: employee.phone,
-      branch: employee.branch,
+      phone: employee.phone || '+91 98765 43210',
+      branch: employee.branch || 'Head Office',
+      office: employee.branch || 'Head Office',
       department: employee.department?.name || 'Media & Production',
-      designation: employee.designation?.name || 'SSM Specialist',
+      designation: employee.designation?.name || 'Specialist',
       status: employee.status,
-      attendances: employee.attendances,
-      works: employee.works,
+      joiningDate: employee.joiningDate,
+      todayAttendance: {
+        status: todayStatus,
+        checkIn: checkInStr,
+        checkOut: checkOutStr || (todayAtt?.punchIn && !todayAtt?.punchOut ? 'Not Checked Out' : null),
+        workingHours: workingHoursStr,
+        breaksToday: todayAtt?.breaks ? todayAtt.breaks.length : 0,
+        totalBreak: `${totalBreakMinutes} min`,
+        totalBreakMinutes,
+        isCurrentlyOnBreak,
+        activeBreakStart: activeBreakStartStr,
+        location: todayAtt?.locationIn || 'Office GPS',
+      },
+      breaks: todayAtt
+        ? todayAtt.breaks.map((b, idx) => ({
+            id: b.id,
+            breakNumber: idx + 1,
+            start: b.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            end: b.breakEnd ? b.breakEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+            duration: b.duration ? `${Math.round(b.duration)} min` : (b.breakEnd ? '0 min' : 'Currently Active'),
+            isActive: !b.breakEnd,
+          }))
+        : [],
+      leaves: (employee.leaveRequests || []).map((l) => ({
+        id: l.id,
+        leaveType: l.leaveType?.name || 'Leave',
+        fromDate: l.fromDate.toISOString().split('T')[0],
+        toDate: l.toDate.toISOString().split('T')[0],
+        days: l.days || 1,
+        reason: l.reason || 'General leave',
+        status: l.status,
+        appliedOn: l.createdAt.toISOString().split('T')[0],
+      })),
+      attendanceHistory: (employee.attendances || []).map((a) => {
+        const hours = Math.floor(a.workingHours || 0);
+        const mins = Math.round(((a.workingHours || 0) - hours) * 60);
+        return {
+          id: a.id,
+          date: a.date.toISOString().split('T')[0],
+          checkIn: a.punchIn ? a.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+          checkOut: a.punchOut ? a.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (a.punchIn ? 'Not Checked Out' : '—'),
+          workingHours: `${hours}h ${mins}m`,
+          status: a.status,
+          location: a.locationIn || 'Office GPS',
+          breaksCount: a.breaks ? a.breaks.length : 0,
+        };
+      }),
+      works: employee.works || [],
+    };
+  }
+
+  async getOffices(customerId?: number | string, isSuperAdmin = false) {
+    const whereCust: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      whereCust.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required');
+    }
+
+    const [branches, employeeBranches] = await Promise.all([
+      this.prisma.branchGeofence.findMany({
+        where: { ...whereCust, isActive: true },
+        select: { id: true, name: true, city: true },
+      }),
+      this.prisma.employee.findMany({
+        where: whereCust,
+        select: { branch: true },
+        distinct: ['branch'],
+      }),
+    ]);
+
+    const set = new Set<string>();
+    branches.forEach((b) => set.add(b.name));
+    employeeBranches.forEach((e) => {
+      if (e.branch && e.branch.trim().length > 0) set.add(e.branch.trim());
+    });
+
+    if (set.size === 0) {
+      set.add('Head Office');
+    }
+
+    return Array.from(set).map((name, idx) => ({
+      id: idx + 1,
+      name,
+    }));
+  }
+
+  async getLiveAttendance(
+    customerId?: number | string,
+    isSuperAdmin = false,
+    branchFilter?: string,
+    dateFilter?: string,
+  ) {
+    const whereEmp: any = { status: 'ACTIVE' };
+    const whereCust: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      whereEmp.customerId = numCustomerId;
+      whereCust.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for live attendance access');
+    }
+
+    if (branchFilter && branchFilter !== 'ALL') {
+      whereEmp.branch = branchFilter;
+    }
+
+    const targetDate = dateFilter ? new Date(dateFilter) : new Date();
+    const todayStart = new Date(targetDate);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(targetDate);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [employees, todayAttendances, todayLeaves] = await Promise.all([
+      this.prisma.employee.findMany({
+        where: whereEmp,
+        include: { department: true, designation: true },
+        orderBy: { firstName: 'asc' },
+      }),
+      this.prisma.attendance.findMany({
+        where: {
+          ...whereCust,
+          date: { gte: todayStart, lte: todayEnd },
+        },
+        include: {
+          breaks: { orderBy: { breakStart: 'asc' } },
+        },
+      }),
+      this.prisma.leaveRequest.findMany({
+        where: {
+          ...whereCust,
+          fromDate: { lte: todayEnd },
+          toDate: { gte: todayStart },
+          status: 'APPROVED',
+        },
+        include: { leaveType: true },
+      }),
+    ]);
+
+    const attendanceMap = new Map<number, typeof todayAttendances[0]>();
+    for (const att of todayAttendances) {
+      attendanceMap.set(att.employeeId, att);
+    }
+
+    const leaveMap = new Map<number, typeof todayLeaves[0]>();
+    for (const leave of todayLeaves) {
+      leaveMap.set(leave.employeeId, leave);
+    }
+
+    let presentCount = 0;
+    let onBreakCount = 0;
+    let onLeaveCount = 0;
+    let absentCount = 0;
+    let checkedOutCount = 0;
+    let lateCount = 0;
+
+    // Office-wise aggregation map
+    const officeStatsMap = new Map<
+      string,
+      { total: number; present: number; onBreak: number; onLeave: number; absent: number }
+    >();
+
+    const liveRecords = employees.map((emp) => {
+      const att = attendanceMap.get(emp.id);
+      const leave = leaveMap.get(emp.id);
+      const officeName = emp.branch || 'Head Office';
+
+      if (!officeStatsMap.has(officeName)) {
+        officeStatsMap.set(officeName, { total: 0, present: 0, onBreak: 0, onLeave: 0, absent: 0 });
+      }
+      const oStat = officeStatsMap.get(officeName)!;
+      oStat.total++;
+
+      let status = 'ABSENT';
+      let punchInStr: string | null = null;
+      let punchOutStr: string | null = null;
+      let breakStartStr: string | null = null;
+      let breakDurationMinutes = 0;
+      let totalWorkingHours = '0h 0m';
+
+      if (leave) {
+        status = 'ON_LEAVE';
+        onLeaveCount++;
+        oStat.onLeave++;
+      } else if (att) {
+        if (att.punchIn) {
+          punchInStr = att.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        if (att.punchOut) {
+          punchOutStr = att.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          status = 'CHECKED_OUT';
+          checkedOutCount++;
+          oStat.present++;
+        } else {
+          // Check if currently on break
+          const activeBreak = att.breaks.find((b) => !b.breakEnd);
+          if (activeBreak) {
+            status = 'ON_BREAK';
+            onBreakCount++;
+            oStat.onBreak++;
+            breakStartStr = activeBreak.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } else {
+            status = att.status === 'LATE' ? 'LATE' : (att.status === 'HALF_DAY' ? 'HALF_DAY' : 'PRESENT');
+            if (att.status === 'LATE') lateCount++;
+            presentCount++;
+            oStat.present++;
+          }
+        }
+
+        const totalBreakMins = att.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+        breakDurationMinutes = Math.round(totalBreakMins);
+        const hours = Math.floor(att.workingHours || 0);
+        const mins = Math.round(((att.workingHours || 0) - hours) * 60);
+        totalWorkingHours = `${hours}h ${mins}m`;
+      } else {
+        status = 'ABSENT';
+        absentCount++;
+        oStat.absent++;
+      }
+
+      return {
+        id: emp.id,
+        customerId: emp.customerId,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`,
+        role: emp.designation?.name || 'Staff',
+        department: emp.department?.name || 'General',
+        branch: officeName,
+        office: officeName,
+        status,
+        punchInTime: punchInStr,
+        punchOutTime: punchOutStr,
+        breakStartTime: breakStartStr,
+        breakDuration: `${breakDurationMinutes}m`,
+        totalWorkingHours,
+        location: att?.locationIn || 'Office GPS',
+        leaveType: leave?.leaveType?.name || null,
+        leaveReason: leave?.reason || null,
+      };
+    });
+
+    const offices = Array.from(officeStatsMap.entries()).map(([officeName, stats]) => ({
+      officeName,
+      totalEmployees: stats.total,
+      present: stats.present,
+      onBreak: stats.onBreak,
+      onLeave: stats.onLeave,
+      absent: stats.absent,
+    }));
+
+    return {
+      summary: {
+        totalEmployees: employees.length,
+        presentCount,
+        onBreakCount,
+        onLeaveCount,
+        absentCount,
+        checkedOutCount,
+        lateCount,
+        currentlyWorking: presentCount,
+        attendancePercentage:
+          employees.length > 0
+            ? Math.round(((presentCount + onBreakCount) / employees.length) * 100)
+            : 0,
+      },
+      offices,
+      records: liveRecords,
     };
   }
 
@@ -163,7 +630,6 @@ export class EmployeeService {
       throw new BadRequestException('Valid customerId is required');
     }
 
-    // Verify or create department scoped to the authenticated customer
     let department = await this.prisma.department.findFirst({
       where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
     });
@@ -177,7 +643,6 @@ export class EmployeeService {
       });
     }
 
-    // Verify or create designation scoped to the authenticated customer
     let designation = await this.prisma.designation.findFirst({
       where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
     });
@@ -214,7 +679,6 @@ export class EmployeeService {
 
   async update(params: UpdateEmployeeParams) {
     const { id, customerId, isSuperAdmin, dto } = params;
-    // Strict ownership verification: ensure employee exists and belongs to customer
     await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
@@ -230,7 +694,6 @@ export class EmployeeService {
 
   async remove(params: EmployeeFindOneParams) {
     const { id, customerId, isSuperAdmin } = params;
-    // Strict ownership verification: ensure employee exists and belongs to customer
     await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
@@ -300,7 +763,11 @@ export class EmployeeService {
     }));
   }
 
-  async getAttendance(customerId?: number | string, isSuperAdmin = false) {
+  async getAttendance(
+    customerId?: number | string,
+    isSuperAdmin = false,
+    options?: { date?: string; branch?: string },
+  ) {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
@@ -310,164 +777,50 @@ export class EmployeeService {
       throw new ForbiddenException('customerId is required for attendance access');
     }
 
+    if (options?.date) {
+      const d = new Date(options.date);
+      const start = new Date(d);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(d);
+      end.setHours(23, 59, 59, 999);
+      where.date = { gte: start, lte: end };
+    }
+
+    if (options?.branch && options.branch !== 'ALL') {
+      where.employee = { branch: options.branch };
+    }
+
     const records = await this.prisma.attendance.findMany({
       where,
-      include: { employee: true },
+      include: {
+        employee: true,
+        breaks: { orderBy: { breakStart: 'asc' } },
+      },
       orderBy: { date: 'desc' },
-      take: 50,
+      take: 100,
     });
 
-    return records.map((a) => ({
-      id: String(a.id),
-      customerId: a.customerId,
-      employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Employee',
-      employeeId: a.employee?.employeeCode || 'EMP-001',
-      date: a.date ? a.date.toISOString().split('T')[0] : '2026-08-21',
-      punchIn: a.punchIn ? a.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '09:00 AM',
-      punchOut: a.punchOut ? a.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '06:00 PM',
-      workingHours: a.workingHours ? `${a.workingHours}h` : '8h',
-      status: a.status,
-      location: a.locationIn || 'Office GPS',
-    }));
-  }
-
-  async getLiveAttendance(customerId?: number | string, isSuperAdmin = false) {
-    const whereEmp: any = { status: 'ACTIVE' };
-    const whereCust: any = {};
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      whereEmp.customerId = numCustomerId;
-      whereCust.customerId = numCustomerId;
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for live attendance access');
-    }
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    const [employees, todayAttendances, todayLeaves] = await Promise.all([
-      this.prisma.employee.findMany({
-        where: whereEmp,
-        include: { department: true, designation: true },
-        orderBy: { firstName: 'asc' },
-      }),
-      this.prisma.attendance.findMany({
-        where: {
-          ...whereCust,
-          date: { gte: todayStart, lte: todayEnd },
-        },
-        include: {
-          breaks: { orderBy: { breakStart: 'desc' } },
-        },
-      }),
-      this.prisma.leaveRequest.findMany({
-        where: {
-          ...whereCust,
-          fromDate: { lte: todayEnd },
-          toDate: { gte: todayStart },
-          status: 'APPROVED',
-        },
-        include: { leaveType: true },
-      }),
-    ]);
-
-    const attendanceMap = new Map<number, typeof todayAttendances[0]>();
-    for (const att of todayAttendances) {
-      attendanceMap.set(att.employeeId, att);
-    }
-
-    const leaveMap = new Map<number, typeof todayLeaves[0]>();
-    for (const leave of todayLeaves) {
-      leaveMap.set(leave.employeeId, leave);
-    }
-
-    let presentCount = 0;
-    let onBreakCount = 0;
-    let onLeaveCount = 0;
-    let absentCount = 0;
-    let checkedOutCount = 0;
-
-    const liveRecords = employees.map((emp) => {
-      const att = attendanceMap.get(emp.id);
-      const leave = leaveMap.get(emp.id);
-
-      let status = 'ABSENT';
-      let punchInStr: string | null = null;
-      let punchOutStr: string | null = null;
-      let breakStartStr: string | null = null;
-      let breakDurationMinutes = 0;
-      let totalWorkingHours = '0h 0m';
-
-      if (leave) {
-        status = 'ON_LEAVE';
-        onLeaveCount++;
-      } else if (att) {
-        if (att.punchIn) {
-          punchInStr = att.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-        if (att.punchOut) {
-          punchOutStr = att.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          status = 'CHECKED_OUT';
-          checkedOutCount++;
-        } else {
-          // Check if currently on break
-          const activeBreak = att.breaks.find((b) => !b.breakEnd);
-          if (activeBreak) {
-            status = 'ON_BREAK';
-            onBreakCount++;
-            breakStartStr = activeBreak.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          } else {
-            status = 'WORKING';
-            presentCount++;
-          }
-        }
-
-        const totalBreakMins = att.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
-        breakDurationMinutes = Math.round(totalBreakMins);
-        const hours = Math.floor(att.workingHours || 0);
-        const mins = Math.round(((att.workingHours || 0) - hours) * 60);
-        totalWorkingHours = `${hours}h ${mins}m`;
-      } else {
-        status = 'ABSENT';
-        absentCount++;
-      }
+    return records.map((a) => {
+      const breakMins = a.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+      const hours = Math.floor(a.workingHours || 0);
+      const mins = Math.round(((a.workingHours || 0) - hours) * 60);
 
       return {
-        id: emp.id,
-        customerId: emp.customerId,
-        employeeCode: emp.employeeCode,
-        name: `${emp.firstName} ${emp.lastName}`,
-        role: emp.designation?.name || 'Staff',
-        department: emp.department?.name || 'General',
-        status,
-        punchInTime: punchInStr,
-        punchOutTime: punchOutStr,
-        breakStartTime: breakStartStr,
-        breakDuration: `${breakDurationMinutes}m`,
-        totalWorkingHours,
-        location: att?.locationIn || 'Office GPS',
-        leaveType: leave?.leaveType?.name || null,
-        leaveReason: leave?.reason || null,
+        id: String(a.id),
+        customerId: a.customerId,
+        employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Employee',
+        employeeId: a.employee?.employeeCode || 'EMP-001',
+        branch: a.employee?.branch || 'Head Office',
+        office: a.employee?.branch || 'Head Office',
+        date: a.date ? a.date.toISOString().split('T')[0] : '2026-08-21',
+        punchIn: a.punchIn ? a.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+        punchOut: a.punchOut ? a.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (a.punchIn ? 'Not Checked Out' : '—'),
+        workingHours: `${hours}h ${mins}m`,
+        breaksCount: a.breaks.length,
+        totalBreak: `${Math.round(breakMins)} min`,
+        status: a.status,
+        location: a.locationIn || 'Office GPS',
       };
     });
-
-    return {
-      summary: {
-        totalEmployees: employees.length,
-        presentCount,
-        onBreakCount,
-        onLeaveCount,
-        absentCount,
-        checkedOutCount,
-        attendancePercentage:
-          employees.length > 0
-            ? Math.round(((presentCount + onBreakCount) / employees.length) * 100)
-            : 0,
-      },
-      records: liveRecords,
-    };
   }
 }
