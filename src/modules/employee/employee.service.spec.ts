@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EmployeeService } from './employee.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlanAccessService } from '../subscription/plan-access.service';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('EmployeeService — Customer Data Isolation', () => {
@@ -46,6 +47,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
       providers: [
         EmployeeService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: PlanAccessService,
+          useValue: {
+            checkUserLimit: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 

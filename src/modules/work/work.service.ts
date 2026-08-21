@@ -7,9 +7,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto } from './dto/work.dto';
 import { WorkType, WorkStatus, TaskStatus } from '@prisma/client';
 
+import { PlanAccessService } from '../subscription/plan-access.service';
+
 @Injectable()
 export class WorkService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly planAccessService?: PlanAccessService,
+  ) {}
 
   async findAll(customerId: number | string, status?: WorkStatus, workType?: WorkType, page = 1, limit = 50) {
     const numCustomerId = Number(customerId);

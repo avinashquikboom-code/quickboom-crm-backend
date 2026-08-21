@@ -13,12 +13,19 @@ import {
   UpdateLeadDto,
   UpdateLeadStatusDto,
 } from './dto/lead.dto';
+import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
 export class LeadService {
-  constructor(private readonly leadRepository: LeadRepository) {}
+  constructor(
+    private readonly leadRepository: LeadRepository,
+    private readonly planAccessService?: PlanAccessService,
+  ) {}
 
   async createLead(customerId: number | string, userId: number | string, dto: CreateLeadDto) {
+    if (this.planAccessService) {
+      await this.planAccessService.checkLeadLimit(customerId);
+    }
     const lead = await this.leadRepository.create(customerId, userId, dto);
     await this.leadRepository.logTimeline(
       lead.id,

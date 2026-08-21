@@ -37,9 +37,14 @@ export interface UpdateEmployeeParams {
   dto: UpdateEmployeeDto;
 }
 
+import { PlanAccessService } from '../subscription/plan-access.service';
+
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly planAccessService?: PlanAccessService,
+  ) {}
 
   async findAll(params: FindAllEmployeesParams) {
     const {
@@ -628,6 +633,10 @@ export class EmployeeService {
     const numCustomerId = Number(customerId);
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
       throw new BadRequestException('Valid customerId is required');
+    }
+
+    if (this.planAccessService) {
+      await this.planAccessService.checkUserLimit(numCustomerId);
     }
 
     let department = await this.prisma.department.findFirst({
