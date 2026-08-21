@@ -166,7 +166,10 @@ export class AuthService {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
-    const primaryRole = user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
+    const hasSuperAdminRole = user.userRoles.some((ur) => ur.role?.type === RoleType.SUPER_ADMIN);
+    const primaryRole = hasSuperAdminRole
+      ? RoleType.SUPER_ADMIN
+      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
     const roles = user.userRoles.map((ur) => ur.role.type);
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
