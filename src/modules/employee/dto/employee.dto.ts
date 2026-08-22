@@ -92,6 +92,16 @@ export class CreateEmployeeDto {
   @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
   @IsOptional()
   mobileLoginEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 'Secret@123', description: 'Initial password for mobile app login' })
+  @IsString()
+  @IsOptional()
+  password?: string;
+
+  @ApiPropertyOptional({ example: 'Secret@123', description: 'Confirm password for validation' })
+  @IsString()
+  @IsOptional()
+  confirmPassword?: string;
 }
 
 export class UpdateEmployeeDto {
@@ -106,6 +116,16 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
   @IsOptional()
   mobileLoginEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 'NewSecret@123', description: 'Optional new password for mobile app' })
+  @IsString()
+  @IsOptional()
+  password?: string;
+
+  @ApiPropertyOptional({ example: 'NewSecret@123', description: 'Confirm new password' })
+  @IsString()
+  @IsOptional()
+  confirmPassword?: string;
 
   @ApiPropertyOptional({ example: 'Rahul' })
   @IsString()

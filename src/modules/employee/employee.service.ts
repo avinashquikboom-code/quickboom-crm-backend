@@ -656,10 +656,15 @@ export class EmployeeService {
    * Preview or allocate the next sequential Employee ID for a customer
    * Format: QB0001, QB0002, ..., QB0099, QB0100
    */
-  async getNextEmployeeCode(customerId?: number | string, prefix?: string): Promise<{ nextEmployeeId: string; prefix: string }> {
+  async getNextEmployeeCode(
+    customerId?: number | string,
+    prefix?: string,
+    txClient?: any,
+  ): Promise<{ nextEmployeeId: string; prefix: string }> {
+    const client = txClient || this.prisma;
     let numCustomerId = Number(customerId);
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
+      const defaultCust = await client.customer.findFirst({ select: { id: true } });
       numCustomerId = defaultCust?.id || 1;
     }
 
@@ -667,7 +672,7 @@ export class EmployeeService {
     const cleanPrefix = (prefix || defaultPrefix).toUpperCase();
 
     // Query existing employee codes for this customer that match the prefix
-    const existingEmployees = await this.prisma.employee.findMany({
+    const existingEmployees = await client.employee.findMany({
       where: {
         customerId: numCustomerId,
         employeeCode: {
@@ -695,7 +700,7 @@ export class EmployeeService {
     let candidateCode = `${cleanPrefix}${String(candidateNum).padStart(4, '0')}`;
 
     // Ensure candidate code does not exist in case of non-sequential manual IDs
-    const existingCodeSet = new Set(existingEmployees.map((e) => e.employeeCode.toUpperCase()));
+    const existingCodeSet = new Set(existingEmployees.map((e: any) => e.employeeCode.toUpperCase()));
     while (existingCodeSet.has(candidateCode.toUpperCase())) {
       candidateNum++;
       candidateCode = `${cleanPrefix}${String(candidateNum).padStart(4, '0')}`;
@@ -715,175 +720,174 @@ export class EmployeeService {
       await this.planAccessService.checkUserLimit(numCustomerId);
     }
 
-    // Handle Auto Employee ID Generation or manual validation
-    let finalEmployeeCode = dto.employeeCode ? dto.employeeCode.trim() : '';
-    const isAutoGenerate = !finalEmployeeCode || dto.autoGenerateCode === true;
-    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
+    // Execute complete creation inside a single atomic database transaction
+    return this.prisma.$transaction(async (tx) => {
+      // Handle Auto Employee ID Generation or manual validation
+      let finalEmployeeCode = dto.employeeCode ? dto.employeeCode.trim() : '';
+      const isAutoGenerate = !finalEmployeeCode || dto.autoGenerateCode === true;
+      const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
 
-    if (isAutoGenerate) {
-      const { nextEmployeeId } = await this.getNextEmployeeCode(numCustomerId, defaultPrefix);
-      finalEmployeeCode = nextEmployeeId;
-    } else {
-      // Validate uniqueness for manual entry
-      const existing = await this.prisma.employee.findFirst({
-        where: {
-          customerId: numCustomerId,
-          employeeCode: finalEmployeeCode,
-        },
-      });
-      if (existing) {
-        throw new ConflictException(`Employee ID "${finalEmployeeCode}" is already assigned to another employee.`);
+      if (isAutoGenerate) {
+        const { nextEmployeeId } = await this.getNextEmployeeCode(numCustomerId, defaultPrefix, tx);
+        finalEmployeeCode = nextEmployeeId;
+      } else {
+        // Validate uniqueness for manual entry
+        const existing = await tx.employee.findFirst({
+          where: {
+            customerId: numCustomerId,
+            employeeCode: finalEmployeeCode,
+          },
+        });
+        if (existing) {
+          throw new ConflictException(
+            `Employee ID "${finalEmployeeCode}" is already assigned to another employee.`,
+          );
+        }
       }
-    }
 
-    let department = await this.prisma.department.findFirst({
-      where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
-    });
-    if (!department) {
-      department = await this.prisma.department.create({
-        data: {
-          customerId: numCustomerId,
-          name: dto.departmentName || 'Media & Production',
-          code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
-        },
+      // Department
+      let department = await tx.department.findFirst({
+        where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
       });
-    }
+      if (!department) {
+        department = await tx.department.create({
+          data: {
+            customerId: numCustomerId,
+            name: dto.departmentName || 'Media & Production',
+            code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
+          },
+        });
+      }
 
-    let designation = await this.prisma.designation.findFirst({
-      where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
-    });
-    if (!designation) {
-      designation = await this.prisma.designation.create({
-        data: {
-          customerId: numCustomerId,
-          name: dto.designationName || 'Photographer',
-          code: (dto.designationName || 'PHT').substring(0, 4).toUpperCase(),
-          departmentId: department.id,
-        },
+      // Designation
+      let designation = await tx.designation.findFirst({
+        where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
       });
-    }
+      if (!designation) {
+        designation = await tx.designation.create({
+          data: {
+            customerId: numCustomerId,
+            name: dto.designationName || 'Photographer',
+            code: (dto.designationName || 'PHT').substring(0, 4).toUpperCase(),
+            departmentId: department.id,
+          },
+        });
+      }
 
-    // 1. Find or create linked User account (Transaction-safe)
-    const normalizedEmail = dto.email.trim().toLowerCase();
-    let user = await this.prisma.user.findFirst({
-      where: { email: normalizedEmail },
-    });
+      // User account password hashing
+      const normalizedEmail = dto.email.trim().toLowerCase();
+      const rawPassword = dto.password?.trim() || 'Password@123';
+      const passwordHash = await bcrypt.hash(rawPassword, 10);
 
-    if (!user) {
-      const defaultPassword = 'Password@123';
-      const passwordHash = await bcrypt.hash(defaultPassword, 10);
-      user = await this.prisma.user.create({
-        data: {
-          customerId: numCustomerId,
-          email: normalizedEmail,
-          phone: dto.phone || null,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          passwordHash,
+      // Find or create linked User account
+      let user = await tx.user.findFirst({
+        where: { email: normalizedEmail },
+      });
+
+      if (!user) {
+        user = await tx.user.create({
+          data: {
+            customerId: numCustomerId,
+            email: normalizedEmail,
+            phone: dto.phone || null,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            passwordHash,
+            isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
+            isVerified: true,
+          },
+        });
+      } else {
+        // If user exists and new password was specifically provided, update password
+        const updateUserData: any = {
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
-          isVerified: true,
+        };
+        if (dto.password?.trim()) {
+          updateUserData.passwordHash = passwordHash;
+        }
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: updateUserData,
+        });
+      }
+
+      // Assign Employee mobile role
+      let employeeRole = await tx.role.findFirst({
+        where: {
+          OR: [
+            { customerId: numCustomerId, name: 'Employee' },
+            { customerId: numCustomerId, type: RoleType.CUSTOM },
+            { customerId: null, name: 'Employee' },
+          ],
         },
       });
-    }
 
-    // 2. Assign standard Employee mobile role if not already assigned
-    let employeeRole = await this.prisma.role.findFirst({
-      where: {
-        OR: [
-          { customerId: numCustomerId, name: 'Employee' },
-          { customerId: numCustomerId, type: RoleType.CUSTOM },
-          { customerId: null, name: 'Employee' },
-        ],
-      },
-    });
+      if (!employeeRole) {
+        employeeRole = await tx.role.create({
+          data: {
+            customerId: numCustomerId,
+            name: 'Employee',
+            type: RoleType.CUSTOM,
+            description: 'Employee mobile application role',
+          },
+        });
+      }
 
-    if (!employeeRole) {
-      employeeRole = await this.prisma.role.create({
-        data: {
-          customerId: numCustomerId,
-          name: 'Employee',
-          type: RoleType.CUSTOM,
-          description: 'Employee mobile application role',
-        },
-      });
-    }
-
-    const existingUserRole = await this.prisma.userRole.findFirst({
-      where: {
-        userId: user.id,
-        roleId: employeeRole.id,
-      },
-    });
-
-    if (!existingUserRole) {
-      await this.prisma.userRole.create({
-        data: {
+      const existingUserRole = await tx.userRole.findFirst({
+        where: {
           userId: user.id,
           roleId: employeeRole.id,
         },
       });
-    }
 
-    const empData: any = {
-      customerId: numCustomerId,
-      userId: user.id,
-      firstName: dto.firstName,
-      lastName: dto.lastName,
-      email: normalizedEmail,
-      phone: dto.phone,
-      branch: dto.branch || 'Head Office',
-      departmentId: department.id,
-      designationId: designation.id,
-      employmentType: dto.employmentType || 'FULL_TIME',
-      gender: dto.gender || null,
-      dob: dto.dob ? new Date(dto.dob) : null,
-      joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : new Date(),
-      address: dto.address || null,
-      documents: dto.documents || null,
-      bankDetails: dto.bankDetails || null,
-      emergencyContact: typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : (dto.emergencyContact || null),
-      managerId: dto.managerId ? Number(dto.managerId) : null,
-      status: dto.status || 'ACTIVE',
-      mobileLoginEnabled: dto.mobileLoginEnabled !== false,
-    };
-
-    // Attempt creation with retry loop on concurrent collision
-    let createdEmployee = null;
-    let attempt = 0;
-    const maxAttempts = 5;
-
-    while (attempt < maxAttempts) {
-      attempt++;
-      try {
-        createdEmployee = await this.prisma.employee.create({
+      if (!existingUserRole) {
+        await tx.userRole.create({
           data: {
-            ...empData,
-            employeeCode: finalEmployeeCode,
-          },
-          include: {
-            department: true,
-            designation: true,
+            userId: user.id,
+            roleId: employeeRole.id,
           },
         });
-        break;
-      } catch (err: any) {
-        // Handle Prisma unique constraint violation (P2002 on employeeCode)
-        if (err.code === 'P2002' && isAutoGenerate) {
-          const { nextEmployeeId } = await this.getNextEmployeeCode(numCustomerId, defaultPrefix);
-          finalEmployeeCode = nextEmployeeId;
-        } else if (err.code === 'P2002') {
-          throw new ConflictException(`Employee ID "${finalEmployeeCode}" already exists in the database.`);
-        } else {
-          throw err;
-        }
       }
-    }
 
-    if (!createdEmployee) {
-      throw new BadRequestException('Unable to generate unique Employee ID due to high concurrency. Please retry.');
-    }
+      const empData: any = {
+        customerId: numCustomerId,
+        userId: user.id,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        email: normalizedEmail,
+        phone: dto.phone,
+        branch: dto.branch || 'Head Office',
+        departmentId: department.id,
+        designationId: designation.id,
+        employmentType: dto.employmentType || 'FULL_TIME',
+        gender: dto.gender || null,
+        dob: dto.dob ? new Date(dto.dob) : null,
+        joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : new Date(),
+        address: dto.address || null,
+        documents: dto.documents || null,
+        bankDetails: dto.bankDetails || null,
+        emergencyContact:
+          typeof dto.emergencyContact === 'object'
+            ? JSON.stringify(dto.emergencyContact)
+            : dto.emergencyContact || null,
+        managerId: dto.managerId ? Number(dto.managerId) : null,
+        status: dto.status || 'ACTIVE',
+        mobileLoginEnabled: dto.mobileLoginEnabled !== false,
+      };
 
-    return createdEmployee;
+      const createdEmployee = await tx.employee.create({
+        data: {
+          ...empData,
+          employeeCode: finalEmployeeCode,
+        },
+        include: {
+          department: true,
+          designation: true,
+        },
+      });
+
+      return createdEmployee;
+    });
   }
 
   async update(params: UpdateEmployeeParams) {
@@ -891,75 +895,100 @@ export class EmployeeService {
     await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
-    const existing = await this.prisma.employee.findUnique({ where: { id: numId } });
-    const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
 
-    const updateData: any = {};
-    if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
-    if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
-    if (dto.email !== undefined) updateData.email = dto.email;
-    if (dto.phone !== undefined) updateData.phone = dto.phone;
-    if (dto.branch !== undefined) updateData.branch = dto.branch;
-    if (dto.status !== undefined) updateData.status = dto.status;
-    if (dto.employmentType !== undefined) updateData.employmentType = dto.employmentType;
-    if (dto.gender !== undefined) updateData.gender = dto.gender;
-    if (dto.dob !== undefined) updateData.dob = dto.dob ? new Date(dto.dob) : null;
-    if (dto.joiningDate !== undefined) updateData.joiningDate = dto.joiningDate ? new Date(dto.joiningDate) : undefined;
-    if (dto.address !== undefined) updateData.address = dto.address;
-    if (dto.documents !== undefined) updateData.documents = dto.documents;
-    if (dto.bankDetails !== undefined) updateData.bankDetails = dto.bankDetails;
-    if (dto.emergencyContact !== undefined) {
-      updateData.emergencyContact = typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : dto.emergencyContact;
-    }
-    if (dto.managerId !== undefined) updateData.managerId = dto.managerId ? Number(dto.managerId) : null;
-    if (dto.mobileLoginEnabled !== undefined) updateData.mobileLoginEnabled = dto.mobileLoginEnabled;
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.employee.findUnique({ where: { id: numId } });
+      const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
 
-    if (dto.status !== undefined && existing?.userId) {
-      await this.prisma.user.update({
-        where: { id: existing.userId },
-        data: { isActive: dto.status === 'ACTIVE' },
-      }).catch(() => null);
-    }
-
-    if (dto.departmentName) {
-      let dept = await this.prisma.department.findFirst({
-        where: { customerId: targetCustId, name: dto.departmentName },
-      });
-      if (!dept) {
-        dept = await this.prisma.department.create({
-          data: {
-            customerId: targetCustId,
-            name: dto.departmentName,
-            code: dto.departmentName.substring(0, 4).toUpperCase(),
-          },
-        });
+      const updateData: any = {};
+      if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
+      if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
+      if (dto.email !== undefined) updateData.email = dto.email;
+      if (dto.phone !== undefined) updateData.phone = dto.phone;
+      if (dto.branch !== undefined) updateData.branch = dto.branch;
+      if (dto.status !== undefined) updateData.status = dto.status;
+      if (dto.employmentType !== undefined) updateData.employmentType = dto.employmentType;
+      if (dto.gender !== undefined) updateData.gender = dto.gender;
+      if (dto.dob !== undefined) updateData.dob = dto.dob ? new Date(dto.dob) : null;
+      if (dto.joiningDate !== undefined)
+        updateData.joiningDate = dto.joiningDate ? new Date(dto.joiningDate) : undefined;
+      if (dto.address !== undefined) updateData.address = dto.address;
+      if (dto.documents !== undefined) updateData.documents = dto.documents;
+      if (dto.bankDetails !== undefined) updateData.bankDetails = dto.bankDetails;
+      if (dto.emergencyContact !== undefined) {
+        updateData.emergencyContact =
+          typeof dto.emergencyContact === 'object'
+            ? JSON.stringify(dto.emergencyContact)
+            : dto.emergencyContact;
       }
-      updateData.departmentId = dept.id;
-    }
+      if (dto.managerId !== undefined)
+        updateData.managerId = dto.managerId ? Number(dto.managerId) : null;
+      if (dto.mobileLoginEnabled !== undefined)
+        updateData.mobileLoginEnabled = dto.mobileLoginEnabled;
 
-    if (dto.designationName) {
-      let desig = await this.prisma.designation.findFirst({
-        where: { customerId: targetCustId, name: dto.designationName },
-      });
-      if (!desig) {
-        desig = await this.prisma.designation.create({
-          data: {
-            customerId: targetCustId,
-            name: dto.designationName,
-            code: dto.designationName.substring(0, 4).toUpperCase(),
-          },
-        });
+      // Handle user account updates (status & optional password)
+      if (existing?.userId) {
+        const userUpdate: any = {};
+        if (dto.status !== undefined) {
+          userUpdate.isActive = dto.status === 'ACTIVE';
+        }
+        if (dto.password && dto.password.trim().length > 0) {
+          userUpdate.passwordHash = await bcrypt.hash(dto.password.trim(), 10);
+        }
+        if (dto.firstName !== undefined) userUpdate.firstName = dto.firstName;
+        if (dto.lastName !== undefined) userUpdate.lastName = dto.lastName;
+        if (dto.phone !== undefined) userUpdate.phone = dto.phone;
+
+        if (Object.keys(userUpdate).length > 0) {
+          await tx.user
+            .update({
+              where: { id: existing.userId },
+              data: userUpdate,
+            })
+            .catch(() => null);
+        }
       }
-      updateData.designationId = desig.id;
-    }
 
-    return this.prisma.employee.update({
-      where: { id: numId },
-      data: updateData,
-      include: {
-        department: true,
-        designation: true,
-      },
+      if (dto.departmentName) {
+        let dept = await tx.department.findFirst({
+          where: { customerId: targetCustId, name: dto.departmentName },
+        });
+        if (!dept) {
+          dept = await tx.department.create({
+            data: {
+              customerId: targetCustId,
+              name: dto.departmentName,
+              code: dto.departmentName.substring(0, 4).toUpperCase(),
+            },
+          });
+        }
+        updateData.departmentId = dept.id;
+      }
+
+      if (dto.designationName) {
+        let desig = await tx.designation.findFirst({
+          where: { customerId: targetCustId, name: dto.designationName },
+        });
+        if (!desig) {
+          desig = await tx.designation.create({
+            data: {
+              customerId: targetCustId,
+              name: dto.designationName,
+              code: dto.designationName.substring(0, 4).toUpperCase(),
+            },
+          });
+        }
+        updateData.designationId = desig.id;
+      }
+
+      return tx.employee.update({
+        where: { id: numId },
+        data: updateData,
+        include: {
+          department: true,
+          designation: true,
+        },
+      });
     });
   }
 

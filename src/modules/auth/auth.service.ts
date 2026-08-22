@@ -139,12 +139,24 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, targetApp?: 'ADMIN' | 'EMPLOYEE_MOBILE' | 'CUSTOMER') {
-    const normalizedEmail = dto.email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
+    const rawInput = (dto.email || '').trim();
+    const normalizedEmail = rawInput.toLowerCase();
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          { phone: rawInput },
+        ],
+      },
       include: {
         customer: true,
-        employee: true,
+        employee: {
+          include: {
+            department: true,
+            designation: true,
+          },
+        },
         userRoles: {
           include: { role: true },
         },
@@ -237,6 +249,27 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 
+    const emp = user.employee;
+    const employeeData = emp
+      ? {
+          id: emp.id,
+          employeeId: emp.employeeCode,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          email: emp.email,
+          mobile: emp.phone || user.phone,
+          phone: emp.phone || user.phone,
+          branch: emp.branch || 'Head Office',
+          office: emp.branch || 'Head Office',
+          department: emp.department?.name || 'General',
+          designation: emp.designation?.name || 'Staff',
+          status: emp.status,
+          mobileLoginEnabled: emp.mobileLoginEnabled,
+          joiningDate: emp.joiningDate,
+        }
+      : null;
+
     return {
       user: {
         id: user.id,
@@ -249,6 +282,8 @@ export class AuthService {
         role: primaryRole,
         roles: roles.length > 0 ? roles : [primaryRole],
         employeeId: user.employee?.id || null,
+        employeeCode: user.employee?.employeeCode || null,
+        employee: employeeData,
       },
       tokens,
     };
@@ -329,6 +364,12 @@ export class AuthService {
       where: { id: numericUserId },
       include: {
         customer: true,
+        employee: {
+          include: {
+            department: true,
+            designation: true,
+          },
+        },
         userRoles: {
           include: {
             role: true,
@@ -343,6 +384,27 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.type);
 
+    const emp = user.employee;
+    const employeeData = emp
+      ? {
+          id: emp.id,
+          employeeId: emp.employeeCode,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          email: emp.email,
+          mobile: emp.phone || user.phone,
+          phone: emp.phone || user.phone,
+          branch: emp.branch || 'Head Office',
+          office: emp.branch || 'Head Office',
+          department: emp.department?.name || 'General',
+          designation: emp.designation?.name || 'Staff',
+          status: emp.status,
+          mobileLoginEnabled: emp.mobileLoginEnabled,
+          joiningDate: emp.joiningDate,
+        }
+      : null;
+
     return {
       id: user.id,
       email: user.email,
@@ -352,6 +414,8 @@ export class AuthService {
       customerId: user.customerId,
       customerName: user.customer?.name || 'Enterprise Workspace',
       roles,
+      employee: employeeData,
+      employeeId: emp?.employeeCode || null,
       createdAt: user.createdAt,
     };
   }
