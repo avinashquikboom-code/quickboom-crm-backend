@@ -227,4 +227,34 @@ export class WorkService {
       team: w.team?.name || 'SSM Production Team',
     }));
   }
+
+  async updateTaskStatus(
+    customerId: number | string,
+    workId: number | string,
+    taskId: number | string,
+    status: TaskStatus,
+  ) {
+    const numCustomerId = Number(customerId);
+    const numWorkId = Number(workId);
+    const numTaskId = Number(taskId);
+
+    // Verify work belongs to customer
+    await this.findOne(numCustomerId, numWorkId);
+
+    const task = await this.prisma.workTask.findFirst({
+      where: { id: numTaskId, workId: numWorkId },
+    });
+
+    if (!task) {
+      throw new NotFoundException(`Task with ID ${taskId} not found for work ${workId}`);
+    }
+
+    return this.prisma.workTask.update({
+      where: { id: numTaskId },
+      data: { status },
+      include: {
+        assignedTo: true,
+      },
+    });
+  }
 }
