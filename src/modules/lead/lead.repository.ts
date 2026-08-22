@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CheckDuplicateDto,
+  ConvertLeadDto,
   CreateLeadDto,
   CreateProposalDto,
   FinalCallDto,
@@ -55,9 +56,36 @@ export class LeadRepository {
 
   async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto) {
     const numCustomerId = Number(customerId);
+    const placeId = (dto.googlePlaceId || '').trim();
     const normPhone = (dto.phone || '').replace(/\D/g, '');
     const cleanCompany = (dto.companyName || '').toLowerCase().trim();
     const cleanWebsite = (dto.website || '').toLowerCase().trim().replace(/^https?:\/\//, '');
+    const cleanEmail = (dto.email || '').toLowerCase().trim();
+
+    if (placeId) {
+      const placeMatch = await this.prisma.lead.findFirst({
+        where: { customerId: numCustomerId, googlePlaceId: placeId, deletedAt: null },
+        select: {
+          id: true,
+          title: true,
+          companyName: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          website: true,
+          googlePlaceId: true,
+          status: true,
+          createdAt: true,
+        },
+      });
+      if (placeMatch) {
+        return {
+          isDuplicate: true,
+          matchReason: 'Google Place ID match',
+          existingLead: placeMatch,
+        };
+      }
+    }
 
     const candidates = await this.prisma.lead.findMany({
       where: { customerId: numCustomerId, deletedAt: null },
@@ -67,8 +95,10 @@ export class LeadRepository {
         companyName: true,
         firstName: true,
         lastName: true,
+        email: true,
         phone: true,
         website: true,
+        googlePlaceId: true,
         status: true,
         createdAt: true,
       },
@@ -78,16 +108,23 @@ export class LeadRepository {
       const leadPhone = (lead.phone || '').replace(/\D/g, '');
       const leadCompany = (lead.companyName || lead.title || '').toLowerCase().trim();
       const leadWebsite = (lead.website || '').toLowerCase().trim().replace(/^https?:\/\//, '');
+      const leadEmail = (lead.email || '').toLowerCase().trim();
 
+      const isPlaceMatch = placeId && lead.googlePlaceId === placeId;
       const isPhoneMatch = normPhone.length >= 7 && leadPhone.length >= 7 && normPhone === leadPhone;
+      const isEmailMatch = cleanEmail.length >= 5 && leadEmail === cleanEmail;
       const isCompanyMatch = cleanCompany.length >= 3 && leadCompany === cleanCompany;
       const isWebsiteMatch = cleanWebsite.length >= 4 && leadWebsite === cleanWebsite;
 
-      if (isPhoneMatch || isCompanyMatch || isWebsiteMatch) {
+      if (isPlaceMatch || isPhoneMatch || isEmailMatch || isCompanyMatch || isWebsiteMatch) {
         return {
           isDuplicate: true,
-          matchReason: isPhoneMatch
+          matchReason: isPlaceMatch
+            ? 'Google Place ID match'
+            : isPhoneMatch
             ? 'Phone number match'
+            : isEmailMatch
+            ? 'Email address match'
             : isCompanyMatch
             ? 'Company name match'
             : 'Website match',
@@ -103,7 +140,195 @@ export class LeadRepository {
     };
   }
 
-  async findAll(customerId: number | string, options: { page?: number; limit?: number; search?: string; status?: string }) {
+  async getSummaryMetrics(customerId: number | string) {
+    const numCustomerId = Number(customerId);
+    const [total, newCount, contacted, qualified, converted, lost] = await Promise.all([
+      this.prisma.lead.count({ where: { customerId: numCustomerId, deletedAt: null } }),
+      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'NEW', deletedAt: null } }),
+      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'CONTACTED', deletedAt: null } }),
+      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'QUALIFIED', deletedAt: null } }),
+      this.prisma.lead.count({
+        where: {
+          customerId: numCustomerId,
+          status: { in: [LeadStatus.CONVERTED, LeadStatus.WON] },
+          deletedAt: null,
+        },
+      }),
+      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'LOST', deletedAt: null } }),
+    ]);
+
+    return {
+      total,
+      new: newCount,
+      contacted,
+      qualified,
+      converted,
+      lost,
+    };
+  }
+
+  async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto) {
+    const numCustomerId = Number(customerId);
+    const numLeadId = Number(leadId);
+    const numUserId = Number(userId);
+
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: numLeadId, customerId: numCustomerId, deletedAt: null },
+    });
+
+    if (!lead) {
+      throw new Error(`Lead with ID ${leadId} not found`);
+    }
+
+    if (lead.status === LeadStatus.CONVERTED || lead.status === LeadStatus.WON) {
+      return {
+        alreadyConverted: true,
+        message: 'Lead is already converted',
+        lead,
+      };
+    }
+
+    const companyName = (dto.companyName || lead.companyName || lead.title || 'Client Company').trim();
+
+    // 1. Find or create Company
+    let company = await this.prisma.company.findFirst({
+      where: { customerId: numCustomerId, name: { equals: companyName, mode: 'insensitive' }, deletedAt: null },
+    });
+
+    if (!company) {
+      company = await this.prisma.company.create({
+        data: {
+          customerId: numCustomerId,
+          name: companyName,
+          domain: lead.website ? lead.website.replace(/^https?:\/\//, '') : undefined,
+          phone: lead.phone,
+          email: lead.email,
+          address: lead.address,
+          city: lead.city,
+          country: lead.country,
+        },
+      });
+    }
+
+    // 2. Find or create Contact
+    let contact = await this.prisma.contact.findFirst({
+      where: {
+        customerId: numCustomerId,
+        OR: [
+          lead.email ? { email: lead.email } : undefined,
+          lead.phone ? { phone: lead.phone } : undefined,
+        ].filter(Boolean) as any,
+        deletedAt: null,
+      },
+    });
+
+    if (!contact) {
+      contact = await this.prisma.contact.create({
+        data: {
+          customerId: numCustomerId,
+          companyId: company.id,
+          firstName: lead.firstName || 'Primary',
+          lastName: lead.lastName || 'Contact',
+          email: lead.email,
+          phone: lead.phone,
+          type: 'CUSTOMER',
+          notes: `Converted from Lead #${lead.id} (${lead.title})`,
+        },
+      });
+    }
+
+    // 3. Create Deal in Default Pipeline
+    let pipeline: any = await this.prisma.pipeline.findFirst({
+      where: { customerId: numCustomerId, deletedAt: null },
+      include: { stages: { orderBy: { order: 'asc' } } },
+    });
+
+    if (!pipeline) {
+      pipeline = await this.prisma.pipeline.create({
+        data: {
+          customerId: numCustomerId,
+          name: 'Sales Pipeline',
+          stages: {
+            create: [
+              { name: 'Lead Qualified', order: 1, probability: 25 },
+              { name: 'Proposal', order: 2, probability: 50 },
+              { name: 'Negotiation', order: 3, probability: 75 },
+              { name: 'Won', order: 4, probability: 100 },
+            ],
+          },
+        },
+        include: { stages: { orderBy: { order: 'asc' } } },
+      });
+    }
+
+    const defaultStageId = pipeline.stages[0]?.id;
+    const dealTitle = (dto.dealTitle || `${companyName} - Enterprise Deal`).trim();
+    const dealValue = dto.dealValue !== undefined ? Number(dto.dealValue) : (lead.value || 0);
+
+    let deal: any = null;
+    if (defaultStageId) {
+      deal = await this.prisma.deal.create({
+        data: {
+          customerId: numCustomerId,
+          pipelineId: pipeline.id,
+          stageId: defaultStageId,
+          companyId: company.id,
+          contactId: contact.id,
+          title: dealTitle,
+          amount: dealValue,
+          probability: 75,
+        },
+      });
+    }
+
+    // 4. Update Lead to CONVERTED
+    const updatedLead = await this.prisma.lead.update({
+      where: { id: numLeadId },
+      data: {
+        status: LeadStatus.CONVERTED,
+        convertedAt: new Date(),
+        convertedToCompanyId: company.id,
+        convertedToContactId: contact.id,
+        convertedToDealId: deal ? deal.id : undefined,
+      },
+    });
+
+    // 5. Log status history & timeline
+    await this.prisma.leadStatusHistory.create({
+      data: {
+        leadId: numLeadId,
+        fromStatus: lead.status,
+        toStatus: LeadStatus.CONVERTED,
+        changedById: numUserId,
+        notes: dto.notes || `Lead successfully converted to Customer/Company "${company.name}" (Deal: "${dealTitle}" - ₹${dealValue.toLocaleString('en-IN')})`,
+      },
+    });
+
+    await this.logTimeline(
+      numLeadId,
+      'LEAD_CONVERTED',
+      `Lead converted to Customer Account "${company.name}" & Deal "${dealTitle}"`,
+      {
+        companyId: company.id,
+        companyName: company.name,
+        contactId: contact.id,
+        dealId: deal?.id,
+        dealValue,
+        notes: dto.notes,
+      },
+    );
+
+    return {
+      success: true,
+      message: 'Lead converted successfully.',
+      lead: updatedLead,
+      company,
+      contact,
+      deal,
+    };
+  }
+
+  async findAll(customerId: number | string, options: { page?: number; limit?: number; search?: string; status?: string; assignedToId?: string | number }) {
     const numCustomerId = Number(customerId);
     const page = options.page || 1;
     const limit = options.limit || 50;

@@ -135,6 +135,36 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   paymentRef?: string;
+
+  @ApiPropertyOptional({ example: 'India' })
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @ApiPropertyOptional({ example: 19.076 })
+  @IsNumber()
+  @IsOptional()
+  latitude?: number;
+
+  @ApiPropertyOptional({ example: 72.8777 })
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
+
+  @ApiPropertyOptional({ example: 'ChIJN1t_tDeuEmsRUsoyG83frY4' })
+  @IsString()
+  @IsOptional()
+  googlePlaceId?: string;
+
+  @ApiPropertyOptional({ example: 4.8 })
+  @IsNumber()
+  @IsOptional()
+  rating?: number;
+
+  @ApiPropertyOptional({ example: 120 })
+  @IsNumber()
+  @IsOptional()
+  reviewCount?: number;
 }
 
 export class UpdateLeadDto extends CreateLeadDto {}
@@ -154,6 +184,38 @@ export class CheckDuplicateDto {
   @IsString()
   @IsOptional()
   website?: string;
+
+  @ApiPropertyOptional({ example: 'ChIJN1t_tDeuEmsRUsoyG83frY4' })
+  @IsString()
+  @IsOptional()
+  googlePlaceId?: string;
+
+  @ApiPropertyOptional({ example: 'alice@techcorp.com' })
+  @IsString()
+  @IsOptional()
+  email?: string;
+}
+
+export class ConvertLeadDto {
+  @ApiPropertyOptional({ example: 'TechCorp Solutions Pvt Ltd' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @ApiPropertyOptional({ example: 'Enterprise Deal Q3' })
+  @IsString()
+  @IsOptional()
+  dealTitle?: string;
+
+  @ApiPropertyOptional({ example: 150000.0 })
+  @IsNumber()
+  @IsOptional()
+  dealValue?: number;
+
+  @ApiPropertyOptional({ example: 'Lead successfully qualified and converted to enterprise customer' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
 export class CreateLeadNoteDto {

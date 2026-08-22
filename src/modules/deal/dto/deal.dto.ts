@@ -7,30 +7,40 @@ export class CreateDealDto {
   @IsNotEmpty()
   title: string;
 
-  @ApiProperty({ example: 'pipeline-uuid' })
+  @ApiPropertyOptional({ example: '1' })
   @IsString()
-  @IsNotEmpty()
-  pipelineId: string;
+  @IsOptional()
+  pipelineId?: string;
 
-  @ApiProperty({ example: 'stage-uuid' })
+  @ApiPropertyOptional({ example: '1' })
   @IsString()
-  @IsNotEmpty()
-  stageId: string;
+  @IsOptional()
+  stageId?: string;
 
   @ApiProperty({ example: 120000.0 })
   @IsNumber()
   @IsNotEmpty()
   amount: number;
 
-  @ApiPropertyOptional({ example: 'contact-uuid' })
+  @ApiPropertyOptional({ example: '1' })
   @IsString()
   @IsOptional()
   contactId?: string;
 
-  @ApiPropertyOptional({ example: 'company-uuid' })
+  @ApiPropertyOptional({ example: '1' })
   @IsString()
   @IsOptional()
   companyId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  leadId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  assignedToId?: string;
 
   @ApiPropertyOptional({ example: '2026-09-30T00:00:00.000Z' })
   @IsDateString()
@@ -41,6 +51,26 @@ export class CreateDealDto {
   @IsNumber()
   @IsOptional()
   probability?: number;
+
+  @ApiPropertyOptional({ example: 'CRM' })
+  @IsString()
+  @IsOptional()
+  source?: string;
+
+  @ApiPropertyOptional({ example: 'INR' })
+  @IsString()
+  @IsOptional()
+  currency?: string;
+
+  @ApiPropertyOptional({ example: 'Enterprise cloud solution deal for 500 licenses.' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ example: 'Client requested quarterly invoicing.' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
 export class UpdateDealDto extends CreateDealDto {
@@ -58,4 +88,31 @@ export class UpdateDealDto extends CreateDealDto {
   @IsString()
   @IsOptional()
   lostReason?: string;
+}
+
+export class UpdateDealStageDto {
+  @ApiProperty({ example: '1' })
+  @IsString()
+  @IsNotEmpty()
+  stageId: string;
+
+  @ApiPropertyOptional({ example: 80 })
+  @IsNumber()
+  @IsOptional()
+  probability?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  isWon?: boolean;
+
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isLost?: boolean;
+
+  @ApiPropertyOptional({ example: 'Client agreed to proposal terms.' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }

@@ -3,20 +3,45 @@ import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from
 import { VisitStatus } from '@prisma/client';
 
 export class CreateVisitDto {
-  @ApiProperty({ example: 'employee-uuid' })
+  @ApiPropertyOptional({ example: '1' })
   @IsString()
-  @IsNotEmpty()
-  employeeId: string;
+  @IsOptional()
+  employeeId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  companyId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  contactId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  leadId?: string;
+
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  dealId?: string;
 
   @ApiProperty({ example: 'Apex Tech Solutions HQ' })
   @IsString()
   @IsNotEmpty()
   customerName: string;
 
-  @ApiProperty({ example: 'On-site Reels Production & Content Planning' })
+  @ApiProperty({ example: 'On-site Enterprise Product Demonstration' })
   @IsString()
   @IsNotEmpty()
   purpose: string;
+
+  @ApiPropertyOptional({ example: 'CLIENT_MEETING' })
+  @IsString()
+  @IsOptional()
+  visitType?: string;
 
   @ApiProperty({ example: '2026-08-26T10:30:00.000Z' })
   @IsDateString()
@@ -42,13 +67,58 @@ export class CreateVisitDto {
   @IsOptional()
   longitude?: number;
 
-  @ApiPropertyOptional({ example: 'Bring gimbal and primary lens setup' })
+  @ApiPropertyOptional({ enum: VisitStatus, example: VisitStatus.SCHEDULED })
+  @IsEnum(VisitStatus)
+  @IsOptional()
+  status?: VisitStatus;
+
+  @ApiPropertyOptional({ example: 'Client requested technical overview' })
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: 'Client was very interested in HRM attendance features.' })
+  @IsString()
+  @IsOptional()
+  outcome?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-02T10:00:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  nextFollowUpDate?: string;
 }
 
 export class UpdateVisitDto {
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  employeeId?: string;
+
+  @ApiPropertyOptional({ example: 'Apex Tech Solutions' })
+  @IsString()
+  @IsOptional()
+  customerName?: string;
+
+  @ApiPropertyOptional({ example: 'Proposal Discussion' })
+  @IsString()
+  @IsOptional()
+  purpose?: string;
+
+  @ApiPropertyOptional({ example: '2026-08-26T10:30:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  date?: string;
+
+  @ApiPropertyOptional({ example: '11:00 AM' })
+  @IsString()
+  @IsOptional()
+  time?: string;
+
+  @ApiPropertyOptional({ example: 'BKC, Mumbai' })
+  @IsString()
+  @IsOptional()
+  location?: string;
+
   @ApiPropertyOptional({ enum: VisitStatus, example: VisitStatus.COMPLETED })
   @IsEnum(VisitStatus)
   @IsOptional()
@@ -59,8 +129,13 @@ export class UpdateVisitDto {
   @IsOptional()
   notes?: string;
 
-  @ApiPropertyOptional({ example: 90 })
-  @IsNumber()
+  @ApiPropertyOptional({ example: 'Successful demo, proposal requested' })
+  @IsString()
   @IsOptional()
-  duration?: number;
+  outcome?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-02T10:00:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  nextFollowUpDate?: string;
 }

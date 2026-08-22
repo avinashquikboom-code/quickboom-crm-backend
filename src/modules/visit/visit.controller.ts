@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
@@ -24,24 +24,42 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 export class VisitController {
   constructor(private readonly visitService: VisitService) {}
 
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get summary metrics for client visits' })
+  async getMetrics(@CurrentCustomer() customerId: number | string | undefined) {
+    return this.visitService.getMetrics(customerId);
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get all client visits' })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'companyId', required: false })
   async findAll(
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('status') status?: VisitStatus,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('companyId') companyId?: string,
   ) {
     return this.visitService.findAll(
       customerId,
       status,
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 50,
+      search,
+      employeeId,
+      companyId,
     );
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get single client visit' })
+  @ApiOperation({ summary: 'Get single client visit with CRM relations' })
   async findOne(
     @Param('id') id: string,
     @CurrentCustomer() customerId: number | string | undefined,

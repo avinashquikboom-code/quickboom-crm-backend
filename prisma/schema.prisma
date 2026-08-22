@@ -61,6 +61,10 @@ model Customer {
   leavePolicies            LeavePolicy[]
   salaryPolicies           SalaryPolicy[]
   claimPolicies            ClaimPolicy[]
+  shifts                   Shift[]
+  shiftGuidances           ShiftGuidance[]
+  dataCaptureJobs          DataCaptureJob[]
+  dataCapturePlaces        DataCapturePlace[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -163,37 +167,41 @@ model PaymentHistory {
 }
 
 model User {
-  id              Int             @id @default(autoincrement())
-  customerId      Int?
-  email           String          @unique
-  phone           String?         @unique
-  passwordHash    String
-  firstName       String
-  lastName        String
-  avatar          String?
-  designation     String?
-  isActive        Boolean         @default(true)
-  isVerified      Boolean         @default(false)
-  otpCode         String?
-  otpExpiresAt    DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  deletedAt       DateTime?
-  auditLogs       AuditLog[]
-  employee        Employee?
-  assignedLeads   Lead[]          @relation("AssignedLeads")
-  createdLeads    Lead[]          @relation("CreatedLeads")
-  leadNotes       LeadNote[]
-  notifications   Notification[]
-  refreshTokens   RefreshToken[]
-  sessions        Session[]
-  assignedTickets SupportTicket[] @relation("AssignedTickets")
-  createdTickets  SupportTicket[] @relation("CreatedTickets")
-  assignedTasks   Task[]          @relation("AssignedTasks")
-  createdTasks    Task[]          @relation("CreatedTasks")
-  ticketComments  TicketComment[]
-  customer        Customer?       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userRoles       UserRole[]
+  id                Int              @id @default(autoincrement())
+  customerId        Int?
+  email             String           @unique
+  phone             String?          @unique
+  passwordHash      String
+  firstName         String
+  lastName          String
+  avatar            String?
+  designation       String?
+  isActive          Boolean          @default(true)
+  isVerified        Boolean          @default(false)
+  otpCode           String?
+  otpExpiresAt      DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
+  auditLogs         AuditLog[]
+  employee          Employee?
+  assignedLeads     Lead[]           @relation("AssignedLeads")
+  createdLeads      Lead[]           @relation("CreatedLeads")
+  assignedCompanies Company[]        @relation("AssignedCompanies")
+  assignedContacts  Contact[]        @relation("AssignedContacts")
+  assignedDeals     Deal[]           @relation("AssignedDeals")
+  leadNotes         LeadNote[]
+  notifications     Notification[]
+  refreshTokens     RefreshToken[]
+  sessions          Session[]
+  assignedTickets   SupportTicket[]  @relation("AssignedTickets")
+  createdTickets    SupportTicket[]  @relation("CreatedTickets")
+  assignedTasks     Task[]           @relation("AssignedTasks")
+  createdTasks      Task[]           @relation("CreatedTasks")
+  ticketComments    TicketComment[]
+  dataCaptureJobs   DataCaptureJob[]
+  customer          Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userRoles         UserRole[]
 
   @@index([customerId])
   @@index([email])
@@ -275,51 +283,61 @@ model Session {
 }
 
 model Lead {
-  id               Int                    @id @default(autoincrement())
-  customerId       Int
-  title            String
-  firstName        String
-  lastName         String
-  email            String?
-  phone            String?
-  companyName      String?
-  website          String?
-  address          String?
-  city             String?
-  state            String?
-  category         String?
-  source           String                 @default("WEBSITE")
-  status           LeadStatus             @default(NEW)
-  priority         LeadPriority           @default(MEDIUM)
-  value            Float                  @default(0)
-  assignedToId     Int?
-  createdById      Int
-  nextFollowUpDate DateTime?
-  nextFollowUpTime String?
-  workStartDate    DateTime?
-  workNotes        String?
-  assignedTeam     String?
-  paidAmount       Float?                 @default(0)
-  paymentStatus    String?                @default("PENDING")
-  paymentMethod    String?
-  paymentRef       String?
-  convertedAt      DateTime?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
-  deletedAt        DateTime?
-  assignedTo       User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
-  createdBy        User                   @relation("CreatedLeads", fields: [createdById], references: [id])
-  customer         Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  timeline         LeadActivityTimeline[]
-  notes            LeadNote[]
-  reminders        LeadReminder[]
-  statusHistory    LeadStatusHistory[]
-  quotations       Quotation[]
-  visits           Visit[]
+  id                   Int                    @id @default(autoincrement())
+  customerId           Int
+  title                String
+  firstName            String
+  lastName             String
+  email                String?
+  phone                String?
+  companyName          String?
+  website              String?
+  address              String?
+  city                 String?
+  state                String?
+  category             String?
+  source               String                 @default("WEBSITE")
+  status               LeadStatus             @default(NEW)
+  priority             LeadPriority           @default(MEDIUM)
+  value                Float                  @default(0)
+  assignedToId         Int?
+  createdById          Int
+  nextFollowUpDate     DateTime?
+  nextFollowUpTime     String?
+  workStartDate        DateTime?
+  workNotes            String?
+  assignedTeam         String?
+  paidAmount           Float?                 @default(0)
+  paymentStatus        String?                @default("PENDING")
+  paymentMethod        String?
+  paymentRef           String?
+  country              String?
+  latitude             Float?
+  longitude            Float?
+  googlePlaceId        String?
+  rating               Float?
+  reviewCount          Int?
+  convertedToCompanyId Int?
+  convertedToContactId Int?
+  convertedToDealId    Int?
+  convertedAt          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  deletedAt            DateTime?
+  assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
+  customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  timeline             LeadActivityTimeline[]
+  notes                LeadNote[]
+  reminders            LeadReminder[]
+  statusHistory        LeadStatusHistory[]
+  quotations           Quotation[]
+  visits               Visit[]
 
   @@index([customerId])
   @@index([status])
   @@index([assignedToId])
+  @@index([googlePlaceId])
   @@index([deletedAt])
 }
 
@@ -374,48 +392,72 @@ model LeadReminder {
 }
 
 model Company {
-  id         Int       @id @default(autoincrement())
-  customerId Int
-  name       String
-  domain     String?
-  industry   String?
-  phone      String?
-  email      String?
-  address    String?
-  city       String?
-  country    String?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  deletedAt  DateTime?
-  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  contacts   Contact[]
-  deals      Deal[]
+  id            Int       @id @default(autoincrement())
+  customerId    Int
+  name          String
+  domain        String?
+  website       String?
+  industry      String?
+  category      String?
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?
+  latitude      Float?
+  longitude     Float?
+  googlePlaceId String?
+  rating        Float?
+  reviewCount   Int?
+  source        String?   @default("MANUAL")
+  status        String?   @default("ACTIVE")
+  notes         String?
+  assignedToId  Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo    User?     @relation("AssignedCompanies", fields: [assignedToId], references: [id])
+  contacts      Contact[]
+  deals         Deal[]
+  visits        Visit[]
 
   @@index([customerId])
+  @@index([googlePlaceId])
   @@index([deletedAt])
 }
 
 model Contact {
-  id             Int                    @id @default(autoincrement())
-  customerId     Int
-  companyId      Int?
-  type           ContactType            @default(CUSTOMER)
-  firstName      String
-  lastName       String
-  email          String?
-  phone          String?
-  designation    String?
-  tags           String[]
-  notes          String?
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  deletedAt      DateTime?
-  communications CommunicationHistory[]
-  company        Company?               @relation(fields: [companyId], references: [id])
-  customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  deals          Deal[]
-  invoices       Invoice[]
-  quotations     Quotation[]
+  id              Int                    @id @default(autoincrement())
+  customerId      Int
+  companyId       Int?
+  type            ContactType            @default(CUSTOMER)
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String?
+  mobile          String?
+  alternateMobile String?
+  designation     String?
+  website         String?
+  source          String?                @default("DIRECT")
+  status          String?                @default("ACTIVE")
+  tags            String[]
+  notes           String?
+  assignedToId    Int?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  deletedAt       DateTime?
+  communications  CommunicationHistory[]
+  company         Company?               @relation(fields: [companyId], references: [id])
+  customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo      User?                  @relation("AssignedContacts", fields: [assignedToId], references: [id])
+  deals           Deal[]
+  visits          Visit[]
+  invoices        Invoice[]
+  quotations      Quotation[]
 
   @@index([customerId])
   @@index([companyId])
@@ -471,6 +513,8 @@ model Deal {
   stageId         Int
   contactId       Int?
   companyId       Int?
+  leadId          Int?
+  assignedToId    Int?
   title           String
   amount          Float
   expectedClosing DateTime?
@@ -478,6 +522,10 @@ model Deal {
   isWon           Boolean       @default(false)
   isLost          Boolean       @default(false)
   lostReason      String?
+  source          String?       @default("CRM")
+  currency        String?       @default("INR")
+  description     String?
+  notes           String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   deletedAt       DateTime?
@@ -486,7 +534,9 @@ model Deal {
   customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])
   stage           PipelineStage @relation(fields: [stageId], references: [id])
+  assignedTo      User?         @relation("AssignedDeals", fields: [assignedToId], references: [id])
   quotations      Quotation[]
+  visits          Visit[]
 
   @@index([customerId])
   @@index([pipelineId])
@@ -495,28 +545,106 @@ model Deal {
 }
 
 model Task {
-  id           Int          @id @default(autoincrement())
-  customerId   Int
-  title        String
-  description  String?
-  status       TaskStatus   @default(PENDING)
-  priority     TaskPriority @default(MEDIUM)
-  dueDate      DateTime?
-  isRecurring  Boolean      @default(false)
-  recurrence   String?
-  assignedToId Int?
-  createdById  Int
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  deletedAt    DateTime?
-  assignedTo   User?        @relation("AssignedTasks", fields: [assignedToId], references: [id])
-  createdBy    User         @relation("CreatedTasks", fields: [createdById], references: [id])
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  id                Int           @id @default(autoincrement())
+  customerId        Int
+  taskNumber        String?
+  title             String
+  description       String?
+  status            TaskStatus    @default(PENDING)
+  priority          TaskPriority  @default(MEDIUM)
+  dueDate           DateTime?
+  dueTime           String?
+  dueAt             DateTime?
+  startDate         DateTime?
+  startTime         String?
+  startedAt         DateTime?
+  category          String?
+  isRecurring       Boolean       @default(false)
+  recurrence        String?
+  employeeId        Int?
+  departmentId      Int?
+  designationId     Int?
+  assignedToId      Int?
+  createdById       Int
+  submittedAt       DateTime?
+  submissionComment String?
+  completedAt       DateTime?
+  approvedById      Int?
+  approvedByName    String?
+  approvedAt        DateTime?
+  rejectedById      Int?
+  rejectedByName    String?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+  employee          Employee?     @relation(fields: [employeeId], references: [id])
+  department        Department?   @relation(fields: [departmentId], references: [id])
+  designation       Designation?  @relation(fields: [designationId], references: [id])
+  assignedTo        User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy         User          @relation("CreatedTasks", fields: [createdById], references: [id])
+  customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  proofs            TaskProof[]
+  reviews           TaskReview[]
+  history           TaskHistory[]
 
   @@index([customerId])
+  @@index([employeeId])
+  @@index([departmentId])
   @@index([assignedToId])
   @@index([status])
+  @@index([dueAt])
   @@index([deletedAt])
+}
+
+model TaskProof {
+  id         Int      @id @default(autoincrement())
+  taskId     Int
+  employeeId Int?
+  fileUrl    String
+  fileName   String?
+  fileType   String?
+  fileSize   Int?
+  comment    String?
+  uploadedAt DateTime @default(now())
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([employeeId])
+}
+
+model TaskReview {
+  id             Int      @id @default(autoincrement())
+  taskId         Int
+  reviewedById   Int
+  reviewedByName String?
+  status         String
+  comment        String?
+  reviewedAt     DateTime @default(now())
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TaskHistory {
+  id                   Int      @id @default(autoincrement())
+  taskId               Int
+  action               String
+  performedById        Int?
+  performedByName      String?
+  oldStatus            String?
+  newStatus            String?
+  previousEmployeeId   Int?
+  previousEmployeeName String?
+  newEmployeeId        Int?
+  newEmployeeName      String?
+  comment              String?
+  createdAt            DateTime @default(now())
+  task                 Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
 }
 
 model Product {
@@ -724,20 +852,20 @@ model EmployeeLocation {
 }
 
 model BranchGeofence {
-  id           Int          @id @default(autoincrement())
-  customerId   Int
-  name         String
-  city         String?
-  latitude     Float
-  longitude    Float
-  radiusMeters Float        @default(200.0)
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employees      Employee[]
-  attendances    Attendance[]
-  publicHolidays PublicHoliday[]
+  id                 Int                @id @default(autoincrement())
+  customerId         Int
+  name               String
+  city               String?
+  latitude           Float
+  longitude          Float
+  radiusMeters       Float              @default(200.0)
+  isActive           Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employees          Employee[]
+  attendances        Attendance[]
+  publicHolidays     PublicHoliday[]
   attendancePolicies AttendancePolicy[]
   leavePolicies      LeavePolicy[]
   salaryPolicies     SalaryPolicy[]
@@ -775,6 +903,7 @@ model Department {
   customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   designations Designation[]
   employees    Employee[]
+  tasks        Task[]
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -794,54 +923,58 @@ model Designation {
   customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department   Department? @relation(fields: [departmentId], references: [id])
   employees    Employee[]
+  tasks        Task[]
 
   @@unique([customerId, code])
   @@index([customerId])
 }
 
 model Employee {
-  id               Int               @id @default(autoincrement())
-  customerId       Int
-  userId           Int?              @unique
-  employeeCode     String
-  firstName        String
-  lastName         String
-  email            String
-  phone            String?
-  gender           String?
-  dob              DateTime?
-  joiningDate      DateTime          @default(now())
-  departmentId     Int?
-  designationId    Int?
-  officeId         Int?
-  managerId        Int?
-  employmentType   String            @default("FULL_TIME")
-  branch           String            @default("Head Office")
-  address          String?
-  emergencyContact String?
-  bankDetails      Json?
-  documents        Json?
-  status           String            @default("ACTIVE")
-  mobileLoginEnabled Boolean         @default(true)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  attendances      Attendance[]
-  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  department       Department?       @relation(fields: [departmentId], references: [id])
-  designation      Designation?      @relation(fields: [designationId], references: [id])
-  office           BranchGeofence?   @relation(fields: [officeId], references: [id])
-  user             User?             @relation(fields: [userId], references: [id])
-  leaveRequests    LeaveRequest[]
-  leaveBalances    EmployeeLeaveBalance[]
-  leaveAdjustments LeaveAdjustmentHistory[]
-  payrollItems     PayrollItem[]
-  remoteRequests   RemoteRequest[]
-  salarySlips      SalarySlip[]
-  salaryStructures SalaryStructure[]
-  teamMembers      TeamMember[]
-  visits           Visit[]
-  works            Work[]
-  workTasks        WorkTask[]
+  id                 Int                      @id @default(autoincrement())
+  customerId         Int
+  userId             Int?                     @unique
+  employeeCode       String
+  firstName          String
+  lastName           String
+  email              String
+  phone              String?
+  gender             String?
+  dob                DateTime?
+  joiningDate        DateTime                 @default(now())
+  departmentId       Int?
+  designationId      Int?
+  officeId           Int?
+  shiftId            Int?
+  managerId          Int?
+  employmentType     String                   @default("FULL_TIME")
+  branch             String                   @default("Head Office")
+  address            String?
+  emergencyContact   String?
+  bankDetails        Json?
+  documents          Json?
+  status             String                   @default("ACTIVE")
+  mobileLoginEnabled Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  attendances        Attendance[]
+  customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department         Department?              @relation(fields: [departmentId], references: [id])
+  designation        Designation?             @relation(fields: [designationId], references: [id])
+  office             BranchGeofence?          @relation(fields: [officeId], references: [id])
+  shift              Shift?                   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  user               User?                    @relation(fields: [userId], references: [id])
+  leaveRequests      LeaveRequest[]
+  leaveBalances      EmployeeLeaveBalance[]
+  leaveAdjustments   LeaveAdjustmentHistory[]
+  payrollItems       PayrollItem[]
+  remoteRequests     RemoteRequest[]
+  salarySlips        SalarySlip[]
+  salaryStructures   SalaryStructure[]
+  teamMembers        TeamMember[]
+  visits             Visit[]
+  works              Work[]
+  workTasks          WorkTask[]
+  tasks              Task[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -889,15 +1022,15 @@ model AttendanceBreak {
 }
 
 model LeaveType {
-  id                 Int            @id @default(autoincrement())
+  id                 Int                      @id @default(autoincrement())
   customerId         Int
   name               String
   code               String
-  daysAllowedPerYear Int            @default(12)
-  isCarryForward     Boolean        @default(false)
-  isActive           Boolean        @default(true)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  daysAllowedPerYear Int                      @default(12)
+  isCarryForward     Boolean                  @default(false)
+  isActive           Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
   leaveRequests      LeaveRequest[]
   leaveBalances      EmployeeLeaveBalance[]
   leaveAdjustments   LeaveAdjustmentHistory[]
@@ -949,20 +1082,20 @@ model PublicHoliday {
 }
 
 model EmployeeLeaveBalance {
-  id                 Int                       @id @default(autoincrement())
-  customerId         Int
-  employeeId         Int
-  leaveTypeId        Int
-  year               Int                       @default(2026)
-  allocatedDays      Float                     @default(12.0)
-  usedDays           Float                     @default(0.0)
-  remainingDays      Float                     @default(12.0)
-  createdAt          DateTime                  @default(now())
-  updatedAt          DateTime                  @updatedAt
-  customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee           Employee                  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType          LeaveType                 @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
-  adjustments        LeaveAdjustmentHistory[]
+  id            Int                      @id @default(autoincrement())
+  customerId    Int
+  employeeId    Int
+  leaveTypeId   Int
+  year          Int                      @default(2026)
+  allocatedDays Float                    @default(12.0)
+  usedDays      Float                    @default(0.0)
+  remainingDays Float                    @default(12.0)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  customer      Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee      Employee                 @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType     LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  adjustments   LeaveAdjustmentHistory[]
 
   @@unique([employeeId, leaveTypeId, year])
   @@index([customerId])
@@ -971,23 +1104,23 @@ model EmployeeLeaveBalance {
 }
 
 model LeaveAdjustmentHistory {
-  id                   Int                   @id @default(autoincrement())
-  customerId           Int
-  employeeId           Int
-  leaveTypeId          Int
-  balanceId            Int?
-  previousBalance      Float
-  adjustmentType       String
-  adjustmentAmount     Float
-  newBalance           Float
-  reason               String
-  adjustedById         Int?
-  adjustedByName       String?
-  createdAt            DateTime              @default(now())
-  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee             Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType            LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
-  balance              EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id], onDelete: SetNull)
+  id               Int                   @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  leaveTypeId      Int
+  balanceId        Int?
+  previousBalance  Float
+  adjustmentType   String
+  adjustmentAmount Float
+  newBalance       Float
+  reason           String
+  adjustedById     Int?
+  adjustedByName   String?
+  createdAt        DateTime              @default(now())
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee         Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType        LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([employeeId])
@@ -1013,10 +1146,10 @@ model AttendancePolicy {
   punchOutRequired           Boolean         @default(true)
   minWorkingHours            Float           @default(8.0)
   earlyCheckoutGraceMinutes  Int             @default(15)
-  earlyCheckoutThresholdMins  Int             @default(30)
+  earlyCheckoutThresholdMins Int             @default(30)
   earlyCheckoutAction        String          @default("MARK_EARLY")
   autoPunchOut               Boolean         @default(false)
-  fullDayAbsenceDeductionPct  Float           @default(100.0)
+  fullDayAbsenceDeductionPct Float           @default(100.0)
   halfDayDeductionPct        Float           @default(50.0)
   lateArrivalDeductionPct    Float           @default(25.0)
   earlyCheckoutDeductionPct  Float           @default(25.0)
@@ -1171,31 +1304,93 @@ model RemoteRequest {
   @@index([toDate])
 }
 
+model Shift {
+  id                    Int            @id @default(autoincrement())
+  customerId            Int
+  name                  String
+  code                  String
+  startTime             String         @default("09:30 AM")
+  endTime               String         @default("06:30 PM")
+  durationHours         Float          @default(9.0)
+  gracePeriodMinutes    Int            @default(15)
+  halfDayThresholdHours Float          @default(4.5)
+  breakDurationMinutes  Int            @default(60)
+  isNightShift          Boolean        @default(false)
+  isRotational          Boolean        @default(false)
+  workingDays           String[]       @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+  color                 String?        @default("#3B82F6")
+  status                String         @default("ACTIVE")
+  notes                 String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  deletedAt             DateTime?
+  customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  guidance              ShiftGuidance?
+  employees             Employee[]
+
+  @@unique([customerId, code])
+  @@index([customerId])
+  @@index([status])
+}
+
+model ShiftGuidance {
+  id                       Int      @id @default(autoincrement())
+  shiftId                  Int      @unique
+  customerId               Int
+  overtimeRule             String?  @default("Overtime commences after 9 hours of active shift work; calculated at 1.5x regular hourly wage.")
+  punchInRule              String?  @default("Punch-in allowed 30 minutes prior to shift start. Late arrival recorded after 15-minute grace period.")
+  punchOutRule             String?  @default("Early departure before shift completion requires manager half-day authorization.")
+  breakPolicy              String?  @default("1-hour lunch break between 01:00 PM and 02:00 PM + two 15-minute tea breaks.")
+  nightShiftAllowance      String?  @default("₹250 per night shift allowance + complimentary company transport.")
+  swapPolicy               String?  @default("Shift swap requests must be submitted at least 24 hours in advance with mutual employee approval.")
+  geofenceRequirement      String?  @default("Mandatory punch within 150m of assigned office geofence or approved client site.")
+  emergencyContactProtocol String?  @default("Contact HR Duty Manager immediately for emergency shift cancellations.")
+  notes                    String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
 model Visit {
-  id           Int         @id @default(autoincrement())
-  customerId   Int
-  employeeId   Int
-  leadId       Int?
-  customerName String
-  purpose      String
-  date         DateTime    @default(now())
-  time         String?
-  location     String
-  latitude     Float?
-  longitude    Float?
-  status       VisitStatus @default(SCHEDULED)
-  notes        String?
-  duration     Float?
-  startedAt    DateTime?
-  completedAt  DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  employee     Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  lead         Lead?       @relation(fields: [leadId], references: [id])
+  id               Int         @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  leadId           Int?
+  companyId        Int?
+  contactId        Int?
+  dealId           Int?
+  customerName     String
+  purpose          String
+  visitType        String?     @default("CLIENT_MEETING")
+  date             DateTime    @default(now())
+  time             String?
+  location         String
+  latitude         Float?
+  longitude        Float?
+  status           VisitStatus @default(SCHEDULED)
+  notes            String?
+  outcome          String?
+  nextFollowUpDate DateTime?
+  duration         Float?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead             Lead?       @relation(fields: [leadId], references: [id])
+  company          Company?    @relation(fields: [companyId], references: [id])
+  contact          Contact?    @relation(fields: [contactId], references: [id])
+  deal             Deal?       @relation(fields: [dealId], references: [id])
 
   @@index([customerId])
   @@index([employeeId])
   @@index([leadId])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([dealId])
 }
 
 model SalaryStructure {
@@ -1425,6 +1620,53 @@ model WorkTask {
   @@index([assignedToId])
 }
 
+model DataCaptureJob {
+  id                Int                @id @default(autoincrement())
+  jobId             String             @unique
+  customerId        Int
+  userId            Int
+  keyword           String
+  location          String
+  requestedResults  Int                @default(20)
+  capturedResults   Int                @default(0)
+  googleApiRequests Int                @default(1)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  places            DataCapturePlace[]
+
+  @@index([customerId])
+  @@index([jobId])
+}
+
+model DataCapturePlace {
+  id             Int            @id @default(autoincrement())
+  jobId          String
+  customerId     Int
+  googlePlaceId  String
+  businessName   String
+  category       String?
+  address        String?
+  phone          String?
+  website        String?
+  rating         Float?
+  reviewCount    Int?
+  latitude       Float?
+  longitude      Float?
+  googleMapsUrl  String?
+  businessStatus String?        @default("OPERATIONAL")
+  isImported     Boolean        @default(false)
+  importedLeadId Int?
+  createdAt      DateTime       @default(now())
+  job            DataCaptureJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([customerId])
+  @@index([googlePlaceId])
+}
+
 enum RoleType {
   SUPER_ADMIN
   CUSTOMER_ADMIN
@@ -1461,6 +1703,7 @@ enum LeadStatus {
   PAYMENT
   WORK_STARTED
   WON
+  CONVERTED
   LOST
   CANCELLED
 }
@@ -1482,7 +1725,10 @@ enum ContactType {
 enum TaskStatus {
   PENDING
   IN_PROGRESS
+  SUBMITTED
+  UNDER_REVIEW
   COMPLETED
+  REJECTED
   CANCELLED
 }
 

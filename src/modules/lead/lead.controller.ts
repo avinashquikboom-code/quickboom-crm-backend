@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { LeadService } from './lead.service';
 import {
   CheckDuplicateDto,
+  ConvertLeadDto,
   CreateLeadDto,
   CreateLeadNoteDto,
   CreateProposalDto,
@@ -47,12 +48,18 @@ export class LeadController {
   }
 
   @Post('check-duplicate')
-  @ApiOperation({ summary: 'Check if lead already exists by phone, company, or website' })
+  @ApiOperation({ summary: 'Check if lead already exists by phone, company, website, or Google Place ID' })
   async checkDuplicate(
     @CurrentCustomer() customerId: string,
     @Body() dto: CheckDuplicateDto,
   ) {
     return this.leadService.checkDuplicate(customerId, dto);
+  }
+
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get summary metrics count for leads' })
+  async getMetrics(@CurrentCustomer() customerId: string) {
+    return this.leadService.getSummaryMetrics(customerId);
   }
 
   @Get()
@@ -74,6 +81,17 @@ export class LeadController {
       search,
       status,
     });
+  }
+
+  @Post(':id/convert')
+  @ApiOperation({ summary: 'Convert qualified lead to Customer Company, Contact, and Deal' })
+  async convert(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ConvertLeadDto,
+  ) {
+    return this.leadService.convertLead(customerId, id, userId, dto);
   }
 
   @Get(':id')

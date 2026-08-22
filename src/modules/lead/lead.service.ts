@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { LeadRepository } from './lead.repository';
 import {
   CheckDuplicateDto,
+  ConvertLeadDto,
   CreateLeadDto,
   CreateLeadNoteDto,
   CreateProposalDto,
@@ -21,6 +22,14 @@ export class LeadService {
     private readonly leadRepository: LeadRepository,
     private readonly planAccessService?: PlanAccessService,
   ) {}
+
+  async getSummaryMetrics(customerId: number | string) {
+    return this.leadRepository.getSummaryMetrics(customerId);
+  }
+
+  async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto) {
+    return this.leadRepository.convertLead(customerId, leadId, userId, dto);
+  }
 
   async createLead(customerId: number | string, userId: number | string, dto: CreateLeadDto) {
     if (this.planAccessService) {
