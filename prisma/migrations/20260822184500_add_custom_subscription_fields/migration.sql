@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "customer_subscriptions"
+ADD COLUMN IF NOT EXISTS "customFeatures" JSONB,
+ADD COLUMN IF NOT EXISTS "customLeadLimit" INTEGER,
+ADD COLUMN IF NOT EXISTS "customPrice" DOUBLE PRECISION,
+ADD COLUMN IF NOT EXISTS "customStorageLimit" BIGINT,
+ADD COLUMN IF NOT EXISTS "customUserLimit" INTEGER;
