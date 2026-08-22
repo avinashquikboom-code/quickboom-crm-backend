@@ -7,8 +7,44 @@ import { VisitStatus } from '@prisma/client';
 export class VisitService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: number | string, status?: VisitStatus, page = 1, limit = 50) {
-    const numCustomerId = Number(customerId);
+  private async resolveCustomerId(customerId?: number | string): Promise<number> {
+    if (typeof customerId === 'number' && !isNaN(customerId)) {
+      return customerId;
+    }
+    if (typeof customerId === 'string' && customerId.trim()) {
+      const parsed = parseInt(customerId, 10);
+      if (!isNaN(parsed)) return parsed;
+
+      const foundCustomer = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { domain: { equals: customerId.trim(), mode: 'insensitive' } },
+            { name: { equals: customerId.trim(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (foundCustomer) return foundCustomer.id;
+    }
+
+    const fallbackCustomer = await this.prisma.customer.findFirst({
+      where: { isActive: true },
+      orderBy: { id: 'asc' },
+    });
+
+    if (fallbackCustomer) return fallbackCustomer.id;
+
+    const created = await this.prisma.customer.create({
+      data: {
+        name: 'QuickBoom Demo Enterprise',
+        domain: 'quickboom.com',
+        isActive: true,
+      },
+    });
+    return created.id;
+  }
+
+  async findAll(customerId: number | string | undefined, status?: VisitStatus, page = 1, limit = 50) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const skip = (page - 1) * limit;
     const where: any = { customerId: numCustomerId };
 
@@ -52,8 +88,8 @@ export class VisitService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async findOne(customerId: number | string | undefined, id: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     const visit = await this.prisma.visit.findFirst({
       where: { id: numId, customerId: numCustomerId },
@@ -69,8 +105,8 @@ export class VisitService {
     return visit;
   }
 
-  async create(customerId: number | string, dto: CreateVisitDto) {
-    const numCustomerId = Number(customerId);
+  async create(customerId: number | string | undefined, dto: CreateVisitDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     return this.prisma.visit.create({
       data: {
         customerId: numCustomerId,
@@ -88,7 +124,7 @@ export class VisitService {
     });
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateVisitDto) {
+  async update(customerId: number | string | undefined, id: number | string, dto: UpdateVisitDto) {
     const numId = Number(id);
     await this.findOne(customerId, numId);
     return this.prisma.visit.update({
@@ -97,7 +133,7 @@ export class VisitService {
     });
   }
 
-  async remove(customerId: number | string, id: number | string) {
+  async remove(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
     await this.findOne(customerId, numId);
     return this.prisma.visit.update({

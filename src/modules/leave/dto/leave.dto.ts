@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
 
 export class CreateLeaveDto {
   @ApiProperty({ example: 1, description: 'Employee ID' })
@@ -39,4 +39,32 @@ export class RejectLeaveDto {
   @IsString()
   @IsOptional()
   rejectionReason?: string;
+}
+
+export class AdjustLeaveBalanceDto {
+  @ApiProperty({ example: 1, description: 'Leave Type ID' })
+  @IsNumber()
+  @IsNotEmpty()
+  leaveTypeId: number;
+
+  @ApiProperty({
+    example: 'ADD',
+    enum: ['ADD', 'DEDUCT', 'SET_BALANCE'],
+    description: 'Adjustment action type',
+  })
+  @IsString()
+  @IsIn(['ADD', 'DEDUCT', 'SET_BALANCE'])
+  @IsNotEmpty()
+  adjustmentType: 'ADD' | 'DEDUCT' | 'SET_BALANCE';
+
+  @ApiProperty({ example: 2, description: 'Adjustment amount' })
+  @IsNumber()
+  @Min(0)
+  @IsNotEmpty()
+  amount: number;
+
+  @ApiProperty({ example: 'Additional leave approved by HR manager for outstanding performance' })
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
 }

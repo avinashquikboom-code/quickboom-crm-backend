@@ -13,8 +13,18 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeaveService } from './leave.service';
-import { CreateLeaveDto, RejectLeaveDto } from './dto/leave.dto';
+import {
+  CreateLeaveDto,
+  RejectLeaveDto,
+  AdjustLeaveBalanceDto,
+} from './dto/leave.dto';
 import { CreateHolidayDto, UpdateHolidayDto } from './dto/holiday.dto';
+import {
+  UpsertAttendancePolicyDto,
+  UpsertLeavePolicyDto,
+  UpsertSalaryPolicyDto,
+  UpsertClaimPolicyDto,
+} from './dto/policy.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -153,7 +163,68 @@ export class LeaveController {
   }
 
   // =========================================================
-  // 3. PUBLIC HOLIDAYS
+  // 3. EMPLOYEE-WISE LEAVE BALANCES
+  // =========================================================
+  @Get('balances')
+  @ApiOperation({ summary: 'Get employee-wise leave balances across all configured leave types' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'officeId', required: false })
+  @ApiQuery({ name: 'departmentId', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  async getLeaveBalances(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('search') search?: string,
+    @Query('officeId') officeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('year') year?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.leaveService.getLeaveBalances(targetCustomerId, {
+      search,
+      officeId,
+      departmentId,
+      year,
+    });
+  }
+
+  @Get('balances/:employeeId')
+  @ApiOperation({ summary: 'Get single employee leave balance profile and history' })
+  async getEmployeeBalanceDetails(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.getEmployeeBalanceDetails(targetCustomerId, employeeId);
+  }
+
+  @Post('balances/:employeeId/adjust')
+  @ApiOperation({ summary: 'Adjust employee leave balance with mandatory audit reason' })
+  async adjustLeaveBalance(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Body() dto: AdjustLeaveBalanceDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.adjustLeaveBalance(user, targetCustomerId, employeeId, dto);
+  }
+
+  // =========================================================
+  // 4. PUBLIC HOLIDAYS
   // =========================================================
   @Get('holidays')
   @ApiOperation({ summary: 'Get all declared public holidays' })
@@ -238,5 +309,73 @@ export class LeaveController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.leaveService.deletePublicHoliday(targetCustomerId, id);
+  }
+
+  // =========================================================
+  // 5. HR POLICIES
+  // =========================================================
+  @Get('policies')
+  @ApiOperation({ summary: 'Get current active HR policies overview' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getPoliciesOverview(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.getPoliciesOverview(targetCustomerId);
+  }
+
+  @Post('policies/attendance')
+  @ApiOperation({ summary: 'Create or update Attendance Policy' })
+  async upsertAttendancePolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: UpsertAttendancePolicyDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.upsertAttendancePolicy(user, targetCustomerId, dto);
+  }
+
+  @Post('policies/leave')
+  @ApiOperation({ summary: 'Create or update Leave Policy' })
+  async upsertLeavePolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: UpsertLeavePolicyDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.upsertLeavePolicy(user, targetCustomerId, dto);
+  }
+
+  @Post('policies/salary')
+  @ApiOperation({ summary: 'Create or update Salary Policy' })
+  async upsertSalaryPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: UpsertSalaryPolicyDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.upsertSalaryPolicy(user, targetCustomerId, dto);
+  }
+
+  @Post('policies/claim')
+  @ApiOperation({ summary: 'Create or update Claim / Expense Policy' })
+  async upsertClaimPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: UpsertClaimPolicyDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.upsertClaimPolicy(user, targetCustomerId, dto);
   }
 }

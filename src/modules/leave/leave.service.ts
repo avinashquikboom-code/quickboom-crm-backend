@@ -6,8 +6,18 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateLeaveDto, RejectLeaveDto } from './dto/leave.dto';
+import {
+  CreateLeaveDto,
+  RejectLeaveDto,
+  AdjustLeaveBalanceDto,
+} from './dto/leave.dto';
 import { CreateHolidayDto, UpdateHolidayDto } from './dto/holiday.dto';
+import {
+  UpsertAttendancePolicyDto,
+  UpsertLeavePolicyDto,
+  UpsertSalaryPolicyDto,
+  UpsertClaimPolicyDto,
+} from './dto/policy.dto';
 import { AttendanceStatus, RequestStatus } from '@prisma/client';
 
 @Injectable()
@@ -61,7 +71,6 @@ export class LeaveService {
       whereEmp.departmentId = Number(query.departmentId);
     }
 
-    // Fetch all active employees with relations
     const employees = await this.prisma.employee.findMany({
       where: whereEmp,
       include: {
@@ -118,7 +127,6 @@ export class LeaveService {
           availableCount++;
           lastActivity = `Checked Out at ${checkOutStr}`;
         } else {
-          // Check if currently on break
           const activeBreak = (att.breaks || []).find((b) => !b.breakEnd);
           if (activeBreak) {
             status = 'ON_BREAK';
@@ -165,7 +173,6 @@ export class LeaveService {
       };
     });
 
-    // Apply client filter criteria
     let filtered = roster;
     if (query?.status && query.status !== 'ALL') {
       filtered = filtered.filter((r) => r.status === query.status);
@@ -232,35 +239,34 @@ export class LeaveService {
       ];
     }
 
-    const [items, total, pendingCount, approvedCount, rejectedCount] =
-      await Promise.all([
-        this.prisma.leaveRequest.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { createdAt: 'desc' },
-          include: {
-            employee: {
-              include: {
-                department: true,
-                designation: true,
-                office: true,
-              },
+    const [items, total, pendingCount, approvedCount, rejectedCount] = await Promise.all([
+      this.prisma.leaveRequest.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+              office: true,
             },
-            leaveType: true,
           },
-        }),
-        this.prisma.leaveRequest.count({ where }),
-        this.prisma.leaveRequest.count({
-          where: { customerId: numCustomerId, status: RequestStatus.PENDING },
-        }),
-        this.prisma.leaveRequest.count({
-          where: { customerId: numCustomerId, status: RequestStatus.APPROVED },
-        }),
-        this.prisma.leaveRequest.count({
-          where: { customerId: numCustomerId, status: RequestStatus.REJECTED },
-        }),
-      ]);
+          leaveType: true,
+        },
+      }),
+      this.prisma.leaveRequest.count({ where }),
+      this.prisma.leaveRequest.count({
+        where: { customerId: numCustomerId, status: RequestStatus.PENDING },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { customerId: numCustomerId, status: RequestStatus.APPROVED },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { customerId: numCustomerId, status: RequestStatus.REJECTED },
+      }),
+    ]);
 
     return {
       data: items.map((l) => ({
@@ -374,7 +380,7 @@ export class LeaveService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const leave = await this.prisma.leaveRequest.findFirst({
       where: { id, customerId: numCustomerId },
-      include: { employee: true },
+      include: { employee: true, leaveType: true },
     });
 
     if (!leave) {
@@ -389,36 +395,75 @@ export class LeaveService {
       throw new BadRequestException(`Cannot approve request that is currently ${leave.status}`);
     }
 
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id },
-      data: {
-        status: RequestStatus.APPROVED,
-        approvedById: user?.id || null,
-        rejectionReason: null,
-      },
-    });
-
-    // Check if leave covers today, and update today's attendance record
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    if (leave.fromDate <= todayEnd && leave.toDate >= today) {
-      const todayAtt = await this.prisma.attendance.findFirst({
-        where: {
-          employeeId: leave.employeeId,
-          date: { gte: today, lte: todayEnd },
+    // Atomic transaction for leave approval + balance recalculation
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const appReq = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: RequestStatus.APPROVED,
+          approvedById: user?.id || null,
+          rejectionReason: null,
         },
       });
 
-      if (todayAtt && !todayAtt.punchIn) {
-        await this.prisma.attendance.update({
-          where: { id: todayAtt.id },
-          data: { status: AttendanceStatus.LEAVE },
+      // Recalculate employee leave balance
+      const currentYear = new Date().getFullYear();
+      let balance = await tx.employeeLeaveBalance.findFirst({
+        where: {
+          employeeId: leave.employeeId,
+          leaveTypeId: leave.leaveTypeId,
+          year: currentYear,
+        },
+      });
+
+      if (!balance) {
+        const defaultAllocated = leave.leaveType?.daysAllowedPerYear || 12.0;
+        balance = await tx.employeeLeaveBalance.create({
+          data: {
+            customerId: numCustomerId,
+            employeeId: leave.employeeId,
+            leaveTypeId: leave.leaveTypeId,
+            year: currentYear,
+            allocatedDays: defaultAllocated,
+            usedDays: Number(leave.days || 1),
+            remainingDays: Math.max(0, defaultAllocated - Number(leave.days || 1)),
+          },
+        });
+      } else {
+        const newUsed = balance.usedDays + Number(leave.days || 1);
+        await tx.employeeLeaveBalance.update({
+          where: { id: balance.id },
+          data: {
+            usedDays: newUsed,
+            remainingDays: Math.max(0, balance.allocatedDays - newUsed),
+          },
         });
       }
-    }
+
+      // Check if leave covers today, and update today's attendance record
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+
+      if (leave.fromDate <= todayEnd && leave.toDate >= today) {
+        const todayAtt = await tx.attendance.findFirst({
+          where: {
+            employeeId: leave.employeeId,
+            date: { gte: today, lte: todayEnd },
+          },
+        });
+
+        if (todayAtt && !todayAtt.punchIn) {
+          await tx.attendance.update({
+            where: { id: todayAtt.id },
+            data: { status: AttendanceStatus.LEAVE },
+          });
+        }
+      }
+
+      return appReq;
+    });
 
     return {
       success: true,
@@ -466,7 +511,6 @@ export class LeaveService {
   async createLeave(customerId: number | string | undefined, dto: CreateLeaveDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    // Resolve or find leave type
     let leaveTypeId = dto.leaveTypeId;
     if (!leaveTypeId) {
       let typeName = dto.leaveTypeName || 'Casual Leave';
@@ -514,7 +558,444 @@ export class LeaveService {
   }
 
   // ==========================================
-  // 3. PUBLIC HOLIDAYS MANAGEMENT
+  // 3. EMPLOYEE-WISE LEAVE BALANCES & AUDIT
+  // ==========================================
+  async getLeaveBalances(
+    customerId?: number | string,
+    query?: {
+      search?: string;
+      officeId?: string | number;
+      departmentId?: string | number;
+      year?: number | string;
+    },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const targetYear = query?.year ? Number(query.year) : new Date().getFullYear();
+
+    // 1. Fetch all configured active leave types for this customer
+    let leaveTypes = await this.prisma.leaveType.findMany({
+      where: { customerId: numCustomerId, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+
+    // Ensure default types exist if none created yet
+    if (leaveTypes.length === 0) {
+      const defaultTypes = [
+        { name: 'Casual Leave', code: 'CL', daysAllowedPerYear: 12 },
+        { name: 'Sick Leave', code: 'SL', daysAllowedPerYear: 8 },
+        { name: 'Paid Leave', code: 'PL', daysAllowedPerYear: 15 },
+        { name: 'Unpaid Leave', code: 'UL', daysAllowedPerYear: 0 },
+      ];
+
+      for (const dt of defaultTypes) {
+        await this.prisma.leaveType.upsert({
+          where: { customerId_code: { customerId: numCustomerId, code: dt.code } },
+          update: {},
+          create: {
+            customerId: numCustomerId,
+            name: dt.name,
+            code: dt.code,
+            daysAllowedPerYear: dt.daysAllowedPerYear,
+          },
+        });
+      }
+
+      leaveTypes = await this.prisma.leaveType.findMany({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { id: 'asc' },
+      });
+    }
+
+    // 2. Fetch employees matching filter
+    const whereEmp: any = {
+      customerId: numCustomerId,
+      status: 'ACTIVE',
+    };
+
+    if (query?.officeId && query.officeId !== 'ALL') {
+      whereEmp.officeId = Number(query.officeId);
+    }
+    if (query?.departmentId && query.departmentId !== 'ALL') {
+      whereEmp.departmentId = Number(query.departmentId);
+    }
+
+    const employees = await this.prisma.employee.findMany({
+      where: whereEmp,
+      include: {
+        department: true,
+        designation: true,
+        office: true,
+        leaveBalances: {
+          where: { year: targetYear },
+          include: { leaveType: true },
+        },
+        leaveRequests: {
+          where: {
+            status: RequestStatus.APPROVED,
+            fromDate: {
+              gte: new Date(`${targetYear}-01-01T00:00:00.000Z`),
+              lte: new Date(`${targetYear}-12-31T23:59:59.999Z`),
+            },
+          },
+        },
+      },
+      orderBy: { firstName: 'asc' },
+    });
+
+    let totalAllocatedCompany = 0;
+    let totalUsedCompany = 0;
+    let totalRemainingCompany = 0;
+    let employeesWithRemaining = 0;
+    let employeesWithNoRemaining = 0;
+
+    const rows = employees.map((emp) => {
+      let empTotalAllocated = 0;
+      let empTotalUsed = 0;
+      let empTotalRemaining = 0;
+
+      const balancesPerType: Record<
+        string,
+        {
+          leaveTypeId: number;
+          leaveTypeName: string;
+          allocated: number;
+          used: number;
+          remaining: number;
+          isUnlimited: boolean;
+        }
+      > = {};
+
+      leaveTypes.forEach((lt) => {
+        const storedBalance = emp.leaveBalances.find((b) => b.leaveTypeId === lt.id);
+        const approvedUsed = emp.leaveRequests
+          .filter((lr) => lr.leaveTypeId === lt.id)
+          .reduce((sum, lr) => sum + (lr.days || 1), 0);
+
+        const isUnlimited = lt.code === 'UL' || lt.name.toLowerCase().includes('unpaid');
+        const allocated = storedBalance ? storedBalance.allocatedDays : lt.daysAllowedPerYear;
+        const used = approvedUsed;
+        const remaining = isUnlimited ? 999 : Math.max(0, allocated - used);
+
+        if (!isUnlimited) {
+          empTotalAllocated += allocated;
+          empTotalUsed += used;
+          empTotalRemaining += remaining;
+        }
+
+        balancesPerType[lt.name] = {
+          leaveTypeId: lt.id,
+          leaveTypeName: lt.name,
+          allocated,
+          used,
+          remaining,
+          isUnlimited,
+        };
+      });
+
+      totalAllocatedCompany += empTotalAllocated;
+      totalUsedCompany += empTotalUsed;
+      totalRemainingCompany += empTotalRemaining;
+
+      if (empTotalRemaining > 0) {
+        employeesWithRemaining++;
+      } else {
+        employeesWithNoRemaining++;
+      }
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode || `EMP-${emp.id}`,
+        name: `${emp.firstName} ${emp.lastName}`.trim(),
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        email: emp.email,
+        office: emp.office?.name || emp.branch || 'Head Office',
+        officeCity: emp.office?.city || '',
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        balances: balancesPerType,
+        totalAllocated: empTotalAllocated,
+        totalUsed: empTotalUsed,
+        totalRemaining: empTotalRemaining,
+      };
+    });
+
+    let filtered = rows;
+    if (query?.search && query.search.trim().length > 0) {
+      const s = query.search.trim().toLowerCase();
+      filtered = filtered.filter(
+        (r) =>
+          r.name.toLowerCase().includes(s) ||
+          r.employeeCode.toLowerCase().includes(s) ||
+          r.department.toLowerCase().includes(s) ||
+          r.office.toLowerCase().includes(s),
+      );
+    }
+
+    return {
+      leaveTypes: leaveTypes.map((lt) => ({
+        id: lt.id,
+        name: lt.name,
+        code: lt.code,
+        daysAllowedPerYear: lt.daysAllowedPerYear,
+      })),
+      summary: {
+        totalEmployees: employees.length,
+        employeesWithRemaining,
+        employeesWithNoRemaining,
+        totalAllocated: totalAllocatedCompany,
+        totalUsed: totalUsedCompany,
+        totalRemaining: totalRemainingCompany,
+      },
+      records: filtered,
+    };
+  }
+
+  async getEmployeeBalanceDetails(customerId: number | string | undefined, employeeId: number) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const currentYear = new Date().getFullYear();
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, customerId: numCustomerId },
+      include: {
+        department: true,
+        designation: true,
+        office: true,
+        leaveBalances: {
+          where: { year: currentYear },
+          include: { leaveType: true },
+        },
+        leaveRequests: {
+          where: {
+            status: RequestStatus.APPROVED,
+            fromDate: {
+              gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+              lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+            },
+          },
+          include: { leaveType: true },
+          orderBy: { fromDate: 'desc' },
+        },
+        leaveAdjustments: {
+          include: { leaveType: true },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        },
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee #${employeeId} not found`);
+    }
+
+    const leaveTypes = await this.prisma.leaveType.findMany({
+      where: { customerId: numCustomerId, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+
+    let totalAllocated = 0;
+    let totalUsed = 0;
+    let totalRemaining = 0;
+
+    const balances = leaveTypes.map((lt) => {
+      const stored = employee.leaveBalances.find((b) => b.leaveTypeId === lt.id);
+      const used = employee.leaveRequests
+        .filter((r) => r.leaveTypeId === lt.id)
+        .reduce((sum, r) => sum + (r.days || 1), 0);
+
+      const isUnlimited = lt.code === 'UL' || lt.name.toLowerCase().includes('unpaid');
+      const allocated = stored ? stored.allocatedDays : lt.daysAllowedPerYear;
+      const remaining = isUnlimited ? 999 : Math.max(0, allocated - used);
+
+      if (!isUnlimited) {
+        totalAllocated += allocated;
+        totalUsed += used;
+        totalRemaining += remaining;
+      }
+
+      return {
+        leaveTypeId: lt.id,
+        leaveTypeName: lt.name,
+        code: lt.code,
+        allocated,
+        used,
+        remaining,
+        isUnlimited,
+      };
+    });
+
+    return {
+      employee: {
+        id: employee.id,
+        employeeCode: employee.employeeCode,
+        name: `${employee.firstName} ${employee.lastName}`.trim(),
+        email: employee.email,
+        phone: employee.phone,
+        office: employee.office?.name || employee.branch || 'Head Office',
+        department: employee.department?.name || 'General',
+        designation: employee.designation?.name || 'Staff',
+      },
+      balances,
+      totals: {
+        totalAllocated,
+        totalUsed,
+        totalRemaining,
+      },
+      adjustments: employee.leaveAdjustments.map((a) => ({
+        id: a.id,
+        date: a.createdAt.toISOString().split('T')[0],
+        createdAt: a.createdAt,
+        leaveTypeId: a.leaveTypeId,
+        leaveTypeName: a.leaveType?.name || 'Leave',
+        action: a.adjustmentType,
+        amount: a.adjustmentAmount,
+        previousBalance: a.previousBalance,
+        newBalance: a.newBalance,
+        reason: a.reason,
+        adjustedBy: a.adjustedByName || 'HR Manager',
+      })),
+      recentApprovedLeaves: employee.leaveRequests.map((r) => ({
+        id: r.id,
+        leaveType: r.leaveType?.name,
+        fromDate: r.fromDate.toISOString().split('T')[0],
+        toDate: r.toDate.toISOString().split('T')[0],
+        days: r.days,
+        reason: r.reason,
+      })),
+    };
+  }
+
+  async adjustLeaveBalance(
+    user: any,
+    customerId: number | string | undefined,
+    employeeId: number,
+    dto: AdjustLeaveBalanceDto,
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const currentYear = new Date().getFullYear();
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, customerId: numCustomerId },
+      include: {
+        leaveRequests: {
+          where: {
+            leaveTypeId: dto.leaveTypeId,
+            status: RequestStatus.APPROVED,
+            fromDate: {
+              gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+              lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+            },
+          },
+        },
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee #${employeeId} not found`);
+    }
+
+    const leaveType = await this.prisma.leaveType.findFirst({
+      where: { id: dto.leaveTypeId, customerId: numCustomerId },
+    });
+
+    if (!leaveType) {
+      throw new NotFoundException(`Leave type #${dto.leaveTypeId} not found`);
+    }
+
+    const trimmedReason = dto.reason?.trim();
+    if (!trimmedReason) {
+      throw new BadRequestException('Mandatory reason required for leave balance adjustment');
+    }
+
+    const amount = Number(dto.amount);
+    if (isNaN(amount) || amount < 0) {
+      throw new BadRequestException('Adjustment amount must be a non-negative number');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      let balanceRecord = await tx.employeeLeaveBalance.findFirst({
+        where: {
+          employeeId,
+          leaveTypeId: dto.leaveTypeId,
+          year: currentYear,
+        },
+      });
+
+      const previousAllocated = balanceRecord ? balanceRecord.allocatedDays : leaveType.daysAllowedPerYear;
+      let newAllocated = previousAllocated;
+
+      if (dto.adjustmentType === 'ADD') {
+        newAllocated = previousAllocated + amount;
+      } else if (dto.adjustmentType === 'DEDUCT') {
+        if (previousAllocated - amount < 0) {
+          throw new BadRequestException(
+            `Cannot deduct ${amount} days. Current allocated balance is ${previousAllocated} days.`,
+          );
+        }
+        newAllocated = previousAllocated - amount;
+      } else if (dto.adjustmentType === 'SET_BALANCE') {
+        newAllocated = amount;
+      }
+
+      const totalUsed = employee.leaveRequests.reduce((sum, r) => sum + (r.days || 1), 0);
+      const remainingDays = Math.max(0, newAllocated - totalUsed);
+
+      let updatedBalance: any;
+      if (balanceRecord) {
+        updatedBalance = await tx.employeeLeaveBalance.update({
+          where: { id: balanceRecord.id },
+          data: {
+            allocatedDays: newAllocated,
+            usedDays: totalUsed,
+            remainingDays,
+          },
+        });
+      } else {
+        updatedBalance = await tx.employeeLeaveBalance.create({
+          data: {
+            customerId: numCustomerId,
+            employeeId,
+            leaveTypeId: dto.leaveTypeId,
+            year: currentYear,
+            allocatedDays: newAllocated,
+            usedDays: totalUsed,
+            remainingDays,
+          },
+        });
+      }
+
+      // Record immutable audit history
+      const adjustedByName = user?.firstName
+        ? `${user.firstName} ${user.lastName || ''}`.trim()
+        : 'HR Administrator';
+
+      const history = await tx.leaveAdjustmentHistory.create({
+        data: {
+          customerId: numCustomerId,
+          employeeId,
+          leaveTypeId: dto.leaveTypeId,
+          balanceId: updatedBalance.id,
+          previousBalance: previousAllocated,
+          adjustmentType: dto.adjustmentType,
+          adjustmentAmount: amount,
+          newBalance: newAllocated,
+          reason: trimmedReason,
+          adjustedById: user?.id || null,
+          adjustedByName,
+        },
+      });
+
+      return {
+        success: true,
+        message: `Leave balance updated successfully (${previousAllocated} → ${newAllocated} days)`,
+        balance: updatedBalance,
+        history,
+      };
+    });
+  }
+
+  // ==========================================
+  // 4. PUBLIC HOLIDAYS MANAGEMENT
   // ==========================================
   async getPublicHolidays(
     customerId?: number | string,
@@ -611,7 +1092,6 @@ export class LeaveService {
       throw new BadRequestException('Valid holiday date is required');
     }
 
-    // Check duplicate for same date & office scope
     const dayStart = new Date(holidayDate);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(holidayDate);
@@ -714,5 +1194,350 @@ export class LeaveService {
       success: true,
       message: `Public holiday "${holiday.name}" deleted successfully.`,
     };
+  }
+
+  // ==========================================
+  // 5. HR POLICIES MANAGEMENT
+  // ==========================================
+  async getPoliciesOverview(customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+
+    const [attendance, leave, salary, claim] = await Promise.all([
+      this.prisma.attendancePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.leavePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.salaryPolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.claimPolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    return {
+      attendance: attendance || {
+        name: 'Standard Attendance Policy',
+        officeStartTime: '09:30',
+        officeEndTime: '18:30',
+        workingDaysPerWeek: 5,
+        workingHoursPerDay: 8.0,
+        punchInRequired: true,
+        earlyPunchInAllowed: true,
+        multiplePunchInAllowed: false,
+        gracePeriodMinutes: 15,
+        lateArrivalThresholdMins: 30,
+        lateRuleAction: 'MARK_LATE',
+        punchOutRequired: true,
+        minWorkingHours: 8.0,
+        earlyCheckoutGraceMinutes: 15,
+        earlyCheckoutThresholdMins: 30,
+        earlyCheckoutAction: 'MARK_EARLY',
+        autoPunchOut: false,
+        fullDayAbsenceDeductionPct: 100.0,
+        halfDayDeductionPct: 50.0,
+        lateArrivalDeductionPct: 25.0,
+        earlyCheckoutDeductionPct: 25.0,
+        breakExcessDeductionPct: 100.0,
+        overtimeEligible: true,
+        breakAllowed: true,
+        breakRequired: false,
+        maxBreakDurationMins: 60,
+        minBreakDurationMins: 15,
+        maxBreaksPerDay: 2,
+        breakGracePeriodMins: 5,
+        breakType: 'UNPAID',
+        breakExcessAction: 'DEDUCT_EXCESS',
+        allowBreakExtension: false,
+        officeAttendanceRequired: true,
+        gpsRequired: true,
+        isActive: true,
+        updatedByName: 'Default System Policy',
+      },
+      leave: leave || {
+        name: 'Standard Leave Policy',
+        allowHalfDay: true,
+        allowBackdatedLeave: false,
+        maxBackdatedDays: 3,
+        allowFutureLeave: true,
+        maxFutureDays: 90,
+        allowProbationLeave: false,
+        includeHolidaysInLeave: false,
+        includeWeekendsInLeave: false,
+        minNoticePeriodDays: 2,
+        maxConsecutiveDays: 10,
+        requiresManagerApproval: true,
+        requiresHrApproval: true,
+        requiresAttachmentAboveDays: 3,
+        isActive: true,
+        updatedByName: 'Default System Policy',
+      },
+      salary: salary || {
+        name: 'Standard Salary Policy',
+        salaryCycle: 'MONTHLY',
+        payrollCycleStartDay: 1,
+        workingDaysPerMonth: 30,
+        fullDayDeductionPct: 100.0,
+        halfDayDeductionPct: 50.0,
+        lateArrivalDeductionPct: 25.0,
+        earlyCheckoutDeductionPct: 25.0,
+        overtimeEnabled: true,
+        overtimeMultiplier: 1.5,
+        overtimeCalculationMethod: 'HOURLY_BASE',
+        commissionEnabled: false,
+        commissionPercentage: 0.0,
+        pfPercent: 12.0,
+        esiPercent: 0.75,
+        isActive: true,
+        updatedByName: 'Default System Policy',
+      },
+      claim: claim || {
+        name: 'Standard Claim Policy',
+        claimsEnabled: true,
+        maxClaimAmountPerReceipt: 25000.0,
+        monthlyClaimLimit: 100000.0,
+        annualClaimLimit: 500000.0,
+        receiptRequired: true,
+        receiptRequiredAboveAmount: 500.0,
+        approvalRequired: true,
+        autoApprovalThreshold: 0.0,
+        allowedCategories: [
+          'TRAVEL',
+          'FOOD',
+          'FUEL',
+          'ACCOMMODATION',
+          'MEDICAL',
+          'COMMUNICATION',
+          'OFFICE_SUPPLIES',
+          'OTHER',
+        ],
+        isActive: true,
+        updatedByName: 'Default System Policy',
+      },
+    };
+  }
+
+  async upsertAttendancePolicy(user: any, customerId: number | string | undefined, dto: UpsertAttendancePolicyDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const updatedByName = user?.firstName
+      ? `${user.firstName} ${user.lastName || ''}`.trim()
+      : 'HR Administrator';
+
+    const existing = await this.prisma.attendancePolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
+
+    const data: any = {
+      customerId: numCustomerId,
+      officeId: dto.officeId ? Number(dto.officeId) : null,
+      name: dto.name?.trim() || 'Standard Attendance Policy',
+      officeStartTime: dto.officeStartTime?.trim() || '09:30',
+      officeEndTime: dto.officeEndTime?.trim() || '18:30',
+      workingDaysPerWeek: dto.workingDaysPerWeek ?? 5,
+      workingHoursPerDay: dto.workingHoursPerDay ?? 8.0,
+      punchInRequired: dto.punchInRequired ?? true,
+      earlyPunchInAllowed: dto.earlyPunchInAllowed ?? true,
+      multiplePunchInAllowed: dto.multiplePunchInAllowed ?? false,
+      gracePeriodMinutes: dto.gracePeriodMinutes ?? 15,
+      lateArrivalThresholdMins: dto.lateArrivalThresholdMins ?? 30,
+      lateRuleAction: dto.lateRuleAction?.trim() || 'MARK_LATE',
+      punchOutRequired: dto.punchOutRequired ?? true,
+      minWorkingHours: dto.minWorkingHours ?? 8.0,
+      earlyCheckoutGraceMinutes: dto.earlyCheckoutGraceMinutes ?? 15,
+      earlyCheckoutThresholdMins: dto.earlyCheckoutThresholdMins ?? 30,
+      earlyCheckoutAction: dto.earlyCheckoutAction?.trim() || 'MARK_EARLY',
+      autoPunchOut: dto.autoPunchOut ?? false,
+      fullDayAbsenceDeductionPct: dto.fullDayAbsenceDeductionPct ?? 100.0,
+      halfDayDeductionPct: dto.halfDayDeductionPct ?? 50.0,
+      lateArrivalDeductionPct: dto.lateArrivalDeductionPct ?? 25.0,
+      earlyCheckoutDeductionPct: dto.earlyCheckoutDeductionPct ?? 25.0,
+      breakExcessDeductionPct: dto.breakExcessDeductionPct ?? 100.0,
+      minWorkingHoursForHalfDay: dto.minWorkingHoursForHalfDay ?? 4.0,
+      overtimeEligible: dto.overtimeEligible ?? true,
+      breakAllowed: dto.breakAllowed ?? true,
+      breakRequired: dto.breakRequired ?? false,
+      maxBreakDurationMins: dto.maxBreakDurationMins ?? 60,
+      minBreakDurationMins: dto.minBreakDurationMins ?? 15,
+      maxBreaksPerDay: dto.maxBreaksPerDay ?? 2,
+      breakGracePeriodMins: dto.breakGracePeriodMins ?? 5,
+      breakType: dto.breakType?.trim() || 'UNPAID',
+      breakExcessAction: dto.breakExcessAction?.trim() || 'DEDUCT_EXCESS',
+      allowBreakExtension: dto.allowBreakExtension ?? false,
+      officeAttendanceRequired: dto.officeAttendanceRequired ?? true,
+      gpsRequired: dto.gpsRequired ?? true,
+      allowOutsideCheckIn: dto.allowOutsideCheckIn ?? false,
+      allowOutsideCheckOut: dto.allowOutsideCheckOut ?? false,
+      isActive: dto.isActive ?? true,
+      updatedById: user?.id || null,
+      updatedByName,
+    };
+
+    if (existing) {
+      return this.prisma.attendancePolicy.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      return this.prisma.attendancePolicy.create({
+        data: {
+          ...data,
+          createdById: user?.id || null,
+        },
+      });
+    }
+  }
+
+  async upsertLeavePolicy(user: any, customerId: number | string | undefined, dto: UpsertLeavePolicyDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const updatedByName = user?.firstName
+      ? `${user.firstName} ${user.lastName || ''}`.trim()
+      : 'HR Administrator';
+
+    const existing = await this.prisma.leavePolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
+
+    const data: any = {
+      customerId: numCustomerId,
+      officeId: dto.officeId ? Number(dto.officeId) : null,
+      name: dto.name?.trim() || 'Standard Leave Policy',
+      allowHalfDay: dto.allowHalfDay ?? true,
+      allowBackdatedLeave: dto.allowBackdatedLeave ?? false,
+      maxBackdatedDays: dto.maxBackdatedDays ?? 3,
+      allowFutureLeave: dto.allowFutureLeave ?? true,
+      maxFutureDays: dto.maxFutureDays ?? 90,
+      allowProbationLeave: dto.allowProbationLeave ?? false,
+      includeHolidaysInLeave: dto.includeHolidaysInLeave ?? false,
+      includeWeekendsInLeave: dto.includeWeekendsInLeave ?? false,
+      minNoticePeriodDays: dto.minNoticePeriodDays ?? 2,
+      maxConsecutiveDays: dto.maxConsecutiveDays ?? 10,
+      requiresManagerApproval: dto.requiresManagerApproval ?? true,
+      requiresHrApproval: dto.requiresHrApproval ?? true,
+      requiresAttachmentAboveDays: dto.requiresAttachmentAboveDays ?? 3,
+      isActive: dto.isActive ?? true,
+      updatedById: user?.id || null,
+      updatedByName,
+    };
+
+    if (existing) {
+      return this.prisma.leavePolicy.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      return this.prisma.leavePolicy.create({
+        data: {
+          ...data,
+          createdById: user?.id || null,
+        },
+      });
+    }
+  }
+
+  async upsertSalaryPolicy(user: any, customerId: number | string | undefined, dto: UpsertSalaryPolicyDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const updatedByName = user?.firstName
+      ? `${user.firstName} ${user.lastName || ''}`.trim()
+      : 'HR Administrator';
+
+    const existing = await this.prisma.salaryPolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
+
+    const data: any = {
+      customerId: numCustomerId,
+      officeId: dto.officeId ? Number(dto.officeId) : null,
+      name: dto.name?.trim() || 'Standard Salary Policy',
+      salaryCycle: dto.salaryCycle?.trim() || 'MONTHLY',
+      payrollCycleStartDay: dto.payrollCycleStartDay ?? 1,
+      workingDaysPerMonth: dto.workingDaysPerMonth ?? 30,
+      fullDayDeductionPct: dto.fullDayDeductionPct ?? 100.0,
+      halfDayDeductionPct: dto.halfDayDeductionPct ?? 50.0,
+      lateArrivalDeductionPct: dto.lateArrivalDeductionPct ?? 25.0,
+      earlyCheckoutDeductionPct: dto.earlyCheckoutDeductionPct ?? 25.0,
+      overtimeEnabled: dto.overtimeEnabled ?? true,
+      overtimeMultiplier: dto.overtimeMultiplier ?? 1.5,
+      overtimeCalculationMethod: dto.overtimeCalculationMethod?.trim() || 'HOURLY_BASE',
+      commissionEnabled: dto.commissionEnabled ?? false,
+      commissionType: dto.commissionType?.trim() || 'PERCENTAGE',
+      commissionPercentage: dto.commissionPercentage ?? 0.0,
+      pfPercent: dto.pfPercent ?? 12.0,
+      esiPercent: dto.esiPercent ?? 0.75,
+      isActive: dto.isActive ?? true,
+      updatedById: user?.id || null,
+      updatedByName,
+    };
+
+    if (existing) {
+      return this.prisma.salaryPolicy.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      return this.prisma.salaryPolicy.create({
+        data: {
+          ...data,
+          createdById: user?.id || null,
+        },
+      });
+    }
+  }
+
+  async upsertClaimPolicy(user: any, customerId: number | string | undefined, dto: UpsertClaimPolicyDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const updatedByName = user?.firstName
+      ? `${user.firstName} ${user.lastName || ''}`.trim()
+      : 'HR Administrator';
+
+    const existing = await this.prisma.claimPolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
+
+    const data: any = {
+      customerId: numCustomerId,
+      officeId: dto.officeId ? Number(dto.officeId) : null,
+      name: dto.name?.trim() || 'Standard Claim Policy',
+      claimsEnabled: dto.claimsEnabled ?? true,
+      maxClaimAmountPerReceipt: dto.maxClaimAmountPerReceipt ?? 25000.0,
+      monthlyClaimLimit: dto.monthlyClaimLimit ?? 100000.0,
+      annualClaimLimit: dto.annualClaimLimit ?? 500000.0,
+      receiptRequired: dto.receiptRequired ?? true,
+      receiptRequiredAboveAmount: dto.receiptRequiredAboveAmount ?? 500.0,
+      approvalRequired: dto.approvalRequired ?? true,
+      autoApprovalThreshold: dto.autoApprovalThreshold ?? 0.0,
+      allowedCategories: dto.allowedCategories || [
+        'TRAVEL',
+        'FOOD',
+        'FUEL',
+        'ACCOMMODATION',
+        'MEDICAL',
+        'COMMUNICATION',
+        'OFFICE_SUPPLIES',
+        'OTHER',
+      ],
+      isActive: dto.isActive ?? true,
+      updatedById: user?.id || null,
+      updatedByName,
+    };
+
+    if (existing) {
+      return this.prisma.claimPolicy.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      return this.prisma.claimPolicy.create({
+        data: {
+          ...data,
+          createdById: user?.id || null,
+        },
+      });
+    }
   }
 }

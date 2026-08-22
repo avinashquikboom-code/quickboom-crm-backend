@@ -55,6 +55,12 @@ model Customer {
   works                    Work[]
   subscriptions            CustomerSubscription[]
   publicHolidays           PublicHoliday[]
+  leaveBalances            EmployeeLeaveBalance[]
+  leaveAdjustments         LeaveAdjustmentHistory[]
+  attendancePolicies       AttendancePolicy[]
+  leavePolicies            LeavePolicy[]
+  salaryPolicies           SalaryPolicy[]
+  claimPolicies            ClaimPolicy[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -732,6 +738,10 @@ model BranchGeofence {
   employees      Employee[]
   attendances    Attendance[]
   publicHolidays PublicHoliday[]
+  attendancePolicies AttendancePolicy[]
+  leavePolicies      LeavePolicy[]
+  salaryPolicies     SalaryPolicy[]
+  claimPolicies      ClaimPolicy[]
 
   @@index([customerId])
   @@index([isActive])
@@ -822,6 +832,8 @@ model Employee {
   office           BranchGeofence?   @relation(fields: [officeId], references: [id])
   user             User?             @relation(fields: [userId], references: [id])
   leaveRequests    LeaveRequest[]
+  leaveBalances    EmployeeLeaveBalance[]
+  leaveAdjustments LeaveAdjustmentHistory[]
   payrollItems     PayrollItem[]
   remoteRequests   RemoteRequest[]
   salarySlips      SalarySlip[]
@@ -887,6 +899,8 @@ model LeaveType {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   leaveRequests      LeaveRequest[]
+  leaveBalances      EmployeeLeaveBalance[]
+  leaveAdjustments   LeaveAdjustmentHistory[]
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -934,6 +948,202 @@ model PublicHoliday {
   @@index([isActive])
 }
 
+model EmployeeLeaveBalance {
+  id                 Int                       @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int
+  leaveTypeId        Int
+  year               Int                       @default(2026)
+  allocatedDays      Float                     @default(12.0)
+  usedDays           Float                     @default(0.0)
+  remainingDays      Float                     @default(12.0)
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee           Employee                  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType          LeaveType                 @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  adjustments        LeaveAdjustmentHistory[]
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([leaveTypeId])
+}
+
+model LeaveAdjustmentHistory {
+  id                   Int                   @id @default(autoincrement())
+  customerId           Int
+  employeeId           Int
+  leaveTypeId          Int
+  balanceId            Int?
+  previousBalance      Float
+  adjustmentType       String
+  adjustmentAmount     Float
+  newBalance           Float
+  reason               String
+  adjustedById         Int?
+  adjustedByName       String?
+  createdAt            DateTime              @default(now())
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee             Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType            LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  balance              EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([createdAt])
+}
+
+model AttendancePolicy {
+  id                         Int             @id @default(autoincrement())
+  customerId                 Int
+  officeId                   Int?
+  name                       String          @default("Standard Attendance Policy")
+  officeStartTime            String          @default("09:30")
+  officeEndTime              String          @default("18:30")
+  workingDaysPerWeek         Int             @default(5)
+  workingHoursPerDay         Float           @default(8.0)
+  punchInRequired            Boolean         @default(true)
+  earlyPunchInAllowed        Boolean         @default(true)
+  multiplePunchInAllowed     Boolean         @default(false)
+  gracePeriodMinutes         Int             @default(15)
+  lateArrivalThresholdMins   Int             @default(30)
+  lateRuleAction             String          @default("MARK_LATE")
+  punchOutRequired           Boolean         @default(true)
+  minWorkingHours            Float           @default(8.0)
+  earlyCheckoutGraceMinutes  Int             @default(15)
+  earlyCheckoutThresholdMins  Int             @default(30)
+  earlyCheckoutAction        String          @default("MARK_EARLY")
+  autoPunchOut               Boolean         @default(false)
+  fullDayAbsenceDeductionPct  Float           @default(100.0)
+  halfDayDeductionPct        Float           @default(50.0)
+  lateArrivalDeductionPct    Float           @default(25.0)
+  earlyCheckoutDeductionPct  Float           @default(25.0)
+  breakExcessDeductionPct    Float           @default(100.0)
+  minWorkingHoursForHalfDay  Float           @default(4.0)
+  overtimeEligible           Boolean         @default(true)
+  breakAllowed               Boolean         @default(true)
+  breakRequired              Boolean         @default(false)
+  maxBreakDurationMins       Int             @default(60)
+  minBreakDurationMins       Int             @default(15)
+  maxBreaksPerDay            Int             @default(2)
+  breakGracePeriodMins       Int             @default(5)
+  breakType                  String          @default("UNPAID")
+  breakExcessAction          String          @default("DEDUCT_EXCESS")
+  allowBreakExtension        Boolean         @default(false)
+  officeAttendanceRequired   Boolean         @default(true)
+  gpsRequired                Boolean         @default(true)
+  allowOutsideCheckIn        Boolean         @default(false)
+  allowOutsideCheckOut       Boolean         @default(false)
+  isActive                   Boolean         @default(true)
+  createdById                Int?
+  updatedById                Int?
+  updatedByName              String?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+  customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model LeavePolicy {
+  id                          Int             @id @default(autoincrement())
+  customerId                  Int
+  officeId                    Int?
+  name                        String          @default("Standard Leave Policy")
+  allowHalfDay                Boolean         @default(true)
+  allowBackdatedLeave         Boolean         @default(false)
+  maxBackdatedDays            Int             @default(3)
+  allowFutureLeave            Boolean         @default(true)
+  maxFutureDays               Int             @default(90)
+  allowProbationLeave         Boolean         @default(false)
+  includeHolidaysInLeave      Boolean         @default(false)
+  includeWeekendsInLeave      Boolean         @default(false)
+  minNoticePeriodDays         Int             @default(2)
+  maxConsecutiveDays          Int             @default(10)
+  requiresManagerApproval     Boolean         @default(true)
+  requiresHrApproval          Boolean         @default(true)
+  requiresAttachmentAboveDays Int             @default(3)
+  isActive                    Boolean         @default(true)
+  createdById                 Int?
+  updatedById                 Int?
+  updatedByName               String?
+  createdAt                   DateTime        @default(now())
+  updatedAt                   DateTime        @updatedAt
+  customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  office                      BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model SalaryPolicy {
+  id                        Int             @id @default(autoincrement())
+  customerId                Int
+  officeId                  Int?
+  name                      String          @default("Standard Salary Policy")
+  salaryCycle               String          @default("MONTHLY")
+  payrollCycleStartDay      Int             @default(1)
+  workingDaysPerMonth       Int             @default(30)
+  fullDayDeductionPct       Float           @default(100.0)
+  halfDayDeductionPct       Float           @default(50.0)
+  lateArrivalDeductionPct   Float           @default(25.0)
+  earlyCheckoutDeductionPct Float           @default(25.0)
+  overtimeEnabled           Boolean         @default(true)
+  overtimeMultiplier        Float           @default(1.5)
+  overtimeCalculationMethod String          @default("HOURLY_BASE")
+  commissionEnabled         Boolean         @default(false)
+  commissionType            String          @default("PERCENTAGE")
+  commissionPercentage      Float           @default(0.0)
+  pfPercent                 Float           @default(12.0)
+  esiPercent                Float           @default(0.75)
+  isActive                  Boolean         @default(true)
+  createdById               Int?
+  updatedById               Int?
+  updatedByName             String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  office                    BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model ClaimPolicy {
+  id                         Int             @id @default(autoincrement())
+  customerId                 Int
+  officeId                   Int?
+  name                       String          @default("Standard Claim Policy")
+  claimsEnabled              Boolean         @default(true)
+  maxClaimAmountPerReceipt   Float           @default(25000.0)
+  monthlyClaimLimit          Float           @default(100000.0)
+  annualClaimLimit           Float           @default(500000.0)
+  receiptRequired            Boolean         @default(true)
+  receiptRequiredAboveAmount Float           @default(500.0)
+  approvalRequired           Boolean         @default(true)
+  autoApprovalThreshold      Float           @default(0.0)
+  allowedCategories          String[]        @default(["TRAVEL", "FOOD", "FUEL", "ACCOMMODATION", "MEDICAL", "COMMUNICATION", "OFFICE_SUPPLIES", "OTHER"])
+  isActive                   Boolean         @default(true)
+  createdById                Int?
+  updatedById                Int?
+  updatedByName              String?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+  customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([officeId])
+  @@index([isActive])
+}
+
 model RemoteRequest {
   id              Int           @id @default(autoincrement())
   customerId      Int
@@ -946,12 +1156,19 @@ model RemoteRequest {
   status          RequestStatus @default(PENDING)
   rejectionReason String?
   approvedById    Int?
+  approvedByName  String?
+  approvedAt      DateTime?
+  rejectedById    Int?
+  rejectedByName  String?
+  rejectedAt      DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
   @@index([employeeId])
+  @@index([fromDate])
+  @@index([toDate])
 }
 
 model Visit {

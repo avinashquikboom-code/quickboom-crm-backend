@@ -7,13 +7,19 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @ApiTags('Client Visits')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('visits')
 export class VisitController {
   constructor(private readonly visitService: VisitService) {}
@@ -21,12 +27,11 @@ export class VisitController {
   @Get()
   @ApiOperation({ summary: 'Get all client visits' })
   async findAll(
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Query('status') status?: VisitStatus,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
     return this.visitService.findAll(
       customerId,
       status,
@@ -39,9 +44,8 @@ export class VisitController {
   @ApiOperation({ summary: 'Get single client visit' })
   async findOne(
     @Param('id') id: string,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
     return this.visitService.findOne(customerId, id);
   }
 
@@ -49,9 +53,8 @@ export class VisitController {
   @ApiOperation({ summary: 'Create / schedule client visit' })
   async create(
     @Body() dto: CreateVisitDto,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
     return this.visitService.create(customerId, dto);
   }
 
@@ -60,9 +63,8 @@ export class VisitController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateVisitDto,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
     return this.visitService.update(customerId, id, dto);
   }
 
@@ -70,9 +72,8 @@ export class VisitController {
   @ApiOperation({ summary: 'Cancel client visit' })
   async remove(
     @Param('id') id: string,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
     return this.visitService.remove(customerId, id);
   }
 }

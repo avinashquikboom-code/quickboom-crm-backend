@@ -26,6 +26,7 @@ import { DesignationModule } from './modules/designation/designation.module';
 import { OfficeModule } from './modules/office/office.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { LeaveModule } from './modules/leave/leave.module';
+import { RemoteWorkModule } from './modules/remote-work/remote-work.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -45,6 +46,7 @@ import { AppController } from './app.controller';
     OfficeModule,
     AttendanceModule,
     LeaveModule,
+    RemoteWorkModule,
     TeamModule,
     VisitModule,
     InvoiceModule,

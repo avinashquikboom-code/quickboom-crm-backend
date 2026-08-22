@@ -68,4 +68,24 @@ export class AttendanceController {
   ) {
     return this.attendanceService.checkOut(user, customerId, dto);
   }
+
+  @Post('break/start')
+  @ApiOperation({ summary: 'Start Employee Break' })
+  async startBreak(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto?: any,
+  ) {
+    return this.attendanceService.startBreak(user, customerId, dto);
+  }
+
+  @Post('break/end')
+  @ApiOperation({ summary: 'End Employee Break' })
+  async endBreak(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto?: any,
+  ) {
+    return this.attendanceService.endBreak(user, customerId, dto);
+  }
 }
