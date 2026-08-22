@@ -7,29 +7,39 @@ import {
   Param,
   UseGuards,
   Req,
-  ForbiddenException,
 } from '@nestjs/common';
 import { LocationService, LocationUpdateDto } from './location.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller()
 export class LocationController {
   constructor(private readonly locationService: LocationService) {}
 
   // Mobile App API: POST /api/v1/mobile/location/update
   @Post('mobile/location/update')
-  async updateMobileLocation(@Body() dto: LocationUpdateDto, @Req() req: any) {
-    // Authenticated employee & customer derived from JWT
-    const customerId = req.user?.customerId || 'demo-customer-id';
-    const employeeId = req.user?.id || 'demo-employee-id';
-
-    return this.locationService.recordLocationUpdate(customerId, employeeId, dto);
+  async updateMobileLocation(
+    @Body() dto: LocationUpdateDto,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    const targetCustomerId = customerId || user?.customerId || 1;
+    const employeeId = user?.employee?.id || user?.id || 1;
+    return this.locationService.recordLocationUpdate(targetCustomerId, employeeId, dto);
   }
 
   // Admin Panel API: GET /api/v1/admin/location/live
   @Get('admin/location/live')
-  async getLiveLocations(@Req() req: any) {
-    const customerId = req.user?.customerId || 'demo-customer-id';
-    return this.locationService.getLiveLocations(customerId);
+  async getLiveLocations(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = customerIdQuery || customerId || user?.customerId;
+    return this.locationService.getLiveLocations(targetCustomerId);
   }
 
   // Admin Panel API: GET /api/v1/admin/location/history
@@ -37,23 +47,38 @@ export class LocationController {
   async getLocationHistory(
     @Query('employeeId') employeeId: string,
     @Query('date') date: string,
-    @Req() req: any,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
   ) {
-    const customerId = req.user?.customerId || 'demo-customer-id';
-    return this.locationService.getLocationHistory(customerId, employeeId, date || new Date().toISOString().split('T')[0]);
+    const targetCustomerId = customerIdQuery || customerId || user?.customerId || 1;
+    return this.locationService.getLocationHistory(
+      targetCustomerId,
+      employeeId,
+      date || new Date().toISOString().split('T')[0],
+    );
   }
 
   // Admin Panel API: GET /api/v1/admin/branches
   @Get('admin/branches')
-  async getBranchGeofences(@Req() req: any) {
-    const customerId = req.user?.customerId || 'demo-customer-id';
-    return this.locationService.getBranchGeofences(customerId);
+  async getBranchGeofences(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = customerIdQuery || customerId || user?.customerId;
+    return this.locationService.getBranchGeofences(targetCustomerId);
   }
 
   // Admin Panel API: POST /api/v1/admin/branches
   @Post('admin/branches')
-  async createBranchGeofence(@Body() body: any, @Req() req: any) {
-    const customerId = req.user?.customerId || 'demo-customer-id';
-    return this.locationService.createBranchGeofence(customerId, body);
+  async createBranchGeofence(
+    @Body() body: any,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = customerIdQuery || customerId || user?.customerId || 1;
+    return this.locationService.createBranchGeofence(targetCustomerId, body);
   }
 }

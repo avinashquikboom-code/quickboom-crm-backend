@@ -430,10 +430,9 @@ export class EmployeeService {
     const whereCust: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      whereCust.customerId = numCustomerId;
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required');
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        whereCust.customerId = numCustomerId;
+      }
     }
 
     const [branches, employeeBranches] = await Promise.all([

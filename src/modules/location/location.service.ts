@@ -45,10 +45,23 @@ export class LocationService {
     employeeId: number | string,
     dto: LocationUpdateDto,
   ) {
-    const numCustomerId = Number(customerId);
-    const numEmployeeId = Number(employeeId);
+    let numCustomerId = Number(customerId);
+    let numEmployeeId = Number(employeeId);
+
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
+      numCustomerId = defaultCust?.id || 1;
+    }
+    if (isNaN(numEmployeeId) || numEmployeeId <= 0) {
+      const defaultEmp = await this.prisma.employee.findFirst({
+        where: { customerId: numCustomerId },
+        select: { id: true },
+      });
+      numEmployeeId = defaultEmp?.id || 1;
+    }
+
     this.logger.log(
-      `Recording location update for employee ${employeeId} in customer ${customerId}: lat=${dto.latitude}, lng=${dto.longitude}`,
+      `Recording location update for employee ${numEmployeeId} in customer ${numCustomerId}: lat=${dto.latitude}, lng=${dto.longitude}`,
     );
 
     return this.prisma.employeeLocation.create({
@@ -68,12 +81,47 @@ export class LocationService {
   }
 
   // Get active live locations for admin panel
-  async getLiveLocations(customerId: number | string) {
-    const numCustomerId = Number(customerId);
-    return this.prisma.employeeLocation.findMany({
-      where: { customerId: numCustomerId },
+  async getLiveLocations(customerId?: number | string) {
+    const numCustomerId = customerId ? Number(customerId) : NaN;
+    const whereClause: any = {};
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      whereClause.customerId = numCustomerId;
+    }
+
+    const locations = await this.prisma.employeeLocation.findMany({
+      where: whereClause,
       orderBy: { timestamp: 'desc' },
       take: 100,
+    });
+
+    const employeeIds = Array.from(new Set(locations.map((l) => l.employeeId)));
+    const employees = await this.prisma.employee.findMany({
+      where: { id: { in: employeeIds } },
+      include: {
+        department: { select: { name: true } },
+        designation: { select: { name: true } },
+      },
+    });
+
+    const empMap = new Map(employees.map((e) => [e.id, e]));
+
+    return locations.map((loc) => {
+      const emp = empMap.get(loc.employeeId);
+      return {
+        ...loc,
+        employee: emp
+          ? {
+              id: emp.id,
+              employeeCode: emp.employeeCode,
+              firstName: emp.firstName,
+              lastName: emp.lastName,
+              name: `${emp.firstName} ${emp.lastName}`,
+              branch: emp.branch,
+              department: emp.department?.name || 'General',
+              designation: emp.designation?.name || 'Staff',
+            }
+          : null,
+      };
     });
   }
 
@@ -91,24 +139,36 @@ export class LocationService {
     const endDate = new Date(date);
     endDate.setHours(23, 59, 59, 999);
 
-    return this.prisma.employeeLocation.findMany({
-      where: {
-        customerId: numCustomerId,
-        employeeId: numEmployeeId,
-        timestamp: {
-          gte: startDate,
-          lte: endDate,
-        },
+    const whereClause: any = {
+      timestamp: {
+        gte: startDate,
+        lte: endDate,
       },
+    };
+
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      whereClause.customerId = numCustomerId;
+    }
+    if (!isNaN(numEmployeeId) && numEmployeeId > 0) {
+      whereClause.employeeId = numEmployeeId;
+    }
+
+    return this.prisma.employeeLocation.findMany({
+      where: whereClause,
       orderBy: { timestamp: 'asc' },
     });
   }
 
   // Branch Geofence Management
-  async getBranchGeofences(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  async getBranchGeofences(customerId?: number | string) {
+    const numCustomerId = customerId ? Number(customerId) : NaN;
+    const whereClause: any = { isActive: true };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      whereClause.customerId = numCustomerId;
+    }
+
     return this.prisma.branchGeofence.findMany({
-      where: { customerId: numCustomerId, isActive: true },
+      where: whereClause,
     });
   }
 
@@ -116,7 +176,12 @@ export class LocationService {
     customerId: number | string,
     data: { name: string; city?: string; latitude: number; longitude: number; radiusMeters?: number },
   ) {
-    const numCustomerId = Number(customerId);
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
+      numCustomerId = defaultCust?.id || 1;
+    }
+
     return this.prisma.branchGeofence.create({
       data: {
         customerId: numCustomerId,

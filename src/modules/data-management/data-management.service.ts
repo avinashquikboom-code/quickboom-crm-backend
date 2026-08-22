@@ -25,7 +25,11 @@ export class DataManagementService {
    * Fetches real live database record counts for all customer modules
    */
   async getSummary(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
+      numCustomerId = defaultCust?.id || 1;
+    }
     try {
       const [
         leadsCount,
