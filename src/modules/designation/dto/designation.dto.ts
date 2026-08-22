@@ -1,0 +1,66 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+
+export class CreateDesignationDto {
+  @ApiProperty({ example: 'Software Engineer' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional({ example: 'SE' })
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Optional department ID this designation belongs to' })
+  @IsNumber()
+  @IsOptional()
+  departmentId?: number;
+
+  @ApiPropertyOptional({ example: 'Core software developer' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Seniority level (1-10)' })
+  @IsNumber()
+  @IsOptional()
+  level?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}
+
+export class UpdateDesignationDto {
+  @ApiPropertyOptional({ example: 'Senior Software Engineer' })
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'SSE' })
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsNumber()
+  @IsOptional()
+  departmentId?: number;
+
+  @ApiPropertyOptional({ example: 'Core software developer' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  level?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}

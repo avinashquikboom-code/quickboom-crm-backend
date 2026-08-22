@@ -30,15 +30,23 @@ export class CreateEmployeeDto {
   @IsOptional()
   phone?: string;
 
-  @ApiPropertyOptional({ example: 'Photographer' })
-  @IsString()
+  @ApiPropertyOptional({ example: 1, description: 'Master Department ID' })
   @IsOptional()
-  designationName?: string;
+  departmentId?: number;
 
   @ApiPropertyOptional({ example: 'Media & Production' })
   @IsString()
   @IsOptional()
   departmentName?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Master Designation ID' })
+  @IsOptional()
+  designationId?: number;
+
+  @ApiPropertyOptional({ example: 'Photographer' })
+  @IsString()
+  @IsOptional()
+  designationName?: string;
 
   @ApiPropertyOptional({ example: 'Head Office' })
   @IsString()
@@ -179,10 +187,18 @@ export class UpdateEmployeeDto {
   @IsOptional()
   address?: string;
 
+  @ApiPropertyOptional({ example: 1, description: 'Master Department ID' })
+  @IsOptional()
+  departmentId?: number;
+
   @ApiPropertyOptional({ example: 'Media & Production' })
   @IsString()
   @IsOptional()
   departmentName?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Master Designation ID' })
+  @IsOptional()
+  designationId?: number;
 
   @ApiPropertyOptional({ example: 'Senior Specialist' })
   @IsString()

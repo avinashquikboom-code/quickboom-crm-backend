@@ -22,6 +22,9 @@ import { ReportModule } from './modules/report/report.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 
+import { DepartmentModule } from './modules/department/department.module';
+import { DesignationModule } from './modules/designation/designation.module';
+
 import { AppController } from './app.controller';
 
 @Module({
@@ -36,6 +39,8 @@ import { AppController } from './app.controller';
     SubscriptionModule,
     WorkModule,
     EmployeeModule,
+    DepartmentModule,
+    DesignationModule,
     TeamModule,
     VisitModule,
     InvoiceModule,

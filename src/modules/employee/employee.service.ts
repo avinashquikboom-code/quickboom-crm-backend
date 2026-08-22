@@ -200,8 +200,14 @@ export class EmployeeService {
         emergencyContact: e.emergencyContact || null,
         managerId: e.managerId || null,
         employmentType: e.employmentType || 'FULL_TIME',
+        departmentId: e.departmentId,
+        designationId: e.designationId,
         designation: e.designation?.name || 'Staff',
+        designationName: e.designation?.name || 'Staff',
         department: e.department?.name || 'General',
+        departmentName: e.department?.name || 'General',
+        departmentObj: e.department,
+        designationObj: e.designation,
         branch: e.branch || 'Head Office',
         office: e.branch || 'Head Office',
         status: e.status,
@@ -376,8 +382,14 @@ export class EmployeeService {
       phone: employee.phone || '+91 98765 43210',
       branch: employee.branch || 'Head Office',
       office: employee.branch || 'Head Office',
+      departmentId: employee.departmentId,
+      designationId: employee.designationId,
       department: employee.department?.name || 'Media & Production',
+      departmentName: employee.department?.name || 'Media & Production',
+      departmentObj: employee.department,
       designation: employee.designation?.name || 'Specialist',
+      designationName: employee.designation?.name || 'Specialist',
+      designationObj: employee.designation,
       status: employee.status,
       mobileLoginEnabled: employee.mobileLoginEnabled !== false,
       joiningDate: employee.joiningDate,
@@ -745,33 +757,82 @@ export class EmployeeService {
         }
       }
 
-      // Department
-      let department = await tx.department.findFirst({
-        where: { customerId: numCustomerId, name: dto.departmentName || 'Media & Production' },
-      });
-      if (!department) {
-        department = await tx.department.create({
-          data: {
-            customerId: numCustomerId,
-            name: dto.departmentName || 'Media & Production',
-            code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
-          },
+      // Department resolution
+      let department: any = null;
+      if (dto.departmentId) {
+        department = await tx.department.findFirst({
+          where: { id: Number(dto.departmentId), customerId: numCustomerId },
         });
+        if (!department) {
+          throw new BadRequestException(`Department #${dto.departmentId} not found`);
+        }
+      } else if (dto.departmentName) {
+        department = await tx.department.findFirst({
+          where: { customerId: numCustomerId, name: dto.departmentName },
+        });
+        if (!department) {
+          department = await tx.department.create({
+            data: {
+              customerId: numCustomerId,
+              name: dto.departmentName,
+              code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
+            },
+          });
+        }
+      } else {
+        department = await tx.department.findFirst({
+          where: { customerId: numCustomerId },
+          orderBy: { id: 'asc' },
+        });
+        if (!department) {
+          department = await tx.department.create({
+            data: {
+              customerId: numCustomerId,
+              name: 'General',
+              code: 'GEN',
+            },
+          });
+        }
       }
 
-      // Designation
-      let designation = await tx.designation.findFirst({
-        where: { customerId: numCustomerId, name: dto.designationName || 'Photographer' },
-      });
-      if (!designation) {
-        designation = await tx.designation.create({
-          data: {
-            customerId: numCustomerId,
-            name: dto.designationName || 'Photographer',
-            code: (dto.designationName || 'PHT').substring(0, 4).toUpperCase(),
-            departmentId: department.id,
-          },
+      // Designation resolution
+      let designation: any = null;
+      if (dto.designationId) {
+        designation = await tx.designation.findFirst({
+          where: { id: Number(dto.designationId), customerId: numCustomerId },
         });
+        if (!designation) {
+          throw new BadRequestException(`Designation #${dto.designationId} not found`);
+        }
+      } else if (dto.designationName) {
+        designation = await tx.designation.findFirst({
+          where: { customerId: numCustomerId, name: dto.designationName },
+        });
+        if (!designation) {
+          designation = await tx.designation.create({
+            data: {
+              customerId: numCustomerId,
+              name: dto.designationName,
+              code: (dto.designationName || 'STF').substring(0, 4).toUpperCase(),
+              departmentId: department?.id || null,
+            },
+          });
+        }
+      } else {
+        designation = await tx.designation.findFirst({
+          where: { customerId: numCustomerId },
+          orderBy: { id: 'asc' },
+        });
+        if (!designation) {
+          designation = await tx.designation.create({
+            data: {
+              customerId: numCustomerId,
+              name: 'Staff',
+              code: 'STF',
+              departmentId: department?.id || null,
+            },
+          });
+        }
       }
 
       // User account password hashing
@@ -949,7 +1010,16 @@ export class EmployeeService {
         }
       }
 
-      if (dto.departmentName) {
+      if (dto.departmentId !== undefined && dto.departmentId !== null) {
+        const numDeptId = Number(dto.departmentId);
+        const dept = await tx.department.findFirst({
+          where: { id: numDeptId, customerId: targetCustId },
+        });
+        if (!dept) {
+          throw new BadRequestException(`Department #${numDeptId} not found`);
+        }
+        updateData.departmentId = dept.id;
+      } else if (dto.departmentName) {
         let dept = await tx.department.findFirst({
           where: { customerId: targetCustId, name: dto.departmentName },
         });
@@ -965,7 +1035,16 @@ export class EmployeeService {
         updateData.departmentId = dept.id;
       }
 
-      if (dto.designationName) {
+      if (dto.designationId !== undefined && dto.designationId !== null) {
+        const numDesigId = Number(dto.designationId);
+        const desig = await tx.designation.findFirst({
+          where: { id: numDesigId, customerId: targetCustId },
+        });
+        if (!desig) {
+          throw new BadRequestException(`Designation #${numDesigId} not found`);
+        }
+        updateData.designationId = desig.id;
+      } else if (dto.designationName) {
         let desig = await tx.designation.findFirst({
           where: { customerId: targetCustId, name: dto.designationName },
         });
@@ -975,6 +1054,7 @@ export class EmployeeService {
               customerId: targetCustId,
               name: dto.designationName,
               code: dto.designationName.substring(0, 4).toUpperCase(),
+              departmentId: updateData.departmentId || existing?.departmentId || null,
             },
           });
         }
