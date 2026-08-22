@@ -54,6 +54,7 @@ model Customer {
   users                    User[]
   works                    Work[]
   subscriptions            CustomerSubscription[]
+  publicHolidays           PublicHoliday[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -728,8 +729,9 @@ model BranchGeofence {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employees    Employee[]
-  attendances  Attendance[]
+  employees      Employee[]
+  attendances    Attendance[]
+  publicHolidays PublicHoliday[]
 
   @@index([customerId])
   @@index([isActive])
@@ -910,6 +912,26 @@ model LeaveRequest {
 
   @@index([customerId])
   @@index([employeeId])
+}
+
+model PublicHoliday {
+  id          Int             @id @default(autoincrement())
+  customerId  Int
+  name        String
+  date        DateTime
+  description String?
+  officeId    Int?
+  isActive    Boolean         @default(true)
+  createdById Int?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  office      BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([officeId])
+  @@index([date])
+  @@index([isActive])
 }
 
 model RemoteRequest {
