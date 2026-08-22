@@ -7,6 +7,11 @@ export class CreateCustomerDto {
   @IsNotEmpty()
   name: string;
 
+  @ApiPropertyOptional({ example: 'Acme Global Holdings' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
   @ApiPropertyOptional({ example: 'acme.quikboom.com' })
   @IsString()
   @IsOptional()
@@ -17,10 +22,15 @@ export class CreateCustomerDto {
   @IsOptional()
   email?: string;
 
-  @ApiPropertyOptional({ example: '+91 98765 43210' })
+  @ApiProperty({ example: '+91 98765 43210' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiPropertyOptional({ example: '+91 98765 00000' })
   @IsString()
   @IsOptional()
-  phone?: string;
+  alternatePhone?: string;
 
   @ApiPropertyOptional({ example: '101, Business Park, BKC' })
   @IsString()
@@ -36,6 +46,51 @@ export class CreateCustomerDto {
   @IsString()
   @IsOptional()
   state?: string;
+
+  @ApiPropertyOptional({ example: 'India' })
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @ApiPropertyOptional({ example: '400051' })
+  @IsString()
+  @IsOptional()
+  pincode?: string;
+
+  @ApiPropertyOptional({ example: 'ENTERPRISE' })
+  @IsString()
+  @IsOptional()
+  customerType?: string;
+
+  @ApiPropertyOptional({ example: 'Information Technology' })
+  @IsString()
+  @IsOptional()
+  industry?: string;
+
+  @ApiPropertyOptional({ example: 'DIRECT' })
+  @IsString()
+  @IsOptional()
+  source?: string;
+
+  @ApiPropertyOptional({ example: 'ACTIVE' })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsOptional()
+  assignedEmployee?: string;
+
+  @ApiPropertyOptional({ example: 'Sales' })
+  @IsString()
+  @IsOptional()
+  department?: string;
+
+  @ApiPropertyOptional({ example: 'VIP enterprise client with custom SLA.' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 
   @ApiPropertyOptional({ example: 20 })
   @IsNumber()
@@ -54,6 +109,11 @@ export class UpdateCustomerDto {
   @IsOptional()
   name?: string;
 
+  @ApiPropertyOptional({ example: 'Acme Global Holdings' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
   @ApiPropertyOptional({ example: 'contact@acme.com' })
   @IsEmail()
   @IsOptional()
@@ -64,18 +124,78 @@ export class UpdateCustomerDto {
   @IsOptional()
   phone?: string;
 
+  @ApiPropertyOptional({ example: '+91 98765 00000' })
+  @IsString()
+  @IsOptional()
+  alternatePhone?: string;
+
+  @ApiPropertyOptional({ example: '101, Business Park, BKC' })
+  @IsString()
+  @IsOptional()
+  address?: string;
+
   @ApiPropertyOptional({ example: 'Mumbai' })
   @IsString()
   @IsOptional()
   city?: string;
+
+  @ApiPropertyOptional({ example: 'Maharashtra' })
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @ApiPropertyOptional({ example: 'India' })
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @ApiPropertyOptional({ example: '400051' })
+  @IsString()
+  @IsOptional()
+  pincode?: string;
+
+  @ApiPropertyOptional({ example: 'ENTERPRISE' })
+  @IsString()
+  @IsOptional()
+  customerType?: string;
+
+  @ApiPropertyOptional({ example: 'Information Technology' })
+  @IsString()
+  @IsOptional()
+  industry?: string;
+
+  @ApiPropertyOptional({ example: 'DIRECT' })
+  @IsString()
+  @IsOptional()
+  source?: string;
 
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsOptional()
+  assignedEmployee?: string;
+
+  @ApiPropertyOptional({ example: 'Sales' })
+  @IsString()
+  @IsOptional()
+  department?: string;
+
+  @ApiPropertyOptional({ example: 'Updated notes.' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
+
   @ApiPropertyOptional({ example: 50 })
   @IsNumber()
   @IsOptional()
   userLimit?: number;
+
+  @ApiPropertyOptional({ example: 5000 })
+  @IsNumber()
+  @IsOptional()
+  leadLimit?: number;
 }

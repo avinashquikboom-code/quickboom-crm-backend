@@ -1,0 +1,10 @@
+-- AlterTable customers
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "pincode" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "companyName" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "alternatePhone" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "customerType" TEXT DEFAULT 'ENTERPRISE';
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "industry" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "source" TEXT DEFAULT 'DIRECT';
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "assignedEmployee" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "department" TEXT;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "notes" TEXT;

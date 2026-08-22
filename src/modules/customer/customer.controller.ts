@@ -7,37 +7,97 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
-@ApiTags('Customers')
+@ApiTags('Customers & Tenant Management')
+@ApiBearerAuth()
 @Controller('customers')
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
 
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get Customer KPI summary metrics' })
+  async getMetrics() {
+    return this.customerService.getMetrics();
+  }
+
   @Get()
-  @ApiOperation({ summary: 'Get all customers with pagination and filtering' })
+  @ApiOperation({ summary: 'Get all customers with advanced filtering, search, sorting and pagination' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'source', required: false })
+  @ApiQuery({ name: 'assignedEmployee', required: false })
+  @ApiQuery({ name: 'company', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'sortBy', required: false })
+  @ApiQuery({ name: 'sortOrder', required: false })
   async findAll(
     @Query('search') search?: string,
+    @Query('status') status?: string,
     @Query('isActive') isActive?: string,
+    @Query('source') source?: string,
+    @Query('assignedEmployee') assignedEmployee?: string,
+    @Query('company') company?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
   ) {
     const activeBool = isActive !== undefined ? isActive === 'true' : undefined;
-    return this.customerService.findAll(
+    return this.customerService.findAll({
       search,
-      activeBool,
-      page ? parseInt(page, 10) : 1,
-      limit ? parseInt(limit, 10) : 50,
-    );
+      status,
+      isActive: activeBool,
+      source,
+      assignedEmployee,
+      company,
+      dateFrom,
+      dateTo,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      sortBy,
+      sortOrder,
+    });
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get single customer details' })
   async findOne(@Param('id') id: string) {
     return this.customerService.findOne(id);
+  }
+
+  @Get(':id/activities')
+  @ApiOperation({ summary: 'Get customer activities and audit history' })
+  async getCustomerActivities(@Param('id') id: string) {
+    return this.customerService.getCustomerActivities(id);
+  }
+
+  @Get(':id/tasks')
+  @ApiOperation({ summary: 'Get customer tasks' })
+  async getCustomerTasks(@Param('id') id: string) {
+    return this.customerService.getCustomerTasks(id);
+  }
+
+  @Get(':id/visits')
+  @ApiOperation({ summary: 'Get customer visits' })
+  async getCustomerVisits(@Param('id') id: string) {
+    return this.customerService.getCustomerVisits(id);
+  }
+
+  @Get(':id/deals')
+  @ApiOperation({ summary: 'Get customer deals' })
+  async getCustomerDeals(@Param('id') id: string) {
+    return this.customerService.getCustomerDeals(id);
   }
 
   @Get(':id/plan')

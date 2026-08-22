@@ -6,35 +6,139 @@ import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
 export class CustomerService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(search?: string, isActive?: boolean, page = 1, limit = 50) {
+  /**
+   * Helper to safely serialize BigInt fields to numbers/strings
+   */
+  private serializeBigInt(obj: any): any {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj === 'bigint') return Number(obj);
+    if (Array.isArray(obj)) return obj.map((item) => this.serializeBigInt(item));
+    if (typeof obj === 'object' && !(obj instanceof Date)) {
+      const copy: any = {};
+      for (const key of Object.keys(obj)) {
+        copy[key] = this.serializeBigInt(obj[key]);
+      }
+      return copy;
+    }
+    return obj;
+  }
+
+  /**
+   * Get KPI Summary metrics for Customer screen
+   */
+  async getMetrics() {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [totalCustomers, activeCustomers, inactiveCustomers, newCustomers, customersWithDeals] =
+      await Promise.all([
+        this.prisma.customer.count({ where: { deletedAt: null } }),
+        this.prisma.customer.count({ where: { deletedAt: null, isActive: true } }),
+        this.prisma.customer.count({ where: { deletedAt: null, isActive: false } }),
+        this.prisma.customer.count({
+          where: {
+            deletedAt: null,
+            createdAt: { gte: thirtyDaysAgo },
+          },
+        }),
+        this.prisma.customer.count({
+          where: {
+            deletedAt: null,
+            deals: { some: { isWon: false, isLost: false } },
+          },
+        }),
+      ]);
+
+    return {
+      totalCustomers,
+      activeCustomers,
+      inactiveCustomers,
+      newCustomers,
+      customersWithOpenDeals: customersWithDeals,
+    };
+  }
+
+  /**
+   * Get all customers with search, advanced filtering, sorting, and pagination
+   */
+  async findAll(query: {
+    search?: string;
+    status?: string;
+    isActive?: boolean;
+    source?: string;
+    assignedEmployee?: string;
+    company?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? query.limit : 20;
     const skip = (page - 1) * limit;
+
     const where: any = {
       deletedAt: null,
     };
 
-    if (isActive !== undefined) {
-      where.isActive = isActive;
+    if (query.isActive !== undefined) {
+      where.isActive = query.isActive;
+    } else if (query.status) {
+      if (query.status.toUpperCase() === 'ACTIVE') {
+        where.isActive = true;
+      } else if (query.status.toUpperCase() === 'INACTIVE') {
+        where.isActive = false;
+      }
     }
 
-    if (search) {
+    if (query.source && query.source !== 'ALL') {
+      where.source = { equals: query.source, mode: 'insensitive' };
+    }
+
+    if (query.assignedEmployee && query.assignedEmployee !== 'ALL') {
+      where.assignedEmployee = { contains: query.assignedEmployee, mode: 'insensitive' };
+    }
+
+    if (query.company) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { city: { contains: search, mode: 'insensitive' } },
+        { name: { contains: query.company, mode: 'insensitive' } },
+        { companyName: { contains: query.company, mode: 'insensitive' } },
       ];
     }
+
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { companyName: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { phone: { contains: query.search, mode: 'insensitive' } },
+        { city: { contains: query.search, mode: 'insensitive' } },
+        { domain: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {};
+      if (query.dateFrom) where.createdAt.gte = new Date(query.dateFrom);
+      if (query.dateTo) where.createdAt.lte = new Date(query.dateTo);
+    }
+
+    const orderBy: any = {};
+    const validSortFields = ['name', 'createdAt', 'updatedAt', 'city', 'isActive'];
+    const sortField = query.sortBy && validSortFields.includes(query.sortBy) ? query.sortBy : 'createdAt';
+    orderBy[sortField] = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
     const [items, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         include: {
           subscriptions: {
-            include: {
-              plan: true,
-            },
+            include: { plan: true },
             take: 1,
             orderBy: { createdAt: 'desc' },
           },
@@ -42,6 +146,10 @@ export class CustomerService {
             select: {
               users: true,
               leads: true,
+              deals: true,
+              contacts: true,
+              tasks: true,
+              tickets: true,
             },
           },
         },
@@ -52,23 +160,43 @@ export class CustomerService {
     const formatted = items.map((c) => {
       const activeSub = c.subscriptions[0];
       const planName = activeSub?.plan?.name || 'Starter Plan';
-      const mrr = activeSub?.plan?.monthlyPrice ? `₹${Number(activeSub.plan.monthlyPrice).toLocaleString('en-IN')}` : '₹4,999';
+      const mrr = activeSub?.plan?.monthlyPrice
+        ? `₹${Number(activeSub.plan.monthlyPrice).toLocaleString('en-IN')}`
+        : '₹4,999';
 
       return {
         id: c.id,
+        customerId: `CUST-${String(c.id).padStart(4, '0')}`,
         name: c.name,
+        companyName: c.companyName || c.name,
+        company: c.companyName || c.name,
         domain: c.domain,
-        email: c.email,
-        phone: c.phone,
-        city: c.city,
-        state: c.state,
+        email: c.email || 'N/A',
+        phone: c.phone || 'N/A',
+        alternatePhone: c.alternatePhone,
+        address: c.address,
+        city: c.city || 'N/A',
+        state: c.state || 'N/A',
+        country: c.country || 'India',
+        pincode: c.pincode,
+        customerType: c.customerType || 'ENTERPRISE',
+        industry: c.industry || 'General',
+        source: c.source || 'DIRECT',
+        assignedEmployee: c.assignedEmployee || 'Unassigned',
+        department: c.department || 'General',
+        notes: c.notes,
         isActive: c.isActive,
-        status: c.isActive ? 'active' : 'inactive',
+        status: c.isActive ? 'ACTIVE' : 'INACTIVE',
         plan: planName,
         users: c._count.users || 1,
         leads: c._count.leads || 0,
-        storage: `${(Number(c.storageUsed) / (1024 * 1024)).toFixed(1)} MB`,
+        deals: c._count.deals || 0,
+        contacts: c._count.contacts || 0,
+        tasks: c._count.tasks || 0,
+        storageUsed: Number(c.storageUsed || 0),
+        storage: `${(Number(c.storageUsed || 0) / (1024 * 1024)).toFixed(1)} MB`,
         mrr,
+        lastActivity: c.updatedAt,
         createdAt: c.createdAt,
       };
     });
@@ -84,15 +212,16 @@ export class CustomerService {
     };
   }
 
+  /**
+   * Get single customer with complete overview and related CRM entity counts
+   */
   async findOne(id: number | string) {
     const numericId = Number(id);
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
       include: {
         subscriptions: {
-          include: {
-            plan: true,
-          },
+          include: { plan: true },
           orderBy: { createdAt: 'desc' },
         },
         users: {
@@ -102,6 +231,8 @@ export class CustomerService {
             firstName: true,
             lastName: true,
             phone: true,
+            designation: true,
+            isActive: true,
           },
         },
         _count: {
@@ -110,65 +241,204 @@ export class CustomerService {
             leads: true,
             deals: true,
             contacts: true,
+            tasks: true,
+            tickets: true,
+            companies: true,
           },
         },
       },
     });
 
-    if (!customer) {
-      throw new NotFoundException(`Customer with ID ${id} not found`);
+    if (!customer || customer.deletedAt) {
+      throw new NotFoundException(`Customer #${id} not found.`);
     }
 
     const activeSub = customer.subscriptions[0];
+    const safeCustomer = this.serializeBigInt(customer);
 
     return {
-      ...customer,
+      ...safeCustomer,
+      customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
+      company: customer.companyName || customer.name,
       plan: activeSub?.plan?.name || 'Starter Plan',
       subscriptionStatus: activeSub?.status || 'ACTIVE',
       userCount: customer._count.users,
       leadCount: customer._count.leads,
       dealCount: customer._count.deals,
       contactCount: customer._count.contacts,
+      taskCount: customer._count.tasks,
     };
   }
 
+  /**
+   * Get Activities & Audit Logs for Customer
+   */
+  async getCustomerActivities(customerId: number | string) {
+    const numericId = Number(customerId);
+    const logs = await this.prisma.auditLog.findMany({
+      where: { customerId: numericId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { user: { select: { firstName: true, lastName: true, email: true } } },
+    });
+    return logs;
+  }
+
+  /**
+   * Get Tasks for Customer
+   */
+  async getCustomerTasks(customerId: number | string) {
+    const numericId = Number(customerId);
+    const tasks = await this.prisma.task.findMany({
+      where: { customerId: numericId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        assignedTo: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+    return tasks;
+  }
+
+  /**
+   * Get Visits for Customer
+   */
+  async getCustomerVisits(customerId: number | string) {
+    const numericId = Number(customerId);
+    const visits = await this.prisma.visit.findMany({
+      where: { customerId: numericId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        employee: { select: { firstName: true, lastName: true, employeeCode: true } },
+      },
+    });
+    return visits;
+  }
+
+  /**
+   * Get Deals for Customer
+   */
+  async getCustomerDeals(customerId: number | string) {
+    const numericId = Number(customerId);
+    const deals = await this.prisma.deal.findMany({
+      where: { customerId: numericId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        assignedTo: { select: { firstName: true, lastName: true } },
+      },
+    });
+    return deals;
+  }
+
+  /**
+   * Create new Customer organization
+   */
   async create(dto: CreateCustomerDto) {
-    return this.prisma.customer.create({
+    const customer = await this.prisma.customer.create({
       data: {
         name: dto.name,
+        companyName: dto.companyName || dto.name,
         domain: dto.domain,
         email: dto.email,
         phone: dto.phone,
+        alternatePhone: dto.alternatePhone,
         address: dto.address,
         city: dto.city,
         state: dto.state,
+        country: dto.country || 'India',
+        pincode: dto.pincode,
+        customerType: dto.customerType || 'ENTERPRISE',
+        industry: dto.industry,
+        source: dto.source || 'DIRECT',
+        assignedEmployee: dto.assignedEmployee,
+        department: dto.department,
+        notes: dto.notes,
         userLimit: dto.userLimit || 15,
         leadLimit: dto.leadLimit || 1000,
       },
     });
+
+    // Automatically provision initial subscription plan if plans exist
+    const defaultPlan = await this.prisma.plan.findFirst({
+      where: { deletedAt: null },
+      orderBy: { id: 'asc' },
+    });
+
+    if (defaultPlan) {
+      await this.prisma.customerSubscription.create({
+        data: {
+          customerId: customer.id,
+          planId: defaultPlan.id,
+          status: 'ACTIVE',
+          billingCycle: 'MONTHLY',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          autoRenew: true,
+        },
+      });
+    }
+
+    return this.serializeBigInt(customer);
   }
 
+  /**
+   * Update Customer
+   */
   async update(id: number | string, dto: UpdateCustomerDto) {
     const numericId = Number(id);
     await this.findOne(numericId);
-    return this.prisma.customer.update({
+
+    const updated = await this.prisma.customer.update({
       where: { id: numericId },
-      data: dto,
+      data: {
+        name: dto.name,
+        companyName: dto.companyName,
+        email: dto.email,
+        phone: dto.phone,
+        alternatePhone: dto.alternatePhone,
+        address: dto.address,
+        city: dto.city,
+        state: dto.state,
+        country: dto.country,
+        pincode: dto.pincode,
+        customerType: dto.customerType,
+        industry: dto.industry,
+        source: dto.source,
+        assignedEmployee: dto.assignedEmployee,
+        department: dto.department,
+        notes: dto.notes,
+        isActive: dto.isActive !== undefined ? dto.isActive : undefined,
+        userLimit: dto.userLimit,
+        leadLimit: dto.leadLimit,
+      },
     });
+
+    return this.serializeBigInt(updated);
   }
 
+  /**
+   * Soft-delete / deactivate customer
+   */
   async remove(id: number | string) {
     const numericId = Number(id);
     await this.findOne(numericId);
-    return this.prisma.customer.update({
+
+    const archived = await this.prisma.customer.update({
       where: { id: numericId },
       data: {
         isActive: false,
         deletedAt: new Date(),
       },
     });
+
+    return this.serializeBigInt(archived);
   }
 
+  /**
+   * Get plan details for customer
+   */
   async getCustomerPlan(id: number | string) {
     const numericId = Number(id);
     const customer = await this.prisma.customer.findUnique({
@@ -193,7 +463,6 @@ export class CustomerService {
     });
 
     const basePlan = activeSub?.plan || availablePlans[0] || null;
-
     const basePrice = basePlan ? Number(basePlan.monthlyPrice) : 0;
     const customPrice = activeSub?.customPrice !== null && activeSub?.customPrice !== undefined
       ? Number(activeSub.customPrice)
@@ -210,7 +479,9 @@ export class CustomerService {
 
     const effectiveUserLimit = activeSub?.customUserLimit || customer.userLimit || basePlan?.userLimit || 10;
     const effectiveLeadLimit = activeSub?.customLeadLimit || customer.leadLimit || basePlan?.leadLimit || 500;
-    const effectiveStorageLimit = activeSub?.customStorageLimit ? Number(activeSub.customStorageLimit) : (basePlan?.storageLimit ? Number(basePlan.storageLimit) : 10737418240);
+    const effectiveStorageLimit = activeSub?.customStorageLimit
+      ? Number(activeSub.customStorageLimit)
+      : (basePlan?.storageLimit ? Number(basePlan.storageLimit) : 10737418240);
 
     return {
       customerId: customer.id,
@@ -290,10 +561,6 @@ export class CustomerService {
       ? new Date(dto.endDate)
       : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-    if (endDate < startDate) {
-      throw new Error('End date must be greater than or equal to start date');
-    }
-
     const customPrice = dto.customPrice !== undefined && dto.customPrice !== null && dto.customPrice !== ''
       ? Number(dto.customPrice)
       : null;
@@ -309,7 +576,6 @@ export class CustomerService {
     const customFeatures = Array.isArray(dto.features) ? dto.features : plan.features;
     const status = dto.status || 'ACTIVE';
 
-    // Mark previous active subscriptions as EXPIRED/CANCELED to preserve historical records
     await this.prisma.customerSubscription.updateMany({
       where: {
         customerId: numericId,
@@ -320,7 +586,6 @@ export class CustomerService {
       },
     });
 
-    // Create the new customized subscription record
     const newSubscription = await this.prisma.customerSubscription.create({
       data: {
         customerId: numericId,
@@ -340,7 +605,6 @@ export class CustomerService {
       },
     });
 
-    // Update customer entity user and lead limits
     await this.prisma.customer.update({
       where: { id: numericId },
       data: {

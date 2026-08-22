@@ -18,6 +18,15 @@ model Customer {
   city                     String?
   state                    String?
   country                  String?
+  pincode                  String?
+  companyName              String?
+  alternatePhone           String?
+  customerType             String?                   @default("ENTERPRISE")
+  industry                 String?
+  source                   String?                   @default("DIRECT")
+  assignedEmployee         String?
+  department               String?
+  notes                    String?
   isActive                 Boolean                   @default(true)
   storageUsed              BigInt                    @default(0)
   userLimit                Int                       @default(5)
