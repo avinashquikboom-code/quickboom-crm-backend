@@ -8,10 +8,21 @@ export class CustomerGuard implements CanActivate {
     const user = request.user;
 
     // Super Admins bypass customer isolation check
-    if (user && user.roles?.includes(RoleType.SUPER_ADMIN)) {
+    const isSuperAdmin = Boolean(
+      user && (
+        user.roles?.includes(RoleType.SUPER_ADMIN) ||
+        user.roles?.includes('SUPER_ADMIN') ||
+        user.roles?.some((r: any) => String(r).toUpperCase().replace(/\s+/g, '_') === 'SUPER_ADMIN') ||
+        String(user.role).toUpperCase().replace(/\s+/g, '_') === 'SUPER_ADMIN'
+      )
+    );
+
+    if (isSuperAdmin) {
       const explicitCustomerId = request.headers['x-customer-id'] || request.query?.customerId;
-      if (explicitCustomerId) {
+      if (explicitCustomerId && !isNaN(Number(explicitCustomerId)) && Number(explicitCustomerId) > 0) {
         request.customerId = Number(explicitCustomerId);
+      } else if (user?.customerId) {
+        request.customerId = Number(user.customerId);
       }
       return true;
     }
@@ -31,3 +42,4 @@ export class CustomerGuard implements CanActivate {
     return true;
   }
 }
+

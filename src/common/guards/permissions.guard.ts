@@ -22,7 +22,11 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Access denied');
     }
 
-    if (user.roles?.includes(RoleType.SUPER_ADMIN) || user.roles?.includes(RoleType.CUSTOMER_ADMIN)) {
+    const userRoles: string[] = Array.isArray(user.roles)
+      ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
+      : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);
+
+    if (userRoles.includes('SUPER_ADMIN') || userRoles.includes('CUSTOMER_ADMIN')) {
       return true;
     }
 
