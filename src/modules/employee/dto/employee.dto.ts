@@ -40,6 +40,50 @@ export class CreateEmployeeDto {
   @IsString()
   @IsOptional()
   branch?: string;
+
+  @ApiPropertyOptional({ example: 'FULL_TIME' })
+  @IsString()
+  @IsOptional()
+  employmentType?: string;
+
+  @ApiPropertyOptional({ example: 'Male' })
+  @IsString()
+  @IsOptional()
+  gender?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  dob?: string | Date;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  joiningDate?: string | Date;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'ACTIVE' })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  documents?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  bankDetails?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  emergencyContact?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  managerId?: number;
 }
 
 export class UpdateEmployeeDto {
@@ -52,6 +96,10 @@ export class UpdateEmployeeDto {
   @IsString()
   @IsOptional()
   lastName?: string;
+
+  @ApiPropertyOptional({ example: 'rahul.sharma@quikboom.com' })
+  @IsOptional()
+  email?: string;
 
   @ApiPropertyOptional({ example: '+91 98765 11111' })
   @IsString()
@@ -67,4 +115,53 @@ export class UpdateEmployeeDto {
   @IsString()
   @IsOptional()
   branch?: string;
+
+  @ApiPropertyOptional({ example: 'FULL_TIME' })
+  @IsString()
+  @IsOptional()
+  employmentType?: string;
+
+  @ApiPropertyOptional({ example: 'Male' })
+  @IsString()
+  @IsOptional()
+  gender?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  dob?: string | Date;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  joiningDate?: string | Date;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'Media & Production' })
+  @IsString()
+  @IsOptional()
+  departmentName?: string;
+
+  @ApiPropertyOptional({ example: 'Senior Specialist' })
+  @IsString()
+  @IsOptional()
+  designationName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  documents?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  bankDetails?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  emergencyContact?: any;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  managerId?: number;
 }

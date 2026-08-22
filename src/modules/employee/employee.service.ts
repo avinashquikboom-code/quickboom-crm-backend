@@ -13,6 +13,9 @@ export interface FindAllEmployeesParams {
   search?: string;
   status?: string;
   branch?: string;
+  department?: string;
+  designation?: string;
+  employmentType?: string;
   attendanceStatus?: string;
   date?: string;
   page?: number;
@@ -53,6 +56,9 @@ export class EmployeeService {
       search,
       status,
       branch,
+      department,
+      designation,
+      employmentType,
       attendanceStatus,
       date,
       page = 1,
@@ -73,6 +79,9 @@ export class EmployeeService {
 
     if (status && status !== 'ALL') where.status = status;
     if (branch && branch !== 'ALL') where.branch = branch;
+    if (department && department !== 'ALL') where.department = { name: department };
+    if (designation && designation !== 'ALL') where.designation = { name: designation };
+    if (employmentType && employmentType !== 'ALL') where.employmentType = employmentType;
 
     if (search && search.trim().length > 0) {
       const trimmedSearch = search.trim();
@@ -174,17 +183,28 @@ export class EmployeeService {
         id: e.id,
         customerId: e.customerId,
         employeeId: e.employeeCode,
+        employeeCode: e.employeeCode,
         name: `${e.firstName} ${e.lastName}`,
         firstName: e.firstName,
         lastName: e.lastName,
         email: e.email,
-        phone: e.phone || '+91 98765 43210',
+        phone: e.phone || '',
+        gender: e.gender || null,
+        dob: e.dob || null,
+        address: e.address || null,
+        documents: e.documents || null,
+        bankDetails: e.bankDetails || null,
+        emergencyContact: e.emergencyContact || null,
+        managerId: e.managerId || null,
+        employmentType: e.employmentType || 'FULL_TIME',
         designation: e.designation?.name || 'Staff',
         department: e.department?.name || 'General',
         branch: e.branch || 'Head Office',
         office: e.branch || 'Head Office',
         status: e.status,
         joiningDate: e.joiningDate,
+        createdAt: e.createdAt,
+        updatedAt: e.updatedAt,
         attendance: {
           status: displayStatus,
           rawStatus: att?.status || (leave ? 'ON_LEAVE' : 'ABSENT'),
@@ -666,19 +686,30 @@ export class EmployeeService {
       });
     }
 
+    const empData: any = {
+      customerId: numCustomerId,
+      employeeCode: dto.employeeCode,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      email: dto.email,
+      phone: dto.phone,
+      branch: dto.branch || 'Head Office',
+      departmentId: department.id,
+      designationId: designation.id,
+      employmentType: dto.employmentType || 'FULL_TIME',
+      gender: dto.gender || null,
+      dob: dto.dob ? new Date(dto.dob) : null,
+      joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : new Date(),
+      address: dto.address || null,
+      documents: dto.documents || null,
+      bankDetails: dto.bankDetails || null,
+      emergencyContact: typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : (dto.emergencyContact || null),
+      managerId: dto.managerId ? Number(dto.managerId) : null,
+      status: dto.status || 'ACTIVE',
+    };
+
     return this.prisma.employee.create({
-      data: {
-        customerId: numCustomerId,
-        employeeCode: dto.employeeCode,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        email: dto.email,
-        phone: dto.phone,
-        branch: dto.branch || 'Head Office',
-        departmentId: department.id,
-        designationId: designation.id,
-        status: 'ACTIVE',
-      },
+      data: empData,
       include: {
         department: true,
         designation: true,
@@ -691,9 +722,63 @@ export class EmployeeService {
     await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
+    const existing = await this.prisma.employee.findUnique({ where: { id: numId } });
+    const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
+
+    const updateData: any = {};
+    if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
+    if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
+    if (dto.email !== undefined) updateData.email = dto.email;
+    if (dto.phone !== undefined) updateData.phone = dto.phone;
+    if (dto.branch !== undefined) updateData.branch = dto.branch;
+    if (dto.status !== undefined) updateData.status = dto.status;
+    if (dto.employmentType !== undefined) updateData.employmentType = dto.employmentType;
+    if (dto.gender !== undefined) updateData.gender = dto.gender;
+    if (dto.dob !== undefined) updateData.dob = dto.dob ? new Date(dto.dob) : null;
+    if (dto.joiningDate !== undefined) updateData.joiningDate = dto.joiningDate ? new Date(dto.joiningDate) : undefined;
+    if (dto.address !== undefined) updateData.address = dto.address;
+    if (dto.documents !== undefined) updateData.documents = dto.documents;
+    if (dto.bankDetails !== undefined) updateData.bankDetails = dto.bankDetails;
+    if (dto.emergencyContact !== undefined) {
+      updateData.emergencyContact = typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : dto.emergencyContact;
+    }
+    if (dto.managerId !== undefined) updateData.managerId = dto.managerId ? Number(dto.managerId) : null;
+
+    if (dto.departmentName) {
+      let dept = await this.prisma.department.findFirst({
+        where: { customerId: targetCustId, name: dto.departmentName },
+      });
+      if (!dept) {
+        dept = await this.prisma.department.create({
+          data: {
+            customerId: targetCustId,
+            name: dto.departmentName,
+            code: dto.departmentName.substring(0, 4).toUpperCase(),
+          },
+        });
+      }
+      updateData.departmentId = dept.id;
+    }
+
+    if (dto.designationName) {
+      let desig = await this.prisma.designation.findFirst({
+        where: { customerId: targetCustId, name: dto.designationName },
+      });
+      if (!desig) {
+        desig = await this.prisma.designation.create({
+          data: {
+            customerId: targetCustId,
+            name: dto.designationName,
+            code: dto.designationName.substring(0, 4).toUpperCase(),
+          },
+        });
+      }
+      updateData.designationId = desig.id;
+    }
+
     return this.prisma.employee.update({
       where: { id: numId },
-      data: dto,
+      data: updateData,
       include: {
         department: true,
         designation: true,

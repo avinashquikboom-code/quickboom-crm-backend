@@ -320,30 +320,31 @@ export class AuthService {
   private async generateTokens(userId: number, customerId: number | null, email: string) {
     const payload = { sub: userId, customerId, email };
 
+    const expiresIn = this.configService.get('JWT_EXPIRATION') || '7d';
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get('JWT_SECRET') || 'quikboom_super_secret_jwt_access_key_2026',
-      expiresIn: '15m',
+      expiresIn,
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       secret:
         this.configService.get('JWT_REFRESH_SECRET') ||
         'quikboom_super_secret_jwt_refresh_key_2026',
-      expiresIn: '7d',
+      expiresIn: '30d',
     });
 
     await this.prisma.refreshToken.create({
       data: {
         userId,
         token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
 
     return {
       accessToken,
       refreshToken,
-      expiresIn: 900,
+      expiresIn: 604800,
     };
   }
 }

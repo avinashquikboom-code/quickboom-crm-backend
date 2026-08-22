@@ -28,13 +28,14 @@ export class EmployeeController {
   constructor(private readonly employeeService: EmployeeService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get paginated list of employees with live attendance, office, break, and leave data' })
+  @ApiOperation({ summary: 'Get paginated list of employees master data' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'branch', required: false })
-  @ApiQuery({ name: 'attendanceStatus', required: false })
-  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'department', required: false })
+  @ApiQuery({ name: 'designation', required: false })
+  @ApiQuery({ name: 'employmentType', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
@@ -44,8 +45,9 @@ export class EmployeeController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('branch') branch?: string,
-    @Query('attendanceStatus') attendanceStatus?: string,
-    @Query('date') date?: string,
+    @Query('department') department?: string,
+    @Query('designation') designation?: string,
+    @Query('employmentType') employmentType?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -62,8 +64,9 @@ export class EmployeeController {
       search,
       status,
       branch,
-      attendanceStatus,
-      date,
+      department,
+      designation,
+      employmentType,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
