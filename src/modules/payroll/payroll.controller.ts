@@ -1,61 +1,91 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @Controller('admin/payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
 
   @Post('calculate')
-  async calculate(@Body() body: { customerId?: string; month: number; year: number; departmentId?: string }) {
-    const customerId = body.customerId || 'default-customer';
+  async calculate(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
+  ) {
+    const customerId = body.customerId || currentCustomer;
     return this.payrollService.calculatePayroll(customerId, body.month, body.year, body.departmentId);
   }
 
   @Post('preview')
-  async preview(@Body() body: { customerId?: string; month: number; year: number; departmentId?: string }) {
-    const customerId = body.customerId || 'default-customer';
+  async preview(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
+  ) {
+    const customerId = body.customerId || currentCustomer;
     return this.payrollService.previewPayroll(customerId, body.month, body.year, body.departmentId);
   }
 
   @Post('approve')
-  async approve(@Body() body: { customerId?: string; payrollId: string }) {
-    const customerId = body.customerId || 'default-customer';
+  async approve(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: { customerId?: string | number; payrollId: string | number }
+  ) {
+    const customerId = body.customerId || currentCustomer;
     return this.payrollService.approvePayroll(customerId, body.payrollId);
   }
 
   @Post('generate')
-  async generate(@Body() body: { customerId?: string; payrollId: string }) {
-    const customerId = body.customerId || 'default-customer';
+  async generate(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: { customerId?: string | number; payrollId: string | number }
+  ) {
+    const customerId = body.customerId || currentCustomer;
     return this.payrollService.generatePayroll(customerId, body.payrollId);
   }
 
   @Post('disburse')
-  async disburse(@Body() body: { customerId?: string; payrollId: string }) {
-    const customerId = body.customerId || 'default-customer';
+  async disburse(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: { customerId?: string | number; payrollId: string | number }
+  ) {
+    const customerId = body.customerId || currentCustomer;
     return this.payrollService.disbursePayroll(customerId, body.payrollId);
   }
 
   @Get()
-  async findAll(@Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
+  async findAll(
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
     return this.payrollService.getPayrolls(customerId);
   }
 
   @Get('slips')
-  async findSlips(@Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
+  async findSlips(
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
     return this.payrollService.getSalarySlips(customerId);
   }
 
   @Get('slips/:id')
-  async findSlipById(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
+  async findSlipById(
+    @Param('id') id: string,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
     return this.payrollService.getSalarySlipById(customerId, id);
   }
 
   @Get('slips/:id/download')
-  async downloadSlip(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
+  async downloadSlip(
+    @Param('id') id: string,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
     const slip = await this.payrollService.getSalarySlipById(customerId, id);
     return {
       message: 'Download salary slip PDF',
@@ -65,8 +95,13 @@ export class PayrollController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string, @Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
+  async findOne(
+    @Param('id') id: string,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
     return this.payrollService.getPayrollById(customerId, id);
   }
 }
+
