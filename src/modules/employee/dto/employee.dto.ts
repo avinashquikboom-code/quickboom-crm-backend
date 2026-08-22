@@ -91,6 +91,14 @@ export class CreateEmployeeDto {
 }
 
 export class UpdateEmployeeDto {
+  @ApiPropertyOptional({ example: 'QB0001', description: 'Read-only, ignored if sent on update' })
+  @IsOptional()
+  employeeCode?: string;
+
+  @ApiPropertyOptional({ description: 'Ignored on update' })
+  @IsOptional()
+  autoGenerateCode?: boolean;
+
   @ApiPropertyOptional({ example: 'Rahul' })
   @IsString()
   @IsOptional()
