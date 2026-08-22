@@ -92,8 +92,11 @@ export class WorkService {
       throw new BadRequestException('No active subscription found for this customer.');
     }
 
-    // Determine service category from workType
     const serviceName = dto.serviceName || (dto.workType === WorkType.REELS_SHOOT ? 'Reels' : 'Creative Posts');
+
+    if (this.planAccessService) {
+      await this.planAccessService.checkScheduleAccess(numCustomerId, serviceName);
+    }
 
     // 2. Entitlement verification
     let entitlement = await this.prisma.planEntitlement.findFirst({

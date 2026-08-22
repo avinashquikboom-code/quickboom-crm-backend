@@ -33,6 +33,9 @@ export interface EffectivePlan {
   userLimit: number;
   leadLimit: number;
   storageLimitBytes: bigint;
+  scheduleLimit: number;
+  usedSchedules: number;
+  remainingSchedules: number;
   features: any;
   usage: EffectivePlanUsage;
 }
@@ -92,6 +95,9 @@ export class PlanAccessService {
           userLimit: 5,
           leadLimit: 500,
           storageLimitBytes: BigInt(5368709120),
+          scheduleLimit: 10,
+          usedSchedules: 0,
+          remainingSchedules: 10,
           features: ['Customer Management', 'Calendar', 'Schedule', 'Works', 'Reports'],
           usage: {
             currentUsers: 0,
@@ -145,8 +151,8 @@ export class PlanAccessService {
       )
     );
 
-    // 4. Gather live usage counts
-    const [currentUsers, currentLeads, scheduledWorks] = await Promise.all([
+    // 4. Gather live usage counts & entitlements
+    const [currentUsers, currentLeads, scheduledWorks, entitlements] = await Promise.all([
       this.prisma.employee.count({
         where: { customerId: numCustomerId, status: 'ACTIVE' },
       }),
@@ -156,7 +162,25 @@ export class PlanAccessService {
       this.prisma.work.count({
         where: { customerId: numCustomerId, status: 'SCHEDULED' },
       }),
+      this.prisma.planEntitlement.findMany({
+        where: { customerId: numCustomerId },
+      }),
     ]);
+
+    // Calculate Schedule Limits and Quotas
+    let totalScheduleLimit = basePlan.code === 'BASIC' ? 10 : (basePlan.code === 'STANDARD' ? 20 : 50);
+    let totalUsedSchedules = scheduledWorks;
+
+    if (entitlements && entitlements.length > 0) {
+      const entSum = entitlements.reduce((acc, e) => acc + (e.totalQty || 0), 0);
+      const entUsed = entitlements.reduce((acc, e) => acc + ((e.usedQty || 0) + (e.scheduledQty || 0)), 0);
+      if (entSum > 0) {
+        totalScheduleLimit = entSum;
+        totalUsedSchedules = entUsed;
+      }
+    }
+
+    const remainingSchedules = Math.max(0, totalScheduleLimit - totalUsedSchedules);
 
     return {
       customerId: numCustomerId,
@@ -177,6 +201,9 @@ export class PlanAccessService {
       userLimit: effectiveUserLimit,
       leadLimit: effectiveLeadLimit,
       storageLimitBytes: effectiveStorageLimitBytes,
+      scheduleLimit: totalScheduleLimit,
+      usedSchedules: totalUsedSchedules,
+      remainingSchedules,
       features: effectiveFeatures,
       usage: {
         currentUsers,
@@ -286,7 +313,7 @@ export class PlanAccessService {
   }
 
   /**
-   * Enforces Schedule access and entitlement quotas.
+   * Enforces Schedule access and entitlement quotas for Customer.
    */
   async checkScheduleAccess(
     customerId: number | string,
@@ -303,10 +330,17 @@ export class PlanAccessService {
       if (entitlement && entitlement.totalQty > 0) {
         if (entitlement.usedQty + entitlement.scheduledQty >= entitlement.totalQty) {
           throw new BadRequestException(
-            `Schedule quota reached for ${serviceName}. Entitlement limit: ${entitlement.totalQty}.`,
+            `Schedule limit reached. Your current plan allows ${entitlement.totalQty} schedules.`,
           );
         }
       }
+    }
+
+    // Total schedule limit check
+    if (plan.usedSchedules >= plan.scheduleLimit) {
+      throw new BadRequestException(
+        `Schedule limit reached. Your current plan allows ${plan.scheduleLimit} schedules.`,
+      );
     }
 
     return plan;

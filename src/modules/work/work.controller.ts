@@ -7,12 +7,14 @@ import {
   Post,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { CreateWorkDto, UpdateWorkDto } from './dto/work.dto';
 import { WorkStatus, WorkType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 @ApiTags('Work & SSM Management')
@@ -50,6 +52,20 @@ export class WorkController {
     return this.workService.getCalendar(customerId, dateFrom, dateTo);
   }
 
+  @Post('customer-schedule')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer create new calendar schedule with plan limit validation' })
+  async createCustomerSchedule(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: CreateWorkDto,
+  ) {
+    if (!customerId) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+    return this.workService.create(customerId, dto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single work item with multi-step tasks' })
   async findOne(
@@ -61,23 +77,35 @@ export class WorkController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Schedule new work item against plan entitlement' })
+  @ApiOperation({ summary: 'Create new scheduled work deliverable' })
   async create(
+    @Query('customerId') customerIdQuery: string,
     @Body() dto: CreateWorkDto,
-    @Query('customerId') customerIdQuery?: string,
   ) {
     const customerId = customerIdQuery || 'default-customer';
     return this.workService.create(customerId, dto);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update work item status or internal progress' })
+  @ApiOperation({ summary: 'Update work item details' })
   async update(
     @Param('id') id: string,
+    @Query('customerId') customerIdQuery: string,
     @Body() dto: UpdateWorkDto,
-    @Query('customerId') customerIdQuery?: string,
   ) {
     const customerId = customerIdQuery || 'default-customer';
     return this.workService.update(customerId, id, dto);
+  }
+
+  @Patch(':id/tasks/:taskId/status')
+  @ApiOperation({ summary: 'Update task progress state' })
+  async updateTaskStatus(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Query('customerId') customerIdQuery: string,
+    @Body('status') status: any,
+  ) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.workService.updateTaskStatus(customerId, id, taskId, status);
   }
 }
