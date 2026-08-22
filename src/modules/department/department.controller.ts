@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RoleType } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Departments')
 @ApiBearerAuth()
@@ -45,7 +45,7 @@ export class DepartmentController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {
@@ -74,7 +74,7 @@ export class DepartmentController {
     @Param('id', ParseIntPipe) id: number,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.departmentService.findOne(targetCustomerId, id);
   }
@@ -87,7 +87,7 @@ export class DepartmentController {
     @Body() dto: CreateDepartmentDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.departmentService.create(targetCustomerId, dto);
   }
@@ -101,7 +101,7 @@ export class DepartmentController {
     @Body() dto: UpdateDepartmentDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.departmentService.update(targetCustomerId, id, dto);
   }
@@ -114,7 +114,7 @@ export class DepartmentController {
     @Param('id', ParseIntPipe) id: number,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.departmentService.remove(targetCustomerId, id);
   }

@@ -1,5 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { RoleType } from '@prisma/client';
+import { isUserSuperAdmin } from '../utils/role.util';
 
 @Injectable()
 export class CustomerGuard implements CanActivate {
@@ -7,17 +7,10 @@ export class CustomerGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    // Super Admins bypass customer isolation check
-    const isSuperAdmin = Boolean(
-      user && (
-        user.roles?.includes(RoleType.SUPER_ADMIN) ||
-        user.roles?.includes('SUPER_ADMIN') ||
-        user.roles?.some((r: any) => String(r).toUpperCase().replace(/\s+/g, '_') === 'SUPER_ADMIN') ||
-        String(user.role).toUpperCase().replace(/\s+/g, '_') === 'SUPER_ADMIN'
-      )
-    );
+    const isSuperAdmin = isUserSuperAdmin(user);
 
     if (isSuperAdmin) {
+      request.isSuperAdmin = true;
       const explicitCustomerId = request.headers['x-customer-id'] || request.query?.customerId;
       if (explicitCustomerId && !isNaN(Number(explicitCustomerId)) && Number(explicitCustomerId) > 0) {
         request.customerId = Number(explicitCustomerId);
@@ -42,4 +35,3 @@ export class CustomerGuard implements CanActivate {
     return true;
   }
 }
-

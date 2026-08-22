@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RoleType } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -51,7 +51,7 @@ export class EmployeeController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {
@@ -82,7 +82,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
     @Query('prefix') prefix?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
@@ -96,7 +96,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getOffices(targetCustomerId, isSuperAdmin);
   }
@@ -109,7 +109,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getLeaves(targetCustomerId, isSuperAdmin);
   }
@@ -122,7 +122,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getRemoteRequests(targetCustomerId, isSuperAdmin);
   }
@@ -139,7 +139,7 @@ export class EmployeeController {
     @Query('date') date?: string,
     @Query('branch') branch?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin, { date, branch });
   }
@@ -156,7 +156,7 @@ export class EmployeeController {
     @Query('branch') branch?: string,
     @Query('date') date?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin, branch, date);
   }
@@ -170,7 +170,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {
@@ -193,7 +193,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!targetCustomerId) {
@@ -216,7 +216,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {
@@ -240,7 +240,7 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {

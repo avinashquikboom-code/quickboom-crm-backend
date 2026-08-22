@@ -1,0 +1,20 @@
+import { RoleType } from '@prisma/client';
+
+export function isUserSuperAdmin(user: any): boolean {
+  if (!user) return false;
+  if (user.role) {
+    const normalized = String(user.role).toUpperCase().replace(/[\s_]+/g, '');
+    if (normalized === 'SUPERADMIN' || user.role === RoleType.SUPER_ADMIN) {
+      return true;
+    }
+  }
+  if (Array.isArray(user.roles)) {
+    return user.roles.some((r: any) => {
+      if (!r) return false;
+      const val = typeof r === 'string' ? r : r?.type || r?.name || String(r);
+      const normalized = String(val).toUpperCase().replace(/[\s_]+/g, '');
+      return normalized === 'SUPERADMIN' || r === RoleType.SUPER_ADMIN;
+    });
+  }
+  return false;
+}

@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RoleType } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Designations')
 @ApiBearerAuth()
@@ -47,7 +47,7 @@ export class DesignationController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
     if (!isSuperAdmin && !targetCustomerId) {
@@ -82,7 +82,7 @@ export class DesignationController {
     @Param('id', ParseIntPipe) id: number,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.designationService.findOne(targetCustomerId, id);
   }
@@ -95,7 +95,7 @@ export class DesignationController {
     @Body() dto: CreateDesignationDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.designationService.create(targetCustomerId, dto);
   }
@@ -109,7 +109,7 @@ export class DesignationController {
     @Body() dto: UpdateDesignationDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.designationService.update(targetCustomerId, id, dto);
   }
@@ -122,7 +122,7 @@ export class DesignationController {
     @Param('id', ParseIntPipe) id: number,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.designationService.remove(targetCustomerId, id);
   }
