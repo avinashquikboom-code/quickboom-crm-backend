@@ -113,6 +113,7 @@ export class EmployeeService {
         include: {
           department: true,
           designation: true,
+          office: true,
           attendances: {
             where: {
               date: { gte: startOfDay, lte: endOfDay },
@@ -208,8 +209,10 @@ export class EmployeeService {
         departmentName: e.department?.name || 'General',
         departmentObj: e.department,
         designationObj: e.designation,
-        branch: e.branch || 'Head Office',
-        office: e.branch || 'Head Office',
+        officeId: e.officeId || null,
+        officeObj: e.office,
+        branch: e.office?.name || e.branch || 'Head Office',
+        office: e.office?.name || e.branch || 'Head Office',
         status: e.status,
         mobileLoginEnabled: e.mobileLoginEnabled !== false,
         joiningDate: e.joiningDate,
@@ -299,6 +302,7 @@ export class EmployeeService {
       include: {
         department: true,
         designation: true,
+        office: true,
         attendances: {
           orderBy: { date: 'desc' },
           take: 30,
@@ -380,8 +384,10 @@ export class EmployeeService {
       lastName: employee.lastName,
       email: employee.email,
       phone: employee.phone || '+91 98765 43210',
-      branch: employee.branch || 'Head Office',
-      office: employee.branch || 'Head Office',
+      officeId: employee.officeId || null,
+      officeObj: employee.office,
+      branch: employee.office?.name || employee.branch || 'Head Office',
+      office: employee.office?.name || employee.branch || 'Head Office',
       departmentId: employee.departmentId,
       designationId: employee.designationId,
       department: employee.department?.name || 'Media & Production',
@@ -452,32 +458,35 @@ export class EmployeeService {
       }
     }
 
-    const [branches, employeeBranches] = await Promise.all([
-      this.prisma.branchGeofence.findMany({
-        where: { ...whereCust, isActive: true },
-        select: { id: true, name: true, city: true },
-      }),
-      this.prisma.employee.findMany({
-        where: whereCust,
-        select: { branch: true },
-        distinct: ['branch'],
-      }),
-    ]);
-
-    const set = new Set<string>();
-    branches.forEach((b) => set.add(b.name));
-    employeeBranches.forEach((e) => {
-      if (e.branch && e.branch.trim().length > 0) set.add(e.branch.trim());
+    const branches = await this.prisma.branchGeofence.findMany({
+      where: { ...whereCust, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        latitude: true,
+        longitude: true,
+        radiusMeters: true,
+        isActive: true,
+      },
+      orderBy: { name: 'asc' },
     });
 
-    if (set.size === 0) {
-      set.add('Head Office');
+    if (branches.length === 0) {
+      return [
+        {
+          id: 1,
+          name: 'Head Office',
+          city: 'Mumbai',
+          latitude: 19.076,
+          longitude: 72.8777,
+          radiusMeters: 200,
+          isActive: true,
+        },
+      ];
     }
 
-    return Array.from(set).map((name, idx) => ({
-      id: idx + 1,
-      name,
-    }));
+    return branches;
   }
 
   async getLiveAttendance(
@@ -910,6 +919,58 @@ export class EmployeeService {
         });
       }
 
+      // Office / Branch resolution with geo-fence linkage
+      let officeId: number | null = null;
+      let branchName = dto.branch || dto.officeName || 'Head Office';
+
+      if (dto.officeId) {
+        const office = await tx.branchGeofence.findFirst({
+          where: { id: Number(dto.officeId), customerId: numCustomerId },
+        });
+        if (!office) {
+          throw new BadRequestException(`Office #${dto.officeId} not found or does not belong to this customer`);
+        }
+        officeId = office.id;
+        branchName = office.name;
+      } else if (dto.branch || dto.officeName) {
+        const targetName = (dto.branch || dto.officeName || '').trim();
+        const office = await tx.branchGeofence.findFirst({
+          where: {
+            customerId: numCustomerId,
+            name: { equals: targetName, mode: 'insensitive' },
+          },
+        });
+        if (office) {
+          officeId = office.id;
+          branchName = office.name;
+        }
+      }
+
+      if (!officeId) {
+        const defaultOffice = await tx.branchGeofence.findFirst({
+          where: { customerId: numCustomerId, isActive: true },
+          orderBy: { id: 'asc' },
+        });
+        if (defaultOffice) {
+          officeId = defaultOffice.id;
+          branchName = defaultOffice.name;
+        } else {
+          const createdDefault = await tx.branchGeofence.create({
+            data: {
+              customerId: numCustomerId,
+              name: 'Head Office',
+              city: 'Mumbai',
+              latitude: 19.0760,
+              longitude: 72.8777,
+              radiusMeters: 200.0,
+              isActive: true,
+            },
+          });
+          officeId = createdDefault.id;
+          branchName = createdDefault.name;
+        }
+      }
+
       const empData: any = {
         customerId: numCustomerId,
         userId: user.id,
@@ -917,7 +978,8 @@ export class EmployeeService {
         lastName: dto.lastName,
         email: normalizedEmail,
         phone: dto.phone,
-        branch: dto.branch || 'Head Office',
+        officeId,
+        branch: branchName,
         departmentId: department.id,
         designationId: designation.id,
         employmentType: dto.employmentType || 'FULL_TIME',
@@ -944,6 +1006,7 @@ export class EmployeeService {
         include: {
           department: true,
           designation: true,
+          office: true,
         },
       });
 
@@ -1061,12 +1124,37 @@ export class EmployeeService {
         updateData.designationId = desig.id;
       }
 
+      if (dto.officeId !== undefined && dto.officeId !== null) {
+        const numOfficeId = Number(dto.officeId);
+        const office = await tx.branchGeofence.findFirst({
+          where: { id: numOfficeId, customerId: targetCustId },
+        });
+        if (!office) {
+          throw new BadRequestException(`Office #${numOfficeId} not found`);
+        }
+        updateData.officeId = office.id;
+        updateData.branch = office.name;
+      } else if (dto.officeName || dto.branch) {
+        const officeNameTarget = (dto.officeName || dto.branch || '').trim();
+        const office = await tx.branchGeofence.findFirst({
+          where: {
+            customerId: targetCustId,
+            name: { equals: officeNameTarget, mode: 'insensitive' },
+          },
+        });
+        if (office) {
+          updateData.officeId = office.id;
+          updateData.branch = office.name;
+        }
+      }
+
       return tx.employee.update({
         where: { id: numId },
         data: updateData,
         include: {
           department: true,
           designation: true,
+          office: true,
         },
       });
     });
