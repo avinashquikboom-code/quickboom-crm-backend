@@ -72,6 +72,22 @@ export class EmployeeController {
     });
   }
 
+  @Get('next-id')
+  @ApiOperation({ summary: 'Preview the next auto-generated Employee ID' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'prefix', required: false, description: 'ID Prefix e.g. QB' })
+  async getNextId(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('prefix') prefix?: string,
+  ) {
+    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
+    return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
+  }
+
   @Get('hrm/offices')
   @ApiOperation({ summary: 'Get list of real branches/offices for filtering' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })

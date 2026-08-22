@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
@@ -647,6 +648,58 @@ export class EmployeeService {
     };
   }
 
+  /**
+   * Preview or allocate the next sequential Employee ID for a customer
+   * Format: QB0001, QB0002, ..., QB0099, QB0100
+   */
+  async getNextEmployeeCode(customerId?: number | string, prefix?: string): Promise<{ nextEmployeeId: string; prefix: string }> {
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
+      numCustomerId = defaultCust?.id || 1;
+    }
+
+    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
+    const cleanPrefix = (prefix || defaultPrefix).toUpperCase();
+
+    // Query existing employee codes for this customer that match the prefix
+    const existingEmployees = await this.prisma.employee.findMany({
+      where: {
+        customerId: numCustomerId,
+        employeeCode: {
+          startsWith: cleanPrefix,
+        },
+      },
+      select: { employeeCode: true },
+    });
+
+    let maxNum = 0;
+    const regex = new RegExp(`^${cleanPrefix}(\\d+)$`, 'i');
+
+    for (const emp of existingEmployees) {
+      const match = emp.employeeCode.match(regex);
+      if (match && match[1]) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+
+    // Determine the next number and pad to at least 4 digits
+    let candidateNum = maxNum + 1;
+    let candidateCode = `${cleanPrefix}${String(candidateNum).padStart(4, '0')}`;
+
+    // Ensure candidate code does not exist in case of non-sequential manual IDs
+    const existingCodeSet = new Set(existingEmployees.map((e) => e.employeeCode.toUpperCase()));
+    while (existingCodeSet.has(candidateCode.toUpperCase())) {
+      candidateNum++;
+      candidateCode = `${cleanPrefix}${String(candidateNum).padStart(4, '0')}`;
+    }
+
+    return { nextEmployeeId: candidateCode, prefix: cleanPrefix };
+  }
+
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
@@ -656,6 +709,27 @@ export class EmployeeService {
 
     if (this.planAccessService) {
       await this.planAccessService.checkUserLimit(numCustomerId);
+    }
+
+    // Handle Auto Employee ID Generation or manual validation
+    let finalEmployeeCode = dto.employeeCode ? dto.employeeCode.trim() : '';
+    const isAutoGenerate = !finalEmployeeCode || dto.autoGenerateCode === true;
+    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
+
+    if (isAutoGenerate) {
+      const { nextEmployeeId } = await this.getNextEmployeeCode(numCustomerId, defaultPrefix);
+      finalEmployeeCode = nextEmployeeId;
+    } else {
+      // Validate uniqueness for manual entry
+      const existing = await this.prisma.employee.findFirst({
+        where: {
+          customerId: numCustomerId,
+          employeeCode: finalEmployeeCode,
+        },
+      });
+      if (existing) {
+        throw new ConflictException(`Employee ID "${finalEmployeeCode}" is already assigned to another employee.`);
+      }
     }
 
     let department = await this.prisma.department.findFirst({
@@ -687,7 +761,6 @@ export class EmployeeService {
 
     const empData: any = {
       customerId: numCustomerId,
-      employeeCode: dto.employeeCode,
       firstName: dto.firstName,
       lastName: dto.lastName,
       email: dto.email,
@@ -707,13 +780,43 @@ export class EmployeeService {
       status: dto.status || 'ACTIVE',
     };
 
-    return this.prisma.employee.create({
-      data: empData,
-      include: {
-        department: true,
-        designation: true,
-      },
-    });
+    // Attempt creation with retry loop on concurrent collision
+    let createdEmployee = null;
+    let attempt = 0;
+    const maxAttempts = 5;
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        createdEmployee = await this.prisma.employee.create({
+          data: {
+            ...empData,
+            employeeCode: finalEmployeeCode,
+          },
+          include: {
+            department: true,
+            designation: true,
+          },
+        });
+        break;
+      } catch (err: any) {
+        // Handle Prisma unique constraint violation (P2002 on employeeCode)
+        if (err.code === 'P2002' && isAutoGenerate) {
+          const { nextEmployeeId } = await this.getNextEmployeeCode(numCustomerId, defaultPrefix);
+          finalEmployeeCode = nextEmployeeId;
+        } else if (err.code === 'P2002') {
+          throw new ConflictException(`Employee ID "${finalEmployeeCode}" already exists in the database.`);
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!createdEmployee) {
+      throw new BadRequestException('Unable to generate unique Employee ID due to high concurrency. Please retry.');
+    }
+
+    return createdEmployee;
   }
 
   async update(params: UpdateEmployeeParams) {
