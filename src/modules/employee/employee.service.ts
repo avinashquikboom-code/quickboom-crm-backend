@@ -893,10 +893,16 @@ export class EmployeeService {
     await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
-    return this.prisma.employee.update({
-      where: { id: numId },
-      data: { status: 'INACTIVE' },
-    });
+    try {
+      return await this.prisma.employee.delete({
+        where: { id: numId },
+      });
+    } catch {
+      return await this.prisma.employee.update({
+        where: { id: numId },
+        data: { status: 'INACTIVE' },
+      });
+    }
   }
 
   async getLeaves(customerId?: number | string, isSuperAdmin = false) {
