@@ -1,6 +1,7 @@
 import {
   Injectable,
   UnauthorizedException,
+  ForbiddenException,
   BadRequestException,
   ConflictException,
   Logger,
@@ -137,9 +138,10 @@ export class AuthService {
     });
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, targetApp?: 'ADMIN' | 'EMPLOYEE_MOBILE' | 'CUSTOMER') {
+    const normalizedEmail = dto.email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
       include: {
         customer: true,
         employee: true,
@@ -167,10 +169,71 @@ export class AuthService {
     }
 
     const hasSuperAdminRole = user.userRoles.some((ur) => ur.role?.type === RoleType.SUPER_ADMIN);
+    const isEmployee = Boolean(user.employee);
+    const isCustomer = Boolean(user.customerId && !isEmployee && !hasSuperAdminRole);
+
+    const app = targetApp || dto.appType;
+
+    // Strict Access Rules Matrix Enforcement
+    if (app === 'ADMIN') {
+      if (!hasSuperAdminRole) {
+        if (isEmployee) {
+          throw new ForbiddenException(
+            'Access Denied: The Admin Panel is strictly for SUPER_ADMIN only. Other roles must use the mobile application.',
+          );
+        }
+        throw new ForbiddenException(
+          'Access Denied: Customer accounts cannot access the Admin Panel.',
+        );
+      }
+    } else if (app === 'EMPLOYEE_MOBILE') {
+      if (hasSuperAdminRole) {
+        throw new ForbiddenException(
+          'Access Denied: Admin accounts cannot access the Employee Mobile App.',
+        );
+      }
+      if (isCustomer || !isEmployee) {
+        throw new ForbiddenException(
+          'Access Denied: Customer accounts cannot access the Employee Mobile App.',
+        );
+      }
+      if (user.employee?.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is inactive.');
+      }
+      if (!user.employee?.mobileLoginEnabled) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
+    } else if (app === 'CUSTOMER') {
+      if (hasSuperAdminRole) {
+        throw new ForbiddenException(
+          'Access Denied: Admin accounts cannot access the Customer portal.',
+        );
+      }
+      if (isEmployee) {
+        throw new ForbiddenException(
+          'Access Denied: Employee accounts cannot access the Customer portal.',
+        );
+      }
+    } else {
+      // General login endpoint validation
+      if (isEmployee) {
+        if (user.employee?.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Employee account is inactive.');
+        }
+        if (!user.employee?.mobileLoginEnabled) {
+          throw new UnauthorizedException('Mobile login is disabled for this employee.');
+        }
+      }
+    }
+
     const primaryRole = hasSuperAdminRole
       ? RoleType.SUPER_ADMIN
-      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
-    const roles = user.userRoles.map((ur) => ur.role.type);
+      : isEmployee
+      ? RoleType.CUSTOM
+      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.CUSTOM);
+    const roles = isEmployee && !hasSuperAdminRole
+      ? ['EMPLOYEE', RoleType.CUSTOM]
+      : user.userRoles.map((ur) => ur.role.type);
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 

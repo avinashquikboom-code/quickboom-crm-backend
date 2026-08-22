@@ -807,6 +807,7 @@ model Employee {
   bankDetails      Json?
   documents        Json?
   status           String            @default("ACTIVE")
+  mobileLoginEnabled Boolean         @default(true)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]

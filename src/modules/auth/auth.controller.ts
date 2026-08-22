@@ -37,6 +37,38 @@ export class AuthController {
   }
 
   @Public()
+  @Post('admin/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Super Admin login for Admin Panel' })
+  async adminLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'ADMIN');
+  }
+
+  @Public()
+  @Post('employee/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Employee mobile application login' })
+  async employeeLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'EMPLOYEE_MOBILE');
+  }
+
+  @Public()
+  @Post('mobile/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mobile application login alias' })
+  async mobileLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'EMPLOYEE_MOBILE');
+  }
+
+  @Public()
+  @Post('customer/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Customer workspace login' })
+  async customerLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'CUSTOMER');
+  }
+
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh JWT Access Token using Refresh Token' })

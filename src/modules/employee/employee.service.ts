@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
+import { RoleType } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 export interface FindAllEmployeesParams {
   customerId?: number | string;
@@ -203,6 +205,7 @@ export class EmployeeService {
         branch: e.branch || 'Head Office',
         office: e.branch || 'Head Office',
         status: e.status,
+        mobileLoginEnabled: e.mobileLoginEnabled !== false,
         joiningDate: e.joiningDate,
         createdAt: e.createdAt,
         updatedAt: e.updatedAt,
@@ -376,6 +379,7 @@ export class EmployeeService {
       department: employee.department?.name || 'Media & Production',
       designation: employee.designation?.name || 'Specialist',
       status: employee.status,
+      mobileLoginEnabled: employee.mobileLoginEnabled !== false,
       joiningDate: employee.joiningDate,
       todayAttendance: {
         status: todayStatus,
@@ -759,11 +763,73 @@ export class EmployeeService {
       });
     }
 
+    // 1. Find or create linked User account (Transaction-safe)
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    let user = await this.prisma.user.findFirst({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      const defaultPassword = 'Password@123';
+      const passwordHash = await bcrypt.hash(defaultPassword, 10);
+      user = await this.prisma.user.create({
+        data: {
+          customerId: numCustomerId,
+          email: normalizedEmail,
+          phone: dto.phone || null,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          passwordHash,
+          isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
+
+    // 2. Assign standard Employee mobile role if not already assigned
+    let employeeRole = await this.prisma.role.findFirst({
+      where: {
+        OR: [
+          { customerId: numCustomerId, name: 'Employee' },
+          { customerId: numCustomerId, type: RoleType.CUSTOM },
+          { customerId: null, name: 'Employee' },
+        ],
+      },
+    });
+
+    if (!employeeRole) {
+      employeeRole = await this.prisma.role.create({
+        data: {
+          customerId: numCustomerId,
+          name: 'Employee',
+          type: RoleType.CUSTOM,
+          description: 'Employee mobile application role',
+        },
+      });
+    }
+
+    const existingUserRole = await this.prisma.userRole.findFirst({
+      where: {
+        userId: user.id,
+        roleId: employeeRole.id,
+      },
+    });
+
+    if (!existingUserRole) {
+      await this.prisma.userRole.create({
+        data: {
+          userId: user.id,
+          roleId: employeeRole.id,
+        },
+      });
+    }
+
     const empData: any = {
       customerId: numCustomerId,
+      userId: user.id,
       firstName: dto.firstName,
       lastName: dto.lastName,
-      email: dto.email,
+      email: normalizedEmail,
       phone: dto.phone,
       branch: dto.branch || 'Head Office',
       departmentId: department.id,
@@ -778,6 +844,7 @@ export class EmployeeService {
       emergencyContact: typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : (dto.emergencyContact || null),
       managerId: dto.managerId ? Number(dto.managerId) : null,
       status: dto.status || 'ACTIVE',
+      mobileLoginEnabled: dto.mobileLoginEnabled !== false,
     };
 
     // Attempt creation with retry loop on concurrent collision
@@ -845,6 +912,14 @@ export class EmployeeService {
       updateData.emergencyContact = typeof dto.emergencyContact === 'object' ? JSON.stringify(dto.emergencyContact) : dto.emergencyContact;
     }
     if (dto.managerId !== undefined) updateData.managerId = dto.managerId ? Number(dto.managerId) : null;
+    if (dto.mobileLoginEnabled !== undefined) updateData.mobileLoginEnabled = dto.mobileLoginEnabled;
+
+    if (dto.status !== undefined && existing?.userId) {
+      await this.prisma.user.update({
+        where: { id: existing.userId },
+        data: { isActive: dto.status === 'ACTIVE' },
+      }).catch(() => null);
+    }
 
     if (dto.departmentName) {
       let dept = await this.prisma.department.findFirst({

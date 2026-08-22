@@ -11,6 +11,11 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @ApiPropertyOptional({ enum: ['ADMIN', 'EMPLOYEE_MOBILE', 'CUSTOMER'], example: 'EMPLOYEE_MOBILE' })
+  @IsOptional()
+  @IsString()
+  appType?: 'ADMIN' | 'EMPLOYEE_MOBILE' | 'CUSTOMER';
 }
 
 export class RegisterCustomerDto {

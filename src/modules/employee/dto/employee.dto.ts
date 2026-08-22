@@ -88,6 +88,10 @@ export class CreateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   managerId?: number;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
+  @IsOptional()
+  mobileLoginEnabled?: boolean;
 }
 
 export class UpdateEmployeeDto {
@@ -98,6 +102,10 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional({ description: 'Ignored on update' })
   @IsOptional()
   autoGenerateCode?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
+  @IsOptional()
+  mobileLoginEnabled?: boolean;
 
   @ApiPropertyOptional({ example: 'Rahul' })
   @IsString()
