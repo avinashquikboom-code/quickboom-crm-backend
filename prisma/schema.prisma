@@ -18,6 +18,14 @@ model Customer {
   city                     String?
   state                    String?
   country                  String?
+  isActive                 Boolean                   @default(true)
+  storageUsed              BigInt                    @default(0)
+  userLimit                Int                       @default(5)
+  leadLimit                Int                       @default(500)
+  storageLimit             BigInt                    @default(5368709120)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  deletedAt                DateTime?
   pincode                  String?
   companyName              String?
   alternatePhone           String?
@@ -27,26 +35,27 @@ model Customer {
   assignedEmployee         String?
   department               String?
   notes                    String?
-  isActive                 Boolean                   @default(true)
-  storageUsed              BigInt                    @default(0)
-  userLimit                Int                       @default(5)
-  leadLimit                Int                       @default(500)
-  storageLimit             BigInt                    @default(5368709120)
-  createdAt                DateTime                  @default(now())
-  updatedAt                DateTime                  @updatedAt
-  deletedAt                DateTime?
+  attendancePolicies       AttendancePolicy[]
   auditLogs                AuditLog[]
   branchGeofences          BranchGeofence[]
+  claimPolicies            ClaimPolicy[]
   companies                Company[]
   contacts                 Contact[]
+  dataCaptureJobs          DataCaptureJob[]
+  dataCapturePlaces        DataCapturePlace[]
   deals                    Deal[]
   departments              Department[]
   designations             Designation[]
   employees                Employee[]
+  employeeClaims           EmployeeClaim[]
+  leaveBalances            EmployeeLeaveBalance[]
+  employeeLoans            EmployeeLoan[]
   employeeLocations        EmployeeLocation[]
   featureToggles           FeatureToggle[]
   invoices                 Invoice[]
   leads                    Lead[]
+  leaveAdjustments         LeaveAdjustmentHistory[]
+  leavePolicies            LeavePolicy[]
   locationTrackingSettings LocationTrackingSetting[]
   notifications            Notification[]
   payments                 PaymentHistory[]
@@ -55,25 +64,18 @@ model Customer {
   pipelines                Pipeline[]
   planEntitlements         PlanEntitlement[]
   products                 Product[]
+  publicHolidays           PublicHoliday[]
   quotations               Quotation[]
   roles                    Role[]
+  salaryPolicies           SalaryPolicy[]
+  shifts                   Shift[]
+  shiftGuidances           ShiftGuidance[]
   tickets                  SupportTicket[]
   tasks                    Task[]
   teams                    Team[]
   users                    User[]
   works                    Work[]
   subscriptions            CustomerSubscription[]
-  publicHolidays           PublicHoliday[]
-  leaveBalances            EmployeeLeaveBalance[]
-  leaveAdjustments         LeaveAdjustmentHistory[]
-  attendancePolicies       AttendancePolicy[]
-  leavePolicies            LeavePolicy[]
-  salaryPolicies           SalaryPolicy[]
-  claimPolicies            ClaimPolicy[]
-  shifts                   Shift[]
-  shiftGuidances           ShiftGuidance[]
-  dataCaptureJobs          DataCaptureJob[]
-  dataCapturePlaces        DataCapturePlace[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -193,12 +195,13 @@ model User {
   updatedAt         DateTime         @updatedAt
   deletedAt         DateTime?
   auditLogs         AuditLog[]
+  assignedCompanies Company[]        @relation("AssignedCompanies")
+  assignedContacts  Contact[]        @relation("AssignedContacts")
+  dataCaptureJobs   DataCaptureJob[]
+  assignedDeals     Deal[]           @relation("AssignedDeals")
   employee          Employee?
   assignedLeads     Lead[]           @relation("AssignedLeads")
   createdLeads      Lead[]           @relation("CreatedLeads")
-  assignedCompanies Company[]        @relation("AssignedCompanies")
-  assignedContacts  Contact[]        @relation("AssignedContacts")
-  assignedDeals     Deal[]           @relation("AssignedDeals")
   leadNotes         LeadNote[]
   notifications     Notification[]
   refreshTokens     RefreshToken[]
@@ -208,7 +211,6 @@ model User {
   assignedTasks     Task[]           @relation("AssignedTasks")
   createdTasks      Task[]           @relation("CreatedTasks")
   ticketComments    TicketComment[]
-  dataCaptureJobs   DataCaptureJob[]
   customer          Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userRoles         UserRole[]
 
@@ -320,19 +322,19 @@ model Lead {
   paymentStatus        String?                @default("PENDING")
   paymentMethod        String?
   paymentRef           String?
-  country              String?
-  latitude             Float?
-  longitude            Float?
-  googlePlaceId        String?
-  rating               Float?
-  reviewCount          Int?
-  convertedToCompanyId Int?
-  convertedToContactId Int?
-  convertedToDealId    Int?
   convertedAt          DateTime?
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   deletedAt            DateTime?
+  convertedToCompanyId Int?
+  convertedToContactId Int?
+  convertedToDealId    Int?
+  country              String?
+  googlePlaceId        String?
+  latitude             Float?
+  longitude            Float?
+  rating               Float?
+  reviewCount          Int?
   assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -405,30 +407,30 @@ model Company {
   customerId    Int
   name          String
   domain        String?
-  website       String?
   industry      String?
-  category      String?
   phone         String?
   email         String?
   address       String?
   city          String?
-  state         String?
   country       String?
-  postalCode    String?
-  latitude      Float?
-  longitude     Float?
-  googlePlaceId String?
-  rating        Float?
-  reviewCount   Int?
-  source        String?   @default("MANUAL")
-  status        String?   @default("ACTIVE")
-  notes         String?
-  assignedToId  Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
-  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedToId  Int?
+  category      String?
+  googlePlaceId String?
+  latitude      Float?
+  longitude     Float?
+  notes         String?
+  postalCode    String?
+  rating        Float?
+  reviewCount   Int?
+  source        String?   @default("MANUAL")
+  state         String?
+  status        String?   @default("ACTIVE")
+  website       String?
   assignedTo    User?     @relation("AssignedCompanies", fields: [assignedToId], references: [id])
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contacts      Contact[]
   deals         Deal[]
   visits        Visit[]
@@ -447,26 +449,26 @@ model Contact {
   lastName        String
   email           String?
   phone           String?
-  mobile          String?
-  alternateMobile String?
   designation     String?
-  website         String?
-  source          String?                @default("DIRECT")
-  status          String?                @default("ACTIVE")
   tags            String[]
   notes           String?
-  assignedToId    Int?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   deletedAt       DateTime?
+  alternateMobile String?
+  assignedToId    Int?
+  mobile          String?
+  source          String?                @default("DIRECT")
+  status          String?                @default("ACTIVE")
+  website         String?
   communications  CommunicationHistory[]
+  assignedTo      User?                  @relation("AssignedContacts", fields: [assignedToId], references: [id])
   company         Company?               @relation(fields: [companyId], references: [id])
   customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  assignedTo      User?                  @relation("AssignedContacts", fields: [assignedToId], references: [id])
   deals           Deal[]
-  visits          Visit[]
   invoices        Invoice[]
   quotations      Quotation[]
+  visits          Visit[]
 
   @@index([customerId])
   @@index([companyId])
@@ -522,8 +524,6 @@ model Deal {
   stageId         Int
   contactId       Int?
   companyId       Int?
-  leadId          Int?
-  assignedToId    Int?
   title           String
   amount          Float
   expectedClosing DateTime?
@@ -531,19 +531,21 @@ model Deal {
   isWon           Boolean       @default(false)
   isLost          Boolean       @default(false)
   lostReason      String?
-  source          String?       @default("CRM")
-  currency        String?       @default("INR")
-  description     String?
-  notes           String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   deletedAt       DateTime?
+  assignedToId    Int?
+  currency        String?       @default("INR")
+  description     String?
+  leadId          Int?
+  notes           String?
+  source          String?       @default("CRM")
+  assignedTo      User?         @relation("AssignedDeals", fields: [assignedToId], references: [id])
   company         Company?      @relation(fields: [companyId], references: [id])
   contact         Contact?      @relation(fields: [contactId], references: [id])
   customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])
   stage           PipelineStage @relation(fields: [stageId], references: [id])
-  assignedTo      User?         @relation("AssignedDeals", fields: [assignedToId], references: [id])
   quotations      Quotation[]
   visits          Visit[]
 
@@ -556,48 +558,48 @@ model Deal {
 model Task {
   id                Int           @id @default(autoincrement())
   customerId        Int
-  taskNumber        String?
   title             String
   description       String?
   status            TaskStatus    @default(PENDING)
   priority          TaskPriority  @default(MEDIUM)
   dueDate           DateTime?
-  dueTime           String?
-  dueAt             DateTime?
-  startDate         DateTime?
-  startTime         String?
-  startedAt         DateTime?
-  category          String?
   isRecurring       Boolean       @default(false)
   recurrence        String?
-  employeeId        Int?
-  departmentId      Int?
-  designationId     Int?
   assignedToId      Int?
   createdById       Int
-  submittedAt       DateTime?
-  submissionComment String?
-  completedAt       DateTime?
-  approvedById      Int?
-  approvedByName    String?
-  approvedAt        DateTime?
-  rejectedById      Int?
-  rejectedByName    String?
-  rejectedAt        DateTime?
-  rejectionReason   String?
-  notes             String?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
   deletedAt         DateTime?
-  employee          Employee?     @relation(fields: [employeeId], references: [id])
-  department        Department?   @relation(fields: [departmentId], references: [id])
-  designation       Designation?  @relation(fields: [designationId], references: [id])
+  approvedAt        DateTime?
+  approvedById      Int?
+  approvedByName    String?
+  category          String?
+  departmentId      Int?
+  designationId     Int?
+  dueAt             DateTime?
+  dueTime           String?
+  employeeId        Int?
+  notes             String?
+  rejectedAt        DateTime?
+  rejectedById      Int?
+  rejectedByName    String?
+  rejectionReason   String?
+  startDate         DateTime?
+  startTime         String?
+  submissionComment String?
+  submittedAt       DateTime?
+  taskNumber        String?
+  completedAt       DateTime?
+  startedAt         DateTime?
   assignedTo        User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
   createdBy         User          @relation("CreatedTasks", fields: [createdById], references: [id])
   customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department        Department?   @relation(fields: [departmentId], references: [id])
+  designation       Designation?  @relation(fields: [designationId], references: [id])
+  employee          Employee?     @relation(fields: [employeeId], references: [id])
+  history           TaskHistory[]
   proofs            TaskProof[]
   reviews           TaskReview[]
-  history           TaskHistory[]
 
   @@index([customerId])
   @@index([employeeId])
@@ -871,14 +873,14 @@ model BranchGeofence {
   isActive           Boolean            @default(true)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
-  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employees          Employee[]
   attendances        Attendance[]
-  publicHolidays     PublicHoliday[]
   attendancePolicies AttendancePolicy[]
-  leavePolicies      LeavePolicy[]
-  salaryPolicies     SalaryPolicy[]
+  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   claimPolicies      ClaimPolicy[]
+  employees          Employee[]
+  leavePolicies      LeavePolicy[]
+  publicHolidays     PublicHoliday[]
+  salaryPolicies     SalaryPolicy[]
 
   @@index([customerId])
   @@index([isActive])
@@ -952,8 +954,6 @@ model Employee {
   joiningDate        DateTime                 @default(now())
   departmentId       Int?
   designationId      Int?
-  officeId           Int?
-  shiftId            Int?
   managerId          Int?
   employmentType     String                   @default("FULL_TIME")
   branch             String                   @default("Head Office")
@@ -962,28 +962,32 @@ model Employee {
   bankDetails        Json?
   documents          Json?
   status             String                   @default("ACTIVE")
-  mobileLoginEnabled Boolean                  @default(true)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
+  mobileLoginEnabled Boolean                  @default(true)
+  officeId           Int?
+  shiftId            Int?
   attendances        Attendance[]
   customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department         Department?              @relation(fields: [departmentId], references: [id])
   designation        Designation?             @relation(fields: [designationId], references: [id])
   office             BranchGeofence?          @relation(fields: [officeId], references: [id])
-  shift              Shift?                   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  shift              Shift?                   @relation(fields: [shiftId], references: [id])
   user               User?                    @relation(fields: [userId], references: [id])
-  leaveRequests      LeaveRequest[]
+  employeeClaims     EmployeeClaim[]
   leaveBalances      EmployeeLeaveBalance[]
+  employeeLoans      EmployeeLoan[]
   leaveAdjustments   LeaveAdjustmentHistory[]
+  leaveRequests      LeaveRequest[]
   payrollItems       PayrollItem[]
   remoteRequests     RemoteRequest[]
   salarySlips        SalarySlip[]
   salaryStructures   SalaryStructure[]
+  tasks              Task[]
   teamMembers        TeamMember[]
   visits             Visit[]
   works              Work[]
   workTasks          WorkTask[]
-  tasks              Task[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -995,7 +999,6 @@ model Attendance {
   id                 Int               @id @default(autoincrement())
   customerId         Int
   employeeId         Int
-  officeId           Int?
   date               DateTime          @default(now())
   punchIn            DateTime?
   punchOut           DateTime?
@@ -1004,11 +1007,12 @@ model Attendance {
   status             AttendanceStatus  @default(PRESENT)
   locationIn         String?
   locationOut        String?
-  latitude           Float?
-  longitude          Float?
-  distanceFromOffice Float?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
+  distanceFromOffice Float?
+  latitude           Float?
+  longitude          Float?
+  officeId           Int?
   employee           Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office             BranchGeofence?   @relation(fields: [officeId], references: [id])
   breaks             AttendanceBreak[]
@@ -1040,9 +1044,9 @@ model LeaveType {
   isActive           Boolean                  @default(true)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
-  leaveRequests      LeaveRequest[]
   leaveBalances      EmployeeLeaveBalance[]
   leaveAdjustments   LeaveAdjustmentHistory[]
+  leaveRequests      LeaveRequest[]
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -1082,7 +1086,7 @@ model PublicHoliday {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  office      BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  office      BranchGeofence? @relation(fields: [officeId], references: [id])
 
   @@index([customerId])
   @@index([officeId])
@@ -1126,10 +1130,10 @@ model LeaveAdjustmentHistory {
   adjustedById     Int?
   adjustedByName   String?
   createdAt        DateTime              @default(now())
+  balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id])
   customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee         Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType        LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
-  balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([employeeId])
@@ -1142,38 +1146,20 @@ model AttendancePolicy {
   customerId                 Int
   officeId                   Int?
   name                       String          @default("Standard Attendance Policy")
-  officeStartTime            String          @default("09:30")
-  officeEndTime              String          @default("18:30")
   workingDaysPerWeek         Int             @default(5)
   workingHoursPerDay         Float           @default(8.0)
-  punchInRequired            Boolean         @default(true)
-  earlyPunchInAllowed        Boolean         @default(true)
-  multiplePunchInAllowed     Boolean         @default(false)
   gracePeriodMinutes         Int             @default(15)
   lateArrivalThresholdMins   Int             @default(30)
-  lateRuleAction             String          @default("MARK_LATE")
-  punchOutRequired           Boolean         @default(true)
-  minWorkingHours            Float           @default(8.0)
-  earlyCheckoutGraceMinutes  Int             @default(15)
   earlyCheckoutThresholdMins Int             @default(30)
-  earlyCheckoutAction        String          @default("MARK_EARLY")
-  autoPunchOut               Boolean         @default(false)
   fullDayAbsenceDeductionPct Float           @default(100.0)
   halfDayDeductionPct        Float           @default(50.0)
   lateArrivalDeductionPct    Float           @default(25.0)
   earlyCheckoutDeductionPct  Float           @default(25.0)
-  breakExcessDeductionPct    Float           @default(100.0)
   minWorkingHoursForHalfDay  Float           @default(4.0)
   overtimeEligible           Boolean         @default(true)
   breakAllowed               Boolean         @default(true)
-  breakRequired              Boolean         @default(false)
   maxBreakDurationMins       Int             @default(60)
-  minBreakDurationMins       Int             @default(15)
   maxBreaksPerDay            Int             @default(2)
-  breakGracePeriodMins       Int             @default(5)
-  breakType                  String          @default("UNPAID")
-  breakExcessAction          String          @default("DEDUCT_EXCESS")
-  allowBreakExtension        Boolean         @default(false)
   officeAttendanceRequired   Boolean         @default(true)
   gpsRequired                Boolean         @default(true)
   allowOutsideCheckIn        Boolean         @default(false)
@@ -1184,8 +1170,26 @@ model AttendancePolicy {
   updatedByName              String?
   createdAt                  DateTime        @default(now())
   updatedAt                  DateTime        @updatedAt
+  officeStartTime            String          @default("09:30")
+  officeEndTime              String          @default("18:30")
+  punchInRequired            Boolean         @default(true)
+  earlyPunchInAllowed        Boolean         @default(true)
+  multiplePunchInAllowed     Boolean         @default(false)
+  lateRuleAction             String          @default("MARK_LATE")
+  punchOutRequired           Boolean         @default(true)
+  minWorkingHours            Float           @default(8.0)
+  earlyCheckoutGraceMinutes  Int             @default(15)
+  earlyCheckoutAction        String          @default("MARK_EARLY")
+  autoPunchOut               Boolean         @default(false)
+  breakRequired              Boolean         @default(false)
+  minBreakDurationMins       Int             @default(15)
+  breakGracePeriodMins       Int             @default(5)
+  breakType                  String          @default("UNPAID")
+  breakExcessAction          String          @default("DEDUCT_EXCESS")
+  breakExcessDeductionPct    Float           @default(100.0)
+  allowBreakExtension        Boolean         @default(false)
   customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  office                     BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id])
 
   @@index([customerId])
   @@index([officeId])
@@ -1217,7 +1221,7 @@ model LeavePolicy {
   createdAt                   DateTime        @default(now())
   updatedAt                   DateTime        @updatedAt
   customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  office                      BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  office                      BranchGeofence? @relation(fields: [officeId], references: [id])
 
   @@index([customerId])
   @@index([officeId])
@@ -1251,7 +1255,7 @@ model SalaryPolicy {
   createdAt                 DateTime        @default(now())
   updatedAt                 DateTime        @updatedAt
   customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  office                    BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  office                    BranchGeofence? @relation(fields: [officeId], references: [id])
 
   @@index([customerId])
   @@index([officeId])
@@ -1279,7 +1283,7 @@ model ClaimPolicy {
   createdAt                  DateTime        @default(now())
   updatedAt                  DateTime        @updatedAt
   customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  office                     BranchGeofence? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id])
 
   @@index([customerId])
   @@index([officeId])
@@ -1298,13 +1302,13 @@ model RemoteRequest {
   status          RequestStatus @default(PENDING)
   rejectionReason String?
   approvedById    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
   approvedByName  String?
   approvedAt      DateTime?
   rejectedById    Int?
   rejectedByName  String?
   rejectedAt      DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -1333,9 +1337,9 @@ model Shift {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   deletedAt             DateTime?
+  employees             Employee[]
   customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   guidance              ShiftGuidance?
-  employees             Employee[]
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -1357,8 +1361,8 @@ model ShiftGuidance {
   notes                    String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
-  shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
 }
@@ -1368,12 +1372,8 @@ model Visit {
   customerId       Int
   employeeId       Int
   leadId           Int?
-  companyId        Int?
-  contactId        Int?
-  dealId           Int?
   customerName     String
   purpose          String
-  visitType        String?     @default("CLIENT_MEETING")
   date             DateTime    @default(now())
   time             String?
   location         String
@@ -1381,18 +1381,22 @@ model Visit {
   longitude        Float?
   status           VisitStatus @default(SCHEDULED)
   notes            String?
-  outcome          String?
-  nextFollowUpDate DateTime?
   duration         Float?
   startedAt        DateTime?
   completedAt      DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
-  employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  lead             Lead?       @relation(fields: [leadId], references: [id])
+  companyId        Int?
+  contactId        Int?
+  dealId           Int?
+  nextFollowUpDate DateTime?
+  outcome          String?
+  visitType        String?     @default("CLIENT_MEETING")
   company          Company?    @relation(fields: [companyId], references: [id])
   contact          Contact?    @relation(fields: [contactId], references: [id])
   deal             Deal?       @relation(fields: [dealId], references: [id])
+  employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead             Lead?       @relation(fields: [leadId], references: [id])
 
   @@index([customerId])
   @@index([employeeId])
@@ -1668,12 +1672,68 @@ model DataCapturePlace {
   isImported     Boolean        @default(false)
   importedLeadId Int?
   createdAt      DateTime       @default(now())
-  job            DataCaptureJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
   customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job            DataCaptureJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
 
   @@index([jobId])
   @@index([customerId])
   @@index([googlePlaceId])
+}
+
+model EmployeeLoan {
+  id               Int        @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  loanAmount       Float
+  approvedAmount   Float?
+  reason           String
+  termMonths       Int        @default(12)
+  monthlyEmi       Float      @default(0.0)
+  interestRate     Float      @default(0.0)
+  startDate        DateTime?
+  remainingBalance Float?
+  status           LoanStatus @default(PENDING)
+  rejectionReason  String?
+  approvedById     Int?
+  approvedByName   String?
+  documents        String[]   @default([])
+  notes            String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee         Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([status])
+}
+
+model EmployeeClaim {
+  id              Int         @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  category        String      @default("TRAVEL")
+  amount          Float
+  approvedAmount  Float?
+  claimDate       DateTime    @default(now())
+  description     String
+  receiptUrl      String?
+  status          ClaimStatus @default(PENDING)
+  rejectionReason String?
+  paymentStatus   String      @default("UNPAID")
+  paidAt          DateTime?
+  reviewedById    Int?
+  reviewedByName  String?
+  reviewedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  customer        Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([status])
+  @@index([category])
 }
 
 enum RoleType {
@@ -1712,9 +1772,9 @@ enum LeadStatus {
   PAYMENT
   WORK_STARTED
   WON
-  CONVERTED
   LOST
   CANCELLED
+  CONVERTED
 }
 
 enum LeadPriority {
@@ -1734,11 +1794,11 @@ enum ContactType {
 enum TaskStatus {
   PENDING
   IN_PROGRESS
+  COMPLETED
+  CANCELLED
   SUBMITTED
   UNDER_REVIEW
-  COMPLETED
   REJECTED
-  CANCELLED
 }
 
 enum TaskPriority {
@@ -1869,4 +1929,21 @@ enum WorkPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+  PAID
+  CANCELLED
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
 }

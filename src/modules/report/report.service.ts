@@ -55,4 +55,61 @@ export class ReportService {
       totalWorkItems: (scheduled + inProgress + completed) || 54,
     };
   }
+
+  async exportReport(customerId: number | string, body: { reportType: string; format?: 'CSV' | 'PDF'; fromDate?: string; toDate?: string }) {
+    const numCustomerId = Number(customerId) || 1;
+    const type = body.reportType?.toUpperCase() || 'ATTENDANCE';
+    const format = body.format?.toUpperCase() || 'CSV';
+
+    let csvContent = '';
+    let filename = `report_${type.toLowerCase()}_${new Date().toISOString().split('T')[0]}.${format.toLowerCase()}`;
+
+    if (type === 'ATTENDANCE') {
+      const records = await this.prisma.attendance.findMany({
+        where: { customerId: numCustomerId },
+        include: { employee: true },
+        take: 100,
+        orderBy: { date: 'desc' },
+      });
+      csvContent = 'Date,Employee Code,Employee Name,Status,Punch In,Punch Out,Working Hours,Location\n' +
+        records.map((r) => `"${r.date.toISOString().split('T')[0]}","${r.employee?.employeeCode || ''}","${r.employee?.firstName || ''} ${r.employee?.lastName || ''}","${r.status}","${r.punchIn ? r.punchIn.toISOString() : ''}","${r.punchOut ? r.punchOut.toISOString() : ''}","${r.workingHours || 0} hrs","${r.locationIn || 'Office'}"`).join('\n');
+    } else if (type === 'PAYROLL') {
+      const slips = await this.prisma.salarySlip.findMany({
+        where: { customerId: numCustomerId },
+        include: { employee: true },
+        take: 100,
+        orderBy: { generatedAt: 'desc' },
+      });
+      csvContent = 'Slip Number,Pay Period,Employee Code,Employee Name,Gross Salary,Total Deductions,Net Salary,Status\n' +
+        slips.map((s) => `"${s.slipNumber}","${s.payPeriod}","${s.employee?.employeeCode || ''}","${s.employee?.firstName || ''} ${s.employee?.lastName || ''}",${s.grossSalary},${s.totalDeductions},${s.netSalary},"${s.status}"`).join('\n');
+    } else if (type === 'LEAVES') {
+      const leaves = await this.prisma.leaveRequest.findMany({
+        where: { customerId: numCustomerId },
+        include: { employee: true, leaveType: true },
+        take: 100,
+        orderBy: { createdAt: 'desc' },
+      });
+      csvContent = 'Employee Code,Employee Name,Leave Type,From Date,To Date,Days,Reason,Status\n' +
+        leaves.map((l) => `"${l.employee?.employeeCode || ''}","${l.employee?.firstName || ''} ${l.employee?.lastName || ''}","${l.leaveType?.name || 'General'}","${l.fromDate.toISOString().split('T')[0]}","${l.toDate.toISOString().split('T')[0]}",${l.days},"${(l.reason || '').replace(/"/g, '""')}","${l.status}"`).join('\n');
+    } else {
+      const employees = await this.prisma.employee.findMany({
+        where: { customerId: numCustomerId },
+        include: { department: true, designation: true },
+        take: 100,
+      });
+      csvContent = 'Employee Code,Full Name,Email,Phone,Department,Designation,Status\n' +
+        employees.map((e) => `"${e.employeeCode}","${e.firstName} ${e.lastName}","${e.email}","${e.phone || ''}","${e.department?.name || ''}","${e.designation?.name || ''}","${e.status}"`).join('\n');
+    }
+
+    return {
+      success: true,
+      reportType: type,
+      format,
+      filename,
+      data: csvContent,
+      rowsCount: csvContent.split('\n').length - 1,
+      generatedAt: new Date().toISOString(),
+    };
+  }
 }
+

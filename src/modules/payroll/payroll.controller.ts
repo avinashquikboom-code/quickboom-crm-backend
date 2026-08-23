@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
@@ -94,6 +94,43 @@ export class PayrollController {
     };
   }
 
+  @Get('history')
+  async getHistory(
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
+    return this.payrollService.getPayrollHistory(customerId);
+  }
+
+  @Get('structures')
+  async getStructures(
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
+    return this.payrollService.getSalaryStructures(customerId);
+  }
+
+  @Post('structures')
+  async saveStructure(
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any
+  ) {
+    const customerId = body.customerId || currentCustomer;
+    return this.payrollService.saveSalaryStructure(customerId, body);
+  }
+
+  @Delete('structures/:id')
+  async deleteStructure(
+    @Param('id') id: string,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const customerId = customerIdQuery || currentCustomer;
+    return this.payrollService.deleteSalaryStructure(customerId, id);
+  }
+
   @Get(':id')
   async findOne(
     @Param('id') id: string,
@@ -104,4 +141,5 @@ export class PayrollController {
     return this.payrollService.getPayrollById(customerId, id);
   }
 }
+
 

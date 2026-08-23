@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ReportService } from './report.service';
 
@@ -26,5 +26,15 @@ export class ReportController {
   async getWork(@Query('customerId') customerIdQuery?: string) {
     const customerId = customerIdQuery || 'default-customer';
     return this.reportService.getWorkReport(customerId);
+  }
+
+  @Post('export')
+  @ApiOperation({ summary: 'Export reports as structured CSV/PDF datasets' })
+  async exportReport(
+    @Query('customerId') customerIdQuery: string,
+    @Body() body: { reportType: string; format?: 'CSV' | 'PDF'; fromDate?: string; toDate?: string }
+  ) {
+    const customerId = customerIdQuery || 'default-customer';
+    return this.reportService.exportReport(customerId, body);
   }
 }

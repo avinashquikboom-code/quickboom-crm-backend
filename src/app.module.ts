@@ -29,6 +29,8 @@ import { LeaveModule } from './modules/leave/leave.module';
 import { RemoteWorkModule } from './modules/remote-work/remote-work.module';
 import { CompanyModule } from './modules/company/company.module';
 import { ShiftModule } from './modules/shift/shift.module';
+import { LoanModule } from './modules/loan/loan.module';
+import { ClaimModule } from './modules/claim/claim.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -66,7 +68,10 @@ import { AppController } from './app.controller';
     DataCaptureModule,
     DataManagementModule,
     ShiftModule,
+    LoanModule,
+    ClaimModule,
   ],
   controllers: [AppController],
 })
 export class AppModule {}
+

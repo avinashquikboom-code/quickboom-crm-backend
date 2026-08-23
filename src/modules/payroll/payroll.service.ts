@@ -299,4 +299,153 @@ export class PayrollService {
       },
     });
   }
+
+  async getPayrollHistory(customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const payrolls = await this.prisma.payroll.findMany({
+      where: { customerId: numCustomerId },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      take: 12,
+      include: {
+        items: true,
+      },
+    });
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    if (!payrolls || payrolls.length === 0) {
+      // Default generated rolling history based on active employees if no locked payrolls
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1;
+      const result = [];
+
+      for (let i = 5; i >= 0; i--) {
+        let m = currentMonth - i;
+        let y = currentYear;
+        if (m <= 0) {
+          m += 12;
+          y -= 1;
+        }
+        result.push({
+          month: monthNames[m - 1],
+          year: y,
+          gross: 0,
+          net: 0,
+          deductions: 0,
+          employees: 0,
+          status: 'UNPROCESSED',
+        });
+      }
+      return result;
+    }
+
+    return payrolls.reverse().map((p) => ({
+      month: monthNames[p.month - 1] || `M${p.month}`,
+      year: p.year,
+      gross: p.grossSalary,
+      net: p.netSalary,
+      deductions: p.totalDeductions,
+      employees: p.totalEmployees,
+      status: p.status,
+    }));
+  }
+
+  async getSalaryStructures(customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    return this.prisma.salaryStructure.findMany({
+      where: { customerId: numCustomerId },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+            designation: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async saveSalaryStructure(customerId: number | string | undefined, data: any) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const basicSalary = Number(data.basicSalary) || 0;
+    const hra = Number(data.hra) || 0;
+    const allowances = Number(data.allowances) || 0;
+    const specialAllowance = Number(data.specialAllowance) || 0;
+    const bonus = Number(data.bonus) || 0;
+    const commission = Number(data.commission) || 0;
+    const overtime = Number(data.overtime) || 0;
+    const otherEarnings = Number(data.otherEarnings) || 0;
+
+    const pf = Number(data.pf) || Math.round(basicSalary * 0.12);
+    const esi = Number(data.esi) || Math.round(basicSalary * 0.0075);
+    const professionalTax = Number(data.professionalTax) || 200;
+    const tds = Number(data.tds) || 0;
+    const otherDeductions = Number(data.otherDeductions) || 0;
+
+    const grossSalary = basicSalary + hra + allowances + specialAllowance + bonus + commission + overtime + otherEarnings;
+    const totalDeductions = pf + esi + professionalTax + tds + otherDeductions;
+    const netSalary = Math.max(0, grossSalary - totalDeductions);
+
+    if (data.id) {
+      return this.prisma.salaryStructure.update({
+        where: { id: Number(data.id) },
+        data: {
+          basicSalary,
+          hra,
+          allowances,
+          specialAllowance,
+          bonus,
+          commission,
+          overtime,
+          otherEarnings,
+          pf,
+          esi,
+          professionalTax,
+          tds,
+          otherDeductions,
+          grossSalary,
+          totalDeductions,
+          netSalary,
+          status: data.status || 'ACTIVE',
+        },
+      });
+    }
+
+    return this.prisma.salaryStructure.create({
+      data: {
+        customerId: numCustomerId,
+        employeeId: Number(data.employeeId),
+        basicSalary,
+        hra,
+        allowances,
+        specialAllowance,
+        bonus,
+        commission,
+        overtime,
+        otherEarnings,
+        pf,
+        esi,
+        professionalTax,
+        tds,
+        otherDeductions,
+        grossSalary,
+        totalDeductions,
+        netSalary,
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  async deleteSalaryStructure(customerId: number | string | undefined, id: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    return this.prisma.salaryStructure.deleteMany({
+      where: { id: Number(id), customerId: numCustomerId },
+    });
+  }
 }
+
