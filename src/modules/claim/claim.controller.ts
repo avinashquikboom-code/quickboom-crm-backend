@@ -33,18 +33,24 @@ export class ClaimController {
 
   @Get()
   @ApiOperation({ summary: 'Get all employee claims with category and status filtering' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'status', required: false, enum: ClaimStatus })
   @ApiQuery({ name: 'category', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('status') status?: ClaimStatus,
     @Query('category') category?: string,
     @Query('employeeId') employeeId?: string,
     @Query('search') search?: string,
   ) {
     return this.claimService.findAll(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
       status,
       category,
       employeeId: employeeId ? Number(employeeId) : undefined,

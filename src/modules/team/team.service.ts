@@ -6,28 +6,67 @@ import { CreateTeamDto, AddTeamMemberDto } from './dto/team.dto';
 export class TeamService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId?: number | string) {
+  async findAll(
+    customerId?: number | string,
+    query?: { page?: number; limit?: number; search?: string },
+  ) {
     const numCustomerId = Number(customerId);
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = { isActive: true };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
     }
-    return this.prisma.team.findMany({
-      where,
-      include: {
-        members: {
-          include: {
-            employee: true,
+
+    if (query?.search && query.search.trim()) {
+      where.OR = [
+        { name: { contains: query.search.trim(), mode: 'insensitive' } },
+        { description: { contains: query.search.trim(), mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.team.findMany({
+        where,
+        include: {
+          members: {
+            include: {
+              employee: true,
+            },
+          },
+          _count: {
+            select: {
+              works: true,
+            },
           },
         },
-        _count: {
-          select: {
-            works: true,
-          },
-        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.team.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: items,
+      items,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
       },
-      orderBy: { createdAt: 'desc' },
-    });
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async findOne(customerId: number | string, id: number | string) {

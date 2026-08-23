@@ -47,21 +47,28 @@ export class ClaimService {
     };
   }
 
-  async findAll(customerId: any, filters?: { status?: ClaimStatus; category?: string; employeeId?: number; search?: string }) {
+  async findAll(
+    customerId: any,
+    query?: { status?: ClaimStatus; category?: string; employeeId?: number; search?: string; page?: number; limit?: number },
+  ) {
     const cid = this.resolveCustomerId(customerId);
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = { customerId: cid };
 
-    if (filters?.status) {
-      where.status = filters.status;
+    if (query?.status) {
+      where.status = query.status;
     }
-    if (filters?.category) {
-      where.category = filters.category;
+    if (query?.category && query.category !== 'ALL') {
+      where.category = query.category;
     }
-    if (filters?.employeeId) {
-      where.employeeId = Number(filters.employeeId);
+    if (query?.employeeId) {
+      where.employeeId = Number(query.employeeId);
     }
-    if (filters?.search) {
-      const q = filters.search.trim();
+    if (query?.search) {
+      const q = query.search.trim();
       where.OR = [
         { description: { contains: q, mode: 'insensitive' } },
         { category: { contains: q, mode: 'insensitive' } },
@@ -71,31 +78,55 @@ export class ClaimService {
       ];
     }
 
-    const items = await this.prisma.employeeClaim.findMany({
-      where,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            employeeCode: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            department: { select: { name: true } },
-            designation: { select: { name: true } },
+    const [items, total] = await Promise.all([
+      this.prisma.employeeClaim.findMany({
+        where,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              department: { select: { name: true } },
+              designation: { select: { name: true } },
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.employeeClaim.count({ where }),
+    ]);
 
-    return items.map((claim) => ({
+    const formatted = items.map((claim) => ({
       ...claim,
       employeeName: `${claim.employee?.firstName || ''} ${claim.employee?.lastName || ''}`.trim() || 'Staff Member',
       department: claim.employee?.department?.name || 'General',
       designation: claim.employee?.designation?.name || 'Staff',
     }));
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: formatted,
+      items: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async findOne(customerId: any, id: string | number) {

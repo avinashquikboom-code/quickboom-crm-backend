@@ -17,10 +17,19 @@ export class TeamController {
   constructor(private readonly teamService: TeamService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get all teams with assigned members' })
-  async findAll(@Query('customerId') customerIdQuery?: string) {
+  @ApiOperation({ summary: 'Get all teams with assigned members and pagination' })
+  async findAll(
+    @Query('customerId') customerIdQuery?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+  ) {
     const customerId = customerIdQuery || 'default-customer';
-    return this.teamService.findAll(customerId);
+    return this.teamService.findAll(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      search,
+    });
   }
 
   @Get(':id')
