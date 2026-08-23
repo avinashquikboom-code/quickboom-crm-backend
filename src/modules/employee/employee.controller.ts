@@ -132,16 +132,28 @@ export class EmployeeController {
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
   @ApiQuery({ name: 'date', required: false })
   @ApiQuery({ name: 'branch', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   async getAttendance(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
     @Query('date') date?: string,
     @Query('branch') branch?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin, { date, branch });
+    return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin, {
+      date,
+      branch,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
   }
 
   @Get('hrm/live-attendance')

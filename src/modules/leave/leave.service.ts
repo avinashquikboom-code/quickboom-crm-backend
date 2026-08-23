@@ -310,6 +310,12 @@ export class LeaveService {
         approved: approvedCount,
         rejected: rejectedCount,
       },
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
       meta: {
         page,
         limit,
