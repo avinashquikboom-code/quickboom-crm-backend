@@ -22,9 +22,10 @@ export class LeadRepository {
     const numCustomerId = Number(customerId);
     const numCreatedById = Number(createdById);
     const status = dto.status || LeadStatus.NEW;
+    const { notes, ...leadData } = dto;
     const lead = await this.prisma.lead.create({
       data: {
-        ...dto,
+        ...leadData,
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         status,
         customerId: numCustomerId,
@@ -39,6 +40,16 @@ export class LeadRepository {
         },
       },
     });
+
+    if (notes) {
+      await this.prisma.leadNote.create({
+        data: {
+          leadId: lead.id,
+          userId: numCreatedById,
+          content: notes,
+        },
+      });
+    }
 
     // Record initial status history
     await this.prisma.leadStatusHistory.create({
@@ -407,10 +418,11 @@ export class LeadRepository {
   async update(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+    const { notes, ...leadData } = dto;
     return this.prisma.lead.updateMany({
       where: { id: numId, customerId: numCustomerId, deletedAt: null },
       data: {
-        ...dto,
+        ...leadData,
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
       } as any,
     });

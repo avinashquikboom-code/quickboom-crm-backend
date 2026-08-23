@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsArray,
   IsEmail,
@@ -165,9 +165,14 @@ export class CreateLeadDto {
   @IsNumber()
   @IsOptional()
   reviewCount?: number;
+
+  @ApiPropertyOptional({ example: 'Initial requirement notes' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
-export class UpdateLeadDto extends CreateLeadDto {}
+export class UpdateLeadDto extends PartialType(CreateLeadDto) {}
 
 export class CheckDuplicateDto {
   @ApiPropertyOptional({ example: '+91 98200 12345' })
