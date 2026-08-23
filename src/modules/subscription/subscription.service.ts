@@ -836,6 +836,63 @@ export class SubscriptionService {
     };
   }
 
+  async updatePlanStatus(id: number | string, isActive: boolean) {
+    const planId = Number(id);
+    const plan = await this.prisma.plan.update({
+      where: { id: planId },
+      data: { isActive },
+    });
+    return {
+      id: plan.id,
+      name: plan.name,
+      isActive: plan.isActive,
+    };
+  }
+
+  async getPlanFeatures(id: number | string) {
+    const plan = await this.getPlanById(id);
+    return Array.isArray(plan.features) ? plan.features : [];
+  }
+
+  async addPlanFeature(id: number | string, feature: string) {
+    const plan = await this.prisma.plan.findUnique({ where: { id: Number(id) } });
+    if (!plan) throw new NotFoundException(`Plan with ID ${id} not found`);
+    const features = Array.isArray(plan.features) ? [...(plan.features as string[]), feature] : [feature];
+    const updated = await this.prisma.plan.update({
+      where: { id: Number(id) },
+      data: { features },
+    });
+    return updated.features;
+  }
+
+  async updatePlanFeature(id: number | string, featureIndex: number, newFeature: string) {
+    const plan = await this.prisma.plan.findUnique({ where: { id: Number(id) } });
+    if (!plan) throw new NotFoundException(`Plan with ID ${id} not found`);
+    const features = Array.isArray(plan.features) ? [...(plan.features as string[])] : [];
+    if (featureIndex >= 0 && featureIndex < features.length) {
+      features[featureIndex] = newFeature;
+    }
+    const updated = await this.prisma.plan.update({
+      where: { id: Number(id) },
+      data: { features },
+    });
+    return updated.features;
+  }
+
+  async deletePlanFeature(id: number | string, featureIndex: number) {
+    const plan = await this.prisma.plan.findUnique({ where: { id: Number(id) } });
+    if (!plan) throw new NotFoundException(`Plan with ID ${id} not found`);
+    const features = Array.isArray(plan.features) ? [...(plan.features as string[])] : [];
+    if (featureIndex >= 0 && featureIndex < features.length) {
+      features.splice(featureIndex, 1);
+    }
+    const updated = await this.prisma.plan.update({
+      where: { id: Number(id) },
+      data: { features },
+    });
+    return updated.features;
+  }
+
   async deletePlan(id: number | string) {
     const planId = Number(id);
     await this.prisma.plan.update({

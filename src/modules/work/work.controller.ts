@@ -101,6 +101,58 @@ export class WorkController {
     return this.workService.getCustomerUsage(customerId);
   }
 
+  @Post('auto-generate')
+  @ApiOperation({ summary: 'Automatically generate plan deliverable schedules' })
+  async generatePlanSchedules(
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    if (!customerIdQuery) {
+      throw new ForbiddenException('CustomerId required for schedule generation');
+    }
+    return this.workService.generatePlanSchedules(customerIdQuery);
+  }
+
+  @Post('customer/auto-generate')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Automatically generate schedules for authenticated customer' })
+  async generateCustomerSchedules(@CurrentCustomer() customerId: string) {
+    if (!customerId) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+    return this.workService.generatePlanSchedules(customerId);
+  }
+
+  @Post(':id/reschedule')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer reschedule existing schedule' })
+  async rescheduleWork(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
+  ) {
+    if (!customerId) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+    return this.workService.rescheduleWork(customerId, id, dto);
+  }
+
+  @Patch(':id/reschedule')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer reschedule existing schedule (PATCH)' })
+  async rescheduleWorkPatch(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
+  ) {
+    if (!customerId) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+    return this.workService.rescheduleWork(customerId, id, dto);
+  }
+
   @Post('customer-schedule')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()

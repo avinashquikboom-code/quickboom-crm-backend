@@ -760,6 +760,246 @@ export class WorkService {
   }
 
   /**
+   * Automatically generate plan deliverable schedules based on active plan entitlements.
+   * Fully idempotent: only creates missing items, does not duplicate existing ones.
+   */
+  async generatePlanSchedules(customerId: number | string) {
+    const numCustomerId = Number(customerId);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new BadRequestException('Valid customer context required');
+    }
+
+    const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
+    if (!activePlan.isActive || activePlan.isExpired) {
+      return {
+        success: false,
+        message: 'Cannot generate schedules. Plan is inactive or expired.',
+        createdCount: 0,
+        schedules: [],
+      };
+    }
+
+    const entitlements = await this.prisma.planEntitlement.findMany({
+      where: { customerId: numCustomerId },
+      orderBy: { id: 'asc' },
+    });
+
+    if (entitlements.length === 0) {
+      return {
+        success: true,
+        message: 'No entitlements found to generate schedules.',
+        createdCount: 0,
+        schedules: [],
+      };
+    }
+
+    const startDate = activePlan.startDate ? new Date(activePlan.startDate) : new Date();
+    const endDate = activePlan.endDate ? new Date(activePlan.endDate) : new Date(startDate.getTime() + 30 * 86400000);
+    const totalDays = Math.max(1, Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+    let totalCreated = 0;
+
+    const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
+      const createdItems: any[] = [];
+
+      for (const ent of entitlements) {
+        if (ent.totalQty <= 0) continue;
+
+        // Query existing non-cancelled work items for this entitlement
+        const existingWorks = await tx.work.findMany({
+          where: {
+            customerId: numCustomerId,
+            entitlementId: ent.id,
+            status: { not: WorkStatus.CANCELLED },
+          },
+          orderBy: { id: 'asc' },
+        });
+
+        const missingQty = ent.totalQty - existingWorks.length;
+        if (missingQty <= 0) {
+          continue;
+        }
+
+        // Determine WorkType from service name
+        let workType: WorkType = WorkType.REELS_SHOOT;
+        const sNameLower = ent.serviceName.toLowerCase();
+        if (sNameLower.includes('reel')) {
+          workType = WorkType.REELS_SHOOT;
+        } else if (sNameLower.includes('post') || sNameLower.includes('creative')) {
+          workType = WorkType.POST_DESIGN;
+        } else if (sNameLower.includes('story') || sNameLower.includes('stories')) {
+          workType = WorkType.STORY_DESIGN;
+        } else if (sNameLower.includes('influencer')) {
+          workType = WorkType.INFLUENCER_PROMO;
+        } else if (sNameLower.includes('video') || sNameLower.includes('edit')) {
+          workType = WorkType.VIDEO_EDITING;
+        } else if (sNameLower.includes('ad') || sNameLower.includes('meta') || sNameLower.includes('google')) {
+          workType = WorkType.META_ADS;
+        } else if (sNameLower.includes('social')) {
+          workType = WorkType.SOCIAL_MEDIA_MANAGEMENT;
+        }
+
+        // Distribute schedule dates across plan duration
+        const stepInterval = Math.max(2, Math.floor(totalDays / (ent.totalQty + 1)));
+
+        for (let i = 0; i < missingQty; i++) {
+          const sequenceNumber = existingWorks.length + i + 1;
+          const dayOffset = Math.min(totalDays - 1, (sequenceNumber * stepInterval));
+          const targetDate = new Date(startDate.getTime() + dayOffset * 86400000);
+
+          // Avoid Sunday (day 0)
+          if (targetDate.getDay() === 0) {
+            targetDate.setDate(targetDate.getDate() + 1);
+          }
+
+          const work = await tx.work.create({
+            data: {
+              customerId: numCustomerId,
+              planId: ent.planId || activePlan.planId,
+              entitlementId: ent.id,
+              workType,
+              title: `${ent.serviceName} #${sequenceNumber}`,
+              description: `System-generated schedule for ${ent.serviceName} (Sequence #${sequenceNumber} of ${ent.totalQty})`,
+              scheduledDate: targetDate,
+              scheduledTime: '11:00 AM',
+              priority: 'MEDIUM',
+              status: WorkStatus.SCHEDULED,
+            },
+          });
+
+          // Create standard sub-tasks
+          if (workType === WorkType.REELS_SHOOT) {
+            await tx.workTask.createMany({
+              data: [
+                { workId: work.id, title: '1. Reel Shoot', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: work.id, title: '2. Video Editing', stepOrder: 2, status: TaskStatus.PENDING },
+                { workId: work.id, title: '3. Customer Review', stepOrder: 3, status: TaskStatus.PENDING },
+                { workId: work.id, title: '4. Final Upload', stepOrder: 4, status: TaskStatus.PENDING },
+              ],
+            });
+          } else {
+            await tx.workTask.createMany({
+              data: [
+                { workId: work.id, title: '1. Content Design / Draft', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: work.id, title: '2. Customer Review', stepOrder: 2, status: TaskStatus.PENDING },
+                { workId: work.id, title: '3. Publishing / Upload', stepOrder: 3, status: TaskStatus.PENDING },
+              ],
+            });
+          }
+
+          createdItems.push(work);
+          totalCreated++;
+        }
+
+        // Update entitlement scheduledQty
+        const activeCount = await tx.work.count({
+          where: {
+            customerId: numCustomerId,
+            entitlementId: ent.id,
+            status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED, WorkStatus.IN_PROGRESS, WorkStatus.CUSTOMER_REVIEW, WorkStatus.REVISION_REQUESTED] },
+          },
+        });
+        await tx.planEntitlement.update({
+          where: { id: ent.id },
+          data: { scheduledQty: activeCount },
+        });
+      }
+
+      return createdItems;
+    });
+
+    return {
+      success: true,
+      message: `Successfully verified and generated ${totalCreated} plan schedules.`,
+      createdCount: totalCreated,
+      schedules: allGeneratedWorks,
+    };
+  }
+
+  /**
+   * Customer Reschedule existing schedule in-place.
+   * Updates the SAME work record without creating duplicates or consuming extra quota.
+   */
+  async rescheduleWork(
+    scopedCustomerId: number | string,
+    id: number | string,
+    dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
+  ) {
+    const numCustomerId = Number(scopedCustomerId);
+    const numId = Number(id);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+
+    const existing = await this.findOne(numCustomerId, numId);
+    if (existing.customerId !== numCustomerId) {
+      throw new ForbiddenException('You do not have permission to reschedule this item.');
+    }
+
+    if (existing.status === WorkStatus.COMPLETED || existing.status === WorkStatus.CANCELLED) {
+      throw new BadRequestException(`Cannot reschedule a work item with status ${existing.status}.`);
+    }
+
+    const newDate = new Date(dto.scheduledDate);
+    if (isNaN(newDate.getTime())) {
+      throw new BadRequestException('Invalid scheduledDate format.');
+    }
+
+    // Verify Active Plan Validity
+    const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
+    if (activePlan.endDate && newDate > new Date(activePlan.endDate)) {
+      throw new BadRequestException('Cannot reschedule past your plan expiration date.');
+    }
+
+    // Validate Sunday / working day rule
+    if (newDate.getDay() === 0) {
+      const customerPolicy = await this.prisma.attendancePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true },
+      });
+      if (customerPolicy && customerPolicy.workingDaysPerWeek <= 5) {
+        throw new BadRequestException('Rescheduling is not allowed on Sundays according to working calendar policy.');
+      }
+    }
+
+    const updated = await this.prisma.work.update({
+      where: { id: numId },
+      data: {
+        scheduledDate: newDate,
+        scheduledTime: dto.scheduledTime || existing.scheduledTime || '11:00 AM',
+        notes: dto.notes ? `${existing.notes || ''}\n[Rescheduled]: ${dto.notes}`.trim() : existing.notes,
+      },
+      include: {
+        customer: true,
+        assignedTo: true,
+        editor: true,
+        entitlement: true,
+        tasks: true,
+      },
+    });
+
+    // Notify assigned staff if present
+    const staffUserIds = [updated.assignedTo?.userId, updated.editor?.userId].filter(Boolean) as number[];
+    for (const uid of staffUserIds) {
+      await this.prisma.notification.create({
+        data: {
+          customerId: updated.customerId,
+          userId: uid,
+          title: 'Schedule Updated by Customer',
+          message: `Customer rescheduled "${updated.title}" to ${newDate.toLocaleDateString()} at ${updated.scheduledTime}.`,
+          type: 'SCHEDULE_RESCHEDULED',
+          data: { workId: updated.id, newDate: updated.scheduledDate },
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Schedule updated successfully.',
+      work: updated,
+    };
+  }
+
+  /**
    * Update intermediate task progress status
    */
   async updateTaskStatus(

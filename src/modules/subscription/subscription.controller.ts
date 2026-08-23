@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Param,
   Body,
@@ -28,9 +29,19 @@ export class SubscriptionController {
     private readonly planAccessService: PlanAccessService,
   ) {}
 
+  // ==========================================
+  // Public & Customer Plan Endpoints
+  // ==========================================
+
   @Get('plans')
   @ApiOperation({ summary: 'Get all active subscription plans (Customer & Public)' })
   async getPlans() {
+    return this.subscriptionService.getPlans(false);
+  }
+
+  @Get('customer/subscription-plans')
+  @ApiOperation({ summary: 'Get all active subscription plans for Customer' })
+  async getCustomerPlans() {
     return this.subscriptionService.getPlans(false);
   }
 
@@ -40,11 +51,29 @@ export class SubscriptionController {
     return this.subscriptionService.getPlanById(id);
   }
 
+  @Get('customer/subscription-plans/:id')
+  @ApiOperation({ summary: 'Get single plan details for Customer' })
+  async getCustomerPlanById(@Param('id') id: string) {
+    return this.subscriptionService.getPlanById(id);
+  }
+
+  // ==========================================
+  // Admin Plan Management Endpoints
+  // ==========================================
+
   @Get('admin/plans')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans including inactive (Admin)' })
   async getAdminPlans() {
+    return this.subscriptionService.getPlans(true);
+  }
+
+  @Get('admin/subscription-plans')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all subscription plans for Admin (Alias)' })
+  async getAdminSubscriptionPlans() {
     return this.subscriptionService.getPlans(true);
   }
 
@@ -56,11 +85,27 @@ export class SubscriptionController {
     return this.subscriptionService.getPlanById(id);
   }
 
+  @Get('admin/subscription-plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get plan by ID (Admin Alias)' })
+  async getAdminSubscriptionPlanById(@Param('id') id: string) {
+    return this.subscriptionService.getPlanById(id);
+  }
+
   @Post('admin/plans')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan (Admin)' })
   async createPlanAdmin(@Body() dto: any) {
+    return this.subscriptionService.createPlan(dto);
+  }
+
+  @Post('admin/subscription-plans')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create new subscription plan (Admin Alias)' })
+  async createSubscriptionPlanAdmin(@Body() dto: any) {
     return this.subscriptionService.createPlan(dto);
   }
 
@@ -72,12 +117,82 @@ export class SubscriptionController {
     return this.subscriptionService.updatePlan(id, dto);
   }
 
+  @Put('admin/subscription-plans/:id')
+  @Patch('admin/subscription-plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update existing subscription plan (Admin Alias)' })
+  async updateSubscriptionPlanAdmin(@Param('id') id: string, @Body() dto: any) {
+    return this.subscriptionService.updatePlan(id, dto);
+  }
+
+  @Patch('admin/plans/:id/status')
+  @Patch('admin/subscription-plans/:id/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Toggle plan active status (Admin)' })
+  async updatePlanStatusAdmin(@Param('id') id: string, @Body() body: { isActive: boolean }) {
+    return this.subscriptionService.updatePlanStatus(id, body.isActive);
+  }
+
   @Delete('admin/plans/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan (Admin)' })
   async deletePlanAdmin(@Param('id') id: string) {
     return this.subscriptionService.deletePlan(id);
+  }
+
+  @Delete('admin/subscription-plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Deactivate subscription plan (Admin Alias)' })
+  async deleteSubscriptionPlanAdmin(@Param('id') id: string) {
+    return this.subscriptionService.deletePlan(id);
+  }
+
+  // Feature endpoints
+  @Get('admin/plans/:id/features')
+  @Get('admin/subscription-plans/:id/features')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get features for a plan (Admin)' })
+  async getPlanFeatures(@Param('id') id: string) {
+    return this.subscriptionService.getPlanFeatures(id);
+  }
+
+  @Post('admin/plans/:id/features')
+  @Post('admin/subscription-plans/:id/features')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Add feature to plan (Admin)' })
+  async addPlanFeature(@Param('id') id: string, @Body() body: { feature: string }) {
+    return this.subscriptionService.addPlanFeature(id, body.feature);
+  }
+
+  @Put('admin/plans/:id/features/:featureId')
+  @Put('admin/subscription-plans/:id/features/:featureId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update feature in plan (Admin)' })
+  async updatePlanFeature(
+    @Param('id') id: string,
+    @Param('featureId') featureId: string,
+    @Body() body: { feature: string },
+  ) {
+    return this.subscriptionService.updatePlanFeature(id, Number(featureId), body.feature);
+  }
+
+  @Delete('admin/plans/:id/features/:featureId')
+  @Delete('admin/subscription-plans/:id/features/:featureId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete feature from plan (Admin)' })
+  async deletePlanFeature(
+    @Param('id') id: string,
+    @Param('featureId') featureId: string,
+  ) {
+    return this.subscriptionService.deletePlanFeature(id, Number(featureId));
   }
 
   @Post('plans')
@@ -105,6 +220,7 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/current')
+  @Get('customer/subscription/current')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription status' })
@@ -113,6 +229,7 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/effective-plan')
+  @Get('customer/subscription/usage')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get customer resolved effective plan with limits and live usage' })
