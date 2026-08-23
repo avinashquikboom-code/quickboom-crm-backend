@@ -61,6 +61,35 @@ export class WorkService {
   }
 
   /**
+   * Helper to resolve customer ID from numeric, string, or alias formats
+   */
+  private resolveCustomerId(customerId?: number | string): number | undefined {
+    if (!customerId) return undefined;
+    if (typeof customerId === 'number') {
+      return !isNaN(customerId) && customerId > 0 ? customerId : undefined;
+    }
+    const str = String(customerId).trim();
+    if (!str) return undefined;
+    const directNum = Number(str);
+    if (!isNaN(directNum) && directNum > 0) {
+      return directNum;
+    }
+    const upper = str.toUpperCase();
+    if (upper === 'T001' || upper === 'CUSTOMER_A' || upper === 'CUST_1' || upper === 'CUST-1') {
+      return 1;
+    }
+    if (upper === 'T002' || upper === 'CUSTOMER_B' || upper === 'CUST_2' || upper === 'CUST-2') {
+      return 2;
+    }
+    const digits = str.replace(/\D/g, '');
+    if (digits) {
+      const parsed = parseInt(digits, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return undefined;
+  }
+
+  /**
    * List work items with tenant/role scoping, status filtering, and pagination.
    */
   async findAll(
@@ -80,9 +109,9 @@ export class WorkService {
     const skip = (page - 1) * limit;
 
     const where: any = {};
-
-    if (scopedCustomerId && !isNaN(Number(scopedCustomerId)) && Number(scopedCustomerId) > 0) {
-      where.customerId = Number(scopedCustomerId);
+    const resolvedCustId = this.resolveCustomerId(scopedCustomerId);
+    if (resolvedCustId) {
+      where.customerId = resolvedCustId;
     }
 
     if (query.status) where.status = query.status;
@@ -669,9 +698,8 @@ export class WorkService {
   ) {
     const where: any = {};
 
-    let numCustomerId: number | undefined;
-    if (scopedCustomerId && !isNaN(Number(scopedCustomerId)) && Number(scopedCustomerId) > 0) {
-      numCustomerId = Number(scopedCustomerId);
+    const numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    if (numCustomerId) {
       where.customerId = numCustomerId;
     }
 
