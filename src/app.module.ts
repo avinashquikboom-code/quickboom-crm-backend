@@ -31,6 +31,7 @@ import { CompanyModule } from './modules/company/company.module';
 import { ShiftModule } from './modules/shift/shift.module';
 import { LoanModule } from './modules/loan/loan.module';
 import { ClaimModule } from './modules/claim/claim.module';
+import { ScheduleModule } from './modules/schedule/schedule.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -43,6 +44,7 @@ import { AppController } from './app.controller';
     AuthModule,
     CustomerModule,
     SubscriptionModule,
+    ScheduleModule,
     WorkModule,
     EmployeeModule,
     DepartmentModule,
@@ -74,4 +76,5 @@ import { AppController } from './app.controller';
   controllers: [AppController],
 })
 export class AppModule {}
+
 

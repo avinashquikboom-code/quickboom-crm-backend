@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PaymentMethod } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -7,36 +7,22 @@ import {
   CreateOrderDto,
   RenewSubscriptionDto,
 } from './dto/subscription.dto';
+import {
+  calculatePlanExpiry,
+  calculateDaysRemaining,
+  deriveSubscriptionStatus,
+  getExpiryNotificationPayload,
+} from '../../common/utils/subscription-date.util';
 
 @Injectable()
 export class SubscriptionService {
+  private readonly logger = new Logger(SubscriptionService.name);
+
   constructor(private prisma: PrismaService) {}
 
-  static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle): Date {
-    const start = new Date(startDate);
-    if (cycle === SubscriptionBillingCycle.MONTHLY) {
-      // 1 calendar month
-      const year = start.getFullYear();
-      const month = start.getMonth();
-      const day = start.getDate();
-
-      const targetMonth = month + 1;
-      const targetYear = year + Math.floor(targetMonth / 12);
-      const normalizedMonth = targetMonth % 12;
-
-      const lastDayOfTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
-      const targetDay = Math.min(day, lastDayOfTargetMonth);
-
-      return new Date(targetYear, normalizedMonth, targetDay, start.getHours(), start.getMinutes(), start.getSeconds());
-    } else {
-      // 12 calendar months (1 year)
-      const year = start.getFullYear() + 1;
-      const month = start.getMonth();
-      const day = start.getDate();
-      const lastDayOfTargetMonth = new Date(year, month + 1, 0).getDate();
-      const targetDay = Math.min(day, lastDayOfTargetMonth);
-      return new Date(year, month, targetDay, start.getHours(), start.getMinutes(), start.getSeconds());
-    }
+  static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
+    const months = durationMonths || (cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1);
+    return calculatePlanExpiry(startDate, months);
   }
 
   async getPlans() {
@@ -98,25 +84,23 @@ export class SubscriptionService {
         {
           name: 'Premium Package',
           code: 'PREMIUM',
-          description: 'Scale Plan for high-growth enterprises',
-          monthlyPrice: 25999,
-          yearlyPrice: 249590,
+          description: 'Full-service enterprise scale suite',
+          monthlyPrice: 24999,
+          yearlyPrice: 239990,
           userLimit: 100,
           leadLimit: 50000,
           storageLimit: BigInt(107374182400),
           features: [
-            '2 Product Reels',
-            '8 Influencer Reels (Total 10 Reels)',
-            '8 Creative Posts',
-            '30 Stories',
-            'Complete Social Media Management',
-            'Premium Content Strategy & Caption Writing',
-            'Advanced Hashtag Research',
+            '10 Reels',
+            '6 Creative Posts',
+            '3 Influencer Promotions',
+            '8 Stories',
+            'Social Media Account Management',
+            'Trending Hashtags',
             'Meta Ads Campaign Setup & Management',
             'Google Ads Campaign Setup & Management',
-            'Detailed Monthly Analytics Report',
-            'Priority Graphic Designing',
-            'Ads will run throughout the campaign/content execution period.',
+            'Monthly Performance Report',
+            'Ads will run only during the content execution period.',
             'Meta & Google Ads Budget will be paid by the client.',
           ],
         },
@@ -154,7 +138,7 @@ export class SubscriptionService {
     const numCustomerId = Number(customerId);
 
     const sub = await this.prisma.customerSubscription.findFirst({
-      where: { customerId: numCustomerId },
+      where: { customerId: numCustomerId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
@@ -163,7 +147,9 @@ export class SubscriptionService {
       return null;
     }
 
-    const isExpired = sub.status === 'EXPIRED' || (sub.endDate && new Date() > new Date(sub.endDate));
+    const daysRemaining = calculateDaysRemaining(sub.endDate);
+    const derivedStatus = deriveSubscriptionStatus(sub.status, sub.endDate);
+    const isExpired = derivedStatus === 'EXPIRED';
 
     const effectivePrice = sub.customPrice !== null && sub.customPrice !== undefined
       ? Number(sub.customPrice)
@@ -179,16 +165,36 @@ export class SubscriptionService {
 
     const effectiveFeatures = sub.customFeatures || sub.plan.features;
 
+    let statusMessage = 'Your plan is active.';
+    if (daysRemaining < 0) {
+      statusMessage = 'Your plan has expired.';
+    } else if (daysRemaining === 0) {
+      statusMessage = 'Your plan expires today.';
+    } else if (daysRemaining === 1) {
+      statusMessage = 'Your plan expires tomorrow.';
+    } else if (daysRemaining <= 5) {
+      statusMessage = `Your plan expires in ${daysRemaining} days.`;
+    } else if (daysRemaining <= 10) {
+      statusMessage = `Your plan expires in ${daysRemaining} days.`;
+    }
+
     return {
       id: sub.id,
       customerId: sub.customerId,
       planId: sub.planId,
       planName: sub.plan.name,
       planCode: sub.plan.code,
-      status: isExpired ? SubscriptionStatus.EXPIRED : sub.status,
+      status: derivedStatus,
+      rawStatus: sub.status,
       billingCycle: sub.billingCycle || SubscriptionBillingCycle.MONTHLY,
       startDate: sub.startDate,
+      purchaseDate: sub.startDate,
+      expiryDate: sub.endDate,
       endDate: sub.endDate,
+      duration: sub.duration || 1,
+      durationUnit: sub.durationUnit || 'MONTH',
+      daysRemaining,
+      statusMessage,
       price: effectivePrice,
       basePrice: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice),
       customPrice: sub.customPrice !== null ? Number(sub.customPrice) : null,
@@ -461,4 +467,271 @@ export class SubscriptionService {
     });
     return { success: true, message: `Plan ${planId} deactivated` };
   }
+
+  /**
+   * Get all subscriptions for Admin/Super Admin with search, pagination, and derived expiry status
+   */
+  async getAllSubscriptions(query: {
+    search?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const where: any = { deletedAt: null };
+
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
+      where.OR = [
+        { customer: { name: { contains: s, mode: 'insensitive' } } },
+        { customer: { email: { contains: s, mode: 'insensitive' } } },
+        { plan: { name: { contains: s, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.customerSubscription.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          customer: { select: { id: true, name: true, email: true, phone: true, assignedEmployee: true } },
+          plan: { select: { id: true, name: true, code: true, monthlyPrice: true } },
+        },
+      }),
+      this.prisma.customerSubscription.count({ where }),
+    ]);
+
+    const formatted = items.map((s) => {
+      const daysRemaining = calculateDaysRemaining(s.endDate);
+      const derivedStatus = deriveSubscriptionStatus(s.status, s.endDate);
+
+      return {
+        id: s.id,
+        customerId: s.customerId,
+        customerName: s.customer?.name || 'N/A',
+        customerEmail: s.customer?.email || 'N/A',
+        assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
+        planId: s.planId,
+        planName: s.plan?.name || 'Starter Plan',
+        startDate: s.startDate,
+        purchaseDate: s.startDate,
+        expiryDate: s.endDate,
+        endDate: s.endDate,
+        duration: s.duration || 1,
+        durationUnit: s.durationUnit || 'MONTH',
+        billingCycle: s.billingCycle,
+        daysRemaining,
+        status: derivedStatus,
+        rawStatus: s.status,
+        price: s.customPrice !== null ? Number(s.customPrice) : Number(s.plan?.monthlyPrice || 0),
+        isExpired: derivedStatus === 'EXPIRED',
+        createdAt: s.createdAt,
+      };
+    });
+
+    let filtered = formatted;
+    if (query.status && query.status !== 'ALL') {
+      filtered = formatted.filter((s) => s.status === query.status || s.rawStatus === query.status);
+    }
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: filtered,
+      items: filtered,
+      pagination: {
+        page,
+        pageSize: limit,
+        limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  /**
+   * Get subscriptions expiring in <= days (e.g. 10 days, 5 days, 1 day, 0 days)
+   */
+  async getExpiringSubscriptions(days = 10) {
+    const numDays = Math.max(0, Number(days) || 10);
+    const now = new Date();
+    const targetThreshold = new Date(now.getTime() + (numDays + 1) * 24 * 60 * 60 * 1000);
+
+    const subscriptions = await this.prisma.customerSubscription.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: ['ACTIVE', 'TRIAL'] },
+        endDate: {
+          gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+          lte: targetThreshold,
+        },
+      },
+      include: {
+        customer: { select: { id: true, name: true, email: true, phone: true, assignedEmployee: true } },
+        plan: { select: { id: true, name: true, code: true, monthlyPrice: true } },
+      },
+      orderBy: { endDate: 'asc' },
+    });
+
+    return subscriptions.map((s) => {
+      const daysRemaining = calculateDaysRemaining(s.endDate);
+      const derivedStatus = deriveSubscriptionStatus(s.status, s.endDate);
+
+      return {
+        id: s.id,
+        customerId: s.customerId,
+        customerName: s.customer?.name || 'N/A',
+        customerEmail: s.customer?.email || 'N/A',
+        assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
+        planId: s.planId,
+        planName: s.plan?.name || 'Starter Plan',
+        startDate: s.startDate,
+        expiryDate: s.endDate,
+        daysRemaining,
+        status: derivedStatus,
+        price: s.customPrice !== null ? Number(s.customPrice) : Number(s.plan?.monthlyPrice || 0),
+      };
+    });
+  }
+
+  /**
+   * Get expired subscriptions
+   */
+  async getExpiredSubscriptions() {
+    const now = new Date();
+    const subscriptions = await this.prisma.customerSubscription.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { status: 'EXPIRED' },
+          { endDate: { lt: now } },
+        ],
+      },
+      include: {
+        customer: { select: { id: true, name: true, email: true, phone: true, assignedEmployee: true } },
+        plan: { select: { id: true, name: true, code: true, monthlyPrice: true } },
+      },
+      orderBy: { endDate: 'desc' },
+    });
+
+    return subscriptions.map((s) => {
+      const daysRemaining = calculateDaysRemaining(s.endDate);
+      return {
+        id: s.id,
+        customerId: s.customerId,
+        customerName: s.customer?.name || 'N/A',
+        customerEmail: s.customer?.email || 'N/A',
+        assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
+        planId: s.planId,
+        planName: s.plan?.name || 'Starter Plan',
+        startDate: s.startDate,
+        expiryDate: s.endDate,
+        daysRemaining,
+        status: 'EXPIRED',
+        price: s.customPrice !== null ? Number(s.customPrice) : Number(s.plan?.monthlyPrice || 0),
+      };
+    });
+  }
+
+  /**
+   * Daily expiry runner: checks days remaining, dispatches multi-stage notifications with idempotency, and updates statuses.
+   */
+  async runDailyExpiryCheck() {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    this.logger.log('Starting daily plan expiry and reminder scan...');
+
+    const activeSubscriptions = await this.prisma.customerSubscription.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: ['ACTIVE', 'TRIAL'] },
+      },
+      include: {
+        customer: {
+          include: {
+            users: { where: { deletedAt: null }, take: 5 },
+          },
+        },
+        plan: true,
+      },
+    });
+
+    let remindersDispatched = 0;
+    let expiredUpdated = 0;
+
+    for (const sub of activeSubscriptions) {
+      const daysRemaining = calculateDaysRemaining(sub.endDate, now);
+      const payload = getExpiryNotificationPayload(sub.plan?.name || 'Your Plan', daysRemaining, sub.endDate);
+
+      if (payload) {
+        // Idempotency: verify this specific reminder hasn't already been sent today
+        const existingNotification = await this.prisma.notification.findFirst({
+          where: {
+            customerId: sub.customerId,
+            type: payload.type,
+            createdAt: {
+              gte: todayStart,
+              lte: todayEnd,
+            },
+          },
+        });
+
+        if (!existingNotification) {
+          // Dispatch notification to customer users
+          const targetUsers = sub.customer?.users || [];
+          for (const user of targetUsers) {
+            await this.prisma.notification.create({
+              data: {
+                customerId: sub.customerId,
+                userId: user.id,
+                title: payload.title,
+                message: payload.message,
+                type: payload.type,
+                data: {
+                  subscriptionId: sub.id,
+                  planId: sub.planId,
+                  daysRemaining,
+                  expiryDate: sub.endDate,
+                },
+              },
+            });
+            remindersDispatched++;
+          }
+        }
+      }
+
+      // Mark expired subscriptions
+      if (daysRemaining < 0 && sub.status !== 'EXPIRED') {
+        await this.prisma.customerSubscription.update({
+          where: { id: sub.id },
+          data: { status: 'EXPIRED' },
+        });
+        expiredUpdated++;
+      }
+    }
+
+    this.logger.log(`Daily scan completed: ${remindersDispatched} reminders dispatched, ${expiredUpdated} subscriptions expired.`);
+
+    return {
+      success: true,
+      checkedCount: activeSubscriptions.length,
+      remindersDispatched,
+      expiredUpdated,
+      timestamp: new Date().toISOString(),
+    };
+  }
 }
+

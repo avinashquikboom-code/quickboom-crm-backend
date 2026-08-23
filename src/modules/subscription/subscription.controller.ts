@@ -168,14 +168,86 @@ export class SubscriptionController {
     return this.subscriptionService.createOrder(customerId, dto);
   }
 
-  @Post('subscriptions/renew')
+  @Get('customer/subscription')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Renew current customer subscription' })
-  async renewSubscription(
-    @CurrentCustomer() customerId: string,
-    @Body() dto: RenewSubscriptionDto,
+  @ApiOperation({ summary: 'Get current customer subscription details with days remaining & expiry dates' })
+  async getCustomerSubscription(@CurrentCustomer() customerId: string) {
+    return this.subscriptionService.getCurrentSubscription(customerId);
+  }
+
+  @Get('customer/subscription/status')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current customer plan status banner payload for mobile & dashboard' })
+  async getCustomerSubscriptionStatus(@CurrentCustomer() customerId: string) {
+    const sub = await this.subscriptionService.getCurrentSubscription(customerId);
+    if (!sub) {
+      return {
+        hasSubscription: false,
+        status: 'INACTIVE',
+        message: 'No active plan found. Please purchase a subscription.',
+      };
+    }
+    return {
+      hasSubscription: true,
+      planName: sub.planName,
+      startDate: sub.startDate,
+      purchaseDate: sub.startDate,
+      expiryDate: sub.endDate,
+      daysRemaining: sub.daysRemaining,
+      status: sub.status,
+      message: sub.statusMessage,
+      isExpired: sub.isExpired,
+    };
+  }
+
+  @Get('admin/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all customer subscriptions (Admin)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  async getAllSubscriptions(
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.subscriptionService.renewSubscription(customerId, dto);
+    return this.subscriptionService.getAllSubscriptions({
+      search,
+      status,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
+
+  @Get('admin/subscriptions/expiring')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get subscriptions expiring soon (Admin)' })
+  @ApiQuery({ name: 'days', required: false, description: 'Default is 10 days' })
+  async getExpiringSubscriptions(@Query('days') days?: string) {
+    const numDays = days ? parseInt(days, 10) : 10;
+    return this.subscriptionService.getExpiringSubscriptions(numDays);
+  }
+
+  @Get('admin/subscriptions/expired')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get expired subscriptions (Admin)' })
+  async getExpiredSubscriptions() {
+    return this.subscriptionService.getExpiredSubscriptions();
+  }
+
+  @Post('admin/subscriptions/check-expiry')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Run idempotent daily plan expiry check & notification dispatcher (Admin / Cron)' })
+  async runExpiryCheck() {
+    return this.subscriptionService.runDailyExpiryCheck();
   }
 }
+

@@ -1,10 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import { ScheduleService } from '../schedule/schedule.service';
+import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 
 @Injectable()
 export class CustomerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scheduleService: ScheduleService,
+  ) {}
 
   /**
    * Helper to safely serialize BigInt fields to numbers/strings
@@ -568,9 +573,13 @@ export class CustomerService {
     }
 
     const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
-    const endDate = dto.endDate
-      ? new Date(dto.endDate)
-      : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+    const durationMonths = dto.duration
+      ? Number(dto.duration)
+      : dto.endDate
+      ? Math.max(1, Math.round((new Date(dto.endDate).getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+      : (dto.billingCycle === 'YEARLY' ? 12 : 1);
+
+    const endDate = dto.endDate ? new Date(dto.endDate) : calculatePlanExpiry(startDate, durationMonths);
 
     const customPrice = dto.customPrice !== undefined && dto.customPrice !== null && dto.customPrice !== ''
       ? Number(dto.customPrice)
@@ -587,6 +596,18 @@ export class CustomerService {
     const customFeatures = Array.isArray(dto.features) ? dto.features : plan.features;
     const status = dto.status || 'ACTIVE';
 
+    // Handle existing active subscriptions and their future unstarted schedules
+    const existingActiveSubs = await this.prisma.customerSubscription.findMany({
+      where: {
+        customerId: numericId,
+        status: 'ACTIVE',
+      },
+    });
+
+    for (const sub of existingActiveSubs) {
+      await this.scheduleService.handleSubscriptionCancellation(sub.id);
+    }
+
     await this.prisma.customerSubscription.updateMany({
       where: {
         customerId: numericId,
@@ -602,7 +623,9 @@ export class CustomerService {
         customerId: numericId,
         planId: plan.id,
         status: status as any,
-        billingCycle: 'MONTHLY',
+        billingCycle: durationMonths >= 12 ? 'YEARLY' : 'MONTHLY',
+        duration: durationMonths,
+        durationUnit: 'MONTH',
         startDate,
         endDate,
         customPrice,
@@ -624,6 +647,15 @@ export class CustomerService {
       },
     });
 
+    // Auto-generate monthly schedule records based on anchor date and duration
+    let generatedSchedules = [];
+    try {
+      const scheduleResult = await this.scheduleService.generateSchedulesForSubscription(newSubscription.id);
+      generatedSchedules = scheduleResult?.schedules || [];
+    } catch (err) {
+      // Non-blocking fallback
+    }
+
     return {
       success: true,
       message: `Customer ${customer.name} plan updated to ${plan.name}`,
@@ -634,13 +666,19 @@ export class CustomerService {
         planName: newSubscription.plan.name,
         status: newSubscription.status,
         startDate: newSubscription.startDate,
+        purchaseDate: newSubscription.startDate,
+        expiryDate: newSubscription.endDate,
         endDate: newSubscription.endDate,
+        duration: newSubscription.duration,
+        durationUnit: newSubscription.durationUnit,
         basePrice: Number(newSubscription.plan.monthlyPrice),
         customPrice: newSubscription.customPrice !== null ? Number(newSubscription.customPrice) : null,
         features: newSubscription.customFeatures,
         userLimit: newSubscription.customUserLimit,
         leadLimit: newSubscription.customLeadLimit,
+        schedulesCount: generatedSchedules.length,
       },
     };
   }
 }
+
