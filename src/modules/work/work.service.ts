@@ -685,21 +685,32 @@ export class WorkService {
     if (query.status) where.status = query.status;
 
     let queriedDate: Date | undefined;
+    let targetYear: number | undefined;
+    let targetMonth: number | undefined;
+    let targetDay: number | undefined;
+
     if (query.date) {
       const parts = query.date.split('-').map(Number);
       if (parts.length === 3 && !parts.some(isNaN)) {
         const [y, m, day] = parts;
+        targetYear = y;
+        targetMonth = m;
+        targetDay = day;
         queriedDate = new Date(Date.UTC(y, m - 1, day, 12, 0, 0));
-        const startOfDay = new Date(Date.UTC(y, m - 1, day, 0, 0, 0, 0));
-        const endOfDay = new Date(Date.UTC(y, m - 1, day, 23, 59, 59, 999));
-        where.scheduledDate = { gte: startOfDay, lte: endOfDay };
+        // Expand query window by ±14 hours to catch any timezone-offset timestamps stored in DB
+        const startWindow = new Date(Date.UTC(y, m - 1, day - 1, 10, 0, 0, 0));
+        const endWindow = new Date(Date.UTC(y, m - 1, day + 1, 14, 0, 0, 0));
+        where.scheduledDate = { gte: startWindow, lte: endWindow };
       } else {
         const d = new Date(query.date);
         if (!isNaN(d.getTime())) {
           queriedDate = d;
-          const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-          const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-          where.scheduledDate = { gte: startOfDay, lte: endOfDay };
+          targetYear = d.getFullYear();
+          targetMonth = d.getMonth() + 1;
+          targetDay = d.getDate();
+          const startWindow = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+          const endWindow = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+          where.scheduledDate = { gte: startWindow, lte: endWindow };
         }
       }
     } else if (query.month && query.year) {
@@ -710,6 +721,20 @@ export class WorkService {
       where.scheduledDate = {};
       if (query.dateFrom) where.scheduledDate.gte = new Date(query.dateFrom);
       if (query.dateTo) where.scheduledDate.lte = new Date(query.dateTo);
+    }
+
+    // Auto-generate schedules if customer has active plan entitlements but 0 work items
+    if (numCustomerId) {
+      const existingCount = await this.prisma.work.count({
+        where: { customerId: numCustomerId, status: { not: WorkStatus.CANCELLED } },
+      });
+      if (existingCount === 0) {
+        try {
+          await this.generatePlanSchedules(numCustomerId);
+        } catch (err) {
+          this.logger.debug(`Auto-schedule generation on calendar query skipped: ${err}`);
+        }
+      }
     }
 
     const items = await this.prisma.work.findMany({
@@ -724,7 +749,24 @@ export class WorkService {
       },
     });
 
-    const result = items.map((w) => ({
+    // Filter items to strictly match the requested day in either UTC or local representation
+    const filteredItems = (targetYear && targetMonth && targetDay)
+      ? items.filter((w) => {
+          if (!w.scheduledDate) return false;
+          const d = new Date(w.scheduledDate);
+          const isUtcMatch =
+            d.getUTCFullYear() === targetYear &&
+            d.getUTCMonth() + 1 === targetMonth &&
+            d.getUTCDate() === targetDay;
+          const isLocalMatch =
+            d.getFullYear() === targetYear &&
+            d.getMonth() + 1 === targetMonth &&
+            d.getDate() === targetDay;
+          return isUtcMatch || isLocalMatch;
+        })
+      : items;
+
+    const result = filteredItems.map((w) => ({
       id: String(w.id),
       title: w.title,
       date: w.scheduledDate,
@@ -745,8 +787,8 @@ export class WorkService {
       revisionCount: w.revisionCount,
     }));
 
-    // If a specific customer and date was queried, check if their active subscription started on that day
-    if (numCustomerId && queriedDate) {
+    // Inject active subscription start event if applicable
+    if (numCustomerId) {
       const activeSub = await this.prisma.customerSubscription.findFirst({
         where: { customerId: numCustomerId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -755,15 +797,23 @@ export class WorkService {
 
       if (activeSub && activeSub.startDate) {
         const subStart = new Date(activeSub.startDate);
-        const isSameDay =
-          (subStart.getUTCFullYear() === queriedDate.getUTCFullYear() &&
-            subStart.getUTCMonth() === queriedDate.getUTCMonth() &&
-            subStart.getUTCDate() === queriedDate.getUTCDate()) ||
-          (subStart.getFullYear() === queriedDate.getFullYear() &&
-            subStart.getMonth() === queriedDate.getMonth() &&
-            subStart.getDate() === queriedDate.getDate());
+        let shouldIncludeSubEvent = false;
 
-        if (isSameDay) {
+        if (targetYear && targetMonth && targetDay) {
+          const isSameDay =
+            (subStart.getUTCFullYear() === targetYear &&
+              subStart.getUTCMonth() + 1 === targetMonth &&
+              subStart.getUTCDate() === targetDay) ||
+            (subStart.getFullYear() === targetYear &&
+              subStart.getMonth() + 1 === targetMonth &&
+              subStart.getDate() === targetDay);
+          shouldIncludeSubEvent = isSameDay;
+        } else {
+          // If no single date filter, always include plan start in all-activities list
+          shouldIncludeSubEvent = true;
+        }
+
+        if (shouldIncludeSubEvent) {
           const hasPlanEvent = result.some(
             (r) =>
               r.title.toLowerCase().includes('plan started') ||
@@ -796,7 +846,7 @@ export class WorkService {
     }
 
     this.logger.log(
-      `[CALENDAR_SERVICE] Customer ID: ${numCustomerId ?? 'ALL'} | Date: ${query.date ?? 'ALL'} | Schedules Found: ${items.length} | Total Events Returned: ${result.length}`,
+      `[CALENDAR_SERVICE] Customer ID: ${numCustomerId ?? 'ALL'} | Date: ${query.date ?? 'ALL'} | Raw Query Items: ${items.length} | Filtered Schedules: ${filteredItems.length} | Total Events Returned: ${result.length}`,
     );
 
     return result;
