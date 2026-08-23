@@ -1,20 +1,41 @@
-import { Controller, Get, Patch, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Patch, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Notifications')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('notifications')
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get notifications list' })
+  @ApiOperation({ summary: 'Get paginated notifications list' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'unreadOnly', required: false })
+  @ApiQuery({ name: 'search', required: false })
   async findAll(
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('unreadOnly') unreadOnly?: string,
+    @Query('search') search?: string,
   ) {
-    const customerId = customerIdQuery || 'default-customer';
-    return this.notificationService.findAll(customerId, undefined, unreadOnly === 'true');
+    const targetCustomerId = customerId || 1;
+    return this.notificationService.findAll(
+      targetCustomerId,
+      undefined,
+      unreadOnly === 'true',
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 20,
+      search,
+    );
   }
 
   @Patch(':id/read')
@@ -25,8 +46,8 @@ export class NotificationController {
 
   @Patch('read-all')
   @ApiOperation({ summary: 'Mark all notifications as read' })
-  async markAllAsRead(@Query('customerId') customerIdQuery?: string) {
-    const customerId = customerIdQuery || 'default-customer';
-    return this.notificationService.markAllAsRead(customerId);
+  async markAllAsRead(@CurrentCustomer() customerId: number | string | undefined) {
+    const targetCustomerId = customerId || 1;
+    return this.notificationService.markAllAsRead(targetCustomerId);
   }
 }

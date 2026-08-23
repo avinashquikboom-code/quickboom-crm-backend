@@ -43,51 +43,83 @@ export class LoanService {
     };
   }
 
-  async findAll(customerId: any, filters?: { status?: LoanStatus; employeeId?: number; search?: string }) {
+  async findAll(
+    customerId: any,
+    query?: { status?: LoanStatus; employeeId?: number; search?: string; page?: number; limit?: number },
+  ) {
     const cid = this.resolveCustomerId(customerId);
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = { customerId: cid };
 
-    if (filters?.status) {
-      where.status = filters.status;
+    if (query?.status) {
+      where.status = query.status;
     }
-    if (filters?.employeeId) {
-      where.employeeId = Number(filters.employeeId);
+
+    if (query?.employeeId) {
+      where.employeeId = query.employeeId;
     }
-    if (filters?.search) {
-      const q = filters.search.trim();
+
+    if (query?.search && query.search.trim()) {
+      const q = query.search.trim();
       where.OR = [
-        { reason: { contains: q, mode: 'insensitive' } },
         { employee: { firstName: { contains: q, mode: 'insensitive' } } },
         { employee: { lastName: { contains: q, mode: 'insensitive' } } },
         { employee: { employeeCode: { contains: q, mode: 'insensitive' } } },
       ];
     }
 
-    const items = await this.prisma.employeeLoan.findMany({
-      where,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            employeeCode: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            department: { select: { name: true } },
-            designation: { select: { name: true } },
+    const [items, total] = await Promise.all([
+      this.prisma.employeeLoan.findMany({
+        where,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              department: { select: { name: true } },
+              designation: { select: { name: true } },
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.employeeLoan.count({ where }),
+    ]);
 
-    return items.map((loan) => ({
+    const formatted = items.map((loan) => ({
       ...loan,
       employeeName: `${loan.employee?.firstName || ''} ${loan.employee?.lastName || ''}`.trim() || 'Staff Member',
       department: loan.employee?.department?.name || 'General',
       designation: loan.employee?.designation?.name || 'Staff',
     }));
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: formatted,
+      items: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async findOne(customerId: any, id: string | number) {

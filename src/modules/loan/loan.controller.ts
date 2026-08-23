@@ -33,16 +33,22 @@ export class LoanController {
 
   @Get()
   @ApiOperation({ summary: 'Get all employee loans with filtering' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'status', required: false, enum: LoanStatus })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('status') status?: LoanStatus,
     @Query('employeeId') employeeId?: string,
     @Query('search') search?: string,
   ) {
     return this.loanService.findAll(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
       status,
       employeeId: employeeId ? Number(employeeId) : undefined,
       search,

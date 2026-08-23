@@ -54,19 +54,39 @@ export class PayrollController {
   @Get()
   async findAll(
     @CurrentCustomer() currentCustomer?: any,
-    @Query('customerId') customerIdQuery?: string
+    @Query('customerId') customerIdQuery?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
   ) {
     const customerId = customerIdQuery || currentCustomer;
-    return this.payrollService.getPayrolls(customerId);
+    return this.payrollService.getPayrolls(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    });
   }
 
   @Get('slips')
   async findSlips(
     @CurrentCustomer() currentCustomer?: any,
-    @Query('customerId') customerIdQuery?: string
+    @Query('customerId') customerIdQuery?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
   ) {
     const customerId = customerIdQuery || currentCustomer;
-    return this.payrollService.getSalarySlips(customerId);
+    return this.payrollService.getSalarySlips(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      search,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    });
   }
 
   @Get('slips/:id')

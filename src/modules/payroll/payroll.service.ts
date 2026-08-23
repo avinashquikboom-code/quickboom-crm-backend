@@ -250,15 +250,50 @@ export class PayrollService {
     });
   }
 
-  async getPayrolls(customerId?: number | string) {
+  async getPayrolls(
+    customerId?: number | string,
+    query?: { page?: number; limit?: number; month?: number; year?: number },
+  ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    return this.prisma.payroll.findMany({
-      where: { customerId: numCustomerId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        items: true,
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const where: any = { customerId: numCustomerId };
+    if (query?.month) where.month = Number(query.month);
+    if (query?.year) where.year = Number(query.year);
+
+    const [items, total] = await Promise.all([
+      this.prisma.payroll.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          items: true,
+        },
+      }),
+      this.prisma.payroll.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: items,
+      items,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
       },
-    });
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async getPayrollById(customerId: number | string | undefined, id: number | string) {
@@ -277,15 +312,61 @@ export class PayrollService {
     });
   }
 
-  async getSalarySlips(customerId?: number | string) {
+  async getSalarySlips(
+    customerId?: number | string,
+    query?: { page?: number; limit?: number; search?: string; month?: number; year?: number },
+  ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    return this.prisma.salarySlip.findMany({
-      where: { customerId: numCustomerId },
-      orderBy: { generatedAt: 'desc' },
-      include: {
-        employee: true,
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const where: any = { customerId: numCustomerId };
+    if (query?.month) where.month = Number(query.month);
+    if (query?.year) where.year = Number(query.year);
+
+    if (query?.search && query.search.trim()) {
+      const s = query.search.trim();
+      where.employee = {
+        OR: [
+          { firstName: { contains: s, mode: 'insensitive' } },
+          { lastName: { contains: s, mode: 'insensitive' } },
+          { employeeCode: { contains: s, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.salarySlip.findMany({
+        where,
+        orderBy: { generatedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          employee: true,
+        },
+      }),
+      this.prisma.salarySlip.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: items,
+      items,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
       },
-    });
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async getSalarySlipById(customerId: number | string | undefined, id: number | string) {

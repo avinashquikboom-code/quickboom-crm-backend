@@ -1,44 +1,70 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class NotificationService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: number | string, userId?: number | string, unreadOnly = false) {
+  async findAll(
+    customerId: number | string,
+    userId?: number | string,
+    unreadOnly = false,
+    page = 1,
+    limit = 20,
+    search?: string,
+  ) {
     const numCustomerId = Number(customerId);
-    const where: any = { customerId: numCustomerId };
-    if (userId) where.userId = Number(userId);
-    if (unreadOnly) where.isRead = false;
+    const numPage = Math.max(Number(page) || 1, 1);
+    const numLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const skip = (numPage - 1) * numLimit;
 
-    const items = await this.prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+    const where: any = {};
+    if (!isNaN(numCustomerId)) {
+      where.customerId = numCustomerId;
+    }
+    if (userId && !isNaN(Number(userId))) {
+      where.userId = Number(userId);
+    }
+    if (unreadOnly) {
+      where.isRead = false;
+    }
 
-    if (items.length === 0) {
-      return [
-        {
-          id: 1,
-          title: 'Work Scheduled: 2 Reels Production',
-          message: 'SSM Team A scheduled on-site shooting for Acme Enterprises at Bandra Studio.',
-          type: 'WORK_SCHEDULED',
-          isRead: false,
-          createdAt: new Date(),
-        },
-        {
-          id: 2,
-          title: 'Payment Received: ₹49,999',
-          message: 'TechCorp Solutions renewed their Enterprise Plan for 1 Year.',
-          type: 'PAYMENT_RECEIVED',
-          isRead: true,
-          createdAt: new Date(Date.now() - 3600000),
-        },
+    if (search && search.trim()) {
+      where.OR = [
+        { title: { contains: search.trim(), mode: 'insensitive' } },
+        { message: { contains: search.trim(), mode: 'insensitive' } },
+        { type: { contains: search.trim(), mode: 'insensitive' } },
       ];
     }
 
-    return items;
+    const [items, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: numLimit,
+      }),
+      this.prisma.notification.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / numLimit) || 1;
+
+    return {
+      data: items,
+      items,
+      pagination: {
+        page: numPage,
+        pageSize: numLimit,
+        total,
+        totalPages,
+      },
+      meta: {
+        page: numPage,
+        limit: numLimit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async markAsRead(id: number | string) {

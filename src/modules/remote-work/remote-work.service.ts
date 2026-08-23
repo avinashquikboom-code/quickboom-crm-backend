@@ -225,15 +225,23 @@ export class RemoteWorkService {
       };
     });
 
+    const totalPages = Math.ceil(total / limit) || 1;
+
     return {
       summary,
       requests: formatted,
       data: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
       },
     };
   }
