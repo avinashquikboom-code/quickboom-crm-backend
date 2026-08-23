@@ -356,6 +356,8 @@ model Lead {
   @@index([assignedToId])
   @@index([googlePlaceId])
   @@index([deletedAt])
+  @@index([customerId, deletedAt, createdAt])
+  @@index([customerId, status, deletedAt])
 }
 
 model LeadStatusHistory {
@@ -612,6 +614,8 @@ model Task {
   @@index([status])
   @@index([dueAt])
   @@index([deletedAt])
+  @@index([customerId, deletedAt, createdAt])
+  @@index([assignedToId, status, deletedAt])
 }
 
 model TaskProof {
@@ -816,6 +820,8 @@ model Notification {
   @@index([customerId])
   @@index([userId])
   @@index([isRead])
+  @@index([userId, isRead, createdAt])
+  @@index([customerId, createdAt])
 }
 
 model AuditLog {
@@ -1692,6 +1698,7 @@ model DataCapturePlace {
   @@index([googlePlaceId])
   @@index([status])
   @@index([deletedAt])
+  @@index([customerId, deletedAt, createdAt])
 }
 
 model EmployeeLoan {

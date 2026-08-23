@@ -168,44 +168,79 @@ export class SubscriptionService {
     }
     const numCustomerId = Number(customerId);
 
-    const sub = await this.prisma.customerSubscription.findFirst({
+    const sub: any = await this.prisma.customerSubscription.findFirst({
       where: { customerId: numCustomerId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
-      include: { plan: true },
+      include: {
+        plan: true,
+        customPlanOrders: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
     });
 
     if (!sub) {
       return null;
     }
 
+    const latestCustomOrder = sub.customPlanOrders?.[0] || await this.prisma.customPlanOrder.findFirst({
+      where: { customerId: numCustomerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
     const daysRemaining = calculateDaysRemaining(sub.endDate);
     const derivedStatus = deriveSubscriptionStatus(sub.status, sub.endDate);
     const isExpired = derivedStatus === 'EXPIRED';
 
+    const planMonthlyPrice = sub.plan ? Number(sub.plan.monthlyPrice) : 999;
+    const planYearlyPrice = sub.plan ? Number(sub.plan.yearlyPrice) : 9599;
+
     const effectivePrice = sub.customPrice !== null && sub.customPrice !== undefined
       ? Number(sub.customPrice)
-      : (sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice));
+      : (latestCustomOrder?.totalAmount !== undefined
+          ? Number(latestCustomOrder.totalAmount)
+          : (sub.billingCycle === SubscriptionBillingCycle.YEARLY ? planYearlyPrice : planMonthlyPrice));
 
     const effectiveUserLimit = sub.customUserLimit !== null && sub.customUserLimit !== undefined
       ? sub.customUserLimit
-      : sub.plan.userLimit;
+      : (sub.plan?.userLimit || 5);
 
     const effectiveLeadLimit = sub.customLeadLimit !== null && sub.customLeadLimit !== undefined
       ? sub.customLeadLimit
-      : sub.plan.leadLimit;
+      : (sub.plan?.leadLimit || 500);
 
-    const effectiveFeatures = sub.customFeatures || sub.plan.features;
+    const effectiveFeatures = sub.customFeatures || (latestCustomOrder?.selectedFeatures as any) || sub.plan?.features || [];
 
+    const isCustomPlan = Boolean(
+      latestCustomOrder ||
+      sub.plan?.code === 'CUSTOM' ||
+      sub.customFeatures ||
+      sub.customPrice !== null,
+    );
+
+    const planType = isCustomPlan ? 'CUSTOM' : 'DEFAULT';
+    const planName = isCustomPlan
+      ? (sub.plan?.name === 'Custom Plan' ? 'Custom Plan' : (sub.plan?.name || 'Custom Plan'))
+      : (sub.plan?.name || 'Starter Plan');
+
+    let reminder: '10_DAYS' | '5_DAYS' | '1_DAY' | 'EXPIRED' | null = null;
     let statusMessage = 'Your plan is active.';
-    if (daysRemaining < 0) {
-      statusMessage = 'Your plan has expired.';
+
+    if (daysRemaining < 0 || isExpired) {
+      reminder = 'EXPIRED';
+      statusMessage = 'Your plan has expired. Please renew your subscription.';
     } else if (daysRemaining === 0) {
+      reminder = '1_DAY';
       statusMessage = 'Your plan expires today.';
     } else if (daysRemaining === 1) {
+      reminder = '1_DAY';
       statusMessage = 'Your plan expires tomorrow.';
     } else if (daysRemaining <= 5) {
+      reminder = '5_DAYS';
       statusMessage = `Your plan expires in ${daysRemaining} days.`;
     } else if (daysRemaining <= 10) {
+      reminder = '10_DAYS';
       statusMessage = `Your plan expires in ${daysRemaining} days.`;
     }
 
@@ -213,8 +248,9 @@ export class SubscriptionService {
       id: sub.id,
       customerId: sub.customerId,
       planId: sub.planId,
-      planName: sub.plan.name,
-      planCode: sub.plan.code,
+      planName,
+      planCode: sub.plan?.code || 'CUSTOM',
+      planType,
       status: derivedStatus,
       rawStatus: sub.status,
       billingCycle: sub.billingCycle || SubscriptionBillingCycle.MONTHLY,
@@ -225,15 +261,28 @@ export class SubscriptionService {
       duration: sub.duration || 1,
       durationUnit: sub.durationUnit || 'MONTH',
       daysRemaining,
+      reminder,
       statusMessage,
       price: effectivePrice,
-      basePrice: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice),
-      customPrice: sub.customPrice !== null ? Number(sub.customPrice) : null,
-      isCustomized: sub.customPrice !== null || Boolean(sub.customFeatures) || Boolean(sub.customUserLimit),
+      purchasedPrice: effectivePrice,
+      basePrice: sub.billingCycle === SubscriptionBillingCycle.YEARLY ? planYearlyPrice : planMonthlyPrice,
+      customPrice: sub.customPrice !== null ? Number(sub.customPrice) : (latestCustomOrder ? Number(latestCustomOrder.totalAmount) : null),
+      isCustomized: isCustomPlan,
       userLimit: effectiveUserLimit,
       leadLimit: effectiveLeadLimit,
-      features: effectiveFeatures,
+      features: Array.isArray(effectiveFeatures)
+        ? effectiveFeatures
+        : (typeof effectiveFeatures === 'object' && effectiveFeatures !== null
+            ? Object.entries(effectiveFeatures).map(([k, v]: [string, any]) => `${v?.name || k}: ${v?.quantity || v}`)
+            : (sub.plan?.features || [])),
       isExpired,
+      customOrder: latestCustomOrder ? {
+        orderNumber: latestCustomOrder.orderNumber,
+        totalAmount: Number(latestCustomOrder.totalAmount),
+        selectedFeatures: latestCustomOrder.selectedFeatures,
+        duration: latestCustomOrder.duration,
+        status: latestCustomOrder.status,
+      } : null,
     };
   }
 
