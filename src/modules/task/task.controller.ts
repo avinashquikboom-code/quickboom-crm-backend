@@ -48,6 +48,8 @@ export class TaskController {
 
   @Get()
   @ApiOperation({ summary: 'Get paginated/filtered list of tasks' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'departmentId', required: false })
@@ -57,6 +59,8 @@ export class TaskController {
   @ApiQuery({ name: 'sortBy', required: false, enum: ['priority', 'dueDate', 'createdAt'] })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
     @Query('status') status?: string,
     @Query('employeeId') employeeId?: string,
     @Query('departmentId') departmentId?: string,
@@ -66,6 +70,8 @@ export class TaskController {
     @Query('sortBy') sortBy?: 'priority' | 'dueDate' | 'createdAt',
   ) {
     return this.taskService.findAll(customerId, {
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
       status,
       employeeId,
       departmentId,

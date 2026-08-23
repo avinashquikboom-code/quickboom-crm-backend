@@ -262,13 +262,22 @@ export class EmployeeService {
         )
       : formatted;
 
+    const totalPages = Math.ceil(total / limit) || 1;
+
     return {
       items: finalItems,
+      data: finalItems,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
       },
     };
   }
@@ -1240,8 +1249,12 @@ export class EmployeeService {
   async getAttendance(
     customerId?: number | string,
     isSuperAdmin = false,
-    options?: { date?: string; branch?: string },
+    options?: { date?: string; branch?: string; search?: string; page?: number; limit?: number },
   ) {
+    const page = Math.max(Number(options?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(options?.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
@@ -1264,17 +1277,32 @@ export class EmployeeService {
       where.employee = { branch: options.branch };
     }
 
-    const records = await this.prisma.attendance.findMany({
-      where,
-      include: {
-        employee: true,
-        breaks: { orderBy: { breakStart: 'asc' } },
-      },
-      orderBy: { date: 'desc' },
-      take: 100,
-    });
+    if (options?.search) {
+      where.employee = {
+        ...(where.employee || {}),
+        OR: [
+          { firstName: { contains: options.search, mode: 'insensitive' } },
+          { lastName: { contains: options.search, mode: 'insensitive' } },
+          { employeeCode: { contains: options.search, mode: 'insensitive' } },
+        ],
+      };
+    }
 
-    return records.map((a) => {
+    const [records, total] = await Promise.all([
+      this.prisma.attendance.findMany({
+        where,
+        include: {
+          employee: true,
+          breaks: { orderBy: { breakStart: 'asc' } },
+        },
+        orderBy: { date: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.attendance.count({ where }),
+    ]);
+
+    const formatted = records.map((a) => {
       const breakMins = a.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
       const hours = Math.floor(a.workingHours || 0);
       const mins = Math.round(((a.workingHours || 0) - hours) * 60);
@@ -1296,5 +1324,24 @@ export class EmployeeService {
         location: a.locationIn || 'Office GPS',
       };
     });
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: formatted,
+      items: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    };
   }
 }

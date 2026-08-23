@@ -37,6 +37,8 @@ export class DealController {
 
   @Get()
   @ApiOperation({ summary: 'Get list of deals filtered by pipeline or stage' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'pipelineId', required: false })
   @ApiQuery({ name: 'stageId', required: false })
   @ApiQuery({ name: 'assignedToId', required: false })
@@ -44,6 +46,8 @@ export class DealController {
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
     @Query('pipelineId') pipelineId?: string,
     @Query('stageId') stageId?: string,
     @Query('assignedToId') assignedToId?: string,
@@ -51,6 +55,8 @@ export class DealController {
     @Query('search') search?: string,
   ) {
     return this.dealService.findAll(customerId, {
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
       pipelineId,
       stageId,
       assignedToId,

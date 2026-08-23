@@ -201,13 +201,22 @@ export class CustomerService {
       };
     });
 
+    const totalPages = Math.ceil(total / limit) || 1;
+
     return {
+      data: formatted,
       items: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
       },
     };
   }

@@ -128,14 +128,22 @@ export class VisitService {
       this.prisma.visit.count({ where }),
     ]);
 
+    const totalPages = Math.ceil(total / limit) || 1;
+
     return {
       items,
       data: items,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
       },
     };
   }

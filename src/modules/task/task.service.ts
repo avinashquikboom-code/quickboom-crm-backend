@@ -263,9 +263,15 @@ export class TaskService {
       search?: string;
       isOverdue?: string;
       sortBy?: 'priority' | 'dueDate' | 'createdAt';
+      page?: number;
+      limit?: number;
     },
   ) {
     const numCustomerId = Number(customerId);
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = { customerId: numCustomerId, deletedAt: null };
 
     if (query.status && query.status !== 'ALL') {
@@ -308,26 +314,31 @@ export class TaskService {
       orderBy = { dueAt: 'asc' };
     }
 
-    const tasks = await this.prisma.task.findMany({
-      where,
-      orderBy,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            employeeCode: true,
-            firstName: true,
-            lastName: true,
-            department: { select: { id: true, name: true } },
-            designation: { select: { id: true, name: true } },
+    const [tasks, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              department: { select: { id: true, name: true } },
+              designation: { select: { id: true, name: true } },
+            },
           },
+          department: { select: { id: true, name: true } },
+          designation: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+          proofs: { take: 1, orderBy: { uploadedAt: 'desc' } },
         },
-        department: { select: { id: true, name: true } },
-        designation: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, firstName: true, lastName: true } },
-        proofs: { take: 1, orderBy: { uploadedAt: 'desc' } },
-      },
-    });
+      }),
+      this.prisma.task.count({ where }),
+    ]);
 
     const now = new Date();
     const mapped = tasks.map((t) => ({
@@ -336,7 +347,6 @@ export class TaskService {
       hasProof: t.proofs && t.proofs.length > 0,
     }));
 
-    // If sorting by priority: URGENT -> HIGH -> MEDIUM -> LOW, then overdue first, then nearest due date
     if (query.sortBy === 'priority' || !query.sortBy) {
       const priorityOrder: Record<string, number> = {
         [TaskPriority.URGENT]: 1,
@@ -350,18 +360,32 @@ export class TaskService {
         const pB = priorityOrder[b.priority] || 99;
         if (pA !== pB) return pA - pB;
 
-        // Same priority: overdue first
         if (a.isOverdue && !b.isOverdue) return -1;
         if (!a.isOverdue && b.isOverdue) return 1;
 
-        // Then nearest due date
         const timeA = a.dueAt ? new Date(a.dueAt).getTime() : Infinity;
         const timeB = b.dueAt ? new Date(b.dueAt).getTime() : Infinity;
         return timeA - timeB;
       });
     }
 
-    return mapped;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: mapped,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    };
   }
 
   async findOne(customerId: number | string, id: number | string) {

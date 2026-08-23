@@ -102,9 +102,13 @@ export class DealService {
 
   async findAll(
     customerId: number | string,
-    query: { pipelineId?: number | string; stageId?: number | string; search?: string; assignedToId?: string; status?: string },
+    query: { pipelineId?: number | string; stageId?: number | string; search?: string; assignedToId?: string; status?: string; page?: number; limit?: number },
   ) {
     const numCustomerId = Number(customerId);
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
     const where: any = { customerId: numCustomerId, deletedAt: null };
 
     if (query.pipelineId && query.pipelineId !== 'ALL') where.pipelineId = Number(query.pipelineId);
@@ -127,17 +131,40 @@ export class DealService {
       ];
     }
 
-    return this.prisma.deal.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        pipeline: { include: { stages: { orderBy: { order: 'asc' } } } },
-        stage: true,
-        contact: true,
-        company: true,
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+    const [data, total] = await Promise.all([
+      this.prisma.deal.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          pipeline: { include: { stages: { orderBy: { order: 'asc' } } } },
+          stage: true,
+          contact: true,
+          company: true,
+          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+        },
+      }),
+      this.prisma.deal.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
       },
-    });
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    };
   }
 
   async findOne(customerId: number | string, id: number | string) {

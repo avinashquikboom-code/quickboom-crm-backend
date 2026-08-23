@@ -7,11 +7,19 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
+export interface PaginationMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface ResponseFormat<T> {
   statusCode: number;
   success: boolean;
   message: string;
   data: T;
+  pagination?: PaginationMeta;
   meta?: any;
 }
 
@@ -26,13 +34,14 @@ export class TransformInterceptor<T>
     const response = context.switchToHttp().getResponse();
     return next.handle().pipe(
       map((data) => {
-        // If data contains pagination meta object
-        if (data && typeof data === 'object' && 'data' in data && 'meta' in data) {
+        // If data contains pagination or meta
+        if (data && typeof data === 'object' && 'data' in data) {
           return {
             statusCode: response.statusCode,
             success: true,
             message: 'Operation completed successfully',
             data: data.data,
+            pagination: data.pagination,
             meta: data.meta,
           };
         }
