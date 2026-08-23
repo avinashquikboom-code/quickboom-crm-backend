@@ -34,6 +34,7 @@ export class WorkController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
+    @CurrentCustomer() authCustomerId: string | undefined,
     @Query('customerId') customerIdQuery?: string,
     @Query('employeeId') employeeId?: string,
     @Query('editorId') editorId?: string,
@@ -43,7 +44,8 @@ export class WorkController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.workService.findAll(customerIdQuery, {
+    const effectiveCustomerId = authCustomerId || customerIdQuery;
+    return this.workService.findAll(effectiveCustomerId, {
       status,
       workType,
       employeeId,
@@ -65,6 +67,7 @@ export class WorkController {
   @ApiQuery({ name: 'year', required: false })
   @ApiQuery({ name: 'status', required: false })
   async getCalendar(
+    @CurrentCustomer() authCustomerId: string | undefined,
     @Query('customerId') customerIdQuery?: string,
     @Query('employeeId') employeeId?: string,
     @Query('date') date?: string,
@@ -74,7 +77,8 @@ export class WorkController {
     @Query('year') year?: string,
     @Query('status') status?: WorkStatus,
   ) {
-    return this.workService.getCalendar(customerIdQuery, {
+    const effectiveCustomerId = authCustomerId || customerIdQuery;
+    return this.workService.getCalendar(effectiveCustomerId, {
       date,
       dateFrom,
       dateTo,
