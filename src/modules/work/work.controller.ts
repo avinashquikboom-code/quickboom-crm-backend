@@ -58,6 +58,7 @@ export class WorkController {
   @ApiOperation({ summary: 'Get scheduled calendar events' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'date', required: false })
   @ApiQuery({ name: 'dateFrom', required: false })
   @ApiQuery({ name: 'dateTo', required: false })
   @ApiQuery({ name: 'month', required: false })
@@ -66,6 +67,7 @@ export class WorkController {
   async getCalendar(
     @Query('customerId') customerIdQuery?: string,
     @Query('employeeId') employeeId?: string,
+    @Query('date') date?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('month') month?: string,
@@ -73,11 +75,39 @@ export class WorkController {
     @Query('status') status?: WorkStatus,
   ) {
     return this.workService.getCalendar(customerIdQuery, {
+      date,
       dateFrom,
       dateTo,
       month: month ? parseInt(month, 10) : undefined,
       year: year ? parseInt(year, 10) : undefined,
       employeeId,
+      status,
+    });
+  }
+
+  @Get('customer/calendar')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get calendar events for authenticated customer' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  async getCustomerCalendar(
+    @CurrentCustomer() customerId: string,
+    @Query('date') date?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
+  ) {
+    return this.workService.getCalendar(customerId, {
+      date,
+      dateFrom,
+      dateTo,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
       status,
     });
   }

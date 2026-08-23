@@ -655,6 +655,7 @@ export class WorkService {
   async getCalendar(
     scopedCustomerId?: number | string,
     query: {
+      date?: string;
       dateFrom?: string;
       dateTo?: string;
       month?: number;
@@ -665,8 +666,10 @@ export class WorkService {
   ) {
     const where: any = {};
 
+    let numCustomerId: number | undefined;
     if (scopedCustomerId && !isNaN(Number(scopedCustomerId)) && Number(scopedCustomerId) > 0) {
-      where.customerId = Number(scopedCustomerId);
+      numCustomerId = Number(scopedCustomerId);
+      where.customerId = numCustomerId;
     }
 
     if (query.employeeId && !isNaN(Number(query.employeeId))) {
@@ -678,9 +681,18 @@ export class WorkService {
 
     if (query.status) where.status = query.status;
 
-    if (query.month && query.year) {
+    let queriedDate: Date | undefined;
+    if (query.date) {
+      const d = new Date(query.date);
+      if (!isNaN(d.getTime())) {
+        queriedDate = d;
+        const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+        const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+        where.scheduledDate = { gte: startOfDay, lte: endOfDay };
+      }
+    } else if (query.month && query.year) {
       const startOfMonth = new Date(query.year, query.month - 1, 1);
-      const endOfMonth = new Date(query.year, query.month, 0, 23, 59, 59);
+      const endOfMonth = new Date(query.year, query.month, 0, 23, 59, 59, 999);
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
     } else if (query.dateFrom || query.dateTo) {
       where.scheduledDate = {};
@@ -700,25 +712,71 @@ export class WorkService {
       },
     });
 
-    return items.map((w) => ({
-      id: w.id,
+    const result = items.map((w) => ({
+      id: String(w.id),
       title: w.title,
       date: w.scheduledDate,
       time: w.scheduledTime || '10:00 AM',
       type: w.workType,
       serviceName: w.entitlement?.serviceName || w.workType,
       status: w.status,
-      customerId: w.customerId,
+      customerId: String(w.customerId),
       customerName: w.customer?.name || 'Customer',
       assignedToId: w.assignedToId,
-      assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Unassigned',
+      assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead',
       editorId: w.editorId,
-      editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Unassigned',
-      team: w.team?.name || 'Production Team',
+      editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor',
+      team: w.team?.name || 'SSM Team A',
+      notes: w.description || w.notes || `${w.title} deliverable`,
       outputUrl: w.outputUrl,
       feedback: w.feedback,
       revisionCount: w.revisionCount,
     }));
+
+    // If a specific customer and date was queried, check if their active subscription started on that day
+    if (numCustomerId && queriedDate) {
+      const activeSub = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true, customer: true },
+      });
+
+      if (activeSub && activeSub.startDate) {
+        const subStart = new Date(activeSub.startDate);
+        const isSameDay =
+          subStart.getFullYear() === queriedDate.getFullYear() &&
+          subStart.getMonth() === queriedDate.getMonth() &&
+          subStart.getDate() === queriedDate.getDate();
+
+        if (isSameDay) {
+          const hasPlanEvent = result.some((r) => r.title.toLowerCase().includes('plan started') || r.title.toLowerCase().includes('subscription'));
+          if (!hasPlanEvent) {
+            result.unshift({
+              id: `sub-start-${activeSub.id}`,
+              title: `${activeSub.plan?.name || 'Active Plan'} Started`,
+              date: subStart,
+              time: '09:00 AM',
+              type: 'SOCIAL_MEDIA_MANAGEMENT' as any,
+              serviceName: 'Plan Activation',
+              status: WorkStatus.SCHEDULED,
+              customerId: String(numCustomerId),
+              customerName: activeSub.customer?.name || 'Customer',
+              assignedToId: undefined,
+              assignedEmployee: 'Account Manager',
+              editorId: undefined,
+              editorName: 'SSM Team',
+              team: 'SSM Core Team',
+              notes: `Active ${activeSub.plan?.name || 'Plan'} billing period started. All plan quotas and deliverables activated.`,
+              outputUrl: null,
+              feedback: null,
+              revisionCount: 0,
+            });
+          }
+        }
+      }
+    }
+
+    return result;
   }
 
   /**
