@@ -453,7 +453,14 @@ export class AuthService {
       expiresIn,
     });
 
-    const refreshToken = this.jwtService.sign(payload, {
+    const refreshPayload = {
+      sub: userId,
+      customerId,
+      email,
+      jti: `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    };
+
+    const refreshToken = this.jwtService.sign(refreshPayload, {
       secret:
         this.configService.get('JWT_REFRESH_SECRET') ||
         'quikboom_super_secret_jwt_refresh_key_2026',

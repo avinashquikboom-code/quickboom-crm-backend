@@ -6,10 +6,14 @@ import { CreateTeamDto, AddTeamMemberDto } from './dto/team.dto';
 export class TeamService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(customerId: number | string) {
+  async findAll(customerId?: number | string) {
     const numCustomerId = Number(customerId);
+    const where: any = { isActive: true };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
     return this.prisma.team.findMany({
-      where: { customerId: numCustomerId, isActive: true },
+      where,
       include: {
         members: {
           include: {
