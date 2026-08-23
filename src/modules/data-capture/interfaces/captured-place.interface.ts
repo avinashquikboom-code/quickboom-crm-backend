@@ -1,10 +1,12 @@
 export interface CapturedPlace {
-  provider: 'GOOGLE_PLACES';
-  googlePlaceId: string;
+  id?: number;
+  provider: 'GOOGLE_PLACES' | 'MANUAL' | 'CSV_IMPORT' | string;
+  googlePlaceId?: string;
   businessName: string;
   category?: string;
   address?: string;
   phone?: string;
+  email?: string;
   website?: string;
   rating?: number;
   reviewCount?: number;
@@ -12,10 +14,27 @@ export interface CapturedPlace {
   longitude?: number;
   googleMapsUrl?: string;
   businessStatus?: string;
-  capturedAt: Date;
+  source?: string;
+  status?: string;
+  notes?: string;
+  rawData?: any;
+  isImported?: boolean;
+  importedLeadId?: number;
+  capturedAt: Date | string;
+  updatedAt?: Date | string;
   customerId: string;
-  capturedBy: string;
-  extractionJobId: string;
+  capturedBy?: string;
+  extractionJobId?: string;
+  duplicateMatches?: DuplicateMatch[];
+}
+
+export interface DuplicateMatch {
+  type: 'LEAD' | 'COMPANY' | 'CONTACT' | 'DATA_CAPTURE';
+  id: number;
+  title: string;
+  matchField: 'googlePlaceId' | 'phone' | 'email' | 'website' | 'businessName';
+  matchValue: string;
+  status?: string;
 }
 
 export interface ExtractionJob {
@@ -38,4 +57,6 @@ export interface ExtractionUsageSummary {
   totalGoogleApiCalls: number;
   quotaLimit: number;
   quotaRemaining: number;
+  validatedCount?: number;
+  convertedCount?: number;
 }

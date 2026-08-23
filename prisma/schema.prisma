@@ -1651,30 +1651,39 @@ model DataCaptureJob {
 }
 
 model DataCapturePlace {
-  id             Int            @id @default(autoincrement())
-  jobId          String
+  id             Int             @id @default(autoincrement())
+  jobId          String?
   customerId     Int
-  googlePlaceId  String
+  googlePlaceId  String?
   businessName   String
   category       String?
   address        String?
   phone          String?
+  email          String?
   website        String?
   rating         Float?
   reviewCount    Int?
   latitude       Float?
   longitude      Float?
   googleMapsUrl  String?
-  businessStatus String?        @default("OPERATIONAL")
-  isImported     Boolean        @default(false)
+  businessStatus String?         @default("OPERATIONAL")
+  source         String?         @default("GOOGLE_PLACES")
+  status         String?         @default("CAPTURED")
+  rawData        Json?
+  notes          String?
+  isImported     Boolean         @default(false)
   importedLeadId Int?
-  createdAt      DateTime       @default(now())
-  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  job            DataCaptureJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @default(now()) @updatedAt
+  deletedAt      DateTime?
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job            DataCaptureJob? @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
 
   @@index([jobId])
   @@index([customerId])
   @@index([googlePlaceId])
+  @@index([status])
+  @@index([deletedAt])
 }
 
 model EmployeeLoan {
