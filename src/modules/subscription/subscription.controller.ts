@@ -29,24 +29,76 @@ export class SubscriptionController {
   ) {}
 
   @Get('plans')
-  @ApiOperation({ summary: 'Get all available subscription plans with monthly and yearly pricing' })
+  @ApiOperation({ summary: 'Get all active subscription plans (Customer & Public)' })
   async getPlans() {
-    return this.subscriptionService.getPlans();
+    return this.subscriptionService.getPlans(false);
+  }
+
+  @Get('plans/:id')
+  @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
+  async getPlanById(@Param('id') id: string) {
+    return this.subscriptionService.getPlanById(id);
+  }
+
+  @Get('admin/plans')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all subscription plans including inactive (Admin)' })
+  async getAdminPlans() {
+    return this.subscriptionService.getPlans(true);
+  }
+
+  @Get('admin/plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get plan by ID (Admin)' })
+  async getAdminPlanById(@Param('id') id: string) {
+    return this.subscriptionService.getPlanById(id);
+  }
+
+  @Post('admin/plans')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create new subscription plan (Admin)' })
+  async createPlanAdmin(@Body() dto: any) {
+    return this.subscriptionService.createPlan(dto);
+  }
+
+  @Patch('admin/plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update existing subscription plan (Admin)' })
+  async updatePlanAdmin(@Param('id') id: string, @Body() dto: any) {
+    return this.subscriptionService.updatePlan(id, dto);
+  }
+
+  @Delete('admin/plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Deactivate subscription plan (Admin)' })
+  async deletePlanAdmin(@Param('id') id: string) {
+    return this.subscriptionService.deletePlan(id);
   }
 
   @Post('plans')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan' })
   async createPlan(@Body() dto: any) {
     return this.subscriptionService.createPlan(dto);
   }
 
   @Patch('plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan' })
   async updatePlan(@Param('id') id: string, @Body() dto: any) {
     return this.subscriptionService.updatePlan(id, dto);
   }
 
   @Delete('plans/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan' })
   async deletePlan(@Param('id') id: string) {
     return this.subscriptionService.deletePlan(id);

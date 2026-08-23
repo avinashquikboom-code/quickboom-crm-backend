@@ -77,6 +77,7 @@ model Customer {
   works                    Work[]
   subscriptions            CustomerSubscription[]
   monthlySchedules         MonthlySchedule[]
+  customPlanOrders         CustomPlanOrder[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -127,6 +128,7 @@ model CustomerSubscription {
   customUserLimit    Int?
   payments           PaymentHistory[]
   monthlySchedules   MonthlySchedule[]
+  customPlanOrders   CustomPlanOrder[]
   coupon             Coupon?                  @relation(fields: [couponId], references: [id])
   customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan               Plan                     @relation(fields: [planId], references: [id])
@@ -2002,4 +2004,65 @@ model MonthlySchedule {
   @@index([deletedAt])
   @@map("monthly_schedules")
 }
+
+model CustomPlanOption {
+  id                   Int       @id @default(autoincrement())
+  name                 String
+  code                 String    @unique
+  description          String?
+  category             String    @default("CONTENT") // CONTENT, CREATIVES, ADS, CRM, STORAGE, SUPPORT
+  monthlyPrice         Float
+  pricingType          String    @default("PER_UNIT") // FLAT, PER_UNIT
+  unitName             String?   @default("unit")
+  minQuantity          Int       @default(1)
+  maxQuantity          Int       @default(100)
+  defaultQuantity      Int       @default(1)
+  isIncludedInStandard Boolean   @default(false)
+  isActive             Boolean   @default(true)
+  sortOrder            Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
+
+  @@index([category])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("custom_plan_options")
+}
+
+model CustomPlanOrder {
+  id               Int                   @id @default(autoincrement())
+  customerId       Int
+  subscriptionId   Int?
+  orderNumber      String                @unique
+  selectedFeatures Json
+  duration         Int                   @default(1) // duration in months
+  durationUnit     String                @default("MONTH")
+  subtotal         Float
+  discount         Float                 @default(0)
+  tax              Float                 @default(0)
+  totalAmount      Float
+  currency         String                @default("INR")
+  status           String                @default("PENDING_PAYMENT") // PENDING_PAYMENT, PAID, ACTIVATED, CANCELLED, EXPIRED
+  paymentMethod    PaymentMethod         @default(RAZORPAY)
+  paymentId        String?
+  orderId          String?
+  transactionId    String?
+  startDate        DateTime?
+  expiryDate       DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  deletedAt        DateTime?
+
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("custom_plan_orders")
+}
+
 

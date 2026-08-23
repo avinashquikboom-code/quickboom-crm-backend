@@ -25,13 +25,18 @@ export class SubscriptionService {
     return calculatePlanExpiry(startDate, months);
   }
 
-  async getPlans() {
+  async getPlans(includeInactive = false) {
+    const where: any = { deletedAt: null };
+    if (!includeInactive) {
+      where.isActive = true;
+    }
+
     let plans = await this.prisma.plan.findMany({
-      where: { deletedAt: null, isActive: true },
+      where,
       orderBy: { monthlyPrice: 'asc' },
     });
 
-    if (plans.length === 0) {
+    if (plans.length === 0 && !includeInactive) {
       // Seed standard QuikBoom subscription packages
       const standardPlans = [
         {
@@ -127,8 +132,34 @@ export class SubscriptionService {
       leadLimit: p.leadLimit,
       storageLimitBytes: Number(p.storageLimit),
       features: p.features,
+      isActive: p.isActive,
       isRecommended: p.code === 'STANDARD',
     }));
+  }
+
+  async getPlanById(id: number | string) {
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: Number(id), deletedAt: null },
+    });
+
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID ${id} not found`);
+    }
+
+    return {
+      id: plan.id,
+      name: plan.name,
+      code: plan.code,
+      description: plan.description,
+      monthlyPrice: Number(plan.monthlyPrice),
+      yearlyPrice: Number(plan.yearlyPrice),
+      userLimit: plan.userLimit,
+      leadLimit: plan.leadLimit,
+      storageLimitBytes: Number(plan.storageLimit),
+      features: plan.features,
+      isActive: plan.isActive,
+      isRecommended: plan.code === 'STANDARD',
+    };
   }
 
   async getCurrentSubscription(customerId: number | string) {
