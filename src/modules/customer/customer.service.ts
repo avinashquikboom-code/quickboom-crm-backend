@@ -44,7 +44,7 @@ export class CustomerService {
         this.prisma.customer.count({
           where: {
             deletedAt: null,
-            deals: { some: { isWon: false, isLost: false } },
+            deals: { some: { deletedAt: null, isWon: false, isLost: false } },
           },
         }),
       ]);
@@ -76,7 +76,7 @@ export class CustomerService {
     sortOrder?: 'asc' | 'desc';
   }) {
     const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? query.limit : 20;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
     const skip = (page - 1) * limit;
 
     const where: any = {
@@ -85,7 +85,7 @@ export class CustomerService {
 
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
-    } else if (query.status) {
+    } else if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
       if (query.status.toUpperCase() === 'ACTIVE') {
         where.isActive = true;
       } else if (query.status.toUpperCase() === 'INACTIVE') {
@@ -93,29 +93,31 @@ export class CustomerService {
       }
     }
 
-    if (query.source && query.source !== 'ALL') {
-      where.source = { equals: query.source, mode: 'insensitive' };
+    if (query.source && query.source !== 'ALL' && query.source.trim() !== '') {
+      where.source = { equals: query.source.trim(), mode: 'insensitive' };
     }
 
-    if (query.assignedEmployee && query.assignedEmployee !== 'ALL') {
-      where.assignedEmployee = { contains: query.assignedEmployee, mode: 'insensitive' };
+    if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {
+      where.assignedEmployee = { contains: query.assignedEmployee.trim(), mode: 'insensitive' };
     }
 
-    if (query.company) {
+    if (query.company && query.company.trim()) {
+      const c = query.company.trim();
       where.OR = [
-        { name: { contains: query.company, mode: 'insensitive' } },
-        { companyName: { contains: query.company, mode: 'insensitive' } },
+        { name: { contains: c, mode: 'insensitive' } },
+        { companyName: { contains: c, mode: 'insensitive' } },
       ];
     }
 
-    if (query.search) {
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
       where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { companyName: { contains: query.search, mode: 'insensitive' } },
-        { email: { contains: query.search, mode: 'insensitive' } },
-        { phone: { contains: query.search, mode: 'insensitive' } },
-        { city: { contains: query.search, mode: 'insensitive' } },
-        { domain: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: s, mode: 'insensitive' } },
+        { companyName: { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+        { city: { contains: s, mode: 'insensitive' } },
+        { domain: { contains: s, mode: 'insensitive' } },
       ];
     }
 
