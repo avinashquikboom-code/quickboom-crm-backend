@@ -80,9 +80,6 @@ jobs:
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Pin image tag and deploy
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_USER: ${{ secrets.DB_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
@@ -90,21 +87,6 @@ jobs:
              cd '${DEPLOY_DIR}'
              chmod +x ./*.sh
              sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-
-             echo '[quikboom] Installing PostgreSQL client...'
-             sudo apt-get update -qq
-             sudo apt-get install -y postgresql-client > /dev/null 2>&1
-
-             echo '[quikboom] Resolving any failed Prisma migrations...'
-             PGPASSWORD=${DB_PASSWORD} psql \
-               -U ${DB_USER} \
-               -h host.docker.internal \
-               -p 5433 \
-               -d qbapp_crm \
-               -c 'UPDATE \"_prisma_migrations\" SET rolled_back_at = NOW() WHERE finished_at IS NULL AND rolled_back_at IS NULL;' \
-               || echo '[quikboom] psql resolve step skipped (non-fatal)'
-
-             echo '[quikboom] Running deploy...'
              ./backend.sh"
 
       - name: Deploy summary
