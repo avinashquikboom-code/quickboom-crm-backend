@@ -96,12 +96,12 @@ jobs:
              sudo apt-get install -y postgresql-client > /dev/null 2>&1
 
              echo '[quikboom] Resolving any failed Prisma migrations...'
-             PGPASSWORD='${DB_PASSWORD}' psql \
-               -U '${DB_USER}' \
+             PGPASSWORD=${DB_PASSWORD} psql \
+               -U ${DB_USER} \
                -h host.docker.internal \
                -p 5433 \
                -d qbapp_crm \
-               -c \"UPDATE \\\"_prisma_migrations\\\" SET rolled_back_at = NOW() WHERE finished_at IS NULL AND rolled_back_at IS NULL;\" \
+               -c 'UPDATE \"_prisma_migrations\" SET rolled_back_at = NOW() WHERE finished_at IS NULL AND rolled_back_at IS NULL;' \
                || echo '[quikboom] psql resolve step skipped (non-fatal)'
 
              echo '[quikboom] Running deploy...'
