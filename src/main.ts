@@ -4,6 +4,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import helmet from 'helmet';
 
 async function bootstrap() {
@@ -33,7 +34,7 @@ async function bootstrap() {
     }),
   );
   app.useGlobalFilters(new GlobalExceptionFilter());
-  app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(new LoggingInterceptor(), new TransformInterceptor());
 
   // Swagger OpenAPI Setup
   const config = new DocumentBuilder()

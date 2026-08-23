@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
@@ -11,6 +12,8 @@ import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
 export class WorkService {
+  private readonly logger = new Logger(WorkService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly planAccessService: PlanAccessService,
@@ -683,16 +686,25 @@ export class WorkService {
 
     let queriedDate: Date | undefined;
     if (query.date) {
-      const d = new Date(query.date);
-      if (!isNaN(d.getTime())) {
-        queriedDate = d;
-        const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-        const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+      const parts = query.date.split('-').map(Number);
+      if (parts.length === 3 && !parts.some(isNaN)) {
+        const [y, m, day] = parts;
+        queriedDate = new Date(Date.UTC(y, m - 1, day, 12, 0, 0));
+        const startOfDay = new Date(Date.UTC(y, m - 1, day, 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(y, m - 1, day, 23, 59, 59, 999));
         where.scheduledDate = { gte: startOfDay, lte: endOfDay };
+      } else {
+        const d = new Date(query.date);
+        if (!isNaN(d.getTime())) {
+          queriedDate = d;
+          const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+          const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+          where.scheduledDate = { gte: startOfDay, lte: endOfDay };
+        }
       }
     } else if (query.month && query.year) {
-      const startOfMonth = new Date(query.year, query.month - 1, 1);
-      const endOfMonth = new Date(query.year, query.month, 0, 23, 59, 59, 999);
+      const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 1, 0, 0, 0, 0));
+      const endOfMonth = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59, 999));
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
     } else if (query.dateFrom || query.dateTo) {
       where.scheduledDate = {};
@@ -744,12 +756,19 @@ export class WorkService {
       if (activeSub && activeSub.startDate) {
         const subStart = new Date(activeSub.startDate);
         const isSameDay =
-          subStart.getFullYear() === queriedDate.getFullYear() &&
-          subStart.getMonth() === queriedDate.getMonth() &&
-          subStart.getDate() === queriedDate.getDate();
+          (subStart.getUTCFullYear() === queriedDate.getUTCFullYear() &&
+            subStart.getUTCMonth() === queriedDate.getUTCMonth() &&
+            subStart.getUTCDate() === queriedDate.getUTCDate()) ||
+          (subStart.getFullYear() === queriedDate.getFullYear() &&
+            subStart.getMonth() === queriedDate.getMonth() &&
+            subStart.getDate() === queriedDate.getDate());
 
         if (isSameDay) {
-          const hasPlanEvent = result.some((r) => r.title.toLowerCase().includes('plan started') || r.title.toLowerCase().includes('subscription'));
+          const hasPlanEvent = result.some(
+            (r) =>
+              r.title.toLowerCase().includes('plan started') ||
+              r.title.toLowerCase().includes('subscription'),
+          );
           if (!hasPlanEvent) {
             result.unshift({
               id: `sub-start-${activeSub.id}`,
@@ -775,6 +794,10 @@ export class WorkService {
         }
       }
     }
+
+    this.logger.log(
+      `[CALENDAR_SERVICE] Customer ID: ${numCustomerId ?? 'ALL'} | Date: ${query.date ?? 'ALL'} | Schedules Found: ${items.length} | Total Events Returned: ${result.length}`,
+    );
 
     return result;
   }
