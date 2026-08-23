@@ -1,20 +1,20 @@
 -- CreateIndex
-CREATE INDEX "leads_customer_id_deleted_at_created_at_idx" ON "leads"("customer_id", "deleted_at", "created_at");
+CREATE INDEX IF NOT EXISTS "Lead_customerId_deletedAt_createdAt_idx" ON "Lead"("customerId", "deletedAt", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "leads_customer_id_status_deleted_at_idx" ON "leads"("customer_id", "status", "deleted_at");
+CREATE INDEX IF NOT EXISTS "Lead_customerId_status_deletedAt_idx" ON "Lead"("customerId", "status", "deletedAt");
 
 -- CreateIndex
-CREATE INDEX "tasks_customer_id_deleted_at_created_at_idx" ON "tasks"("customer_id", "deleted_at", "created_at");
+CREATE INDEX IF NOT EXISTS "Task_customerId_deletedAt_createdAt_idx" ON "Task"("customerId", "deletedAt", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "tasks_assigned_to_id_status_deleted_at_idx" ON "tasks"("assigned_to_id", "status", "deleted_at");
+CREATE INDEX IF NOT EXISTS "Task_assignedToId_status_deletedAt_idx" ON "Task"("assignedToId", "status", "deletedAt");
 
 -- CreateIndex
-CREATE INDEX "notifications_user_id_is_read_created_at_idx" ON "notifications"("user_id", "is_read", "created_at");
+CREATE INDEX IF NOT EXISTS "Notification_userId_isRead_createdAt_idx" ON "Notification"("userId", "isRead", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "notifications_customer_id_created_at_idx" ON "notifications"("customer_id", "created_at");
+CREATE INDEX IF NOT EXISTS "Notification_customerId_createdAt_idx" ON "Notification"("customerId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "data_capture_places_customer_id_deleted_at_created_at_idx" ON "data_capture_places"("customer_id", "deleted_at", "created_at");
+CREATE INDEX IF NOT EXISTS "DataCapturePlace_customerId_deletedAt_createdAt_idx" ON "DataCapturePlace"("customerId", "deletedAt", "createdAt");
