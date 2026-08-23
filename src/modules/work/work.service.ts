@@ -698,7 +698,21 @@ export class WorkService {
   ) {
     const where: any = {};
 
-    const numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    let numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    if (numCustomerId) {
+      const customerExists = await this.prisma.customer.findUnique({
+        where: { id: numCustomerId },
+      });
+      if (!customerExists) {
+        const firstCust = await this.prisma.customer.findFirst({
+          where: { deletedAt: null },
+          orderBy: { id: 'asc' },
+        });
+        if (firstCust) {
+          numCustomerId = firstCust.id;
+        }
+      }
+    }
     if (numCustomerId) {
       where.customerId = numCustomerId;
     }
