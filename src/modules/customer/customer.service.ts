@@ -680,5 +680,73 @@ export class CustomerService {
       },
     };
   }
+
+  async getCustomerProfile(userId: number, explicitCustomerId?: number | string) {
+    let resolvedCustomerId: number | null = explicitCustomerId ? Number(explicitCustomerId) : null;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        customer: {
+          include: {
+            subscriptions: {
+              where: { deletedAt: null },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              include: { plan: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!resolvedCustomerId && user.customerId) {
+      resolvedCustomerId = user.customerId;
+    }
+
+    const customer = user.customer || (resolvedCustomerId ? await this.prisma.customer.findUnique({
+      where: { id: resolvedCustomerId },
+      include: {
+        subscriptions: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { plan: true },
+        },
+      },
+    }) : null);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        isActive: user.isActive,
+      },
+      customer: customer ? {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        city: customer.city,
+        isActive: customer.isActive,
+        activeSubscription: customer.subscriptions[0] ? {
+          id: customer.subscriptions[0].id,
+          planName: customer.subscriptions[0].plan.name,
+          planCode: customer.subscriptions[0].plan.code,
+          status: customer.subscriptions[0].status,
+          startDate: customer.subscriptions[0].startDate,
+          endDate: customer.subscriptions[0].endDate,
+          customPrice: customer.subscriptions[0].customPrice ? Number(customer.subscriptions[0].customPrice) : Number(customer.subscriptions[0].plan.monthlyPrice),
+        } : null,
+      } : null,
+    };
+  }
 }
 

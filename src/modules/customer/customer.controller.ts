@@ -13,12 +13,20 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { CustomerService } from './customer.service';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('customers')
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
+
+  @Get('profile')
+  @ApiOperation({ summary: 'Get profile of current authenticated customer' })
+  async getProfile(@CurrentUser() user: any) {
+    return this.customerService.getCustomerProfile(user.id || user.userId, user.customerId);
+  }
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get Customer KPI summary metrics' })

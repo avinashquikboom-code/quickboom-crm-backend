@@ -102,6 +102,14 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Get('customer/profile')
+  @ApiOperation({ summary: 'Get current logged-in customer profile' })
+  async getCustomerProfile(@CurrentUser() user: any) {
+    return this.authService.getProfile(user.id || user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @Get('me')
   @ApiOperation({ summary: 'Get current user identity' })
   async getMe(@CurrentUser() user: any) {
