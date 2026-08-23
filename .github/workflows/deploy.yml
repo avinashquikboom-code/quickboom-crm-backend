@@ -85,38 +85,8 @@ jobs:
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "set -e
              cd '${DEPLOY_DIR}'
-
-             # ── 1. Update the pinned image tag in config.sh ──────────────────
              chmod +x ./*.sh
              sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-             source ./config.sh
-
-             # ── 2. Resolve any P3009-blocked failed migrations ──────────────
-             # Idempotent: if no failed migrations exist this is a harmless no-op.
-             # Runs inside a disposable container using the freshly-pulled image
-             # so Prisma version and schema are always in sync with the binary.
-             echo '[quikboom] Resolving any failed Prisma migrations (P3009 guard)...'
-             docker run --rm \
-               --network host \
-               -e DATABASE_URL=\"\${DATABASE_URL}\" \
-               \${API_ECR_REGISTRY}/\${API_ECR_REPOSITORY}:\${{ steps.meta.outputs.sha_tag }} \
-               sh -c '
-                 STATUS=\$(npx prisma migrate status 2>&1)
-                 echo \"\$STATUS\"
-                 # Extract all failed migration names and resolve each one
-                 FAILED=\$(echo \"\$STATUS\" | grep -oP \"(?<=The \`)[^`]+(?=\` migration started)\" || true)
-                 if [ -n \"\$FAILED\" ]; then
-                   echo \"[quikboom] Found failed migration(s): \$FAILED\"
-                   for MIGRATION in \$FAILED; do
-                     echo \"[quikboom] Resolving --rolled-back: \$MIGRATION\"
-                     npx prisma migrate resolve --rolled-back \"\$MIGRATION\"
-                   done
-                 else
-                   echo \"[quikboom] No failed migrations found — continuing.\"
-                 fi
-               '
-
-             # ── 3. Run normal deploy (pulls image, runs migrate deploy, restarts container) ──
              ./backend.sh"
 
       - name: Deploy summary
@@ -125,3 +95,4 @@ jobs:
           echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image: \`${{ steps.meta.outputs.image_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${GITHUB_SHA::12}\`" >> "$GITHUB_STEP_SUMMARY"
+
