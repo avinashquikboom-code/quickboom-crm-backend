@@ -48,7 +48,6 @@ export class CompanyController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'industry', required: false })
   @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'assignedToId', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
     @Query('page') page?: number,
@@ -56,7 +55,6 @@ export class CompanyController {
     @Query('search') search?: string,
     @Query('industry') industry?: string,
     @Query('status') status?: string,
-    @Query('assignedToId') assignedToId?: string,
   ) {
     return this.companyService.findAll(customerId, {
       page: page ? Number(page) : 1,
@@ -64,7 +62,6 @@ export class CompanyController {
       search,
       industry,
       status,
-      assignedToId,
     });
   }
 

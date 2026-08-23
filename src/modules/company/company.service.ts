@@ -31,10 +31,8 @@ export class CompanyService {
         source: dto.source || 'MANUAL',
         status: dto.status || 'ACTIVE',
         notes: dto.notes,
-        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
       },
       include: {
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         contacts: true,
         deals: true,
       },
@@ -113,7 +111,7 @@ export class CompanyService {
 
   async findAll(
     customerId: number | string,
-    query: { page?: number; limit?: number; search?: string; industry?: string; status?: string; assignedToId?: string },
+    query: { page?: number; limit?: number; search?: string; industry?: string; status?: string },
   ) {
     const numCustomerId = Number(customerId);
     const page = query.page || 1;
@@ -123,7 +121,6 @@ export class CompanyService {
     const where: any = { customerId: numCustomerId, deletedAt: null };
     if (query.industry && query.industry !== 'ALL') where.industry = query.industry;
     if (query.status && query.status !== 'ALL') where.status = query.status;
-    if (query.assignedToId && query.assignedToId !== 'ALL') where.assignedToId = Number(query.assignedToId);
 
     if (query.search) {
       where.OR = [
@@ -142,7 +139,6 @@ export class CompanyService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
           contacts: { where: { deletedAt: null } },
           deals: { where: { deletedAt: null } },
           visits: { where: { date: { gte: new Date() } }, take: 3 },
@@ -163,7 +159,6 @@ export class CompanyService {
     const company = await this.prisma.company.findFirst({
       where: { id: numId, customerId: numCustomerId, deletedAt: null },
       include: {
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         contacts: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
         deals: {
           where: { deletedAt: null },
@@ -212,10 +207,10 @@ export class CompanyService {
         source: dto.source,
         status: dto.status,
         notes: dto.notes,
-        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
       },
       include: {
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+        contacts: true,
+        deals: true,
       },
     });
   }

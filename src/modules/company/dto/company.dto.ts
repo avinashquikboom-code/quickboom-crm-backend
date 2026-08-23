@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateCompanyDto {
@@ -101,14 +101,9 @@ export class CreateCompanyDto {
   @IsString()
   @IsOptional()
   notes?: string;
-
-  @ApiPropertyOptional({ example: '1' })
-  @IsString()
-  @IsOptional()
-  assignedToId?: string;
 }
 
-export class UpdateCompanyDto extends CreateCompanyDto {}
+export class UpdateCompanyDto extends PartialType(CreateCompanyDto) {}
 
 export class CheckDuplicateCompanyDto {
   @ApiPropertyOptional({ example: 'Apex Tech Solutions' })
