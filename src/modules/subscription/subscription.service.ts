@@ -286,24 +286,51 @@ export class SubscriptionService {
     };
   }
 
-  async getCustomerOrders(customerId: number | string) {
+  async getCustomerOrders(
+    customerId: number | string,
+    query: { page?: number; limit?: number; search?: string; status?: string } = {},
+  ) {
     if (!customerId) {
       throw new BadRequestException('customerId is required');
     }
     const numCustomerId = Number(customerId);
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
 
-    const payments = await this.prisma.paymentHistory.findMany({
-      where: { customerId: numCustomerId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [payments, customOrders, currentSub, customer] = await Promise.all([
+      this.prisma.paymentHistory.findMany({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          subscription: {
+            include: { plan: true },
+          },
+        },
+      }),
+      this.prisma.customPlanOrder.findMany({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          subscription: {
+            include: { plan: true },
+          },
+        },
+      }),
+      this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true },
+      }),
+      this.prisma.customer.findUnique({
+        where: { id: numCustomerId },
+      }),
+    ]);
 
-    const currentSub = await this.prisma.customerSubscription.findFirst({
-      where: { customerId: numCustomerId },
-      include: { plan: true },
-    });
+    const combinedOrders: any[] = [];
 
-    return payments.map((p) => {
-      const isPaid = p.status === 'SUCCESS';
+    // Map standard / package payments
+    for (const p of payments) {
+      const isPaid = p.status === 'SUCCESS' || p.status === 'PAID';
       const billingCycle = (p.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
       const baseAmount = Number(p.amount);
       const taxAmount = Number(p.taxAmount || (baseAmount * 0.18));
@@ -311,26 +338,241 @@ export class SubscriptionService {
 
       const purchaseDate = p.createdAt;
       const activationDate = p.createdAt;
-      const expiryDate = SubscriptionService.calculateExpiryDate(purchaseDate, billingCycle);
+      const expiryDate = p.subscription?.endDate || SubscriptionService.calculateExpiryDate(purchaseDate, billingCycle);
 
-      return {
+      combinedOrders.push({
         id: p.id,
-        orderNumber: p.orderNumber || `#QB-${p.id.toString().padStart(6, '0')}`,
-        planId: p.planId || currentSub?.planId || 1,
-        planName: p.planName || currentSub?.plan?.name || 'Standard Package',
+        orderId: `ORD-PAY-${p.id}`,
+        orderNumber: p.orderNumber || `#QB-${String(p.id).padStart(6, '0')}`,
+        planId: p.planId || p.subscription?.planId || currentSub?.planId || 1,
+        planName: p.planName || p.subscription?.plan?.name || currentSub?.plan?.name || 'Standard Package',
+        planType: 'DEFAULT',
         billingCycle,
+        billingDuration: billingCycle === SubscriptionBillingCycle.YEARLY ? 'YEARLY' : 'MONTHLY',
         amount: baseAmount,
+        subtotal: baseAmount,
+        discount: 0,
         taxAmount,
         totalAmount,
-        paymentStatus: isPaid ? 'PAID' : 'PENDING',
+        status: isPaid ? 'PAID' : (p.status === 'FAILED' ? 'FAILED' : 'PENDING'),
+        paymentStatus: isPaid ? 'PAID' : (p.status === 'FAILED' ? 'FAILED' : 'PENDING'),
         paymentMethod: p.paymentMethod || 'RAZORPAY',
         transactionId: p.transactionId || `TXN-${p.id.toString().padStart(8, '0')}`,
         purchaseDate,
         activationDate,
+        startDate: purchaseDate,
         expiryDate,
-        features: currentSub?.plan?.features || [],
-      };
+        customerName: customer?.name || 'Customer Account',
+        customerEmail: customer?.email || '',
+        features: p.subscription?.plan?.features || currentSub?.plan?.features || [],
+      });
+    }
+
+    // Map custom plan orders
+    for (const co of customOrders) {
+      const isPaid = co.status === 'PAID' || co.status === 'ACTIVATED';
+      const isPending = co.status === 'PENDING_PAYMENT' || co.status === 'PENDING';
+      const duration = co.duration || 1;
+      const durationUnit = co.durationUnit || 'MONTH';
+
+      const purchaseDate = co.createdAt;
+      const startDate = co.startDate || co.createdAt;
+      const expiryDate = co.expiryDate || (durationUnit === 'YEAR'
+        ? SubscriptionService.calculateExpiryDate(startDate, SubscriptionBillingCycle.YEARLY)
+        : SubscriptionService.calculateExpiryDate(startDate, SubscriptionBillingCycle.MONTHLY));
+
+      const selectedFeats = co.selectedFeatures as any;
+      const featureList = Array.isArray(selectedFeats)
+        ? selectedFeats
+        : (typeof selectedFeats === 'object' && selectedFeats !== null
+            ? Object.entries(selectedFeats).map(([k, v]: [string, any]) => `${v?.name || k}: ${v?.quantity || v}`)
+            : []);
+
+      combinedOrders.push({
+        id: co.id + 100000, // Namespace ID for custom orders
+        customOrderId: co.id,
+        orderId: `ORD-CUST-${co.id}`,
+        orderNumber: co.orderNumber,
+        planId: co.subscriptionId || 999,
+        planName: `Custom Plan (${duration} ${durationUnit.toLowerCase()}${duration > 1 ? 's' : ''})`,
+        planType: 'CUSTOM',
+        billingCycle: duration >= 12 ? SubscriptionBillingCycle.YEARLY : SubscriptionBillingCycle.MONTHLY,
+        billingDuration: `${duration} ${durationUnit}`,
+        amount: Number(co.subtotal),
+        subtotal: Number(co.subtotal),
+        discount: Number(co.discount || 0),
+        taxAmount: Number(co.tax || (co.subtotal * 0.18)),
+        totalAmount: Number(co.totalAmount),
+        status: isPaid ? 'PAID' : (isPending ? 'PENDING' : co.status),
+        paymentStatus: isPaid ? 'PAID' : (isPending ? 'PENDING' : co.status),
+        paymentMethod: co.paymentMethod || 'RAZORPAY',
+        transactionId: co.transactionId || `TXN-CP-${co.id}`,
+        purchaseDate,
+        activationDate: startDate,
+        startDate,
+        expiryDate,
+        customerName: customer?.name || 'Customer Account',
+        customerEmail: customer?.email || '',
+        features: featureList,
+      });
+    }
+
+    // Sort by purchaseDate desc
+    combinedOrders.sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
+
+    // Filter by search
+    let filtered = combinedOrders;
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim().toLowerCase();
+      filtered = filtered.filter(
+        (o) =>
+          o.orderNumber.toLowerCase().includes(s) ||
+          o.planName.toLowerCase().includes(s) ||
+          (o.transactionId && o.transactionId.toLowerCase().includes(s)),
+      );
+    }
+
+    // Filter by status
+    if (query.status && query.status !== 'ALL') {
+      const targetStatus = query.status.toUpperCase();
+      filtered = filtered.filter((o) => {
+        if (targetStatus === 'PAID') return o.paymentStatus === 'PAID';
+        if (targetStatus === 'PENDING') return o.paymentStatus === 'PENDING';
+        if (targetStatus === 'FAILED') return o.paymentStatus === 'FAILED';
+        if (targetStatus === 'MONTHLY') return o.billingCycle === SubscriptionBillingCycle.MONTHLY;
+        if (targetStatus === 'YEARLY') return o.billingCycle === SubscriptionBillingCycle.YEARLY;
+        return o.status === targetStatus || o.paymentStatus === targetStatus;
+      });
+    }
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const skip = (page - 1) * limit;
+    const paginatedItems = filtered.slice(skip, skip + limit);
+
+    return {
+      success: true,
+      items: paginatedItems,
+      data: {
+        items: paginatedItems,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+        },
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  async getOrderInvoice(customerId: number | string, orderIdOrNumber: string | number) {
+    const numCustomerId = Number(customerId);
+    const searchVal = String(orderIdOrNumber).trim();
+
+    // Check payment history
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: {
+        customerId: numCustomerId,
+        OR: [
+          { orderNumber: searchVal },
+          { id: !isNaN(Number(searchVal)) ? Number(searchVal) : undefined },
+        ],
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } },
+      },
     });
+
+    if (payment) {
+      const baseAmount = Number(payment.amount);
+      const taxAmount = Number(payment.taxAmount || (baseAmount * 0.18));
+      const totalAmount = Number(payment.totalAmount || (baseAmount + taxAmount));
+      const billingCycle = (payment.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
+      const expiryDate = payment.subscription?.endDate || SubscriptionService.calculateExpiryDate(payment.createdAt, billingCycle);
+
+      return {
+        success: true,
+        invoiceNumber: `INV-${payment.orderNumber ? payment.orderNumber.replace(/[^A-Za-z0-9]/g, '') : payment.id}`,
+        orderNumber: payment.orderNumber || `#QB-${String(payment.id).padStart(6, '0')}`,
+        customerName: payment.customer.name,
+        customerEmail: payment.customer.email,
+        planName: payment.planName || payment.subscription?.plan?.name || 'Standard Package',
+        planType: 'DEFAULT',
+        features: payment.subscription?.plan?.features || [],
+        purchaseDate: payment.createdAt,
+        startDate: payment.createdAt,
+        expiryDate,
+        subtotal: baseAmount,
+        discount: 0,
+        tax: taxAmount,
+        totalAmount,
+        currency: payment.currency,
+        paymentStatus: payment.status === 'SUCCESS' ? 'PAID' : payment.status,
+        paymentMethod: payment.paymentMethod,
+        transactionId: payment.transactionId || `TXN-${payment.id}`,
+      };
+    }
+
+    // Check custom plan order
+    const customOrder = await this.prisma.customPlanOrder.findFirst({
+      where: {
+        customerId: numCustomerId,
+        OR: [
+          { orderNumber: searchVal },
+          { id: !isNaN(Number(searchVal)) ? Number(searchVal) : undefined },
+        ],
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } },
+      },
+    });
+
+    if (customOrder) {
+      const selectedFeats = customOrder.selectedFeatures as any;
+      const featureList = Array.isArray(selectedFeats)
+        ? selectedFeats
+        : (typeof selectedFeats === 'object' && selectedFeats !== null
+            ? Object.entries(selectedFeats).map(([k, v]: [string, any]) => `${v?.name || k}: ${v?.quantity || v}`)
+            : []);
+
+      return {
+        success: true,
+        invoiceNumber: `INV-${customOrder.orderNumber.replace(/[^A-Za-z0-9]/g, '')}`,
+        orderNumber: customOrder.orderNumber,
+        customerName: customOrder.customer.name,
+        customerEmail: customOrder.customer.email,
+        planName: `Custom Plan (${customOrder.duration} ${customOrder.durationUnit.toLowerCase()})`,
+        planType: 'CUSTOM',
+        features: featureList,
+        purchaseDate: customOrder.createdAt,
+        startDate: customOrder.startDate || customOrder.createdAt,
+        expiryDate: customOrder.expiryDate,
+        subtotal: Number(customOrder.subtotal),
+        discount: Number(customOrder.discount || 0),
+        tax: Number(customOrder.tax || (customOrder.subtotal * 0.18)),
+        totalAmount: Number(customOrder.totalAmount),
+        currency: customOrder.currency,
+        paymentStatus: customOrder.status === 'ACTIVATED' || customOrder.status === 'PAID' ? 'PAID' : customOrder.status,
+        paymentMethod: customOrder.paymentMethod,
+        transactionId: customOrder.transactionId || `TXN-${customOrder.id}`,
+      };
+    }
+
+    throw new NotFoundException(`Order or invoice matching "${orderIdOrNumber}" not found for this customer.`);
   }
 
   async createOrder(customerId: number | string, dto: CreateOrderDto) {

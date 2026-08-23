@@ -205,8 +205,83 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get customer purchase and order history' })
-  async getCustomerOrders(@CurrentCustomer() customerId: string) {
-    return this.subscriptionService.getCustomerOrders(customerId);
+  async getCustomerOrders(
+    @CurrentCustomer() customerId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.subscriptionService.getCustomerOrders(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      search,
+      status,
+    });
+  }
+
+  @Get('customer/orders')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get authenticated customer orders with server pagination, search & status filter' })
+  async getCustomerOrdersAlias(
+    @CurrentCustomer() customerId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.subscriptionService.getCustomerOrders(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      search,
+      status,
+    });
+  }
+
+  @Get('customer/orders/:id/invoice')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get verified invoice details for a customer order' })
+  async getOrderInvoice(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    return this.subscriptionService.getOrderInvoice(customerId, id);
+  }
+
+  @Get('customer/orders/:id/pdf')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get verified invoice PDF data for a customer order' })
+  async getOrderInvoicePdf(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    const inv = await this.subscriptionService.getOrderInvoice(customerId, id);
+    return {
+      success: true,
+      invoice: inv,
+      pdfUrl: `https://api.qbapp.online/api/v1/customer/invoices/${inv.invoiceNumber}/download`,
+      message: 'Invoice PDF generated successfully.',
+    };
+  }
+
+  @Get('customer/invoices/:id/pdf')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get verified invoice PDF download metadata' })
+  async getInvoicePdf(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    const inv = await this.subscriptionService.getOrderInvoice(customerId, id);
+    return {
+      success: true,
+      invoice: inv,
+      pdfUrl: `https://api.qbapp.online/api/v1/customer/invoices/${inv.invoiceNumber}/download`,
+      message: 'Invoice PDF generated successfully.',
+    };
   }
 
   @Post('subscriptions/order')
