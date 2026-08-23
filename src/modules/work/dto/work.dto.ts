@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { WorkType, WorkStatus, WorkPriority } from '@prisma/client';
 
 export class CreateWorkDto {
@@ -31,20 +31,27 @@ export class CreateWorkDto {
   @IsOptional()
   priority?: WorkPriority;
 
-  @ApiPropertyOptional({ example: 'team-uuid' })
-  @IsString()
+  @ApiPropertyOptional({ example: 1 })
   @IsOptional()
-  teamId?: string;
+  teamId?: number | string;
 
-  @ApiPropertyOptional({ example: 'employee-uuid' })
-  @IsString()
+  @ApiPropertyOptional({ example: 1 })
   @IsOptional()
-  assignedToId?: string;
+  assignedToId?: number | string;
 
-  @ApiPropertyOptional({ example: 'Plan Entitlement Service: Reels' })
+  @ApiPropertyOptional({ example: 2 })
+  @IsOptional()
+  editorId?: number | string;
+
+  @ApiPropertyOptional({ example: 'Reels' })
   @IsString()
   @IsOptional()
   serviceName?: string;
+
+  @ApiPropertyOptional({ example: 'Customer notes / requirements' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
 export class UpdateWorkDto {
@@ -52,6 +59,16 @@ export class UpdateWorkDto {
   @IsString()
   @IsOptional()
   title?: string;
+
+  @ApiPropertyOptional({ example: '2026-08-25T10:00:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  scheduledDate?: string;
+
+  @ApiPropertyOptional({ example: '11:00 AM' })
+  @IsString()
+  @IsOptional()
+  scheduledTime?: string;
 
   @ApiPropertyOptional({ enum: WorkStatus, example: WorkStatus.COMPLETED })
   @IsEnum(WorkStatus)
@@ -72,4 +89,45 @@ export class UpdateWorkDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  assignedToId?: number | string;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsOptional()
+  editorId?: number | string;
+}
+
+export class SubmitWorkDto {
+  @ApiProperty({ example: 'https://storage.quikboom.com/works/reel-01.mp4' })
+  @IsString()
+  @IsNotEmpty()
+  outputUrl: string;
+
+  @ApiPropertyOptional({ example: 'Color grading and audio synced as per client instructions.' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
+}
+
+export class ReviewWorkDto {
+  @ApiProperty({ example: 'Please brighten the intro and change background music.' })
+  @IsString()
+  @IsNotEmpty()
+  feedback: string;
+}
+
+export class AssignWorkDto {
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  assignedToId?: number | string;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsOptional()
+  editorId?: number | string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  teamId?: number | string;
 }

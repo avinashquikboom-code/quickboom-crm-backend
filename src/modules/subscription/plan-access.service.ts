@@ -14,6 +14,16 @@ export interface EffectivePlanUsage {
   scheduledWorks: number;
 }
 
+export interface EffectivePlanServiceQuota {
+  id?: number;
+  serviceName: string;
+  totalQty: number;
+  usedQty: number;
+  scheduledQty: number;
+  remainingQty: number;
+  validUntil?: Date;
+}
+
 export interface EffectivePlan {
   customerId: number;
   subscriptionId?: number;
@@ -37,6 +47,7 @@ export interface EffectivePlan {
   usedSchedules: number;
   remainingSchedules: number;
   features: any;
+  services: EffectivePlanServiceQuota[];
   usage: EffectivePlanUsage;
 }
 
@@ -99,6 +110,12 @@ export class PlanAccessService {
           usedSchedules: 0,
           remainingSchedules: 10,
           features: ['Customer Management', 'Calendar', 'Schedule', 'Works', 'Reports'],
+          services: [
+            { serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 0, remainingQty: 4 },
+            { serviceName: 'Creative Posts', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
+            { serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
+            { serviceName: 'Influencer Promotion', totalQty: 1, usedQty: 0, scheduledQty: 0, remainingQty: 1 },
+          ],
           usage: {
             currentUsers: 0,
             currentLeads: 0,
@@ -182,6 +199,23 @@ export class PlanAccessService {
 
     const remainingSchedules = Math.max(0, totalScheduleLimit - totalUsedSchedules);
 
+    const services: EffectivePlanServiceQuota[] = (entitlements && entitlements.length > 0)
+      ? entitlements.map((e) => ({
+          id: e.id,
+          serviceName: e.serviceName,
+          totalQty: e.totalQty,
+          usedQty: e.usedQty,
+          scheduledQty: e.scheduledQty,
+          remainingQty: Math.max(0, e.totalQty - (e.usedQty + e.scheduledQty)),
+          validUntil: e.validUntil || (sub?.endDate || new Date()),
+        }))
+      : [
+          { serviceName: 'Reels', totalQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4) },
+          { serviceName: 'Creative Posts', totalQty: basePlan.code === 'PREMIUM' ? 6 : (basePlan.code === 'STANDARD' ? 4 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 6 : (basePlan.code === 'STANDARD' ? 4 : 3) },
+          { serviceName: 'Stories', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 5 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 5 : 3) },
+          { serviceName: 'Influencer Promotion', totalQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1) },
+        ];
+
     return {
       customerId: numCustomerId,
       subscriptionId: sub?.id,
@@ -205,6 +239,7 @@ export class PlanAccessService {
       usedSchedules: totalUsedSchedules,
       remainingSchedules,
       features: effectiveFeatures,
+      services,
       usage: {
         currentUsers,
         currentLeads,

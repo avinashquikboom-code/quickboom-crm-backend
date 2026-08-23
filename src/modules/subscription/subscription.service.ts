@@ -646,6 +646,61 @@ export class SubscriptionService {
         },
       });
 
+      // 3. Initialize or refresh service entitlements based on plan features
+      const featureList = Array.isArray(plan.features) ? plan.features : [];
+      const serviceQuotas: { serviceName: string; totalQty: number }[] = [];
+
+      for (const item of featureList) {
+        const text = typeof item === 'string' ? item : ((item as any)?.name || (item as any)?.title || '');
+        const match = text.match(/^(\d+)\s+(.+)$/i);
+        if (match) {
+          const qty = parseInt(match[1], 10);
+          const name = match[2].trim();
+          serviceQuotas.push({ serviceName: name, totalQty: qty });
+        }
+      }
+
+      if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('reel'))) {
+        serviceQuotas.push({ serviceName: 'Reels', totalQty: plan.code === 'PREMIUM' ? 10 : (plan.code === 'STANDARD' ? 6 : 4) });
+      }
+      if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('post') || s.serviceName.toLowerCase().includes('creative'))) {
+        serviceQuotas.push({ serviceName: 'Creative Posts', totalQty: plan.code === 'PREMIUM' ? 6 : (plan.code === 'STANDARD' ? 4 : 3) });
+      }
+      if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('story') || s.serviceName.toLowerCase().includes('stories'))) {
+        serviceQuotas.push({ serviceName: 'Stories', totalQty: plan.code === 'PREMIUM' ? 8 : (plan.code === 'STANDARD' ? 5 : 3) });
+      }
+      if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('influencer'))) {
+        serviceQuotas.push({ serviceName: 'Influencer Promotion', totalQty: plan.code === 'PREMIUM' ? 3 : (plan.code === 'STANDARD' ? 2 : 1) });
+      }
+
+      for (const sq of serviceQuotas) {
+        const existingEnt = await tx.planEntitlement.findFirst({
+          where: { customerId: numCustomerId, serviceName: sq.serviceName },
+        });
+        if (existingEnt) {
+          await tx.planEntitlement.update({
+            where: { id: existingEnt.id },
+            data: {
+              planId: plan.id,
+              totalQty: sq.totalQty,
+              validUntil: expiryDate,
+            },
+          });
+        } else {
+          await tx.planEntitlement.create({
+            data: {
+              customerId: numCustomerId,
+              planId: plan.id,
+              serviceName: sq.serviceName,
+              totalQty: sq.totalQty,
+              usedQty: 0,
+              scheduledQty: 0,
+              validUntil: expiryDate,
+            },
+          });
+        }
+      }
+
       return {
         order: {
           id: payment.id,

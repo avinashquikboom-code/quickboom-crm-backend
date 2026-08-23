@@ -996,7 +996,8 @@ model Employee {
   tasks              Task[]
   teamMembers        TeamMember[]
   visits                   Visit[]
-  works                    Work[]
+  works                    Work[]                   @relation("AssignedEmployeeWorks")
+  editedWorks              Work[]                   @relation("AssignedEditorWorks")
   workTasks                WorkTask[]
   assignedMonthlySchedules MonthlySchedule[]
 
@@ -1603,6 +1604,7 @@ model Work {
   entitlementId Int?
   teamId        Int?
   assignedToId  Int?
+  editorId      Int?
   workType      WorkType         @default(REELS_SHOOT)
   title         String
   description   String?
@@ -1612,9 +1614,15 @@ model Work {
   priority      WorkPriority     @default(MEDIUM)
   notes         String?
   outputUrl     String?
+  feedback      String?
+  revisionCount Int              @default(0)
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  completedAt   DateTime?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
-  assignedTo    Employee?        @relation(fields: [assignedToId], references: [id])
+  assignedTo    Employee?        @relation("AssignedEmployeeWorks", fields: [assignedToId], references: [id])
+  editor        Employee?        @relation("AssignedEditorWorks", fields: [editorId], references: [id])
   customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
   team          Team?            @relation(fields: [teamId], references: [id])
@@ -1623,6 +1631,7 @@ model Work {
   @@index([customerId])
   @@index([teamId])
   @@index([assignedToId])
+  @@index([editorId])
   @@index([scheduledDate])
   @@index([status])
 }
@@ -1935,11 +1944,30 @@ enum WorkType {
   UPLOADING
   INFLUENCER_PROMO
   ADS_MANAGEMENT
+  REEL
+  CREATIVE_POST
+  STORY
+  INFLUENCER_PROMOTION
+  GRAPHIC_DESIGN
+  VIDEO
+  SHOOT
+  EDITING
+  SOCIAL_MEDIA_MANAGEMENT
+  CONTENT_WRITING
+  META_ADS
+  GOOGLE_ADS
+  PERFORMANCE_REPORT
 }
 
 enum WorkStatus {
   SCHEDULED
+  ASSIGNED
   IN_PROGRESS
+  PROCESSING
+  SUBMITTED
+  CUSTOMER_REVIEW
+  REVISION_REQUESTED
+  APPROVED
   UNDER_REVIEW
   COMPLETED
   CANCELLED
