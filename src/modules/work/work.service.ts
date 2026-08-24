@@ -751,18 +751,17 @@ export class WorkService {
       if (query.dateTo) where.scheduledDate.lte = new Date(query.dateTo);
     }
 
-    // Auto-generate schedules if customer has active plan entitlements but 0 work items
+    // Auto-generate schedules in background if customer has active plan entitlements but 0 work items
     if (numCustomerId) {
-      const existingCount = await this.prisma.work.count({
+      this.prisma.work.count({
         where: { customerId: numCustomerId, status: { not: WorkStatus.CANCELLED } },
-      });
-      if (existingCount === 0) {
-        try {
-          await this.generatePlanSchedules(numCustomerId);
-        } catch (err) {
-          this.logger.debug(`Auto-schedule generation on calendar query skipped: ${err}`);
+      }).then((existingCount) => {
+        if (existingCount === 0) {
+          this.generatePlanSchedules(numCustomerId).catch((err) => {
+            this.logger.debug(`Background auto-schedule generation skipped: ${err}`);
+          });
         }
-      }
+      }).catch(() => {});
     }
 
     const items = await this.prisma.work.findMany({

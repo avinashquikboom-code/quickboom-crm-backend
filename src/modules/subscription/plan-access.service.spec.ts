@@ -52,7 +52,10 @@ describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
         count: jest.fn(),
       },
       planEntitlement: {
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        update: jest.fn(),
       },
     };
 

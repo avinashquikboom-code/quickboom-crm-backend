@@ -24,8 +24,9 @@ export class WorkController {
   constructor(private readonly workService: WorkService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all scheduled work items' })
-  @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'editorId', required: false })
   @ApiQuery({ name: 'status', required: false })
@@ -34,8 +35,7 @@ export class WorkController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
-    @CurrentCustomer() authCustomerId: string | undefined,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: string,
     @Query('employeeId') employeeId?: string,
     @Query('editorId') editorId?: string,
     @Query('status') status?: WorkStatus,
@@ -44,8 +44,7 @@ export class WorkController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const effectiveCustomerId = authCustomerId || customerIdQuery;
-    return this.workService.findAll(effectiveCustomerId, {
+    return this.workService.findAll(customerId, {
       status,
       workType,
       employeeId,
@@ -57,8 +56,9 @@ export class WorkController {
   }
 
   @Get('calendar')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get scheduled calendar events' })
-  @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'date', required: false })
   @ApiQuery({ name: 'dateFrom', required: false })
@@ -67,8 +67,7 @@ export class WorkController {
   @ApiQuery({ name: 'year', required: false })
   @ApiQuery({ name: 'status', required: false })
   async getCalendar(
-    @CurrentCustomer() authCustomerId: string | undefined,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: string,
     @Query('employeeId') employeeId?: string,
     @Query('date') date?: string,
     @Query('dateFrom') dateFrom?: string,
@@ -77,8 +76,7 @@ export class WorkController {
     @Query('year') year?: string,
     @Query('status') status?: WorkStatus,
   ) {
-    const effectiveCustomerId = authCustomerId || customerIdQuery;
-    return this.workService.getCalendar(effectiveCustomerId, {
+    return this.workService.getCalendar(customerId, {
       date,
       dateFrom,
       dateTo,
@@ -202,31 +200,37 @@ export class WorkController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get single work item with multi-step tasks' })
   async findOne(
     @Param('id') id: string,
-    @Query('customerId') customerIdQuery?: string,
+    @CurrentCustomer() customerId: string,
   ) {
-    return this.workService.findOne(customerIdQuery, id);
+    return this.workService.findOne(customerId, id);
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new scheduled work deliverable' })
   async create(
-    @Query('customerId') customerIdQuery: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: CreateWorkDto,
   ) {
-    return this.workService.create(customerIdQuery, dto);
+    return this.workService.create(customerId, dto);
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Update work item details' })
   async update(
     @Param('id') id: string,
-    @Query('customerId') customerIdQuery: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: UpdateWorkDto,
   ) {
-    return this.workService.update(customerIdQuery, id, dto);
+    return this.workService.update(customerId, id, dto);
   }
 
   @Post(':id/submit')
@@ -284,19 +288,19 @@ export class WorkController {
   }
 
   @Post(':id/cancel')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Cancel schedule and release reserved quota' })
   async cancelWork(
     @Param('id') id: string,
-    @Query('customerId') customerIdQuery?: string,
-    @CurrentCustomer() currentCustomerId?: string,
+    @CurrentCustomer() customerId: string,
   ) {
-    const targetCustomer = customerIdQuery || currentCustomerId;
-    return this.workService.cancelWork(targetCustomer, id);
+    return this.workService.cancelWork(customerId, id);
   }
 
   @Patch(':id/tasks/:taskId/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Update task progress state' })
   async updateTaskStatus(
     @Param('id') id: string,

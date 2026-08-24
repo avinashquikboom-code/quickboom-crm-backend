@@ -39,12 +39,10 @@ export class ScheduleController {
     @Query('year') year?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
-    @Query('customerId') customerIdQuery?: string,
     @Query('employeeId') employeeId?: string,
     @Query('status') status?: ScheduleStatus,
   ) {
-    const targetCustomer = customerIdQuery || customerId;
-    return this.scheduleService.getCalendar(targetCustomer, {
+    return this.scheduleService.getCalendar(customerId, {
       month: month ? parseInt(month, 10) : undefined,
       year: year ? parseInt(year, 10) : undefined,
       from,
@@ -67,7 +65,6 @@ export class ScheduleController {
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
-    @Query('customerId') customerIdQuery?: string,
     @Query('employeeId') employeeId?: string,
     @Query('planId') planId?: string,
     @Query('status') status?: ScheduleStatus,
@@ -77,8 +74,7 @@ export class ScheduleController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const targetCustomer = customerIdQuery || customerId;
-    return this.scheduleService.findAll(targetCustomer, {
+    return this.scheduleService.findAll(customerId, {
       employeeId,
       planId,
       status,

@@ -230,9 +230,12 @@ export class SubscriptionController {
 
   @Get('subscriptions/effective-plan')
   @Get('customer/subscription/usage')
+  @Get('customer/plans/current')
+  @Get('customer/plans/current/usage')
+  @Get('customer/plans/current/services')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer resolved effective plan with limits and live usage' })
+  @ApiOperation({ summary: 'Get customer resolved effective plan with limits, service quotas, and live usage' })
   async getEffectivePlan(@CurrentCustomer() customerId: string) {
     return this.planAccessService.getEffectivePlan(customerId);
   }

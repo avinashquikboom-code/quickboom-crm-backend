@@ -20,6 +20,7 @@ export class CustomerGuard implements CanActivate {
       return true;
     }
 
+    const queryCustomerId = request.query?.customerId;
     const headerCustomerId = request.headers['x-customer-id'];
     const userCustomerId = user?.customerId;
 
@@ -28,6 +29,10 @@ export class CustomerGuard implements CanActivate {
     }
 
     if (headerCustomerId && Number(headerCustomerId) !== Number(userCustomerId)) {
+      throw new ForbiddenException('Cross-customer access forbidden');
+    }
+
+    if (queryCustomerId && !isNaN(Number(queryCustomerId)) && Number(queryCustomerId) !== Number(userCustomerId)) {
       throw new ForbiddenException('Cross-customer access forbidden');
     }
 

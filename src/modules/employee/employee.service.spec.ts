@@ -41,7 +41,25 @@ describe('EmployeeService — Customer Data Isolation', () => {
         findFirst: jest.fn(),
         create: jest.fn(),
       },
-    };
+      user: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 10, email: 'test@example.com' }),
+      },
+      role: {
+        findFirst: jest.fn().mockResolvedValue({ id: 1, type: 'CUSTOM' }),
+        create: jest.fn().mockResolvedValue({ id: 1 }),
+      },
+      userRole: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 1 }),
+      },
+      branchGeofence: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 1, name: 'Head Office' }),
+      },
+      $transaction: jest.fn((cb: any) => typeof cb === 'function' ? cb(prisma) : Promise.all(cb)),
+    } as any;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
