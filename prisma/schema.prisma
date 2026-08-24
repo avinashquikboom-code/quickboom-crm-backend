@@ -1634,6 +1634,8 @@ model Work {
   @@index([editorId])
   @@index([scheduledDate])
   @@index([status])
+  @@index([customerId, scheduledDate])
+  @@index([customerId, status])
 }
 
 model WorkTask {

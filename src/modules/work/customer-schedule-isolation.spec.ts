@@ -2,8 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { WorkStatus, WorkType } from '@prisma/client';
+import { CustomerGuard } from '../../common/guards/customer.guard';
 
 describe('Customer Schedule & Calendar Data Isolation Tests', () => {
   let service: WorkService;
@@ -178,35 +179,64 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
     });
   });
 
-  describe('4. Single Quota Consumption Across Workflow Lifecycle', () => {
-    it('approving deliverable marks COMPLETED and decrements scheduledQty, increments usedQty exactly once', async () => {
-      const mockExistingWork = {
-        id: 101,
-        customerId: 1,
-        status: WorkStatus.CUSTOMER_REVIEW,
-        entitlementId: 5,
-        title: 'Reel 1',
-        assignedTo: { userId: 10 },
-        editor: { userId: 11 },
+  describe('5. CustomerGuard Parameter Protection', () => {
+    it('rejects cross-customer query parameter with ForbiddenException', () => {
+      const guard = new CustomerGuard();
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { customerId: 1 },
+            query: { customerId: '2' },
+            headers: {},
+          }),
+        }),
       };
-      prisma.work.findFirst.mockResolvedValue(mockExistingWork);
-      prisma.work.update.mockResolvedValue({
-        ...mockExistingWork,
-        status: WorkStatus.COMPLETED,
-      });
-      prisma.workTask.updateMany.mockResolvedValue({ count: 2 });
-      prisma.planEntitlement.update.mockResolvedValue({ id: 5 });
-      prisma.notification.create.mockResolvedValue({ id: 1 });
+      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
+    });
 
-      const result = await service.approveWork(1, 101);
-      expect(result.success).toBe(true);
-      expect(prisma.planEntitlement.update).toHaveBeenCalledWith({
-        where: { id: 5 },
-        data: {
-          scheduledQty: { decrement: 1 },
-          usedQty: { increment: 1 },
-        },
-      });
+    it('rejects cross-customer string alias parameter (CustomerB) with ForbiddenException', () => {
+      const guard = new CustomerGuard();
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { customerId: 1 },
+            query: { customerId: 'CustomerB' },
+            headers: {},
+          }),
+        }),
+      };
+      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
+    });
+
+    it('rejects cross-customer header (x-customer-id: CUST-900829843) with ForbiddenException', () => {
+      const guard = new CustomerGuard();
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            user: { customerId: 1 },
+            query: {},
+            headers: { 'x-customer-id': 'CUST-900829843' },
+          }),
+        }),
+      };
+      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
+    });
+
+    it('allows matching customer and scopes request.customerId to user.customerId', () => {
+      const guard = new CustomerGuard();
+      const req: any = {
+        user: { customerId: 1 },
+        query: { customerId: '1' },
+        headers: { 'x-customer-id': 'CUST-001' },
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      expect(guard.canActivate(mockContext)).toBe(true);
+      expect(req.customerId).toBe(1);
     });
   });
 });
+

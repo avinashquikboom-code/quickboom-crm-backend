@@ -768,11 +768,11 @@ export class WorkService {
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        team: true,
+        customer: { select: { id: true, name: true } },
+        team: { select: { name: true } },
         assignedTo: { select: { id: true, firstName: true, lastName: true } },
         editor: { select: { id: true, firstName: true, lastName: true } },
-        entitlement: true,
+        entitlement: { select: { serviceName: true } },
       },
     });
 
@@ -819,7 +819,12 @@ export class WorkService {
       const activeSub = await this.prisma.customerSubscription.findFirst({
         where: { customerId: numCustomerId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        include: { plan: true, customer: true },
+        select: {
+          id: true,
+          startDate: true,
+          plan: { select: { name: true } },
+          customer: { select: { name: true } },
+        },
       });
 
       if (activeSub && activeSub.startDate) {
