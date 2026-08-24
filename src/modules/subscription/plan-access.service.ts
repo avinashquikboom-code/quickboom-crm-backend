@@ -10,7 +10,7 @@ import { SubscriptionStatus } from '@prisma/client';
 export interface EffectivePlanUsage {
   currentUsers: number;
   currentLeads: number;
-  currentStorageBytes: bigint;
+  currentStorageBytes: number | bigint;
   scheduledWorks: number;
 }
 
@@ -42,7 +42,7 @@ export interface EffectivePlan {
   isCustomized: boolean;
   userLimit: number;
   leadLimit: number;
-  storageLimitBytes: bigint;
+  storageLimitBytes: number | bigint;
   scheduleLimit: number;
   usedSchedules: number;
   remainingSchedules: number;
@@ -131,7 +131,7 @@ export class PlanAccessService {
           isCustomized: false,
           userLimit: 5,
           leadLimit: 500,
-          storageLimitBytes: BigInt(5368709120),
+          storageLimitBytes: 5368709120,
           scheduleLimit: 10,
           usedSchedules: 0,
           remainingSchedules: 10,
@@ -145,7 +145,7 @@ export class PlanAccessService {
           usage: {
             currentUsers: 0,
             currentLeads: 0,
-            currentStorageBytes: BigInt(0),
+            currentStorageBytes: 0,
             scheduledWorks: 0,
           },
         };
@@ -260,7 +260,7 @@ export class PlanAccessService {
       isCustomized,
       userLimit: effectiveUserLimit,
       leadLimit: effectiveLeadLimit,
-      storageLimitBytes: effectiveStorageLimitBytes,
+      storageLimitBytes: Number(effectiveStorageLimitBytes),
       scheduleLimit: totalScheduleLimit,
       usedSchedules: totalUsedSchedules,
       remainingSchedules,
@@ -269,7 +269,7 @@ export class PlanAccessService {
       usage: {
         currentUsers,
         currentLeads,
-        currentStorageBytes: BigInt(0),
+        currentStorageBytes: 0,
         scheduledWorks,
       },
     };
@@ -327,9 +327,11 @@ export class PlanAccessService {
   ): Promise<EffectivePlan> {
     const plan = await this.checkSubscriptionActive(customerId);
     const added = BigInt(newFileSizeBytes);
+    const currentBytes = BigInt(plan.usage.currentStorageBytes);
+    const limitBytes = BigInt(plan.storageLimitBytes);
 
-    if (plan.usage.currentStorageBytes + added > plan.storageLimitBytes) {
-      const allowedGB = Number(plan.storageLimitBytes / BigInt(1024 * 1024 * 1024));
+    if (currentBytes + added > limitBytes) {
+      const allowedGB = Number(limitBytes / BigInt(1024 * 1024 * 1024));
       throw new BadRequestException(
         `Storage limit exceeded. Your current plan allows up to ${allowedGB} GB.`,
       );
