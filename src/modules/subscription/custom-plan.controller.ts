@@ -12,82 +12,15 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomPlanService } from './custom-plan.service';
 import {
-  PreviewCustomPlanDto,
-  CreateCustomPlanDto,
-  VerifyCustomPlanPaymentDto,
   CreateCustomPlanOptionDto,
   UpdateCustomPlanOptionDto,
 } from './dto/custom-plan.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CustomerGuard } from '../../common/guards/customer.guard';
-import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
-@ApiTags('Custom Plan Builder')
+@ApiTags('Custom Plan Builder (Admin)')
 @Controller()
 export class CustomPlanController {
   constructor(private readonly customPlanService: CustomPlanService) {}
-
-  // ==========================================
-  // CUSTOMER MOBILE / WEB ENDPOINTS
-  // ==========================================
-
-  @Get('customer/custom-plan/options')
-  @ApiOperation({ summary: 'Get active configurable plan options for mobile builder' })
-  async getAvailableOptions() {
-    const data = await this.customPlanService.getAvailableOptions();
-    return {
-      success: true,
-      data,
-    };
-  }
-
-  @Post('customer/custom-plans/preview')
-  @ApiOperation({ summary: 'Calculate live custom plan price breakdown (Subtotal, Discount, Tax, Total)' })
-  async previewPrice(@Body() dto: PreviewCustomPlanDto) {
-    const data = await this.customPlanService.calculateCustomPlanPrice(
-      dto.featureSelections,
-      dto.duration,
-    );
-    return {
-      success: true,
-      data,
-    };
-  }
-
-  @Post('customer/custom-plans')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create custom plan order and initiate checkout' })
-  async createCustomPlan(
-    @CurrentCustomer() customerId: string,
-    @Body() dto: CreateCustomPlanDto,
-  ) {
-    return this.customPlanService.createCustomPlanOrder(customerId, dto);
-  }
-
-  @Get('customer/custom-plans')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer custom plan order history' })
-  async getCustomerCustomPlans(@CurrentCustomer() customerId: string) {
-    const data = await this.customPlanService.getCustomerCustomPlans(customerId);
-    return {
-      success: true,
-      data,
-    };
-  }
-
-  @Post('customer/custom-plans/:id/payment')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Verify payment and activate custom plan with anchor dates & schedules' })
-  async verifyPayment(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @Body() paymentDto: VerifyCustomPlanPaymentDto,
-  ) {
-    return this.customPlanService.verifyAndActivateCustomPlan(customerId, id, paymentDto);
-  }
 
   // ==========================================
   // ADMIN CONFIGURATION & MANAGEMENT ENDPOINTS

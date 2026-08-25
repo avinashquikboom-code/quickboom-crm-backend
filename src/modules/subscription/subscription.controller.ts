@@ -14,10 +14,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SubscriptionService } from './subscription.service';
 import { PlanAccessService } from './plan-access.service';
-import { CreateOrderDto, RenewSubscriptionDto } from './dto/subscription.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CustomerGuard } from '../../common/guards/customer.guard';
-import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RoleType } from '@prisma/client';
 
@@ -39,21 +36,9 @@ export class SubscriptionController {
     return this.subscriptionService.getPlans(false);
   }
 
-  @Get('customer/subscription-plans')
-  @ApiOperation({ summary: 'Get all active subscription plans for Customer' })
-  async getCustomerPlans() {
-    return this.subscriptionService.getPlans(false);
-  }
-
   @Get('plans/:id')
   @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
   async getPlanById(@Param('id') id: string) {
-    return this.subscriptionService.getPlanById(id);
-  }
-
-  @Get('customer/subscription-plans/:id')
-  @ApiOperation({ summary: 'Get single plan details for Customer' })
-  async getCustomerPlanById(@Param('id') id: string) {
     return this.subscriptionService.getPlanById(id);
   }
 
@@ -219,27 +204,6 @@ export class SubscriptionController {
     return this.subscriptionService.deletePlan(id);
   }
 
-  @Get('subscriptions/current')
-  @Get('customer/subscription/current')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer subscription status' })
-  async getCurrentSubscription(@CurrentCustomer() customerId: string) {
-    return this.subscriptionService.getCurrentSubscription(customerId);
-  }
-
-  @Get('subscriptions/effective-plan')
-  @Get('customer/subscription/usage')
-  @Get('customer/plans/current')
-  @Get('customer/plans/current/usage')
-  @Get('customer/plans/current/services')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer resolved effective plan with limits, service quotas, and live usage' })
-  async getEffectivePlan(@CurrentCustomer() customerId: string) {
-    return this.planAccessService.getEffectivePlan(customerId);
-  }
-
   @Get('admin/customers/:id/subscription')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -319,134 +283,6 @@ export class SubscriptionController {
     }
 
     return this.planAccessService.getEffectivePlan(numCustomerId);
-  }
-
-  @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer purchase and order history' })
-  async getCustomerOrders(
-    @CurrentCustomer() customerId: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('search') search?: string,
-    @Query('status') status?: string,
-  ) {
-    return this.subscriptionService.getCustomerOrders(customerId, {
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-      search,
-      status,
-    });
-  }
-
-  @Get('customer/orders')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get authenticated customer orders with server pagination, search & status filter' })
-  async getCustomerOrdersAlias(
-    @CurrentCustomer() customerId: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('search') search?: string,
-    @Query('status') status?: string,
-  ) {
-    return this.subscriptionService.getCustomerOrders(customerId, {
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-      search,
-      status,
-    });
-  }
-
-  @Get('customer/orders/:id/invoice')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get verified invoice details for a customer order' })
-  async getOrderInvoice(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-  ) {
-    return this.subscriptionService.getOrderInvoice(customerId, id);
-  }
-
-  @Get('customer/orders/:id/pdf')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get verified invoice PDF data for a customer order' })
-  async getOrderInvoicePdf(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-  ) {
-    const inv = await this.subscriptionService.getOrderInvoice(customerId, id);
-    return {
-      success: true,
-      invoice: inv,
-      pdfUrl: `https://api.qbapp.online/api/v1/customer/invoices/${inv.invoiceNumber}/download`,
-      message: 'Invoice PDF generated successfully.',
-    };
-  }
-
-  @Get('customer/invoices/:id/pdf')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get verified invoice PDF download metadata' })
-  async getInvoicePdf(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-  ) {
-    const inv = await this.subscriptionService.getOrderInvoice(customerId, id);
-    return {
-      success: true,
-      invoice: inv,
-      pdfUrl: `https://api.qbapp.online/api/v1/customer/invoices/${inv.invoiceNumber}/download`,
-      message: 'Invoice PDF generated successfully.',
-    };
-  }
-
-  @Post('subscriptions/order')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a new plan subscription order' })
-  async createOrder(
-    @CurrentCustomer() customerId: string,
-    @Body() dto: CreateOrderDto,
-  ) {
-    return this.subscriptionService.createOrder(customerId, dto);
-  }
-
-  @Get('customer/subscription')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer subscription details with days remaining & expiry dates' })
-  async getCustomerSubscription(@CurrentCustomer() customerId: string) {
-    return this.subscriptionService.getCurrentSubscription(customerId);
-  }
-
-  @Get('customer/subscription/status')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer plan status banner payload for mobile & dashboard' })
-  async getCustomerSubscriptionStatus(@CurrentCustomer() customerId: string) {
-    const sub = await this.subscriptionService.getCurrentSubscription(customerId);
-    if (!sub) {
-      return {
-        hasSubscription: false,
-        status: 'INACTIVE',
-        message: 'No active plan found. Please purchase a subscription.',
-      };
-    }
-    return {
-      hasSubscription: true,
-      planName: sub.planName,
-      startDate: sub.startDate,
-      purchaseDate: sub.startDate,
-      expiryDate: sub.endDate,
-      daysRemaining: sub.daysRemaining,
-      status: sub.status,
-      message: sub.statusMessage,
-      isExpired: sub.isExpired,
-    };
   }
 
   @Get('admin/subscriptions')

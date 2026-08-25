@@ -61,14 +61,6 @@ export class AuthController {
   }
 
   @Public()
-  @Post('customer/login')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Customer workspace login' })
-  async customerLogin(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'CUSTOMER');
-  }
-
-  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh JWT Access Token using Refresh Token' })
@@ -97,14 +89,6 @@ export class AuthController {
   @Get('profile')
   @ApiOperation({ summary: 'Get current logged-in user profile' })
   async getProfile(@CurrentUser() user: any) {
-    return this.authService.getProfile(user.id || user.userId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Get('customer/profile')
-  @ApiOperation({ summary: 'Get current logged-in customer profile' })
-  async getCustomerProfile(@CurrentUser() user: any) {
     return this.authService.getProfile(user.id || user.userId);
   }
 
