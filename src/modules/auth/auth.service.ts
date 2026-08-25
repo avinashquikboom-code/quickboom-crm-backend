@@ -290,25 +290,76 @@ export class AuthService {
   }
 
   async refreshToken(dto: RefreshTokenDto) {
+    const rawToken = (dto.refreshToken || '').trim();
+    if (!rawToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    const refreshSecret =
+      this.configService.get('JWT_REFRESH_SECRET') ||
+      'quikboom_super_secret_jwt_refresh_key_2026';
+
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(rawToken, {
+        secret: refreshSecret,
+      });
+    } catch (err) {
+      try {
+        const accessSecret =
+          this.configService.get('JWT_SECRET') ||
+          'quikboom_super_secret_jwt_access_key_2026';
+        payload = this.jwtService.verify(rawToken, {
+          secret: accessSecret,
+        });
+      } catch (e) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+    }
+
+    const userId = Number(payload.sub ?? payload.id ?? payload.userId);
+    if (!userId || isNaN(userId)) {
+      throw new UnauthorizedException('Invalid refresh token payload');
+    }
+
     const existingToken = await this.prisma.refreshToken.findUnique({
-      where: { token: dto.refreshToken },
+      where: { token: rawToken },
       include: { user: true },
     });
 
-    if (!existingToken || existingToken.isRevoked || existingToken.expiresAt < new Date()) {
+    if (existingToken && (existingToken.isRevoked || existingToken.expiresAt < new Date())) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    await this.prisma.refreshToken.update({
-      where: { id: existingToken.id },
-      data: { isRevoked: true },
-    });
+    const user =
+      existingToken?.user ||
+      (await this.prisma.user.findUnique({
+        where: { id: userId },
+      }));
 
-    return this.generateTokens(
-      existingToken.user.id,
-      existingToken.user.customerId,
-      existingToken.user.email,
-    );
+    if (!user || !user.isActive || user.deletedAt) {
+      throw new UnauthorizedException('User account inactive or missing');
+    }
+
+    if (existingToken) {
+      await this.prisma.refreshToken.update({
+        where: { id: existingToken.id },
+        data: { isRevoked: true },
+      });
+    }
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      tokens,
+      user: {
+        id: user.id,
+        email: user.email,
+        customerId: user.customerId,
+      },
+    };
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
@@ -447,10 +498,13 @@ export class AuthService {
   private async generateTokens(userId: number, customerId: number | null, email: string) {
     const payload = { sub: userId, customerId, email };
 
-    const expiresIn = this.configService.get('JWT_EXPIRATION') || '7d';
+    const accessExpiresIn =
+      this.configService.get('JWT_ACCESS_EXPIRES_IN') ||
+      this.configService.get('JWT_EXPIRATION') ||
+      '7d';
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get('JWT_SECRET') || 'quikboom_super_secret_jwt_access_key_2026',
-      expiresIn,
+      expiresIn: accessExpiresIn,
     });
 
     const refreshPayload = {
@@ -460,11 +514,16 @@ export class AuthService {
       jti: `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
 
+    const refreshExpiresIn =
+      this.configService.get('JWT_REFRESH_EXPIRES_IN') ||
+      this.configService.get('JWT_REFRESH_EXPIRATION') ||
+      '30d';
+
     const refreshToken = this.jwtService.sign(refreshPayload, {
       secret:
         this.configService.get('JWT_REFRESH_SECRET') ||
         'quikboom_super_secret_jwt_refresh_key_2026',
-      expiresIn: '30d',
+      expiresIn: refreshExpiresIn,
     });
 
     await this.prisma.refreshToken.create({
