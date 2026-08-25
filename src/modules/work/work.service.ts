@@ -690,6 +690,7 @@ export class WorkService {
       status?: WorkStatus;
     } = {},
   ) {
+    const startTime = Date.now();
     const where: any = {};
 
     const numCustomerId = this.resolveCustomerId(scopedCustomerId);
@@ -871,6 +872,13 @@ export class WorkService {
       }
     }
 
+    const duration = Date.now() - startTime;
+    this.logger.log(
+      `[API_PERFORMANCE] GET /works/calendar customerId=${scopedCustomerId} DB duration=${duration}ms total=${duration}ms`,
+    );
+    this.logger.log(
+      `[CALENDAR_DEBUG] authenticatedCustomerCode=${scopedCustomerId} resolvedCustomerId=${numCustomerId} date=${query.date ?? 'ALL'} resultCount=${result.length}`,
+    );
     this.logger.log(
       `[CALENDAR_SERVICE] Customer ID: ${numCustomerId ?? 'ALL'} | Date: ${query.date ?? 'ALL'} | Raw Query Items: ${items.length} | Filtered Schedules: ${filteredItems.length} | Total Events Returned: ${result.length}`,
     );

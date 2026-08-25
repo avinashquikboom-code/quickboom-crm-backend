@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionStatus } from '@prisma/client';
@@ -53,6 +54,8 @@ export interface EffectivePlan {
 
 @Injectable()
 export class PlanAccessService {
+  private readonly logger = new Logger(PlanAccessService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -85,6 +88,7 @@ export class PlanAccessService {
    * 2. If custom field is null/undefined -> Fallback to Base Plan values.
    */
   async getEffectivePlan(customerId: number | string): Promise<EffectivePlan> {
+    const startTime = Date.now();
     if (!customerId) {
       throw new BadRequestException('customerId is required for plan resolution');
     }
@@ -236,7 +240,7 @@ export class PlanAccessService {
           { serviceName: 'Influencer Promotion', totalQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1) },
         ];
 
-    return {
+    const result: EffectivePlan = {
       customerId: numCustomerId,
       subscriptionId: sub?.id,
       planId: basePlan.id,
@@ -267,6 +271,13 @@ export class PlanAccessService {
         scheduledWorks,
       },
     };
+
+    const duration = Date.now() - startTime;
+    this.logger.log(
+      `[API_PERFORMANCE] GET /subscriptions/effective-plan customerId=${customerId} DB duration=${duration}ms total=${duration}ms`,
+    );
+
+    return result;
   }
 
   /**
