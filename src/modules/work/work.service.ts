@@ -768,10 +768,16 @@ export class WorkService {
       const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 1, 0, 0, 0, 0));
       const endOfMonth = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59, 999));
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
-    } else if (query.dateFrom || query.dateTo) {
+    } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
       where.scheduledDate = {};
-      if (query.dateFrom) where.scheduledDate.gte = new Date(query.dateFrom);
-      if (query.dateTo) where.scheduledDate.lte = new Date(query.dateTo);
+      const from = query.dateFrom || (query as any).startDate;
+      const to = query.dateTo || (query as any).endDate;
+      if (from) where.scheduledDate.gte = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setHours(23, 59, 59, 999);
+        where.scheduledDate.lte = toDate;
+      }
     }
 
     // Auto-generate schedules in background if customer has active plan entitlements but 0 work items

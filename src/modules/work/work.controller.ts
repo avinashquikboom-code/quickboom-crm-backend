@@ -73,6 +73,8 @@ export class WorkController {
     @Req() req: any,
     @Query('employeeId') employeeId?: string,
     @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('month') month?: string,
@@ -88,15 +90,15 @@ export class WorkController {
     logger.log(`[CALENDAR_API] authenticatedUserId: ${authUserId}`);
     logger.log(`[CALENDAR_API] authenticatedCustomerId: ${authCustId}`);
     logger.log(`[CALENDAR_API] headerCustomerId: ${headerCustId}`);
-    logger.log(`[CALENDAR_API] queryDate: ${date}`);
+    logger.log(`[CALENDAR_API] queryDate: ${date || startDate}`);
     logger.log(`[CALENDAR_API] resolvedCustomerId: ${customerId}`);
 
     try {
       logger.log(`[CALENDAR_API] DB_QUERY_START`);
       const result = await this.workService.getCalendar(customerId, {
         date,
-        dateFrom,
-        dateTo,
+        dateFrom: dateFrom || startDate,
+        dateTo: dateTo || endDate,
         month: month ? parseInt(month, 10) : undefined,
         year: year ? parseInt(year, 10) : undefined,
         employeeId,

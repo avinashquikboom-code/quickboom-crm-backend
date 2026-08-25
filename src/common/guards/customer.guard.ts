@@ -12,63 +12,52 @@ export class CustomerGuard implements CanActivate {
     if (isSuperAdmin) {
       request.isSuperAdmin = true;
       const explicitCustomerId = request.headers['x-customer-id'] || request.query?.customerId;
-      const resolvedExplicit = this.resolveId(explicitCustomerId);
-      if (resolvedExplicit) {
-        request.customerId = resolvedExplicit;
-      } else if (user?.customerId) {
-        request.customerId = Number(user.customerId);
+      if (explicitCustomerId) {
+        request.customerId = String(explicitCustomerId).trim();
+      } else if (user?.customerId != null) {
+        request.customerId = String(user.customerId).trim();
       }
       return true;
     }
 
     const queryCustomerId = request.query?.customerId;
     const headerCustomerId = request.headers['x-customer-id'];
-    const userCustomerId = user?.customerId ? Number(user.customerId) : undefined;
+    const userCustomerId = user?.customerId != null ? String(user.customerId).trim() : undefined;
 
-    if (!userCustomerId || isNaN(userCustomerId) || userCustomerId <= 0) {
+    if (!userCustomerId || userCustomerId.length === 0) {
       throw new ForbiddenException('User does not belong to any customer');
     }
 
     if (headerCustomerId) {
-      const resolvedHeader = this.resolveId(headerCustomerId);
-      if (resolvedHeader !== userCustomerId) {
+      if (!this.matches(headerCustomerId, user.customerId)) {
         throw new ForbiddenException('Cross-customer access forbidden');
       }
     }
 
     if (queryCustomerId) {
-      const resolvedQuery = this.resolveId(queryCustomerId);
-      if (resolvedQuery !== userCustomerId) {
+      if (!this.matches(queryCustomerId, user.customerId)) {
         throw new ForbiddenException('Cross-customer access forbidden');
       }
     }
 
-    request.customerId = userCustomerId;
+    request.customerId = user.customerId;
     return true;
   }
 
-  private resolveId(id: any): number | undefined {
-    if (!id) return undefined;
-    if (typeof id === 'number') {
-      return !isNaN(id) && id > 0 ? id : undefined;
-    }
-    const str = String(id).trim();
-    if (!str) return undefined;
+  private matches(requestedId: any, userCustomerId: any): boolean {
+    if (!requestedId || userCustomerId == null) return false;
+    const reqStr = String(requestedId).trim().toLowerCase();
+    const userStr = String(userCustomerId).trim().toLowerCase();
 
-    const directNum = Number(str);
-    if (!isNaN(directNum) && directNum > 0) {
-      return directNum;
-    }
+    if (reqStr === userStr) return true;
 
-    // Dynamic customer business code resolution (e.g., CUST-0001, CUST-1, CUST-900829843)
-    const match = str.match(/^CUST[-_]?0*(\d+)$/i);
-    if (match && match[1]) {
-      const parsed = parseInt(match[1], 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
+    const reqNumeric = reqStr.replace(/^cust[-_]?0*/, '');
+    const userNumeric = userStr.replace(/^cust[-_]?0*/, '');
+    if (reqNumeric && userNumeric && reqNumeric === userNumeric) {
+      return true;
     }
 
-    return undefined;
+    return false;
   }
 }
+
