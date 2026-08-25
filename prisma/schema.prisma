@@ -129,6 +129,7 @@ model CustomerSubscription {
   payments           PaymentHistory[]
   monthlySchedules   MonthlySchedule[]
   customPlanOrders   CustomPlanOrder[]
+  works              Work[]
   coupon             Coupon?                  @relation(fields: [couponId], references: [id])
   customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan               Plan                     @relation(fields: [planId], references: [id])
@@ -1600,6 +1601,7 @@ model PlanEntitlement {
 model Work {
   id            Int              @id @default(autoincrement())
   customerId    Int
+  subscriptionId Int?
   planId        Int?
   entitlementId Int?
   teamId        Int?
@@ -1624,11 +1626,13 @@ model Work {
   assignedTo    Employee?        @relation("AssignedEmployeeWorks", fields: [assignedToId], references: [id])
   editor        Employee?        @relation("AssignedEditorWorks", fields: [editorId], references: [id])
   customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription  CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
   team          Team?            @relation(fields: [teamId], references: [id])
   tasks         WorkTask[]
 
   @@index([customerId])
+  @@index([subscriptionId])
   @@index([teamId])
   @@index([assignedToId])
   @@index([editorId])

@@ -284,10 +284,35 @@ export class WorkService {
         data: { scheduledQty: { increment: 1 } },
       });
 
+      // Resolve Purchase (Subscription)
+      let resolvedSubscriptionId: number | null = null;
+      if (dto.subscriptionId) {
+        const sub = await tx.customerSubscription.findUnique({
+          where: { id: Number(dto.subscriptionId) },
+        });
+        if (sub) resolvedSubscriptionId = sub.id;
+      } else if (dto.purchaseId) {
+        const parsed = Number(dto.purchaseId.replace(/\D/g, ''));
+        if (!isNaN(parsed) && parsed > 0) {
+          const sub = await tx.customerSubscription.findUnique({
+            where: { id: parsed },
+          });
+          if (sub) resolvedSubscriptionId = sub.id;
+        }
+      }
+      if (!resolvedSubscriptionId) {
+        const activeSub = await tx.customerSubscription.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (activeSub) resolvedSubscriptionId = activeSub.id;
+      }
+
       // Create Work deliverable record
       const work = await tx.work.create({
         data: {
           customerId: numCustomerId,
+          subscriptionId: resolvedSubscriptionId,
           planId: activePlan.planId,
           entitlementId: entitlement.id,
           teamId: dto.teamId ? Number(dto.teamId) : null,
@@ -307,6 +332,9 @@ export class WorkService {
           assignedTo: true,
           editor: true,
           entitlement: true,
+          subscription: {
+            include: { plan: true },
+          },
         },
       });
 
@@ -770,6 +798,12 @@ export class WorkService {
         assignedTo: { select: { id: true, firstName: true, lastName: true } },
         editor: { select: { id: true, firstName: true, lastName: true } },
         entitlement: { select: { serviceName: true } },
+        subscription: {
+          select: {
+            id: true,
+            plan: { select: { name: true } },
+          },
+        },
       },
     });
     this.logger.debug(`[CALENDAR_QUERY_END] main query took ${Date.now() - queryStart}ms, returned ${items.length} items`);
@@ -791,26 +825,39 @@ export class WorkService {
         })
       : items;
 
-    const result = filteredItems.map((w) => ({
-      id: String(w.id),
-      title: w.title,
-      date: w.scheduledDate,
-      time: w.scheduledTime || '10:00 AM',
-      type: w.workType,
-      serviceName: w.entitlement?.serviceName || w.workType,
-      status: w.status,
-      customerId: String(w.customerId),
-      customerName: w.customer?.name || 'Customer',
-      assignedToId: w.assignedToId,
-      assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead',
-      editorId: w.editorId,
-      editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor',
-      team: w.team?.name || 'SSM Team A',
-      notes: w.description || w.notes || `${w.title} deliverable`,
-      outputUrl: w.outputUrl,
-      feedback: w.feedback,
-      revisionCount: w.revisionCount,
-    }));
+    const result = filteredItems.map((w) => {
+      const purchaseRef = w.subscriptionId
+        ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
+        : (w.subscription?.id ? `PUR-${String(w.subscription.id).padStart(3, '0')}` : `PUR-${String(w.customerId).padStart(3, '0')}`);
+      const startTime = w.scheduledTime || '10:00 AM';
+      const endTime = '11:00 AM';
+      const prodName = w.entitlement?.serviceName || w.title || w.workType;
+      return {
+        id: String(w.id),
+        purchaseId: purchaseRef,
+        productName: prodName,
+        serviceName: prodName,
+        title: w.title,
+        date: w.scheduledDate,
+        scheduleDate: w.scheduledDate,
+        time: startTime,
+        startTime: startTime,
+        endTime: endTime,
+        type: w.workType,
+        status: w.status,
+        customerId: String(w.customerId),
+        customerName: w.customer?.name || 'Customer',
+        assignedToId: w.assignedToId,
+        assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead',
+        editorId: w.editorId,
+        editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor',
+        team: w.team?.name || 'SSM Team A',
+        notes: w.description || w.notes || `${w.title} deliverable`,
+        outputUrl: w.outputUrl,
+        feedback: w.feedback,
+        revisionCount: w.revisionCount,
+      };
+    });
 
     // Inject active subscription start event if applicable
     if (numCustomerId) {
@@ -854,11 +901,16 @@ export class WorkService {
           if (!hasPlanEvent) {
             result.unshift({
               id: `sub-start-${activeSub.id}`,
+              purchaseId: `PUR-${String(activeSub.id).padStart(3, '0')}`,
+              productName: activeSub.plan?.name || 'Active Plan',
+              serviceName: 'Plan Activation',
               title: `${activeSub.plan?.name || 'Active Plan'} Started`,
               date: subStart,
+              scheduleDate: subStart,
               time: '09:00 AM',
+              startTime: '09:00 AM',
+              endTime: '10:00 AM',
               type: 'SOCIAL_MEDIA_MANAGEMENT' as any,
-              serviceName: 'Plan Activation',
               status: WorkStatus.SCHEDULED,
               customerId: String(numCustomerId),
               customerName: activeSub.customer?.name || 'Customer',
@@ -1012,6 +1064,12 @@ export class WorkService {
         // Distribute schedule dates across plan duration
         const stepInterval = Math.max(2, Math.floor(totalDays / (ent.totalQty + 1)));
 
+        // Resolve active customer subscription / purchase
+        const latestSub = await tx.customerSubscription.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        });
+
         for (let i = 0; i < missingQty; i++) {
           const sequenceNumber = existingWorks.length + i + 1;
           const dayOffset = Math.min(totalDays - 1, (sequenceNumber * stepInterval));
@@ -1025,6 +1083,7 @@ export class WorkService {
           const work = await tx.work.create({
             data: {
               customerId: numCustomerId,
+              subscriptionId: latestSub?.id || null,
               planId: ent.planId || activePlan.planId,
               entitlementId: ent.id,
               workType,
