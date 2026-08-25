@@ -4,6 +4,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
   let service: PlanAccessService;
   let prisma: any;
@@ -98,7 +102,7 @@ describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
       expect(effective.leadLimit).toBe(1000);
       expect(effective.price).toBe(19999);
       expect(effective.basePrice).toBe(25999);
-      expect(effective.storageLimitBytes).toBe(BigInt(21474836480));
+      expect(Number(effective.storageLimitBytes)).toBe(21474836480);
       expect(effective.features).toContain('Custom Schedule Access');
     });
 

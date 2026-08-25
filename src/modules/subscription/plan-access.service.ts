@@ -69,22 +69,13 @@ export class PlanAccessService {
     if (!isNaN(directNum) && directNum > 0) {
       return directNum;
     }
-    const upper = str.toUpperCase();
-    if (upper === 'T001' || upper === 'CUSTOMER_A' || upper === 'CUST_1' || upper === 'CUST-1' || upper === 'CUST-001') {
-      return 1;
-    }
-    if (upper === 'T002' || upper === 'CUSTOMER_B' || upper === 'CUST_2' || upper === 'CUST-2' || upper === 'CUST-002') {
-      return 2;
-    }
-    if (upper === 'CUST-900829843') {
-      return 1;
-    }
-    const digits = str.replace(/\D/g, '');
-    if (digits) {
-      const parsed = parseInt(digits, 10);
+
+    const match = str.match(/^CUST[-_]?0*(\d+)$/i);
+    if (match && match[1]) {
+      const parsed = parseInt(match[1], 10);
       if (!isNaN(parsed) && parsed > 0) return parsed;
     }
-    return 1;
+    return undefined;
   }
 
   /**

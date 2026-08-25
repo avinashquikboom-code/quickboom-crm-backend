@@ -54,25 +54,21 @@ export class CustomerGuard implements CanActivate {
     }
     const str = String(id).trim();
     if (!str) return undefined;
-    const directNum = Number(str);
-    if (!isNaN(directNum) && directNum > 0) return directNum;
 
-    const upper = str.toUpperCase();
-    if (upper === 'T001' || upper === 'CUSTOMER_A' || upper === 'CUST_1' || upper === 'CUST-1' || upper === 'CUST-001') {
-      return 1;
+    const directNum = Number(str);
+    if (!isNaN(directNum) && directNum > 0) {
+      return directNum;
     }
-    if (upper === 'T002' || upper === 'CUSTOMER_B' || upper === 'CUST_2' || upper === 'CUST-2' || upper === 'CUST-002') {
-      return 2;
+
+    // Dynamic customer business code resolution (e.g., CUST-0001, CUST-1, CUST-900829843)
+    const match = str.match(/^CUST[-_]?0*(\d+)$/i);
+    if (match && match[1]) {
+      const parsed = parseInt(match[1], 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
     }
-    if (upper === 'CUST-900829843') {
-      return 1;
-    }
-    const digits = str.replace(/\D/g, '');
-    if (digits) {
-      const parsed = parseInt(digits, 10);
-      if (!isNaN(parsed) && parsed > 0) return parsed;
-    }
+
     return undefined;
   }
 }
-
