@@ -6,6 +6,8 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  Logger,
   UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
@@ -68,6 +70,7 @@ export class WorkController {
   @ApiQuery({ name: 'status', required: false })
   async getCalendar(
     @CurrentCustomer() customerId: string,
+    @Req() req: any,
     @Query('employeeId') employeeId?: string,
     @Query('date') date?: string,
     @Query('dateFrom') dateFrom?: string,
@@ -76,15 +79,37 @@ export class WorkController {
     @Query('year') year?: string,
     @Query('status') status?: WorkStatus,
   ) {
-    return this.workService.getCalendar(customerId, {
-      date,
-      dateFrom,
-      dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
-      employeeId,
-      status,
-    });
+    const logger = new Logger('WorksController:getCalendar');
+    const headerCustId = req?.headers ? req.headers['x-customer-id'] : undefined;
+    const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
+    const authCustId = req?.user?.customerId;
+
+    logger.log(`[CALENDAR_API] REQUEST_START`);
+    logger.log(`[CALENDAR_API] authenticatedUserId: ${authUserId}`);
+    logger.log(`[CALENDAR_API] authenticatedCustomerId: ${authCustId}`);
+    logger.log(`[CALENDAR_API] headerCustomerId: ${headerCustId}`);
+    logger.log(`[CALENDAR_API] queryDate: ${date}`);
+    logger.log(`[CALENDAR_API] resolvedCustomerId: ${customerId}`);
+
+    try {
+      logger.log(`[CALENDAR_API] DB_QUERY_START`);
+      const result = await this.workService.getCalendar(customerId, {
+        date,
+        dateFrom,
+        dateTo,
+        month: month ? parseInt(month, 10) : undefined,
+        year: year ? parseInt(year, 10) : undefined,
+        employeeId,
+        status,
+      });
+      logger.log(`[CALENDAR_API] DB_QUERY_END`);
+      logger.log(`[CALENDAR_API] RESULT_COUNT: ${Array.isArray(result) ? result.length : 0}`);
+      logger.log(`[CALENDAR_API] RESPONSE_SENT`);
+      return result;
+    } catch (err: any) {
+      logger.error(`[CALENDAR_API] ERROR: ${err?.message}`, err?.stack);
+      throw err;
+    }
   }
 
   @Get('customer/calendar')

@@ -93,13 +93,16 @@ export class PlanAccessService {
       throw new BadRequestException('customerId is required for plan resolution');
     }
     const numCustomerId = this.resolveCustomerId(customerId) || 1;
+    this.logger.debug(`[PLAN_DEBUG] Start getEffectivePlan for customerId=${customerId} (resolved: ${numCustomerId})`);
 
     // 1. Fetch latest customer subscription
+    const subStart = Date.now();
     const sub = await this.prisma.customerSubscription.findFirst({
       where: { customerId: numCustomerId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
+    this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms`);
 
     let basePlan = sub?.plan;
 
@@ -193,6 +196,7 @@ export class PlanAccessService {
     );
 
     // 4. Gather live usage counts & entitlements
+    const usageStart = Date.now();
     const [currentUsers, currentLeads, scheduledWorks, entitlements] = await Promise.all([
       this.prisma.employee.count({
         where: { customerId: numCustomerId, status: 'ACTIVE' },
@@ -207,6 +211,7 @@ export class PlanAccessService {
         where: { customerId: numCustomerId },
       }),
     ]);
+    this.logger.debug(`[PLAN_QUERY] usage counts (parallel): ${Date.now() - usageStart}ms (users=${currentUsers}, leads=${currentLeads}, works=${scheduledWorks}, entitlements=${entitlements.length})`);
 
     // Calculate Schedule Limits and Quotas
     let totalScheduleLimit = basePlan.code === 'BASIC' ? 10 : (basePlan.code === 'STANDARD' ? 20 : 50);
@@ -274,7 +279,10 @@ export class PlanAccessService {
 
     const duration = Date.now() - startTime;
     this.logger.log(
-      `[API_PERFORMANCE] GET /subscriptions/effective-plan customerId=${customerId} DB duration=${duration}ms total=${duration}ms`,
+      `[API_PERFORMANCE] GET /subscriptions/effective-plan customerId=${customerId} total=${duration}ms`,
+    );
+    this.logger.debug(
+      `[PLAN_DEBUG] completed - customerId=${numCustomerId}, scheduleLimit=${result.scheduleLimit}, services=${result.services.length}`,
     );
 
     return result;

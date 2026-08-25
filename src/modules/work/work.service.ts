@@ -759,6 +759,8 @@ export class WorkService {
       }).catch(() => {});
     }
 
+    const queryStart = Date.now();
+    this.logger.debug(`[CALENDAR_QUERY_START] customerId=${numCustomerId}, date=${query.date}`);
     const items = await this.prisma.work.findMany({
       where,
       orderBy: { scheduledDate: 'asc' },
@@ -770,6 +772,7 @@ export class WorkService {
         entitlement: { select: { serviceName: true } },
       },
     });
+    this.logger.debug(`[CALENDAR_QUERY_END] main query took ${Date.now() - queryStart}ms, returned ${items.length} items`);
 
     // Filter items to strictly match the requested day in either UTC or local representation
     const filteredItems = (targetYear && targetMonth && targetDay)
@@ -811,6 +814,7 @@ export class WorkService {
 
     // Inject active subscription start event if applicable
     if (numCustomerId) {
+      const subStart = Date.now();
       const activeSub = await this.prisma.customerSubscription.findFirst({
         where: { customerId: numCustomerId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -821,6 +825,7 @@ export class WorkService {
           customer: { select: { name: true } },
         },
       });
+      this.logger.debug(`[CALENDAR_SUB_QUERY] subscription lookup took ${Date.now() - subStart}ms`);
 
       if (activeSub && activeSub.startDate) {
         const subStart = new Date(activeSub.startDate);
