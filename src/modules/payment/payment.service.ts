@@ -35,11 +35,20 @@ export class PaymentService {
    */
   private async getRazorpayClient(): Promise<{ instance: any; config: RazorpayDynamicConfig }> {
     const config = await this.integrationSettingsService.getRazorpayConfig();
-    if (!config.isEnabled || !config.keyId || !config.keySecret) {
-      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay is disabled or missing credentials in database/settings');
-      throw new BadRequestException(
-        'Razorpay payment gateway is not configured or disabled. Please configure credentials in Admin Settings.',
-      );
+
+    if (!config.isConfigured || !config.keyId) {
+      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay payment gateway is not configured in Database or settings.');
+      throw new BadRequestException('Razorpay payment gateway is not configured.');
+    }
+
+    if (!config.isEnabled) {
+      this.logger.warn('[RAZORPAY_CONFIG_WARN] Razorpay payment gateway is disabled in settings.');
+      throw new BadRequestException('Razorpay payment gateway is disabled.');
+    }
+
+    if (!config.keySecret) {
+      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay key secret is missing.');
+      throw new BadRequestException('Razorpay credentials are incomplete.');
     }
 
     try {
@@ -181,10 +190,21 @@ export class PaymentService {
 
     // Dynamically retrieve secret from IntegrationSettingsService (Database / .env)
     const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+
+    if (!rzpConfig.isConfigured || !rzpConfig.keyId) {
+      this.logger.error('[RAZORPAY_VERIFY_ERROR] Razorpay gateway is not configured.');
+      throw new BadRequestException('Razorpay payment gateway is not configured.');
+    }
+
+    if (!rzpConfig.isEnabled) {
+      this.logger.error('[RAZORPAY_VERIFY_ERROR] Razorpay gateway is disabled.');
+      throw new BadRequestException('Razorpay payment gateway is disabled.');
+    }
+
     const keySecret = rzpConfig.keySecret;
     if (!keySecret) {
       this.logger.error('[RAZORPAY_VERIFY_ERROR] Razorpay Key Secret not configured in Database or .env — cannot verify signature.');
-      throw new BadRequestException('Payment gateway is not configured. Contact support.');
+      throw new BadRequestException('Razorpay credentials are incomplete.');
     }
 
     const generatedSignature = crypto

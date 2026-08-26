@@ -17,13 +17,40 @@ import {
 import axios from 'axios';
 const Razorpay = require('razorpay');
 
+export enum IntegrationProvider {
+  RAZORPAY = 'RAZORPAY',
+  GOOGLE_MAPS = 'GOOGLE_MAPS',
+  TWILIO = 'TWILIO',
+  WHATSAPP = 'WHATSAPP',
+  SENDGRID = 'SENDGRID',
+  AWS = 'AWS',
+  SHIPROCKET = 'SHIPROCKET',
+}
+
+export function normalizeProvider(provider: string): string {
+  const norm = (provider || '').trim().toUpperCase();
+  if (norm === 'RAZORPAY' || norm === 'RAZORPAY_PAYMENT' || norm === 'PAYMENT_RAZORPAY') {
+    return IntegrationProvider.RAZORPAY;
+  }
+  if (norm === 'GOOGLE_MAPS' || norm === 'GOOGLEMAPS' || norm === 'MAPS') {
+    return IntegrationProvider.GOOGLE_MAPS;
+  }
+  if (norm === 'TWILIO') return IntegrationProvider.TWILIO;
+  if (norm === 'WHATSAPP') return IntegrationProvider.WHATSAPP;
+  if (norm === 'SENDGRID') return IntegrationProvider.SENDGRID;
+  if (norm === 'AWS' || norm === 'AMAZON') return IntegrationProvider.AWS;
+  if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
+  return norm;
+}
+
 export interface RazorpayDynamicConfig {
   keyId: string;
   keySecret: string;
   webhookSecret: string;
   isEnabled: boolean;
+  isConfigured: boolean;
   environment: string;
-  source: 'DATABASE' | 'ENV_FALLBACK';
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
 export interface GoogleMapsDynamicConfig {
@@ -31,7 +58,7 @@ export interface GoogleMapsDynamicConfig {
   isEnabled: boolean;
   environment: string;
   config: Record<string, any>;
-  source: 'DATABASE' | 'ENV_FALLBACK';
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
 // Fields that must always be encrypted at rest in the database
@@ -65,8 +92,9 @@ export class IntegrationSettingsService {
    */
   clearCache(provider?: string) {
     if (provider) {
-      this.cache.delete(provider.toUpperCase());
-      this.logger.log(`[INTEGRATION_CACHE_INVALIDATED] Cache cleared for provider: ${provider}`);
+      const norm = normalizeProvider(provider);
+      this.cache.delete(norm);
+      this.logger.log(`[INTEGRATION_CACHE_INVALIDATED] Cache cleared for provider: ${norm}`);
     } else {
       this.cache.clear();
       this.logger.log('[INTEGRATION_CACHE_INVALIDATED] Cache cleared for all providers');
@@ -77,7 +105,7 @@ export class IntegrationSettingsService {
    * Retrieves raw decrypted integration settings from Database with .env fallback.
    */
   async getIntegrationConfig(provider: string): Promise<any> {
-    const normProvider = provider.toUpperCase();
+    const normProvider = normalizeProvider(provider);
 
     // 1. Check in-memory cache
     const cached = this.cache.get(normProvider);
@@ -86,9 +114,14 @@ export class IntegrationSettingsService {
     }
 
     // 2. Query PostgreSQL IntegrationSetting table
-    const dbRecord = await this.prisma.integrationSetting.findUnique({
-      where: { provider: normProvider },
-    });
+    let dbRecord: any = null;
+    try {
+      dbRecord = await this.prisma.integrationSetting.findUnique({
+        where: { provider: normProvider },
+      });
+    } catch (dbErr: any) {
+      this.logger.error(`[INTEGRATION_DB_ERROR] Failed querying DB for ${normProvider}: ${dbErr?.message}`);
+    }
 
     let result: any = null;
 
@@ -132,17 +165,19 @@ export class IntegrationSettingsService {
    * Fallback values from process.env when database record has not yet been created.
    */
   private getEnvFallbackConfig(provider: string): any {
-    switch (provider) {
-      case 'RAZORPAY': {
-        const keyId =
+    const normProvider = normalizeProvider(provider);
+    switch (normProvider) {
+      case IntegrationProvider.RAZORPAY: {
+        const keyId = (
           process.env.RAZORPAY_KEY_ID ||
           process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
-          '';
-        const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
-        const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+          ''
+        ).trim();
+        const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+        const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
 
         return {
-          provider: 'RAZORPAY',
+          provider: IntegrationProvider.RAZORPAY,
           isEnabled: Boolean(keyId && keySecret),
           environment: keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST',
           credentials: {
@@ -155,14 +190,15 @@ export class IntegrationSettingsService {
         };
       }
 
-      case 'GOOGLE_MAPS': {
-        const apiKey =
+      case IntegrationProvider.GOOGLE_MAPS: {
+        const apiKey = (
           process.env.GOOGLE_MAPS_API_KEY ||
           process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
-          '';
+          ''
+        ).trim();
 
         return {
-          provider: 'GOOGLE_MAPS',
+          provider: IntegrationProvider.GOOGLE_MAPS,
           isEnabled: Boolean(apiKey),
           environment: 'LIVE',
           credentials: {
@@ -179,12 +215,12 @@ export class IntegrationSettingsService {
 
       default:
         return {
-          provider,
+          provider: normProvider,
           isEnabled: false,
           environment: 'LIVE',
           credentials: {},
           config: {},
-          source: 'ENV_FALLBACK',
+          source: 'NONE',
         };
     }
   }
@@ -193,16 +229,28 @@ export class IntegrationSettingsService {
    * Typed helper for Razorpay dynamic configuration.
    */
   async getRazorpayConfig(): Promise<RazorpayDynamicConfig> {
-    const conf = await this.getIntegrationConfig('RAZORPAY');
+    const conf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
     const creds = conf?.credentials || {};
 
+    const keyId = String(creds.keyId || creds.key_id || creds.apiKey || '').trim();
+    const keySecret = String(creds.keySecret || creds.key_secret || creds.apiSecret || creds.secret || '').trim();
+    const webhookSecret = String(creds.webhookSecret || creds.webhook_secret || '').trim();
+    const isConfigured = Boolean(keyId && keySecret);
+    const isEnabled = conf?.isEnabled ?? false;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+
+    this.logger.log(
+      `[RAZORPAY_CONFIG] provider=RAZORPAY configured=${isConfigured} enabled=${isEnabled} keyIdPresent=${Boolean(keyId)} keySecretPresent=${Boolean(keySecret)} source=${source}`,
+    );
+
     return {
-      keyId: creds.keyId || '',
-      keySecret: creds.keySecret || '',
-      webhookSecret: creds.webhookSecret || '',
-      isEnabled: conf?.isEnabled ?? false,
-      environment: conf?.environment || 'LIVE',
-      source: conf?.source || 'ENV_FALLBACK',
+      keyId,
+      keySecret,
+      webhookSecret,
+      isEnabled,
+      isConfigured,
+      environment: conf?.environment || (keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST'),
+      source,
     };
   }
 
@@ -210,15 +258,20 @@ export class IntegrationSettingsService {
    * Typed helper for Google Maps dynamic configuration.
    */
   async getGoogleMapsConfig(): Promise<GoogleMapsDynamicConfig> {
-    const conf = await this.getIntegrationConfig('GOOGLE_MAPS');
+    const conf = await this.getIntegrationConfig(IntegrationProvider.GOOGLE_MAPS);
     const creds = conf?.credentials || {};
 
+    const apiKey = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    const isConfigured = Boolean(apiKey);
+    const isEnabled = conf?.isEnabled ?? false;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+
     return {
-      apiKey: creds.apiKey || '',
-      isEnabled: conf?.isEnabled ?? false,
+      apiKey,
+      isEnabled,
       environment: conf?.environment || 'LIVE',
       config: conf?.config || {},
-      source: conf?.source || 'ENV_FALLBACK',
+      source,
     };
   }
 
@@ -231,7 +284,7 @@ export class IntegrationSettingsService {
     dto: UpdateIntegrationDto,
     adminUserId?: number,
   ) {
-    const normProvider = provider.toUpperCase();
+    const normProvider = normalizeProvider(provider);
 
     // Fetch existing configuration to handle masked credentials retention
     const existing = await this.getIntegrationConfig(normProvider);
@@ -240,20 +293,29 @@ export class IntegrationSettingsService {
     const incomingCreds = dto.credentials || {};
     const encryptedCreds: Record<string, any> = {};
 
+    // 1. First populate with existing credentials preserved
+    for (const [key, value] of Object.entries(existingCreds)) {
+      if (typeof value === 'string' && value.length > 0) {
+        encryptedCreds[key] = isSensitiveKey(key)
+          ? (value.startsWith('enc:v1:') ? value : encryptSecret(value))
+          : value;
+      } else {
+        encryptedCreds[key] = value;
+      }
+    }
+
+    // 2. Overlay incoming non-empty, non-masked credentials
     for (const [key, value] of Object.entries(incomingCreds)) {
       if (typeof value === 'string') {
         const trimmed = value.trim();
 
-        // If the admin sent back the masked value (e.g. 'rzp_sec_***' or '******'), preserve the existing encrypted value
         if (
           trimmed.includes('***') ||
           trimmed === '******' ||
           trimmed.length === 0
         ) {
-          const oldVal = existingCreds[key];
-          encryptedCreds[key] = isSensitiveKey(key) && oldVal
-            ? encryptSecret(oldVal)
-            : oldVal || '';
+          // Keep existing preserved value
+          continue;
         } else if (isSensitiveKey(key)) {
           // Encrypt new sensitive value
           encryptedCreds[key] = encryptSecret(trimmed);
@@ -271,14 +333,24 @@ export class IntegrationSettingsService {
       create: {
         provider: normProvider,
         isEnabled: dto.isEnabled,
-        environment: dto.environment || (normProvider === 'RAZORPAY' && String(encryptedCreds.keyId || '').startsWith('rzp_live') ? 'LIVE' : 'TEST'),
+        environment:
+          dto.environment ||
+          (normProvider === IntegrationProvider.RAZORPAY &&
+          String(encryptedCreds.keyId || '').startsWith('rzp_live')
+            ? 'LIVE'
+            : 'TEST'),
         credentials: encryptedCreds,
         config: dto.config || {},
         updatedByUserId: adminUserId,
       },
       update: {
         isEnabled: dto.isEnabled,
-        environment: dto.environment || (normProvider === 'RAZORPAY' && String(encryptedCreds.keyId || '').startsWith('rzp_live') ? 'LIVE' : 'TEST'),
+        environment:
+          dto.environment ||
+          (normProvider === IntegrationProvider.RAZORPAY &&
+          String(encryptedCreds.keyId || '').startsWith('rzp_live')
+            ? 'LIVE'
+            : 'TEST'),
         credentials: encryptedCreds,
         config: dto.config || {},
         updatedByUserId: adminUserId,

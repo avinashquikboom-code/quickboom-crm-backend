@@ -204,4 +204,59 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       expect(mapsConfig.config.defaultCity).toBe('Bangalore, Karnataka');
     });
   });
+
+  describe('5. Provider Normalization & Gateway Status Flags', () => {
+    it('normalizes provider case and aliases', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: true,
+        environment: 'LIVE',
+        credentials: {
+          keyId: 'rzp_live_norm_123',
+          keySecret: encryptSecret('rzp_sec_norm_456'),
+        },
+        config: {},
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      const resLower = await service.getIntegrationConfig('razorpay');
+      expect(resLower.provider).toBe('RAZORPAY');
+      expect(mockPrisma.integrationSetting.findUnique).toHaveBeenCalledWith({
+        where: { provider: 'RAZORPAY' },
+      });
+    });
+
+    it('identifies disabled state correctly', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: false,
+        environment: 'TEST',
+        credentials: {
+          keyId: 'rzp_test_disabled_key',
+          keySecret: encryptSecret('rzp_sec_disabled_secret'),
+        },
+        config: {},
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      const config = await service.getRazorpayConfig();
+      expect(config.isEnabled).toBe(false);
+      expect(config.isConfigured).toBe(true);
+    });
+
+    it('identifies unconfigured state when keys are empty', async () => {
+      delete process.env.RAZORPAY_KEY_ID;
+      delete process.env.RAZORPAY_KEY_SECRET;
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+
+      const config = await service.getRazorpayConfig();
+      expect(config.isConfigured).toBe(false);
+      expect(config.keyId).toBe('');
+      expect(config.keySecret).toBe('');
+    });
+  });
 });
