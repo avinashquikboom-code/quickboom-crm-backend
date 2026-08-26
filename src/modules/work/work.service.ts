@@ -714,10 +714,29 @@ export class WorkService {
   ) {
     const startTime = Date.now();
     const where: any = {};
-
     const numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    let activeSubForCustomer: any = null;
     if (numCustomerId) {
       where.customerId = numCustomerId;
+      activeSubForCustomer = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true },
+      });
+
+      if (activeSubForCustomer) {
+        where.subscriptionId = activeSubForCustomer.id;
+        const subWorkCount = await this.prisma.work.count({
+          where: { customerId: numCustomerId, subscriptionId: activeSubForCustomer.id },
+        });
+        if (subWorkCount === 0) {
+          try {
+            await this.generatePlanSchedules(numCustomerId);
+          } catch (e: any) {
+            this.logger.warn(`Schedule generation on calendar query: ${e?.message}`);
+          }
+        }
+      }
     }
 
     if (query.employeeId && !isNaN(Number(query.employeeId))) {
@@ -820,11 +839,13 @@ export class WorkService {
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
+      const planName = w.subscription?.plan?.name || (activeSubForCustomer?.plan?.name ?? 'Starter Plan');
       return {
         id: String(w.id),
         purchaseId: purchaseRef,
         productName: prodName,
         serviceName: prodName,
+        planName: planName,
         title: w.title,
         date: w.scheduledDate,
         scheduleDate: w.scheduledDate,
