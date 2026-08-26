@@ -256,21 +256,35 @@ export class AuthService {
       joiningDate: emp.joiningDate || user.createdAt,
     };
 
+    const userRole = hasSuperAdminRole
+      ? 'SUPER_ADMIN'
+      : isEmployee
+      ? 'EMPLOYEE'
+      : (primaryRole as string);
+
+    const userData = {
+      id: user.id,
+      email: user.email,
+      phone: user.phone || null,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: userRole,
+      roles: roles.length > 0 ? roles : [userRole],
+      employeeId: emp.id,
+      employeeCode: emp.employeeCode,
+      employee: employeeData,
+      // Conditional: Only include customerId and customerName for non-super-admin
+      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId || emp.customerId }),
+      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name || 'Enterprise Workspace' }),
+    };
+
     return {
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone || null,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        customerId: user.customerId || emp.customerId,
-        customerName: user.customer?.name || (user.customerId ? 'Enterprise Workspace' : 'Super Admin'),
-        role: primaryRole,
-        roles: roles.length > 0 ? roles : [primaryRole],
-        employeeId: emp.id,
-        employeeCode: emp.employeeCode,
-        employee: employeeData,
+      success: true,
+      data: {
+        user: userData,
+        tokens,
       },
+      user: userData,
       tokens,
     };
   }
@@ -512,19 +526,22 @@ export class AuthService {
       joiningDate: emp.joiningDate || user.createdAt,
     };
 
+    const isSuperAdmin = roles.includes(RoleType.SUPER_ADMIN);
+
     return {
       id: user.id,
       email: user.email,
       phone: user.phone,
       firstName: user.firstName,
       lastName: user.lastName,
-      customerId: user.customerId || emp.customerId,
-      customerName: user.customer?.name || 'Enterprise Workspace',
       roles,
       employee: employeeData,
       employeeId: emp.employeeCode,
       employeeCode: emp.employeeCode,
       createdAt: user.createdAt,
+      // Conditional: Only include customerId and customerName for non-super-admin
+      ...(!isSuperAdmin && { customerId: user.customerId || emp.customerId }),
+      ...(!isSuperAdmin && { customerName: user.customer?.name || 'Enterprise Workspace' }),
     };
   }
 
