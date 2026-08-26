@@ -13,6 +13,7 @@ import {
   VerifyRazorpayPaymentDto,
   SubscriptionBillingCycle,
 } from './dto/payment.dto';
+import { sanitizeSecret } from '../../common/utils/crypto.util';
 import { IntegrationSettingsService, RazorpayDynamicConfig } from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus } from '@prisma/client';
 import * as crypto from 'crypto';
@@ -36,8 +37,11 @@ export class PaymentService {
   private async getRazorpayClient(): Promise<{ instance: any; config: RazorpayDynamicConfig }> {
     const config = await this.integrationSettingsService.getRazorpayConfig();
 
-    if (!config.isConfigured || !config.keyId) {
-      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay payment gateway is not configured in Database or settings.');
+    const sanitizedKeyId = sanitizeSecret(config.keyId);
+    const sanitizedKeySecret = sanitizeSecret(config.keySecret);
+
+    if (!sanitizedKeyId) {
+      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay Key ID is not configured in Database or settings.');
       throw new BadRequestException('Razorpay payment gateway is not configured.');
     }
 
@@ -46,17 +50,28 @@ export class PaymentService {
       throw new BadRequestException('Razorpay payment gateway is disabled.');
     }
 
-    if (!config.keySecret) {
-      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay key secret is missing.');
+    if (!sanitizedKeySecret) {
+      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay Key Secret is missing or empty.');
       throw new BadRequestException('Razorpay credentials are incomplete.');
     }
 
+    this.logger.log(
+      `[RAZORPAY_AUTH_DIAGNOSTICS] keyIdPrefix=${sanitizedKeyId.substring(0, 8)}... keySecretPresent=true environment=${config.environment} source=${config.source}`,
+    );
+
     try {
       const instance = new Razorpay({
-        key_id: config.keyId,
-        key_secret: config.keySecret,
+        key_id: sanitizedKeyId,
+        key_secret: sanitizedKeySecret,
       });
-      return { instance, config };
+      return {
+        instance,
+        config: {
+          ...config,
+          keyId: sanitizedKeyId,
+          keySecret: sanitizedKeySecret,
+        },
+      };
     } catch (err: any) {
       this.logger.error(`[RAZORPAY_CLIENT_INIT_ERROR] ${err?.message}`);
       throw new BadRequestException('Could not initialize payment gateway client.');
@@ -159,12 +174,24 @@ export class PaymentService {
       razorpayOrderId = order.id;
     } catch (err: any) {
       const rzpErr = err?.error;
+      const errDesc = rzpErr?.description || err?.message || 'Failed to create payment order.';
+      const isAuthFailed =
+        errDesc.toLowerCase().includes('auth') ||
+        (rzpErr?.code === 'BAD_REQUEST_ERROR' && errDesc.toLowerCase().includes('failed'));
+
       this.logger.error(
-        `[RAZORPAY_ORDER_CREATE_FAILED] ${err?.message}`,
-        rzpErr ? JSON.stringify({ code: rzpErr.code, description: rzpErr.description, reason: rzpErr.reason }) : '',
+        `[RAZORPAY_ORDER_CREATE_FAILED] ${errDesc} (code=${rzpErr?.code || 'UNKNOWN'}, keyIdPrefix=${rzpConfig.keyId.substring(0, 8)}..., env=${rzpConfig.environment}, source=${rzpConfig.source})`,
+        rzpErr ? JSON.stringify(rzpErr) : '',
       );
+
+      if (isAuthFailed) {
+        throw new BadRequestException(
+          'Razorpay payment gateway authentication failed. Please verify Razorpay Key ID and Key Secret in Admin Panel Settings.',
+        );
+      }
+
       throw new BadRequestException(
-        rzpErr?.description || err?.message || 'Failed to create payment order. Please try again.',
+        errDesc || 'Failed to create payment order. Please try again.',
       );
     }
 

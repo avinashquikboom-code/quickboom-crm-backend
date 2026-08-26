@@ -105,3 +105,13 @@ export function maskSecret(secret: string): string {
   const suffix = clean.substring(clean.length - 4);
   return `${prefix}***${suffix}`;
 }
+
+/**
+ * Strips whitespace, carriage returns, tabs, zero-width characters, and control characters.
+ */
+export function sanitizeSecret(secret: string): string {
+  if (!secret) return '';
+  return String(secret)
+    .replace(/[\r\n\t\s\u200B-\u200D\uFEFF]/g, '')
+    .trim();
+}

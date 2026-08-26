@@ -9,6 +9,7 @@ import {
   encryptSecret,
   decryptSecret,
   maskSecret,
+  sanitizeSecret,
 } from '../../common/utils/crypto.util';
 import {
   UpdateIntegrationDto,
@@ -253,15 +254,15 @@ export class IntegrationSettingsService {
     const conf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
     const creds = conf?.credentials || {};
 
-    const keyId = String(creds.keyId || creds.key_id || creds.apiKey || '').trim();
-    const keySecret = String(creds.keySecret || creds.key_secret || creds.apiSecret || creds.secret || '').trim();
-    const webhookSecret = String(creds.webhookSecret || creds.webhook_secret || '').trim();
+    const keyId = sanitizeSecret(String(creds.keyId || creds.key_id || creds.apiKey || ''));
+    const keySecret = sanitizeSecret(String(creds.keySecret || creds.key_secret || creds.apiSecret || creds.secret || ''));
+    const webhookSecret = sanitizeSecret(String(creds.webhookSecret || creds.webhook_secret || ''));
     const isConfigured = Boolean(keyId && keySecret);
     const isEnabled = conf?.isEnabled ?? false;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
     this.logger.log(
-      `[RAZORPAY_CONFIG] provider=RAZORPAY configured=${isConfigured} enabled=${isEnabled} keyIdPresent=${Boolean(keyId)} keySecretPresent=${Boolean(keySecret)} source=${source}`,
+      `[RAZORPAY_CONFIG] provider=RAZORPAY configured=${isConfigured} enabled=${isEnabled} keyIdPrefix=${keyId ? keyId.substring(0, 8) + '...' : 'none'} keySecretPresent=${Boolean(keySecret)} environment=${conf?.environment || (keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST')} source=${source}`,
     );
 
     return {
