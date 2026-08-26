@@ -67,6 +67,8 @@ async function bootstrap() {
       'x-tenant-id',
       'x-client-type',
       'x-refresh-token',
+      'Access-Control-Request-Method',
+      'Access-Control-Request-Headers',
       'Access-Control-Allow-Origin',
       'Access-Control-Allow-Headers',
       'Access-Control-Allow-Methods',
