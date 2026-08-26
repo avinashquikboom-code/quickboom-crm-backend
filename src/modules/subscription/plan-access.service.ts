@@ -156,7 +156,7 @@ export class PlanAccessService {
 
     // 4. Gather live usage counts & entitlements
     const usageStart = Date.now();
-    const [currentUsers, currentLeads, scheduledWorks, entitlements] = await Promise.all([
+    const [currentUsers, currentLeads, scheduledWorks, completedWorks, entitlements] = await Promise.all([
       this.prisma.employee.count({
         where: { customerId: numCustomerId, status: 'ACTIVE' },
       }),
@@ -166,22 +166,32 @@ export class PlanAccessService {
       this.prisma.work.count({
         where: { customerId: numCustomerId, status: 'SCHEDULED' },
       }),
+      this.prisma.work.count({
+        where: {
+          customerId: numCustomerId,
+          subscriptionId: sub?.id,
+          status: { in: ['COMPLETED', 'APPROVED'] },
+        },
+      }),
       this.prisma.planEntitlement.findMany({
         where: { customerId: numCustomerId },
       }),
     ]);
-    this.logger.debug(`[PLAN_QUERY] usage counts (parallel): ${Date.now() - usageStart}ms (users=${currentUsers}, leads=${currentLeads}, works=${scheduledWorks}, entitlements=${entitlements.length})`);
+    this.logger.debug(`[PLAN_QUERY] usage counts (parallel): ${Date.now() - usageStart}ms (users=${currentUsers}, leads=${currentLeads}, works=${scheduledWorks}, completed=${completedWorks}, entitlements=${entitlements.length})`);
 
-    // Calculate Schedule Limits and Quotas
-    let totalScheduleLimit = basePlan.code === 'BASIC' ? 10 : (basePlan.code === 'STANDARD' ? 20 : 50);
-    let totalUsedSchedules = scheduledWorks;
+    // Calculate Schedule Limits and Quotas based on exact deliverables
+    const planCodeUpper = (basePlan.code || '').toUpperCase();
+    let totalScheduleLimit = planCodeUpper.includes('PREMIUM')
+      ? 48
+      : (planCodeUpper.includes('STANDARD') ? 17 : 11);
+    let totalUsedSchedules = completedWorks;
 
     if (entitlements && entitlements.length > 0) {
       const entSum = entitlements.reduce((acc, e) => acc + (e.totalQty || 0), 0);
-      const entUsed = entitlements.reduce((acc, e) => acc + ((e.usedQty || 0) + (e.scheduledQty || 0)), 0);
+      const entUsed = entitlements.reduce((acc, e) => acc + (e.usedQty || 0), 0);
       if (entSum > 0) {
         totalScheduleLimit = entSum;
-        totalUsedSchedules = entUsed;
+        totalUsedSchedules = entUsed > 0 ? entUsed : completedWorks;
       }
     }
 
@@ -194,15 +204,29 @@ export class PlanAccessService {
           totalQty: e.totalQty,
           usedQty: e.usedQty,
           scheduledQty: e.scheduledQty,
-          remainingQty: Math.max(0, e.totalQty - (e.usedQty + e.scheduledQty)),
+          remainingQty: Math.max(0, e.totalQty - e.usedQty),
           validUntil: e.validUntil || (sub?.endDate || new Date()),
         }))
-      : [
-          { serviceName: 'Reels', totalQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4) },
-          { serviceName: 'Creative Posts', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 4 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 4 : 3) },
-          { serviceName: 'Stories', totalQty: basePlan.code === 'PREMIUM' ? 30 : (basePlan.code === 'STANDARD' ? 5 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 30 : (basePlan.code === 'STANDARD' ? 5 : 3) },
-          { serviceName: 'Influencer Promotion', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 2 : 1), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 2 : 1) },
-        ];
+      : (planCodeUpper.includes('PREMIUM')
+          ? [
+              { serviceName: 'Product Reels', totalQty: 2, usedQty: 0, scheduledQty: 0, remainingQty: 2 },
+              { serviceName: 'Influencer Reels', totalQty: 8, usedQty: 0, scheduledQty: 0, remainingQty: 8 },
+              { serviceName: 'Creative Posts', totalQty: 8, usedQty: 0, scheduledQty: 0, remainingQty: 8 },
+              { serviceName: 'Stories', totalQty: 30, usedQty: 0, scheduledQty: 0, remainingQty: 30 },
+            ]
+          : (planCodeUpper.includes('STANDARD')
+              ? [
+                  { serviceName: 'Reels', totalQty: 6, usedQty: 0, scheduledQty: 0, remainingQty: 6 },
+                  { serviceName: 'Creative Posts', totalQty: 4, usedQty: 0, scheduledQty: 0, remainingQty: 4 },
+                  { serviceName: 'Influencer Promotions', totalQty: 2, usedQty: 0, scheduledQty: 0, remainingQty: 2 },
+                  { serviceName: 'Stories', totalQty: 5, usedQty: 0, scheduledQty: 0, remainingQty: 5 },
+                ]
+              : [
+                  { serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 0, remainingQty: 4 },
+                  { serviceName: 'Creative Posts', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
+                  { serviceName: 'Influencer Promotion', totalQty: 1, usedQty: 0, scheduledQty: 0, remainingQty: 1 },
+                  { serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
+                ]));
 
     const result: EffectivePlan = {
       customerId: numCustomerId,

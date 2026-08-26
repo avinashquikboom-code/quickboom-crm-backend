@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
-import { WorkType, WorkStatus, TaskStatus } from '@prisma/client';
+import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus } from '@prisma/client';
 import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
@@ -1002,12 +1002,32 @@ export class WorkService {
 
     const startDate = activePlan.startDate ? new Date(activePlan.startDate) : new Date();
     const endDate = activePlan.endDate ? new Date(activePlan.endDate) : new Date(startDate.getTime() + 30 * 86400000);
-    const totalDays = Math.max(1, Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
 
     let totalCreated = 0;
 
     const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
       const createdItems: any[] = [];
+
+      // Resolve active customer subscription / purchase
+      const latestSub = await tx.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Helper to advance date by 1 working day (skipping Sunday)
+      const nextWorkingDay = (current: Date): Date => {
+        const next = new Date(current);
+        next.setDate(next.getDate() + 1);
+        if (next.getDay() === 0) {
+          next.setDate(next.getDate() + 1);
+        }
+        return next > endDate ? new Date(endDate) : next;
+      };
+
+      let scheduleCursor = new Date(startDate);
+      if (scheduleCursor.getDay() === 0) {
+        scheduleCursor.setDate(scheduleCursor.getDate() + 1);
+      }
 
       for (const ent of entitlements) {
         if (ent.totalQty <= 0) continue;
@@ -1027,82 +1047,198 @@ export class WorkService {
           continue;
         }
 
-        // Determine WorkType from service name
-        let workType: WorkType = WorkType.REELS_SHOOT;
         const sNameLower = ent.serviceName.toLowerCase();
-        if (sNameLower.includes('reel')) {
-          workType = WorkType.REELS_SHOOT;
-        } else if (sNameLower.includes('post') || sNameLower.includes('creative')) {
-          workType = WorkType.POST_DESIGN;
-        } else if (sNameLower.includes('story') || sNameLower.includes('stories')) {
-          workType = WorkType.STORY_DESIGN;
-        } else if (sNameLower.includes('influencer')) {
-          workType = WorkType.INFLUENCER_PROMO;
-        } else if (sNameLower.includes('video') || sNameLower.includes('edit')) {
-          workType = WorkType.VIDEO_EDITING;
-        } else if (sNameLower.includes('ad') || sNameLower.includes('meta') || sNameLower.includes('google')) {
-          workType = WorkType.META_ADS;
-        } else if (sNameLower.includes('social')) {
-          workType = WorkType.SOCIAL_MEDIA_MANAGEMENT;
-        }
-
-        // Distribute schedule dates across plan duration
-        const stepInterval = Math.max(2, Math.floor(totalDays / (ent.totalQty + 1)));
-
-        // Resolve active customer subscription / purchase
-        const latestSub = await tx.customerSubscription.findFirst({
-          where: { customerId: numCustomerId, deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        });
+        const isReel = sNameLower.includes('reel');
+        const isCreativePost = sNameLower.includes('post') || sNameLower.includes('creative');
+        const isStory = sNameLower.includes('story') || sNameLower.includes('stories');
+        const isInfluencer = sNameLower.includes('influencer');
 
         for (let i = 0; i < missingQty; i++) {
           const sequenceNumber = existingWorks.length + i + 1;
-          const dayOffset = Math.min(totalDays - 1, (sequenceNumber * stepInterval));
-          const targetDate = new Date(startDate.getTime() + dayOffset * 86400000);
+          const targetDate = new Date(scheduleCursor);
 
-          // Avoid Sunday (day 0)
-          if (targetDate.getDay() === 0) {
-            targetDate.setDate(targetDate.getDate() + 1);
-          }
+          if (isReel) {
+            // Workflow: Shoot (Day 0) -> Editing (Day +1) -> Final Upload (Day +2)
+            const shootDate = new Date(scheduleCursor);
+            const editDate = nextWorkingDay(shootDate);
+            const uploadDate = nextWorkingDay(editDate);
 
-          const work = await tx.work.create({
-            data: {
-              customerId: numCustomerId,
-              subscriptionId: latestSub?.id || null,
-              planId: ent.planId || activePlan.planId,
-              entitlementId: ent.id,
-              workType,
-              title: `${ent.serviceName} #${sequenceNumber}`,
-              description: `System-generated schedule for ${ent.serviceName} (Sequence #${sequenceNumber} of ${ent.totalQty})`,
-              scheduledDate: targetDate,
-              scheduledTime: '11:00 AM',
-              priority: 'MEDIUM',
-              status: WorkStatus.SCHEDULED,
-            },
-          });
-
-          // Create standard sub-tasks
-          if (workType === WorkType.REELS_SHOOT) {
+            // 1. Reel - Shoot
+            const shootWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.REELS_SHOOT,
+                title: `${ent.serviceName} #${sequenceNumber} - Shoot`,
+                description: `Scripting & On-Location / Studio Shoot for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: shootDate,
+                scheduledTime: '11:00 AM',
+                priority: 'HIGH',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
             await tx.workTask.createMany({
               data: [
-                { workId: work.id, title: '1. Reel Shoot', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: work.id, title: '2. Video Editing', stepOrder: 2, status: TaskStatus.PENDING },
-                { workId: work.id, title: '3. Customer Review', stepOrder: 3, status: TaskStatus.PENDING },
-                { workId: work.id, title: '4. Final Upload', stepOrder: 4, status: TaskStatus.PENDING },
+                { workId: shootWork.id, title: '1. Script & Audio Selection', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: shootWork.id, title: '2. Video Shoot & Footage Capture', stepOrder: 2, status: TaskStatus.PENDING },
               ],
             });
+            createdItems.push(shootWork);
+            totalCreated++;
+
+            // 2. Reel - Video Editing
+            const editWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.VIDEO_EDITING,
+                title: `${ent.serviceName} #${sequenceNumber} - Video Editing`,
+                description: `Color Grading, Transitions, Captions & Sound Design for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: editDate,
+                scheduledTime: '02:00 PM',
+                priority: 'MEDIUM',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
+            await tx.workTask.createMany({
+              data: [
+                { workId: editWork.id, title: '1. Rough Cut & Color Grade', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: editWork.id, title: '2. Sound Design & Typography', stepOrder: 2, status: TaskStatus.PENDING },
+                { workId: editWork.id, title: '3. Customer Review Draft', stepOrder: 3, status: TaskStatus.PENDING },
+              ],
+            });
+            createdItems.push(editWork);
+            totalCreated++;
+
+            // 3. Reel - Final Upload
+            const uploadWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.REEL,
+                title: `${ent.serviceName} #${sequenceNumber} - Upload`,
+                description: `Final Publishing, Trending Hashtag Optimization & Meta/Instagram Upload for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: uploadDate,
+                scheduledTime: '06:00 PM',
+                priority: 'MEDIUM',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
+            await tx.workTask.createMany({
+              data: [
+                { workId: uploadWork.id, title: '1. Hashtags & SEO Captions', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: uploadWork.id, title: '2. Final Instagram / FB Upload', stepOrder: 2, status: TaskStatus.PENDING },
+              ],
+            });
+            createdItems.push(uploadWork);
+            totalCreated++;
+
+            // Advance date cursor after Reel pipeline
+            scheduleCursor = nextWorkingDay(uploadDate);
+          } else if (isCreativePost) {
+            const postWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.POST_DESIGN,
+                title: `${ent.serviceName} #${sequenceNumber}`,
+                description: `Graphic Design & Carousel / Static Content Publishing for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: targetDate,
+                scheduledTime: '01:00 PM',
+                priority: 'MEDIUM',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
+            await tx.workTask.createMany({
+              data: [
+                { workId: postWork.id, title: '1. Graphic Design / Copywriting', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: postWork.id, title: '2. Client Review & Approval', stepOrder: 2, status: TaskStatus.PENDING },
+                { workId: postWork.id, title: '3. Publishing & Hashtag Setup', stepOrder: 3, status: TaskStatus.PENDING },
+              ],
+            });
+            createdItems.push(postWork);
+            totalCreated++;
+            scheduleCursor = nextWorkingDay(scheduleCursor);
+          } else if (isStory) {
+            const storyWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.STORY_DESIGN,
+                title: `${ent.serviceName} #${sequenceNumber}`,
+                description: `Interactive Story Design, Polls & Daily Updates for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: targetDate,
+                scheduledTime: '10:00 AM',
+                priority: 'MEDIUM',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
+            await tx.workTask.createMany({
+              data: [
+                { workId: storyWork.id, title: '1. Story Graphic / Motion Design', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: storyWork.id, title: '2. Daily Story Publishing', stepOrder: 2, status: TaskStatus.PENDING },
+              ],
+            });
+            createdItems.push(storyWork);
+            totalCreated++;
+            scheduleCursor = nextWorkingDay(scheduleCursor);
+          } else if (isInfluencer) {
+            const infWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.INFLUENCER_PROMO,
+                title: `${ent.serviceName} #${sequenceNumber}`,
+                description: `Creator Collaboration, Briefing & Influencer Shoutout Execution for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: targetDate,
+                scheduledTime: '04:00 PM',
+                priority: 'HIGH',
+                status: WorkStatus.SCHEDULED,
+              },
+            });
+            await tx.workTask.createMany({
+              data: [
+                { workId: infWork.id, title: '1. Influencer Briefing & Product Handover', stepOrder: 1, status: TaskStatus.PENDING },
+                { workId: infWork.id, title: '2. Influencer Content Creation & Shoot', stepOrder: 2, status: TaskStatus.PENDING },
+                { workId: infWork.id, title: '3. Brand Review & Approval', stepOrder: 3, status: TaskStatus.PENDING },
+                { workId: infWork.id, title: '4. Influencer Posting & Tagging', stepOrder: 4, status: TaskStatus.PENDING },
+              ],
+            });
+            createdItems.push(infWork);
+            totalCreated++;
+            scheduleCursor = nextWorkingDay(scheduleCursor);
           } else {
-            await tx.workTask.createMany({
-              data: [
-                { workId: work.id, title: '1. Content Design / Draft', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: work.id, title: '2. Customer Review', stepOrder: 2, status: TaskStatus.PENDING },
-                { workId: work.id, title: '3. Publishing / Upload', stepOrder: 3, status: TaskStatus.PENDING },
-              ],
+            const genericWork = await tx.work.create({
+              data: {
+                customerId: numCustomerId,
+                subscriptionId: latestSub?.id || null,
+                planId: ent.planId || activePlan.planId,
+                entitlementId: ent.id,
+                workType: WorkType.SOCIAL_MEDIA_MANAGEMENT,
+                title: `${ent.serviceName} #${sequenceNumber}`,
+                description: `Scheduled deliverable for ${ent.serviceName} #${sequenceNumber}`,
+                scheduledDate: targetDate,
+                scheduledTime: '11:00 AM',
+                priority: 'MEDIUM',
+                status: WorkStatus.SCHEDULED,
+              },
             });
+            createdItems.push(genericWork);
+            totalCreated++;
+            scheduleCursor = nextWorkingDay(scheduleCursor);
           }
-
-          createdItems.push(work);
-          totalCreated++;
         }
 
         // Update entitlement scheduledQty
@@ -1110,7 +1246,7 @@ export class WorkService {
           where: {
             customerId: numCustomerId,
             entitlementId: ent.id,
-            status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED, WorkStatus.IN_PROGRESS, WorkStatus.CUSTOMER_REVIEW, WorkStatus.REVISION_REQUESTED] },
+            status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED, WorkStatus.IN_PROGRESS, WorkStatus.CUSTOMER_REVIEW, WorkStatus.REVISION_REQUESTED, WorkStatus.COMPLETED, WorkStatus.APPROVED] },
           },
         });
         await tx.planEntitlement.update({
@@ -1124,7 +1260,7 @@ export class WorkService {
 
     return {
       success: true,
-      message: `Successfully verified and generated ${totalCreated} plan schedules.`,
+      message: `Successfully generated ${totalCreated} plan deliverable schedules for customer ${numCustomerId}.`,
       createdCount: totalCreated,
       schedules: allGeneratedWorks,
     };

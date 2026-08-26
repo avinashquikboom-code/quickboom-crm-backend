@@ -31,6 +31,20 @@ export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1
   );
 }
 
+/**
+ * Calculates start and end dates for a customer billing cycle
+ * e.g. 20 Aug 2026 -> 20 Sep 2026 (or inclusive 19 Sep 23:59:59)
+ */
+export function calculatePlanBillingPeriod(startDate: Date | string = new Date(), durationMonths = 1) {
+  const start = new Date(startDate);
+  const expiry = calculatePlanExpiry(start, durationMonths);
+  return {
+    startDate: start,
+    endDate: expiry,
+    expiryDate: expiry,
+  };
+}
+
 export function calculateDaysRemaining(expiryDate: Date | string, now = new Date()): number {
   const exp = new Date(expiryDate);
   const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
