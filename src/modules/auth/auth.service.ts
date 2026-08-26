@@ -147,6 +147,9 @@ export class AuthService {
         OR: [
           { email: normalizedEmail },
           { phone: rawInput },
+          { employee: { employeeCode: rawInput } },
+          { employee: { email: normalizedEmail } },
+          { employee: { phone: rawInput } },
         ],
       },
       include: {

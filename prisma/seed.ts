@@ -66,13 +66,92 @@ async function main() {
     },
   });
 
-  // 4. Update any existing roles named 'Customer Administrator' to avoid stale states
-  await prisma.role.updateMany({
-    where: { name: 'Customer Administrator' },
-    data: { type: RoleType.SUPER_ADMIN },
+  // 4. Ensure default customer exists and is active
+  let customer = await prisma.customer.findFirst({
+    where: { name: 'QuikBoom Enterprise' },
   });
 
-  console.log(`✅ Assigned role SUPER_ADMIN to ${email}`);
+  if (!customer) {
+    customer = await prisma.customer.create({
+      data: {
+        name: 'QuikBoom Enterprise',
+        email: 'info@quikboom.com',
+        isActive: true,
+        customerType: 'ENTERPRISE',
+      },
+    });
+  } else if (!customer.isActive) {
+    customer = await prisma.customer.update({
+      where: { id: customer.id },
+      data: { isActive: true },
+    });
+  }
+
+  // 5. Create or update Demo Mobile Employee User (demo@gmail.com / 123456)
+  const demoEmail = 'demo@gmail.com';
+  let demoUser = await prisma.user.findUnique({
+    where: { email: demoEmail },
+  });
+
+  if (!demoUser) {
+    demoUser = await prisma.user.create({
+      data: {
+        customerId: customer.id,
+        email: demoEmail,
+        phone: '+91-9876543210',
+        firstName: 'Demo',
+        lastName: 'Employee',
+        passwordHash: hashedPassword,
+        isActive: true,
+        isVerified: true,
+      },
+    });
+    console.log(`✅ Created Demo Employee user (${demoEmail} / ${password})`);
+  } else {
+    demoUser = await prisma.user.update({
+      where: { id: demoUser.id },
+      data: {
+        customerId: customer.id,
+        passwordHash: hashedPassword,
+        isActive: true,
+      },
+    });
+    console.log(`✅ Refreshed credentials for (${demoEmail})`);
+  }
+
+  // 6. Ensure Employee record exists for demoUser
+  let employee = await prisma.employee.findUnique({
+    where: { userId: demoUser.id },
+  });
+
+  if (!employee) {
+    employee = await prisma.employee.create({
+      data: {
+        customerId: customer.id,
+        userId: demoUser.id,
+        employeeCode: 'EMP-002',
+        firstName: 'Demo',
+        lastName: 'Employee',
+        email: demoEmail,
+        phone: '+91-9876543210',
+        branch: 'Head Office',
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+      },
+    });
+    console.log(`✅ Created Employee profile EMP-002 for ${demoEmail}`);
+  } else {
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        customerId: customer.id,
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+      },
+    });
+  }
+
+  console.log(`✅ Ready: Admin (admin@quikboom.com) & Demo Employee (demo@gmail.com) with password: ${password}`);
 }
 
 main()
