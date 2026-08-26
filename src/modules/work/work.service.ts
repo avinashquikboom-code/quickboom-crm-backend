@@ -1,5 +1,7 @@
 import {
   Injectable,
+  Inject,
+  forwardRef,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
@@ -16,6 +18,7 @@ export class WorkService {
 
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => PlanAccessService))
     private readonly planAccessService: PlanAccessService,
   ) {}
 
@@ -839,7 +842,7 @@ export class WorkService {
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
-      const planName = w.subscription?.plan?.name || (activeSubForCustomer?.plan?.name ?? 'Starter Plan');
+      const planName = w.subscription?.plan?.name || (activeSubForCustomer?.plan?.name ?? 'Active Plan');
       return {
         id: String(w.id),
         purchaseId: purchaseRef,
