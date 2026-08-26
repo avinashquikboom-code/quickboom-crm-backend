@@ -140,8 +140,26 @@ export class AuthService {
     });
   }
 
-  async login(dto: LoginDto, targetApp?: string) {
-    const rawInput = (dto.email || '').trim();
+  async login(
+    emailOrDto: string | LoginDto,
+    passwordOrApp?: string,
+    targetApp?: string,
+  ) {
+    let email: string;
+    let password = '';
+    let appType: string | undefined;
+
+    if (typeof emailOrDto === 'object' && emailOrDto !== null) {
+      email = emailOrDto.email;
+      password = emailOrDto.password;
+      appType = passwordOrApp || emailOrDto.appType;
+    } else {
+      email = String(emailOrDto || '');
+      password = passwordOrApp || '';
+      appType = targetApp;
+    }
+
+    const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
 
     const user = await this.prisma.user.findFirst({
@@ -172,7 +190,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -189,7 +207,7 @@ export class AuthService {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
-    const rawApp = (targetApp || dto.appType || '').trim().toLowerCase();
+    const rawApp = (appType || '').trim().toLowerCase();
 
     const primaryRole = hasSuperAdminRole
       ? RoleType.SUPER_ADMIN
@@ -203,8 +221,42 @@ export class AuthService {
       ? 'EMPLOYEE'
       : (user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || primaryRole);
 
-    // Client-Type / Role Validation
-    if (rawApp === 'admin' || rawApp === 'super_admin') {
+    // Dedicated Endpoint Exact Role Validation
+    const upperExpectedRole = (appType || '').trim().toUpperCase();
+    if (['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'].includes(upperExpectedRole)) {
+      if (upperExpectedRole === 'SUPER_ADMIN') {
+        if (!hasSuperAdminRole) {
+          throw new ForbiddenException('Only Super Admin can access admin panel');
+        }
+      } else if (upperExpectedRole === 'CUSTOMER') {
+        if (hasSuperAdminRole) {
+          throw new ForbiddenException('This user is SUPER_ADMIN, not CUSTOMER. Use /api/v1/admin/auth/login/super-admin');
+        }
+        if (userRole !== 'CUSTOMER' && userRole !== 'CUSTOMER_ADMIN') {
+          throw new ForbiddenException(`This user is ${userRole}, not CUSTOMER. Use correct endpoint for ${userRole.toLowerCase()} login`);
+        }
+      } else if (upperExpectedRole === 'EMPLOYEE') {
+        if (hasSuperAdminRole) {
+          throw new ForbiddenException('This user is SUPER_ADMIN, not EMPLOYEE. Use /api/v1/admin/auth/login/super-admin');
+        }
+        if (userRole !== 'EMPLOYEE') {
+          throw new ForbiddenException(`This user is ${userRole}, not EMPLOYEE. Use correct endpoint for ${userRole.toLowerCase()} login`);
+        }
+        if (user.employee?.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Employee account is inactive.');
+        }
+        if (!user.employee?.mobileLoginEnabled) {
+          throw new UnauthorizedException('Mobile login is disabled for this employee.');
+        }
+      } else if (upperExpectedRole === 'COMPANY_ADMIN') {
+        if (hasSuperAdminRole) {
+          throw new ForbiddenException('This user is SUPER_ADMIN, not COMPANY_ADMIN. Use /api/v1/admin/auth/login/super-admin');
+        }
+        if (userRole !== 'COMPANY_ADMIN' && userRole !== 'CUSTOMER_ADMIN') {
+          throw new ForbiddenException(`This user is ${userRole}, not COMPANY_ADMIN. Use correct endpoint for ${userRole.toLowerCase()} login`);
+        }
+      }
+    } else if (rawApp === 'admin' || rawApp === 'super_admin') {
       if (!hasSuperAdminRole) {
         throw new ForbiddenException('Only Super Admin can access admin panel');
       }
