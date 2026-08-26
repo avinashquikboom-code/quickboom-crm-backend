@@ -61,24 +61,18 @@ export class WorkService {
   }
 
   /**
-   * Helper to resolve customer ID from numeric, string, or alias formats
+   * Helper to resolve customer ID from numeric values or clean integers
    */
   private resolveCustomerId(customerId?: number | string): number | undefined {
-    if (!customerId) return undefined;
+    if (customerId === null || customerId === undefined) return undefined;
     if (typeof customerId === 'number') {
       return !isNaN(customerId) && customerId > 0 ? customerId : undefined;
     }
     const str = String(customerId).trim();
     if (!str) return undefined;
-    const directNum = Number(str);
-    if (!isNaN(directNum) && directNum > 0) {
+    const directNum = parseInt(str, 10);
+    if (!isNaN(directNum) && String(directNum) === str && directNum > 0) {
       return directNum;
-    }
-
-    const match = str.match(/^CUST[-_]?0*(\d+)$/i);
-    if (match && match[1]) {
-      const parsed = parseInt(match[1], 10);
-      if (!isNaN(parsed) && parsed > 0) return parsed;
     }
     return undefined;
   }
@@ -937,13 +931,10 @@ export class WorkService {
 
     const duration = Date.now() - startTime;
     this.logger.log(
+      `[CALENDAR_DEBUG] authenticatedUserId: ${scopedCustomerId} | authenticatedCustomer: ${scopedCustomerId} | resolvedCustomerDbId: ${numCustomerId} | requestedDate: ${query.date ?? 'ALL'} | queryCustomerId: ${numCustomerId} | resultCount: ${result.length} | queryDurationMs: ${duration}`,
+    );
+    this.logger.log(
       `[API_PERFORMANCE] GET /works/calendar customerId=${scopedCustomerId} DB duration=${duration}ms total=${duration}ms`,
-    );
-    this.logger.log(
-      `[CALENDAR_DEBUG] authenticatedCustomerCode=${scopedCustomerId} resolvedCustomerId=${numCustomerId} date=${query.date ?? 'ALL'} resultCount=${result.length}`,
-    );
-    this.logger.log(
-      `[CALENDAR_SERVICE] Customer ID: ${numCustomerId ?? 'ALL'} | Date: ${query.date ?? 'ALL'} | Raw Query Items: ${items.length} | Filtered Schedules: ${filteredItems.length} | Total Events Returned: ${result.length}`,
     );
 
     return result;

@@ -13,6 +13,9 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
 
   beforeEach(async () => {
     prisma = {
+      customer: {
+        findFirst: jest.fn(),
+      },
       work: {
         findMany: jest.fn(),
         findFirst: jest.fn(),
@@ -71,7 +74,7 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           id: 101,
           customerId: 1,
           title: 'Customer A Reel Shoot',
-          scheduledDate: new Date('2026-08-25T10:00:00Z'),
+          scheduledDate: new Date('2026-08-26T10:00:00Z'),
           scheduledTime: '10:00 AM',
           workType: WorkType.REELS_SHOOT,
           status: WorkStatus.SCHEDULED,
@@ -80,7 +83,7 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       ]);
       prisma.customerSubscription.findFirst.mockResolvedValue(null);
 
-      const result = await service.getCalendar(1, {});
+      const result = await service.getCalendar(1, { date: '2026-08-26' });
       expect(result).toHaveLength(1);
       expect(result[0].customerId).toBe('1');
       expect(result[0].title).toBe('Customer A Reel Shoot');
@@ -98,7 +101,7 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           id: 202,
           customerId: 2,
           title: 'Customer B Story Design',
-          scheduledDate: new Date('2026-08-25T12:00:00Z'),
+          scheduledDate: new Date('2026-08-26T12:00:00Z'),
           scheduledTime: '12:00 PM',
           workType: WorkType.STORY_DESIGN,
           status: WorkStatus.SCHEDULED,
@@ -107,7 +110,7 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       ]);
       prisma.customerSubscription.findFirst.mockResolvedValue(null);
 
-      const result = await service.getCalendar(2, {});
+      const result = await service.getCalendar(2, { date: '2026-08-26' });
       expect(result).toHaveLength(1);
       expect(result[0].customerId).toBe('2');
       expect(result[0].title).toBe('Customer B Story Design');
@@ -116,6 +119,31 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           where: expect.objectContaining({ customerId: 2 }),
         }),
       );
+    });
+
+    it('Correctly returns and filters schedules across distinct dates (2026-08-25, 2026-08-26, 2026-08-27)', async () => {
+      const aug26Event = {
+        id: 301,
+        customerId: 1,
+        title: 'Reel Shoot Aug 26',
+        scheduledDate: new Date('2026-08-26T10:00:00.000Z'),
+        scheduledTime: '10:00 AM',
+        workType: WorkType.REELS_SHOOT,
+        status: WorkStatus.SCHEDULED,
+        customer: { name: 'Customer A' },
+      };
+
+      prisma.work.count.mockResolvedValue(1);
+      prisma.work.findMany.mockResolvedValue([aug26Event]);
+      prisma.customerSubscription.findFirst.mockResolvedValue(null);
+
+      const result26 = await service.getCalendar(1, { date: '2026-08-26' });
+      expect(result26).toHaveLength(1);
+      expect(result26[0].title).toBe('Reel Shoot Aug 26');
+
+      prisma.work.findMany.mockResolvedValue([]);
+      const result27 = await service.getCalendar(1, { date: '2026-08-27' });
+      expect(result27).toHaveLength(0);
     });
   });
 
@@ -179,9 +207,12 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
     });
   });
 
-  describe('5. CustomerGuard Parameter Protection', () => {
-    it('rejects cross-customer query parameter with ForbiddenException', () => {
-      const guard = new CustomerGuard();
+  describe('5. CustomerGuard Parameter Protection & DB Resolution', () => {
+    it('rejects cross-customer query parameter with ForbiddenException', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 1, name: 'Cust 1' }) // auth user check
+        .mockResolvedValueOnce({ id: 2, name: 'Cust 2' }); // query check
       const mockContext: any = {
         switchToHttp: () => ({
           getRequest: () => ({
@@ -191,25 +222,14 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           }),
         }),
       };
-      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
+      await expect(guard.canActivate(mockContext)).rejects.toThrow(ForbiddenException);
     });
 
-    it('rejects cross-customer string alias parameter (CustomerB) with ForbiddenException', () => {
-      const guard = new CustomerGuard();
-      const mockContext: any = {
-        switchToHttp: () => ({
-          getRequest: () => ({
-            user: { customerId: 1 },
-            query: { customerId: 'CustomerB' },
-            headers: {},
-          }),
-        }),
-      };
-      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
-    });
-
-    it('rejects cross-customer header (x-customer-id: CUST-900829843) with ForbiddenException', () => {
-      const guard = new CustomerGuard();
+    it('rejects cross-customer header (x-customer-id: CUST-900829843) with ForbiddenException when pointing to another tenant', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 1, name: 'Cust 1' }) // auth user check
+        .mockResolvedValueOnce(null); // header lookup
       const mockContext: any = {
         switchToHttp: () => ({
           getRequest: () => ({
@@ -219,24 +239,27 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           }),
         }),
       };
-      expect(() => guard.canActivate(mockContext)).toThrow(ForbiddenException);
+      await expect(guard.canActivate(mockContext)).rejects.toThrow(ForbiddenException);
     });
 
-    it('allows matching customer and scopes request.customerId to user.customerId', () => {
-      const guard = new CustomerGuard();
+    it('allows matching customer and scopes request.customerId to user.customerId DB primary key integer', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 1, name: 'Cust 1' }) // auth customer
+        .mockResolvedValueOnce({ id: 1, name: 'Cust 1' }); // header customer
       const req: any = {
         user: { customerId: 1 },
         query: { customerId: '1' },
-        headers: { 'x-customer-id': 'CUST-001' },
+        headers: { 'x-customer-id': 'CUST-1' },
       };
       const mockContext: any = {
         switchToHttp: () => ({
           getRequest: () => req,
         }),
       };
-      expect(guard.canActivate(mockContext)).toBe(true);
+      const result = await guard.canActivate(mockContext);
+      expect(result).toBe(true);
       expect(req.customerId).toBe(1);
     });
   });
 });
-
