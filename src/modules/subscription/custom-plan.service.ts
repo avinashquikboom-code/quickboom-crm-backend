@@ -490,7 +490,10 @@ export class CustomPlanService {
         .digest('hex');
 
       if (generatedSignature !== signature) {
-        this.logger.warn(`[CUSTOM_PLAN_VERIFY] Razorpay signature mismatch: expected=${generatedSignature}, received=${signature}`);
+        this.logger.error(
+          `[CUSTOM_PLAN_VERIFY] Razorpay signature mismatch for orderId=${rzpOrderId} paymentId=${rzpPaymentId}`,
+        );
+        throw new BadRequestException('Payment signature verification failed. Custom plan order rejected.');
       }
     }
 

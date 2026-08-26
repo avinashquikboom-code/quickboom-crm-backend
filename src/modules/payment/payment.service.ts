@@ -42,27 +42,25 @@ export class PaymentService {
         });
         this.logger.log(`[RAZORPAY_INIT] Initialized Razorpay with key ID: ${keyId.substring(0, 8)}...`);
       } catch (err: any) {
-        this.logger.warn(`[RAZORPAY_INIT_WARNING] Could not initialize Razorpay SDK: ${err?.message}`);
+        this.logger.error(`[RAZORPAY_INIT_ERROR] Could not initialize Razorpay SDK: ${err?.message}`);
       }
     } else {
-      this.logger.warn('[RAZORPAY_INIT_WARNING] RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET not set. Using test fallback configuration.');
+      this.logger.error('[RAZORPAY_INIT_ERROR] RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET environment variables are not configured. Payment gateway is disabled.');
     }
   }
 
   private getRazorpayKeyId(): string {
-    return (
-      process.env.RAZORPAY_KEY_ID ||
-      process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
-      'rzp_test_51gXqU77890123'
-    );
+    // No hardcoded fallback — missing key means gateway is disabled
+    return process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
   }
 
   private getRazorpayKeySecret(): string {
-    return process.env.RAZORPAY_KEY_SECRET || 'rzp_sec_test_mock_secret_key_2026';
+    // No hardcoded fallback — missing secret means gateway is disabled
+    return process.env.RAZORPAY_KEY_SECRET || '';
   }
 
   private getRazorpayWebhookSecret(): string {
-    return process.env.RAZORPAY_WEBHOOK_SECRET || 'whsec_quikboom_2026';
+    return process.env.RAZORPAY_WEBHOOK_SECRET || '';
   }
 
   /**
@@ -109,29 +107,39 @@ export class PaymentService {
     );
 
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
-    let razorpayOrderId = `order_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+    let razorpayOrderId: string;
 
-    if (this.razorpayInstance) {
-      try {
-        const order = await this.razorpayInstance.orders.create({
-          amount: amountInPaise,
-          currency: dto.currency || 'INR',
-          receipt,
-          notes: {
-            customerId: String(customerId),
-            planId: String(plan.id),
-            planName: plan.name,
-            billingCycle: cycle,
-          },
-        });
-        if (order && order.id) {
-          razorpayOrderId = order.id;
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `[RAZORPAY_ORDER_CREATE_FALLBACK] Real Razorpay API call failed: ${err?.message}. Generating test order ID for development.`,
-        );
+    if (!this.razorpayInstance) {
+      throw new BadRequestException(
+        'Payment gateway is not configured. Please contact support.',
+      );
+    }
+
+    try {
+      const order = await this.razorpayInstance.orders.create({
+        amount: amountInPaise,
+        currency: dto.currency || 'INR',
+        receipt,
+        notes: {
+          customerId: String(customerId),
+          planId: String(plan.id),
+          planName: plan.name,
+          billingCycle: cycle,
+        },
+      });
+      if (!order || !order.id) {
+        throw new Error('Razorpay returned an empty order response.');
       }
+      razorpayOrderId = order.id;
+    } catch (err: any) {
+      const rzpErr = err?.error;
+      this.logger.error(
+        `[RAZORPAY_ORDER_CREATE_FAILED] ${err?.message}`,
+        rzpErr ? JSON.stringify({ code: rzpErr.code, description: rzpErr.description, reason: rzpErr.reason }) : '',
+      );
+      throw new BadRequestException(
+        rzpErr?.description || err?.message || 'Failed to create payment order. Please try again.',
+      );
     }
 
     this.logger.log(`[RAZORPAY_ORDER_RESPONSE] orderId=${razorpayOrderId}, status=created`);
@@ -184,26 +192,29 @@ export class PaymentService {
 
     this.logger.log(`[PAYMENT_VERIFY] orderId=${dto.razorpay_order_id}, paymentId=${dto.razorpay_payment_id}`);
 
-    // Verify HMAC SHA256 Signature
+    // Verify HMAC SHA256 Signature (server-side only, using Razorpay key secret)
     const keySecret = this.getRazorpayKeySecret();
+    if (!keySecret) {
+      this.logger.error('[RAZORPAY_VERIFY_ERROR] RAZORPAY_KEY_SECRET not configured — cannot verify signature.');
+      throw new BadRequestException('Payment gateway is not configured. Contact support.');
+    }
+
     const generatedSignature = crypto
       .createHmac('sha256', keySecret)
       .update(`${dto.razorpay_order_id}|${dto.razorpay_payment_id}`)
       .digest('hex');
 
-    const isSignatureValid =
-      generatedSignature === dto.razorpay_signature ||
-      dto.razorpay_signature.startsWith('test_') ||
-      dto.razorpay_signature === 'DEMO_SIGNATURE_VERIFIED' ||
-      process.env.NODE_ENV === 'test' ||
-      keySecret.includes('test_mock');
+    // Only accept real HMAC match. No bypass in production.
+    const isSignatureValid = generatedSignature === dto.razorpay_signature;
 
     if (!isSignatureValid) {
       this.logger.error(
-        `[RAZORPAY_SIGNATURE_MISMATCH] expected=${generatedSignature} received=${dto.razorpay_signature}`,
+        `[RAZORPAY_SIGNATURE_MISMATCH] orderId=${dto.razorpay_order_id} paymentId=${dto.razorpay_payment_id} — signature did not match`,
       );
-      throw new BadRequestException('Invalid Razorpay payment signature');
+      throw new BadRequestException('Payment signature verification failed. Transaction rejected.');
     }
+
+    this.logger.log(`[RAZORPAY_SIGNATURE_VERIFIED] orderId=${dto.razorpay_order_id} paymentId=${dto.razorpay_payment_id}`);
 
     this.logger.log(`[SUBSCRIPTION_ACTIVATE] customerId=${customerId}, planId=${plan.id}`);
 
@@ -471,21 +482,23 @@ export class PaymentService {
       const planId = Number(notes.planId);
       const billingCycle = notes.billingCycle || 'MONTHLY';
 
-      if (customerId && planId && paymentId) {
+      if (customerId && planId && paymentId && orderId) {
+        // Webhook event already passed HMAC verification at entry point.
+        // Use the trusted internal activation path that skips client-side signature re-check.
         try {
-          await this.verifyRazorpayPayment(
-            { customerId },
-            {
-              razorpay_order_id: orderId || 'wh_order',
-              razorpay_payment_id: paymentId,
-              razorpay_signature: 'DEMO_SIGNATURE_VERIFIED',
-              planId,
-              billingCycle,
-            },
-          );
+          await this.activateSubscriptionTrusted({
+            customerId,
+            planId,
+            orderId,
+            paymentId,
+            billingCycle,
+          });
+          this.logger.log(`[WEBHOOK_ACTIVATION_SUCCESS] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
         } catch (err: any) {
-          this.logger.warn(`[WEBHOOK_PAYMENT_PROCESS_NOTICE] ${err?.message}`);
+          this.logger.error(`[WEBHOOK_ACTIVATION_FAILED] customerId=${customerId} paymentId=${paymentId} — ${err?.message}`);
         }
+      } else {
+        this.logger.warn(`[WEBHOOK_SKIP] Insufficient data in webhook notes: customerId=${customerId} planId=${planId} paymentId=${paymentId} orderId=${orderId}`);
       }
     }
 
@@ -493,8 +506,117 @@ export class PaymentService {
   }
 
   /**
-   * 4. Get Customer Purchase / Payment History
+   * 4. Internal Trusted Activation — Webhook Only
+   * Called after the webhook-level HMAC is already verified at the controller entry point.
+   * Does NOT re-check client-side payment signature (that's only needed for client verify endpoint).
    */
+  private async activateSubscriptionTrusted(params: {
+    customerId: number;
+    planId: number;
+    orderId: string;
+    paymentId: string;
+    billingCycle: string;
+  }) {
+    const { customerId, planId, orderId, paymentId, billingCycle } = params;
+
+    const plan = await this.prisma.plan.findUnique({
+      where: { id: planId, deletedAt: null },
+    });
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID ${planId} not found`);
+    }
+
+    const cycle = (billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
+    const basePrice = cycle === SubscriptionBillingCycle.YEARLY ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
+    const tax = Math.round(basePrice * 0.18);
+    const total = basePrice + tax;
+
+    const startDate = new Date();
+    const expiryDate = new Date(startDate);
+    if (cycle === SubscriptionBillingCycle.YEARLY) {
+      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+    } else {
+      expiryDate.setMonth(expiryDate.getMonth() + 1);
+    }
+
+    const orderNumber = `#QB-WH-${Date.now().toString(36).toUpperCase()}`;
+    const transactionId = `TXN-${paymentId}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Idempotency: skip if payment already processed
+      const existing = await tx.paymentHistory.findFirst({
+        where: { paymentId, customerId },
+      });
+      if (existing) {
+        this.logger.log(`[WEBHOOK_IDEMPOTENT] Payment ${paymentId} already processed. Skipping duplicate activation.`);
+        return;
+      }
+
+      const payment = await tx.paymentHistory.create({
+        data: {
+          customerId,
+          planId: plan.id,
+          planName: plan.name,
+          orderNumber,
+          orderId,
+          paymentId,
+          billingCycle: cycle as any,
+          amount: basePrice,
+          taxAmount: tax,
+          totalAmount: total,
+          status: 'SUCCESS',
+          paymentMethod: PaymentMethod.RAZORPAY,
+          transactionId,
+        },
+      });
+
+      let sub = await tx.customerSubscription.findFirst({
+        where: { customerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (sub) {
+        sub = await tx.customerSubscription.update({
+          where: { id: sub.id },
+          data: {
+            planId: plan.id,
+            status: SubscriptionStatus.ACTIVE,
+            billingCycle: cycle as any,
+            startDate,
+            endDate: expiryDate,
+            duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
+            durationUnit: 'MONTH',
+            autoRenew: true,
+          },
+          include: { plan: true },
+        });
+      } else {
+        sub = await tx.customerSubscription.create({
+          data: {
+            customerId,
+            planId: plan.id,
+            status: SubscriptionStatus.ACTIVE,
+            billingCycle: cycle as any,
+            startDate,
+            endDate: expiryDate,
+            duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
+            durationUnit: 'MONTH',
+            autoRenew: true,
+          },
+          include: { plan: true },
+        });
+      }
+
+      await tx.paymentHistory.update({ where: { id: payment.id }, data: { subscriptionId: sub.id } });
+    });
+
+    this.logger.log(`[TRUSTED_ACTIVATION_DONE] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
+  }
+
+  /**
+   * 5. Get Customer Purchase / Payment History
+   */
+
   async getPaymentHistory(user: any, reqCustomerId?: number) {
     const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
     if (!customerId || isNaN(customerId)) {
