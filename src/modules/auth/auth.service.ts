@@ -138,7 +138,7 @@ export class AuthService {
     });
   }
 
-  async login(dto: LoginDto, targetApp?: 'ADMIN' | 'EMPLOYEE_MOBILE' | 'CUSTOMER') {
+  async login(dto: LoginDto, targetApp?: string) {
     const rawInput = (dto.email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
 
@@ -187,47 +187,31 @@ export class AuthService {
       throw new UnauthorizedException('Your company account is suspended');
     }
 
-    const app = targetApp || dto.appType;
+    const rawApp = (targetApp || dto.appType || '').trim().toLowerCase();
 
-    // Strict Access Rules Matrix Enforcement
-    if (app === 'ADMIN') {
+    // Client-Type / Role Validation
+    if (rawApp === 'admin' || rawApp === 'super_admin') {
       if (!hasSuperAdminRole) {
-        if (isEmployee) {
-          throw new ForbiddenException(
-            'Access Denied: The Admin Panel is strictly for SUPER_ADMIN only. Other roles must use the mobile application.',
-          );
-        }
-        throw new ForbiddenException(
-          'Access Denied: Customer accounts cannot access the Admin Panel.',
-        );
+        throw new ForbiddenException('Only Super Admin can access admin panel');
       }
-    } else if (app === 'EMPLOYEE_MOBILE') {
+    } else if (rawApp === 'mobile' || rawApp === 'employee_mobile' || rawApp === 'customer_mobile') {
       if (hasSuperAdminRole) {
-        throw new ForbiddenException(
-          'Access Denied: Admin accounts cannot access the Employee Mobile App.',
-        );
-      }
-      if (isCustomer || !isEmployee) {
-        throw new ForbiddenException(
-          'Access Denied: Customer accounts cannot access the Employee Mobile App.',
-        );
-      }
-      if (user.employee?.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Employee account is inactive.');
-      }
-      if (!user.employee?.mobileLoginEnabled) {
-        throw new UnauthorizedException('Mobile login is disabled for this employee.');
-      }
-    } else if (app === 'CUSTOMER') {
-      if (hasSuperAdminRole) {
-        throw new ForbiddenException(
-          'Access Denied: Admin accounts cannot access the Customer portal.',
-        );
+        throw new ForbiddenException('Super Admin accounts must use the web Admin Console.');
       }
       if (isEmployee) {
-        throw new ForbiddenException(
-          'Access Denied: Employee accounts cannot access the Customer portal.',
-        );
+        if (user.employee?.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Employee account is inactive.');
+        }
+        if (!user.employee?.mobileLoginEnabled) {
+          throw new UnauthorizedException('Mobile login is disabled for this employee.');
+        }
+      }
+    } else if (rawApp === 'customer') {
+      if (hasSuperAdminRole) {
+        throw new ForbiddenException('Access Denied: Admin accounts cannot access the Customer portal.');
+      }
+      if (isEmployee) {
+        throw new ForbiddenException('Access Denied: Employee accounts cannot access the Customer portal.');
       }
     } else {
       // General login endpoint validation
@@ -252,26 +236,25 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 
-    const emp = user.employee;
-    const employeeData = emp
-      ? {
-          id: emp.id,
-          employeeId: emp.employeeCode,
-          employeeCode: emp.employeeCode,
-          firstName: emp.firstName,
-          lastName: emp.lastName,
-          email: emp.email,
-          mobile: emp.phone || user.phone,
-          phone: emp.phone || user.phone,
-          branch: emp.branch || 'Head Office',
-          office: emp.branch || 'Head Office',
-          department: emp.department?.name || 'General',
-          designation: emp.designation?.name || 'Staff',
-          status: emp.status,
-          mobileLoginEnabled: emp.mobileLoginEnabled,
-          joiningDate: emp.joiningDate,
-        }
-      : null;
+    // Auto-generate / auto-increment employee record if not yet created
+    const emp = await this.ensureEmployee(user);
+    const employeeData = {
+      id: emp.id,
+      employeeId: emp.employeeCode,
+      employeeCode: emp.employeeCode,
+      firstName: emp.firstName || user.firstName,
+      lastName: emp.lastName || user.lastName,
+      email: emp.email || user.email,
+      mobile: emp.phone || user.phone,
+      phone: emp.phone || user.phone,
+      branch: emp.branch || 'Head Office',
+      office: emp.branch || 'Head Office',
+      department: emp.department?.name || 'General',
+      designation: emp.designation?.name || 'Staff',
+      status: emp.status || 'ACTIVE',
+      mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+      joiningDate: emp.joiningDate || user.createdAt,
+    };
 
     return {
       user: {
@@ -280,16 +263,88 @@ export class AuthService {
         phone: user.phone || null,
         firstName: user.firstName,
         lastName: user.lastName,
-        customerId: user.customerId,
+        customerId: user.customerId || emp.customerId,
         customerName: user.customer?.name || (user.customerId ? 'Enterprise Workspace' : 'Super Admin'),
         role: primaryRole,
         roles: roles.length > 0 ? roles : [primaryRole],
-        employeeId: user.employee?.id || null,
-        employeeCode: user.employee?.employeeCode || null,
+        employeeId: emp.id,
+        employeeCode: emp.employeeCode,
         employee: employeeData,
       },
       tokens,
     };
+  }
+
+  /**
+   * Auto-provisions an Employee record with autoincremented employeeCode (EMP-001, EMP-002, ...)
+   * if a user does not have one attached.
+   */
+  private async ensureEmployee(user: any): Promise<any> {
+    if (user.employee) {
+      return user.employee;
+    }
+
+    try {
+      let customerId = user.customerId;
+      if (!customerId) {
+        let defaultCustomer = await this.prisma.customer.findFirst({
+          where: { isActive: true },
+        });
+        if (!defaultCustomer) {
+          defaultCustomer = await this.prisma.customer.create({
+            data: {
+              name: 'Enterprise Workspace',
+              email: user.email,
+              isActive: true,
+            },
+          });
+        }
+        customerId = defaultCustomer.id;
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { customerId },
+        });
+      }
+
+      // Generate next sequential EMP code
+      const totalEmployees = await this.prisma.employee.count();
+      const codeSeq = String(totalEmployees + 1).padStart(3, '0');
+      const employeeCode = `EMP-${codeSeq}`;
+
+      const newEmployee = await this.prisma.employee.create({
+        data: {
+          customerId,
+          userId: user.id,
+          employeeCode,
+          firstName: user.firstName || 'Employee',
+          lastName: user.lastName || '',
+          email: user.email,
+          phone: user.phone || null,
+          status: 'ACTIVE',
+          mobileLoginEnabled: true,
+          branch: 'Head Office',
+        },
+        include: {
+          department: true,
+          designation: true,
+        },
+      });
+
+      return newEmployee;
+    } catch (err) {
+      const fallbackCode = `EMP-${String(user.id).padStart(3, '0')}`;
+      return {
+        id: user.id,
+        employeeCode: fallbackCode,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+        branch: 'Head Office',
+      };
+    }
   }
 
   async refreshToken(dto: RefreshTokenDto) {
@@ -438,26 +493,24 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.type);
 
-    const emp = user.employee;
-    const employeeData = emp
-      ? {
-          id: emp.id,
-          employeeId: emp.employeeCode,
-          employeeCode: emp.employeeCode,
-          firstName: emp.firstName,
-          lastName: emp.lastName,
-          email: emp.email,
-          mobile: emp.phone || user.phone,
-          phone: emp.phone || user.phone,
-          branch: emp.branch || 'Head Office',
-          office: emp.branch || 'Head Office',
-          department: emp.department?.name || 'General',
-          designation: emp.designation?.name || 'Staff',
-          status: emp.status,
-          mobileLoginEnabled: emp.mobileLoginEnabled,
-          joiningDate: emp.joiningDate,
-        }
-      : null;
+    const emp = await this.ensureEmployee(user);
+    const employeeData = {
+      id: emp.id,
+      employeeId: emp.employeeCode,
+      employeeCode: emp.employeeCode,
+      firstName: emp.firstName || user.firstName,
+      lastName: emp.lastName || user.lastName,
+      email: emp.email || user.email,
+      mobile: emp.phone || user.phone,
+      phone: emp.phone || user.phone,
+      branch: emp.branch || 'Head Office',
+      office: emp.branch || 'Head Office',
+      department: emp.department?.name || 'General',
+      designation: emp.designation?.name || 'Staff',
+      status: emp.status || 'ACTIVE',
+      mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+      joiningDate: emp.joiningDate || user.createdAt,
+    };
 
     return {
       id: user.id,
@@ -465,11 +518,12 @@ export class AuthService {
       phone: user.phone,
       firstName: user.firstName,
       lastName: user.lastName,
-      customerId: user.customerId,
+      customerId: user.customerId || emp.customerId,
       customerName: user.customer?.name || 'Enterprise Workspace',
       roles,
       employee: employeeData,
-      employeeId: emp?.employeeCode || null,
+      employeeId: emp.employeeCode,
+      employeeCode: emp.employeeCode,
       createdAt: user.createdAt,
     };
   }
