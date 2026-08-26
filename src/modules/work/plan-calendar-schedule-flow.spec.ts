@@ -1,14 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PlanAccessService } from '../subscription/plan-access.service';
-import { WorkStatus, WorkType, TaskStatus, SubscriptionStatus } from '@prisma/client';
+import { WorkStatus, WorkType, SubscriptionStatus } from '@prisma/client';
 import { calculatePlanBillingPeriod, calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 
 describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
   let workService: WorkService;
   let prisma: any;
-  let planAccessService: any;
+
+  const mockActiveSub = (customerId: number, startDate: Date, endDate: Date) => ({
+    id: 501,
+    customerId,
+    planId: 1,
+    status: SubscriptionStatus.ACTIVE,
+    startDate,
+    endDate,
+    customUserLimit: null,
+    customLeadLimit: null,
+    customStorageLimit: null,
+    customFeatures: null,
+    customPrice: null,
+    billingCycle: 'MONTHLY',
+    deletedAt: null,
+    plan: {
+      id: 1,
+      name: 'Basic Package',
+      code: 'BASIC',
+      monthlyPrice: 9999,
+      yearlyPrice: 95990,
+    },
+  });
 
   beforeEach(async () => {
     prisma = {
@@ -41,15 +62,10 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       }),
     };
 
-    planAccessService = {
-      getEffectivePlan: jest.fn(),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
-        { provide: PlanAccessService, useValue: planAccessService },
       ],
     }).compile();
 
@@ -60,7 +76,6 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
     it('calculates monthly billing period accurately (20 Aug 2026 -> 20 Sep 2026)', () => {
       const start = new Date('2026-08-20T00:00:00.000Z');
       const billing = calculatePlanBillingPeriod(start, 1);
-
       expect(billing.startDate.toISOString()).toContain('2026-08-20');
       expect(billing.endDate.toISOString()).toContain('2026-09-20');
     });
@@ -68,9 +83,8 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
     it('handles month-end clamping (31 Jan -> 28 Feb)', () => {
       const start = new Date('2026-01-31T00:00:00.000Z');
       const expiry = calculatePlanExpiry(start, 1);
-
-      expect(expiry.getMonth()).toBe(1); // February (0-indexed 1)
-      expect(expiry.getDate()).toBe(28); // 2026 is non-leap year
+      expect(expiry.getMonth()).toBe(1);
+      expect(expiry.getDate()).toBe(28);
     });
 
     it('calculates 15 Jan -> 15 Feb', () => {
@@ -87,26 +101,10 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       const startDate = new Date('2026-08-20T00:00:00.000Z');
       const endDate = new Date('2026-09-20T00:00:00.000Z');
 
-      planAccessService.getEffectivePlan.mockResolvedValue({
-        planId: 1,
-        planName: 'Basic Package',
-        planCode: 'BASIC',
-        isActive: true,
-        isExpired: false,
-        startDate,
-        endDate,
-      });
+      prisma.customerSubscription.findFirst.mockResolvedValue(
+        mockActiveSub(customerId, startDate, endDate),
+      );
 
-      prisma.customerSubscription.findFirst.mockResolvedValue({
-        id: 501,
-        customerId,
-        planId: 1,
-        status: SubscriptionStatus.ACTIVE,
-        startDate,
-        endDate,
-      });
-
-      // Basic entitlements: 4 Reels, 3 Creative Posts, 1 Influencer Promo, 3 Stories (Total = 11)
       prisma.planEntitlement.findMany.mockResolvedValue([
         { id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 0 },
         { id: 2, serviceName: 'Creative Posts', totalQty: 3, usedQty: 0, scheduledQty: 0 },
@@ -114,7 +112,6 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
         { id: 4, serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0 },
       ]);
 
-      // No existing works yet
       prisma.work.findMany.mockResolvedValue([]);
       prisma.work.create.mockImplementation((args: any) => ({ id: Math.floor(Math.random() * 1000) + 1, ...args.data }));
       prisma.work.count.mockResolvedValue(1);
@@ -123,10 +120,7 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       const result = await workService.generatePlanSchedules(customerId);
 
       expect(result.success).toBe(true);
-      // 4 Reels * 3 stages (Shoot, Edit, Upload) = 12 + 3 Posts + 1 Influencer + 3 Stories = 19 scheduled stages
       expect(result.createdCount).toBe(19);
-
-      // Verify Reel tasks were created with Shoot -> Edit -> Upload
       expect(prisma.workTask.createMany).toHaveBeenCalled();
       const taskCalls = prisma.workTask.createMany.mock.calls;
       expect(taskCalls.some((c: any) => c[0].data[0].title.includes('Reel Shoot') || c[0].data[0].title.includes('Rough Cut') || c[0].data[0].title.includes('Script'))).toBe(true);
@@ -139,30 +133,14 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       const startDate = new Date('2026-08-20T00:00:00.000Z');
       const endDate = new Date('2026-09-20T00:00:00.000Z');
 
-      planAccessService.getEffectivePlan.mockResolvedValue({
-        planId: 1,
-        planName: 'Basic Package',
-        planCode: 'BASIC',
-        isActive: true,
-        isExpired: false,
-        startDate,
-        endDate,
-      });
-
-      prisma.customerSubscription.findFirst.mockResolvedValue({
-        id: 501,
-        customerId,
-        planId: 1,
-        status: SubscriptionStatus.ACTIVE,
-        startDate,
-        endDate,
-      });
+      prisma.customerSubscription.findFirst.mockResolvedValue(
+        mockActiveSub(customerId, startDate, endDate),
+      );
 
       prisma.planEntitlement.findMany.mockResolvedValue([
         { id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 },
       ]);
 
-      // Simulate 4 works already existing
       prisma.work.findMany.mockResolvedValue([
         { id: 1, entitlementId: 1, title: 'Reels #1 - Shoot' },
         { id: 2, entitlementId: 1, title: 'Reels #2 - Shoot' },
@@ -179,11 +157,7 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
 
     it('returns unsuccessful result if plan is inactive or expired', async () => {
       const customerId = 102;
-      planAccessService.getEffectivePlan.mockResolvedValue({
-        planId: 1,
-        isActive: false,
-        isExpired: true,
-      });
+      prisma.customerSubscription.findFirst.mockResolvedValue(null);
 
       const result = await workService.generatePlanSchedules(customerId);
       expect(result.success).toBe(false);

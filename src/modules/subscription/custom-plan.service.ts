@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
@@ -21,7 +21,6 @@ export class CustomPlanService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
-    @Inject(forwardRef(() => WorkService))
     private readonly workService: WorkService,
   ) {}
 

@@ -1,7 +1,5 @@
 import {
   Injectable,
-  Inject,
-  forwardRef,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
@@ -10,7 +8,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
 import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus } from '@prisma/client';
-import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
 export class WorkService {
@@ -18,9 +15,58 @@ export class WorkService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(forwardRef(() => PlanAccessService))
-    private readonly planAccessService: PlanAccessService,
   ) {}
+
+  /**
+   * Self-contained active plan resolver using only PrismaService.
+   * Replicates PlanAccessService.getEffectivePlan() without cross-module dependency.
+   */
+  private async getActivePlanDirect(customerId: number) {
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true },
+    });
+
+    if (!sub || !sub.plan) return null;
+
+    const now = new Date();
+    const isExpired =
+      sub.status === SubscriptionStatus.EXPIRED ||
+      (sub.endDate ? now > new Date(sub.endDate) : false);
+    const isActive =
+      sub.status === SubscriptionStatus.ACTIVE && !isExpired;
+
+    const effectivePrice =
+      sub.customPrice !== null && sub.customPrice !== undefined
+        ? Number(sub.customPrice)
+        : (sub.billingCycle === 'YEARLY'
+            ? Number(sub.plan.yearlyPrice)
+            : Number(sub.plan.monthlyPrice));
+
+    const isCustomized = Boolean(
+      sub.customUserLimit !== null ||
+      sub.customLeadLimit !== null ||
+      sub.customStorageLimit !== null ||
+      sub.customFeatures !== null ||
+      sub.customPrice !== null,
+    );
+
+    return {
+      subscriptionId: sub.id,
+      planId: sub.plan.id,
+      planName: isCustomized ? 'Custom Plan' : sub.plan.name,
+      planCode: isCustomized ? 'CUSTOM' : sub.plan.code,
+      status: isExpired ? SubscriptionStatus.EXPIRED : sub.status,
+      isExpired,
+      isActive,
+      billingCycle: sub.billingCycle || 'MONTHLY',
+      startDate: sub.startDate || new Date(),
+      endDate: sub.endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      price: effectivePrice,
+      isCustomized,
+    };
+  }
 
   /**
    * Helper to normalize service name matching from workType or input
@@ -213,8 +259,8 @@ export class WorkService {
     }
 
     // 1. Verify Active Subscription & Expiration
-    const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
-    if (!activePlan.isActive || activePlan.isExpired) {
+    const activePlan = await this.getActivePlanDirect(numCustomerId);
+    if (!activePlan || !activePlan.isActive || activePlan.isExpired) {
       throw new BadRequestException('Cannot create schedule. Your plan is inactive or expired. Please renew.');
     }
 
@@ -959,7 +1005,7 @@ export class WorkService {
    */
   async getCustomerUsage(customerId: number | string) {
     const numCustomerId = Number(customerId);
-    const plan = await this.planAccessService.getEffectivePlan(numCustomerId);
+    const plan = await this.getActivePlanDirect(numCustomerId);
 
     const entitlements = await this.prisma.planEntitlement.findMany({
       where: { customerId: numCustomerId },
@@ -973,22 +1019,26 @@ export class WorkService {
       usedQty: e.usedQty,
       scheduledQty: e.scheduledQty,
       remainingQty: Math.max(0, e.totalQty - (e.usedQty + e.scheduledQty)),
-      validUntil: e.validUntil || plan.endDate,
+      validUntil: e.validUntil || plan?.endDate,
     }));
 
+    const totalLimit = entitlements.reduce((acc, e) => acc + (e.totalQty || 0), 0);
+    const totalUsed = entitlements.reduce((acc, e) => acc + (e.usedQty || 0), 0);
+    const totalRemaining = Math.max(0, totalLimit - totalUsed);
+
     return {
-      planName: plan.planName,
-      planCode: plan.planCode,
-      billingCycle: plan.billingCycle,
-      startDate: plan.startDate,
-      endDate: plan.endDate,
-      status: plan.status,
-      price: plan.price,
-      isExpired: plan.isExpired,
+      planName: plan?.planName ?? 'Active Plan',
+      planCode: plan?.planCode ?? 'CUSTOM',
+      billingCycle: plan?.billingCycle,
+      startDate: plan?.startDate,
+      endDate: plan?.endDate,
+      status: plan?.status,
+      price: plan?.price,
+      isExpired: plan?.isExpired ?? false,
       services: serviceQuotas,
-      totalLimit: plan.scheduleLimit,
-      totalUsed: plan.usedSchedules,
-      totalRemaining: plan.remainingSchedules,
+      totalLimit,
+      totalUsed,
+      totalRemaining,
     };
   }
 
@@ -1002,7 +1052,7 @@ export class WorkService {
       throw new BadRequestException('Valid customer context required');
     }
 
-    const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
+    const activePlan = await this.getActivePlanDirect(numCustomerId);
     if (!activePlan || !activePlan.isActive || activePlan.isExpired) {
       return {
         success: false,
@@ -1360,8 +1410,8 @@ export class WorkService {
     }
 
     // Verify Active Plan Validity
-    const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
-    if (activePlan.endDate && newDate > new Date(activePlan.endDate)) {
+    const activePlan = await this.getActivePlanDirect(numCustomerId);
+    if (activePlan && activePlan.endDate && newDate > new Date(activePlan.endDate)) {
       throw new BadRequestException('Cannot reschedule past your plan expiration date.');
     }
 
