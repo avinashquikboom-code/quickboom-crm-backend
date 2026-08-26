@@ -176,13 +176,13 @@ export class AuthService {
       throw new UnauthorizedException('Your account has been deactivated');
     }
 
-    if (user.customer && !user.customer.isActive) {
-      throw new UnauthorizedException('Your company account is suspended');
-    }
-
     const hasSuperAdminRole = user.userRoles.some((ur) => ur.role?.type === RoleType.SUPER_ADMIN);
     const isEmployee = Boolean(user.employee);
     const isCustomer = Boolean(user.customerId && !isEmployee && !hasSuperAdminRole);
+
+    if (!hasSuperAdminRole && user.customer && !user.customer.isActive) {
+      throw new UnauthorizedException('Your company account is suspended');
+    }
 
     const app = targetApp || dto.appType;
 
