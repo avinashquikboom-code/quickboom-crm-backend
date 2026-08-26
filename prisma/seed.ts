@@ -67,9 +67,7 @@ async function main() {
   });
 
   // 4. Ensure default customer exists and is active
-  let customer = await prisma.customer.findFirst({
-    where: { name: 'QuikBoom Enterprise' },
-  });
+  let customer = await prisma.customer.findFirst();
 
   if (!customer) {
     customer = await prisma.customer.create({
