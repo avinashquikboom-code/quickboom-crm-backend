@@ -822,15 +822,60 @@ export class SubscriptionService {
 
   async updatePlan(id: number | string, dto: any) {
     const planId = Number(id);
+    if (!planId || isNaN(planId)) {
+      throw new BadRequestException('Valid Plan ID is required');
+    }
+
+    const existing = await this.prisma.plan.findUnique({
+      where: { id: planId },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Plan with ID ${planId} not found`);
+    }
+
     const updateData: any = {};
-    if (dto.name) updateData.name = dto.name;
-    if (dto.description !== undefined) updateData.description = dto.description;
-    if (dto.monthlyPrice !== undefined) updateData.monthlyPrice = Number(dto.monthlyPrice);
-    if (dto.yearlyPrice !== undefined) updateData.yearlyPrice = Number(dto.yearlyPrice);
-    if (dto.userLimit !== undefined) updateData.userLimit = Number(dto.userLimit);
-    if (dto.leadLimit !== undefined) updateData.leadLimit = Number(dto.leadLimit);
-    if (dto.features !== undefined) updateData.features = dto.features;
-    if (dto.isActive !== undefined) updateData.isActive = Boolean(dto.isActive);
+    if (dto.name !== undefined && typeof dto.name === 'string' && dto.name.trim().length > 0) {
+      updateData.name = dto.name.trim();
+    }
+    if (dto.code !== undefined && typeof dto.code === 'string' && dto.code.trim().length > 0) {
+      updateData.code = dto.code.trim().toUpperCase();
+    }
+    if (dto.description !== undefined) {
+      updateData.description = typeof dto.description === 'string' ? dto.description.trim() : '';
+    }
+    if (dto.monthlyPrice !== undefined && !isNaN(Number(dto.monthlyPrice))) {
+      updateData.monthlyPrice = Number(dto.monthlyPrice);
+    }
+    if (dto.yearlyPrice !== undefined && !isNaN(Number(dto.yearlyPrice))) {
+      updateData.yearlyPrice = Number(dto.yearlyPrice);
+    }
+    if (dto.userLimit !== undefined && !isNaN(Number(dto.userLimit))) {
+      updateData.userLimit = Number(dto.userLimit);
+    }
+    if (dto.leadLimit !== undefined && !isNaN(Number(dto.leadLimit))) {
+      updateData.leadLimit = Number(dto.leadLimit);
+    }
+    if (dto.storageLimit !== undefined || dto.storageLimitBytes !== undefined) {
+      const storage = dto.storageLimit !== undefined ? dto.storageLimit : dto.storageLimitBytes;
+      if (!isNaN(Number(storage))) {
+        updateData.storageLimit = BigInt(storage);
+      }
+    }
+    if (dto.features !== undefined) {
+      if (Array.isArray(dto.features)) {
+        updateData.features = dto.features;
+      } else if (typeof dto.features === 'string') {
+        try {
+          const parsed = JSON.parse(dto.features);
+          updateData.features = Array.isArray(parsed) ? parsed : [dto.features];
+        } catch {
+          updateData.features = [dto.features];
+        }
+      }
+    }
+    if (dto.isActive !== undefined) {
+      updateData.isActive = Boolean(dto.isActive);
+    }
 
     const plan = await this.prisma.plan.update({
       where: { id: planId },
@@ -846,7 +891,9 @@ export class SubscriptionService {
       yearlyPrice: Number(plan.yearlyPrice),
       userLimit: plan.userLimit,
       leadLimit: plan.leadLimit,
+      storageLimitBytes: Number(plan.storageLimit),
       features: plan.features,
+      isActive: plan.isActive,
     };
   }
 
