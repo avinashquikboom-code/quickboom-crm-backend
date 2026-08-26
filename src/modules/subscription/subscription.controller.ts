@@ -178,6 +178,7 @@ export class SubscriptionController {
     return this.subscriptionService.createPlan(dto);
   }
 
+  @Put('admin/plans/:id')
   @Patch('admin/plans/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -272,6 +273,7 @@ export class SubscriptionController {
     return this.subscriptionService.createPlan(dto);
   }
 
+  @Put('plans/:id')
   @Patch('plans/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

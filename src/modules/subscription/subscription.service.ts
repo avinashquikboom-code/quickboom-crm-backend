@@ -956,11 +956,34 @@ export class SubscriptionService {
 
   async deletePlan(id: number | string) {
     const planId = Number(id);
-    await this.prisma.plan.update({
+    if (!planId || isNaN(planId)) {
+      throw new BadRequestException('Valid Plan ID is required');
+    }
+
+    const existing = await this.prisma.plan.findUnique({
       where: { id: planId },
-      data: { isActive: false, deletedAt: new Date() },
     });
-    return { success: true, message: `Plan ${planId} deactivated` };
+    if (!existing) {
+      throw new NotFoundException(`Plan with ID ${planId} not found`);
+    }
+
+    // Soft-delete / deactivate plan so existing customer subscriptions and records remain linked
+    const plan = await this.prisma.plan.update({
+      where: { id: planId },
+      data: {
+        isActive: false,
+        deletedAt: new Date(),
+      },
+    });
+
+    return {
+      id: plan.id,
+      name: plan.name,
+      code: plan.code,
+      isActive: plan.isActive,
+      deletedAt: plan.deletedAt,
+      message: `Plan "${plan.name}" (${planId}) deactivated successfully`,
+    };
   }
 
   /**
