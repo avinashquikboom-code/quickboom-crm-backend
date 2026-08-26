@@ -18,6 +18,7 @@ import {
   ResetPasswordDto,
 } from './dto/auth.dto';
 import { RoleType } from '@prisma/client';
+import { QBIdGenerator } from './qb-id.generator';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +28,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private qbIdGenerator: QBIdGenerator,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
@@ -189,14 +191,27 @@ export class AuthService {
 
     const rawApp = (targetApp || dto.appType || '').trim().toLowerCase();
 
+    const primaryRole = hasSuperAdminRole
+      ? RoleType.SUPER_ADMIN
+      : isEmployee
+      ? RoleType.CUSTOM
+      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.CUSTOM);
+
+    const userRole: string = hasSuperAdminRole
+      ? 'SUPER_ADMIN'
+      : isEmployee
+      ? 'EMPLOYEE'
+      : (user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || primaryRole);
+
     // Client-Type / Role Validation
     if (rawApp === 'admin' || rawApp === 'super_admin') {
       if (!hasSuperAdminRole) {
         throw new ForbiddenException('Only Super Admin can access admin panel');
       }
     } else if (rawApp === 'mobile' || rawApp === 'employee_mobile' || rawApp === 'customer_mobile') {
-      if (hasSuperAdminRole) {
-        throw new ForbiddenException('Super Admin accounts must use the web Admin Console.');
+      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'CUSTOMER_ADMIN'];
+      if (!allowedRoles.includes(userRole) || hasSuperAdminRole) {
+        throw new ForbiddenException('This user cannot access mobile app');
       }
       if (isEmployee) {
         if (user.employee?.status !== 'ACTIVE') {
@@ -225,11 +240,6 @@ export class AuthService {
       }
     }
 
-    const primaryRole = hasSuperAdminRole
-      ? RoleType.SUPER_ADMIN
-      : isEmployee
-      ? RoleType.CUSTOM
-      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.CUSTOM);
     const roles = isEmployee && !hasSuperAdminRole
       ? ['EMPLOYEE', RoleType.CUSTOM]
       : user.userRoles.map((ur) => ur.role.type);
@@ -239,14 +249,11 @@ export class AuthService {
     // Auto-generate / auto-increment employee record if not yet created
     const emp = await this.ensureEmployee(user);
 
-    const userRole = hasSuperAdminRole
-      ? 'SUPER_ADMIN'
-      : isEmployee
-      ? 'EMPLOYEE'
-      : (primaryRole as string);
-
-    // Generate role-based QB code (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
-    const qbCode = this.generateQbCode(userRole, user, emp);
+    // Generate role-based QB code via QBIdGenerator (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
+    const targetNumericId = userRole === 'EMPLOYEE'
+      ? (emp?.id || user.id)
+      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
+    const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
     const employeeData = {
       id: emp.id,
@@ -515,13 +522,16 @@ export class AuthService {
     const emp = await this.ensureEmployee(user);
 
     const isSuperAdmin = roles.includes(RoleType.SUPER_ADMIN);
-    const userRole = isSuperAdmin
+    const userRole: string = isSuperAdmin
       ? 'SUPER_ADMIN'
       : user.employee
       ? 'EMPLOYEE'
-      : roles[0] || 'CUSTOMER';
+      : (user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || (user.customerId ? 'CUSTOMER_ADMIN' : 'CUSTOMER'));
 
-    const qbCode = this.generateQbCode(userRole, user, emp);
+    const targetNumericId = userRole === 'EMPLOYEE'
+      ? (emp?.id || user.id)
+      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
+    const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
     const employeeData = {
       id: emp.id,
@@ -558,29 +568,6 @@ export class AuthService {
       ...(!isSuperAdmin && { customerId: user.customerId || emp.customerId }),
       ...(!isSuperAdmin && { customerName: user.customer?.name || 'Enterprise Workspace' }),
     };
-  }
-
-  /**
-   * Generates standard role-based QB identifier (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
-   */
-  private generateQbCode(role: string, user: any, emp?: any): string {
-    const normalizedRole = (role || '').toUpperCase();
-    if (normalizedRole === 'SUPER_ADMIN') {
-      return `QB-ADMIN-${String(user.id).padStart(3, '0')}`;
-    }
-    if (normalizedRole === 'COMPANY_ADMIN' || normalizedRole === 'CUSTOMER_ADMIN') {
-      const tenantId = user.customerId || user.id;
-      return `QB-CADMIN-${String(tenantId).padStart(3, '0')}`;
-    }
-    if (normalizedRole === 'EMPLOYEE') {
-      const empId = emp?.id || user.employee?.id || user.id;
-      return `QB-EMP-${String(empId).padStart(3, '0')}`;
-    }
-    if (normalizedRole === 'CUSTOMER') {
-      const custId = user.customerId || user.id;
-      return `QB-CUST-${String(custId).padStart(3, '0')}`;
-    }
-    return `QB-USER-${String(user.id).padStart(3, '0')}`;
   }
 
   async getRoles(customerId?: number) {
