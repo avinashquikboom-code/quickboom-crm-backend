@@ -25,6 +25,8 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
     const allowedOrigins = [
       'https://admin.qbapp.online',
       'https://qbapp.online',
+      'https://app.qbapp.online',
+      'https://api.qbapp.online',
       'http://localhost:3000',
       'http://localhost:3001',
       'http://localhost:5173',
@@ -40,12 +42,14 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         const isAllowed =
           allowedOrigins.includes(origin) ||
           /^https:\/\/([a-zA-Z0-9-]+\.)?qbapp\.online$/.test(origin) ||
+          /^http:\/\/localhost:[0-9]+$/.test(origin) ||
+          /^http:\/\/127\.0\.0\.1:[0-9]+$/.test(origin) ||
           process.env.NODE_ENV !== 'production';
 
         if (isAllowed) {
           callback(null, true);
         } else {
-          callback(new Error(`Origin ${origin} not allowed by CORS`));
+          callback(null, false);
         }
       },
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
@@ -56,7 +60,9 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         'Accept',
         'Authorization',
         'x-customer-id',
+        'x-tenant-id',
         'x-client-type',
+        'x-refresh-token',
         'Access-Control-Allow-Origin',
         'Access-Control-Allow-Headers',
         'Access-Control-Allow-Methods',
@@ -65,6 +71,7 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         'Content-Range',
         'X-Content-Range',
         'x-customer-id',
+        'x-tenant-id',
         'x-total-count',
       ],
       credentials: true,
@@ -83,12 +90,12 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
   });
 
   describe('1. OPTIONS Preflight Requests from https://admin.qbapp.online', () => {
-    it('handles OPTIONS /api/v1/contacts preflight from https://admin.qbapp.online', async () => {
+    it('handles OPTIONS /api/v1/customers preflight from https://admin.qbapp.online', async () => {
       const res = await request(app.getHttpServer())
-        .options('/api/v1/contacts')
+        .options('/api/v1/customers')
         .set('Origin', 'https://admin.qbapp.online')
         .set('Access-Control-Request-Method', 'GET')
-        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id');
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-tenant-id,x-client-type');
 
       expect(res.status).toBe(204);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
@@ -98,12 +105,23 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
     });
 
-    it('handles OPTIONS /api/v1/invoices preflight from https://admin.qbapp.online', async () => {
+    it('handles OPTIONS /api/v1/tasks preflight from https://admin.qbapp.online', async () => {
       const res = await request(app.getHttpServer())
-        .options('/api/v1/invoices?page=1&limit=20')
+        .options('/api/v1/tasks')
         .set('Origin', 'https://admin.qbapp.online')
         .set('Access-Control-Request-Method', 'GET')
-        .set('Access-Control-Request-Headers', 'authorization,content-type');
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-tenant-id');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/plans preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/plans')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET');
 
       expect(res.status).toBe(204);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
@@ -121,17 +139,6 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
-
-    it('handles OPTIONS /api/v1/plans preflight from https://admin.qbapp.online', async () => {
-      const res = await request(app.getHttpServer())
-        .options('/api/v1/plans')
-        .set('Origin', 'https://admin.qbapp.online')
-        .set('Access-Control-Request-Method', 'GET');
-
-      expect(res.status).toBe(204);
-      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
-      expect(res.headers['access-control-allow-credentials']).toBe('true');
-    });
   });
 
   describe('2. Actual Cross-Origin GET Requests', () => {
@@ -144,12 +151,22 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
 
-    it('preserves authentication requirement while returning CORS headers on guarded /api/v1/contacts', async () => {
+    it('preserves authentication requirement while returning CORS headers on guarded /api/v1/customers', async () => {
       const res = await request(app.getHttpServer())
-        .get('/api/v1/contacts')
+        .get('/api/v1/customers')
         .set('Origin', 'https://admin.qbapp.online');
 
-      // Authentication guard rejects missing token with 401, but CORS headers MUST still be present
+      // Guarded endpoint returns 401 without token, but CORS headers are present
+      expect(res.status).toBe(401);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('preserves authentication requirement while returning CORS headers on guarded /api/v1/tasks', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/tasks')
+        .set('Origin', 'https://admin.qbapp.online');
+
       expect(res.status).toBe(401);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
       expect(res.headers['access-control-allow-credentials']).toBe('true');

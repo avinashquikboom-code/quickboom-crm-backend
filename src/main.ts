@@ -26,6 +26,8 @@ async function bootstrap() {
   const allowedOrigins = [
     'https://admin.qbapp.online',
     'https://qbapp.online',
+    'https://app.qbapp.online',
+    'https://api.qbapp.online',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
@@ -43,13 +45,15 @@ async function bootstrap() {
       const isAllowed =
         allowedOrigins.includes(origin) ||
         /^https:\/\/([a-zA-Z0-9-]+\.)?qbapp\.online$/.test(origin) ||
+        /^http:\/\/localhost:[0-9]+$/.test(origin) ||
+        /^http:\/\/127\.0\.0\.1:[0-9]+$/.test(origin) ||
         process.env.NODE_ENV !== 'production';
 
       if (isAllowed) {
         callback(null, true);
       } else {
         logger.warn(`[CORS] Blocked request from unauthorized origin: ${origin}`);
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
+        callback(null, false);
       }
     },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
@@ -60,7 +64,9 @@ async function bootstrap() {
       'Accept',
       'Authorization',
       'x-customer-id',
+      'x-tenant-id',
       'x-client-type',
+      'x-refresh-token',
       'Access-Control-Allow-Origin',
       'Access-Control-Allow-Headers',
       'Access-Control-Allow-Methods',
@@ -69,6 +75,7 @@ async function bootstrap() {
       'Content-Range',
       'X-Content-Range',
       'x-customer-id',
+      'x-tenant-id',
       'x-total-count',
     ],
     credentials: true,
