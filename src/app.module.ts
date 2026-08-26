@@ -32,6 +32,7 @@ import { ShiftModule } from './modules/shift/shift.module';
 import { LoanModule } from './modules/loan/loan.module';
 import { ClaimModule } from './modules/claim/claim.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
+import { PaymentModule } from './modules/payment/payment.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -44,6 +45,7 @@ import { AppController } from './app.controller';
     AuthModule,
     CustomerModule,
     SubscriptionModule,
+    PaymentModule,
     ScheduleModule,
     WorkModule,
     EmployeeModule,
