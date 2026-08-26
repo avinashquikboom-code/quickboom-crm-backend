@@ -8,19 +8,84 @@ import {
   Post,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomPlanService } from './custom-plan.service';
 import {
   CreateCustomPlanOptionDto,
   UpdateCustomPlanOptionDto,
+  PreviewCustomPlanDto,
+  CreateCustomPlanDto,
+  VerifyCustomPlanPaymentDto,
 } from './dto/custom-plan.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
-@ApiTags('Custom Plan Builder (Admin)')
+@ApiTags('Custom Plan Builder')
 @Controller()
 export class CustomPlanController {
   constructor(private readonly customPlanService: CustomPlanService) {}
+
+  // ==========================================
+  // CUSTOMER FACING ENDPOINTS
+  // ==========================================
+
+  @Get('custom-plan/services')
+  @Get('custom-plan/options')
+  @ApiOperation({ summary: 'Get all available configurable services and live pricing for Custom Plan builder' })
+  async getAvailableServices() {
+    return this.customPlanService.getAvailableOptions();
+  }
+
+  @Post('custom-plan/quote')
+  @Post('custom-plan/preview')
+  @ApiOperation({ summary: 'Calculate custom plan price breakdown & subtotal from database' })
+  async previewCustomPlan(@Body() dto: PreviewCustomPlanDto) {
+    const selections = dto.featureSelections || dto.items || [];
+    const durationParam = dto.duration || dto.billingCycle || 1;
+    return this.customPlanService.calculateCustomPlanPrice(selections, durationParam);
+  }
+
+  @Post('custom-plan/create-order')
+  @Post('custom-plan/orders')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create custom plan order and Razorpay order' })
+  async createCustomPlanOrder(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() dto: CreateCustomPlanDto,
+  ) {
+    const customerId = req?.customerId || user?.customerId;
+    return this.customPlanService.createCustomPlanOrder(customerId, dto);
+  }
+
+  @Post('custom-plan/verify')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify Razorpay payment and activate custom plan subscription' })
+  async verifyCustomPlanPayment(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() dto: VerifyCustomPlanPaymentDto,
+    @Query('orderId') orderIdQuery?: string,
+  ) {
+    const customerId = req?.customerId || user?.customerId;
+    const orderId = dto.orderId || orderIdQuery || dto.razorpay_order_id;
+    return this.customPlanService.verifyAndActivateCustomPlan(customerId, orderId!, dto);
+  }
+
+  @Get('custom-plan/history')
+  @Get('customer/custom-plans')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get authenticated customer custom plan purchase history' })
+  async getCustomerCustomPlans(@CurrentUser() user: any, @Req() req: any) {
+    const customerId = req?.customerId || user?.customerId;
+    return this.customPlanService.getCustomerCustomPlans(customerId);
+  }
 
   // ==========================================
   // ADMIN CONFIGURATION & MANAGEMENT ENDPOINTS

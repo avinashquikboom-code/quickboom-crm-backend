@@ -14,29 +14,44 @@ import {
 import { Type } from 'class-transformer';
 
 export class FeatureSelectionItemDto {
-  @ApiProperty({ example: 1, description: 'Option ID or Feature ID' })
-  @IsInt()
-  @IsNotEmpty()
-  optionId: number;
+  @ApiPropertyOptional({ example: 1, description: 'Option ID or Feature ID' })
+  @IsOptional()
+  optionId?: number | string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Service ID alias for Option ID' })
+  @IsOptional()
+  serviceId?: number | string;
 
   @ApiPropertyOptional({ example: 1, default: 1 })
   @IsInt()
-  @Min(1)
+  @Min(0)
   @IsOptional()
   quantity?: number;
 }
 
 export class PreviewCustomPlanDto {
-  @ApiProperty({ type: [FeatureSelectionItemDto] })
+  @ApiPropertyOptional({ type: [FeatureSelectionItemDto] })
   @IsArray()
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => FeatureSelectionItemDto)
-  featureSelections: FeatureSelectionItemDto[];
+  featureSelections?: FeatureSelectionItemDto[];
 
-  @ApiProperty({ example: 3, description: 'Duration in months (e.g. 1, 3, 6, 12)' })
-  @IsInt()
-  @Min(1)
-  duration: number;
+  @ApiPropertyOptional({ type: [FeatureSelectionItemDto] })
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => FeatureSelectionItemDto)
+  items?: FeatureSelectionItemDto[];
+
+  @ApiPropertyOptional({ example: 1, description: 'Duration in months (e.g. 1, 3, 6, 12)' })
+  @IsOptional()
+  duration?: number;
+
+  @ApiPropertyOptional({ example: 'MONTHLY', description: 'MONTHLY or YEARLY' })
+  @IsString()
+  @IsOptional()
+  billingCycle?: string;
 
   @ApiPropertyOptional({ example: 'MONTH', default: 'MONTH' })
   @IsString()
@@ -45,16 +60,33 @@ export class PreviewCustomPlanDto {
 }
 
 export class CreateCustomPlanDto {
-  @ApiProperty({ type: [FeatureSelectionItemDto] })
+  @ApiPropertyOptional({ type: [FeatureSelectionItemDto] })
   @IsArray()
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => FeatureSelectionItemDto)
-  featureSelections: FeatureSelectionItemDto[];
+  featureSelections?: FeatureSelectionItemDto[];
 
-  @ApiProperty({ example: 3, description: 'Duration in months' })
-  @IsInt()
-  @Min(1)
-  duration: number;
+  @ApiPropertyOptional({ type: [FeatureSelectionItemDto] })
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => FeatureSelectionItemDto)
+  items?: FeatureSelectionItemDto[];
+
+  @ApiPropertyOptional({ example: 1, description: 'Duration in months' })
+  @IsOptional()
+  duration?: number;
+
+  @ApiPropertyOptional({ example: 'MONTHLY', description: 'MONTHLY or YEARLY' })
+  @IsString()
+  @IsOptional()
+  billingCycle?: string;
+
+  @ApiPropertyOptional({ example: 'quote_123', description: 'Existing Quote ID' })
+  @IsString()
+  @IsOptional()
+  quoteId?: string;
 
   @ApiPropertyOptional({ example: 'MONTH', default: 'MONTH' })
   @IsString()
@@ -82,6 +114,21 @@ export class VerifyCustomPlanPaymentDto {
   @IsString()
   @IsOptional()
   signature?: string;
+
+  @ApiPropertyOptional({ example: 'razorpay_signature' })
+  @IsString()
+  @IsOptional()
+  razorpay_signature?: string;
+
+  @ApiPropertyOptional({ example: 'razorpay_payment_id' })
+  @IsString()
+  @IsOptional()
+  razorpay_payment_id?: string;
+
+  @ApiPropertyOptional({ example: 'razorpay_order_id' })
+  @IsString()
+  @IsOptional()
+  razorpay_order_id?: string;
 }
 
 export class CreateCustomPlanOptionDto {

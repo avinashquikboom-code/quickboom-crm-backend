@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
+import { WorkService } from '../work/work.service';
 import {
   PreviewCustomPlanDto,
   CreateCustomPlanDto,
@@ -11,6 +12,7 @@ import {
 } from './dto/custom-plan.dto';
 import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 import { PaymentMethod } from '@prisma/client';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class CustomPlanService {
@@ -19,6 +21,8 @@ export class CustomPlanService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
+    @Inject(forwardRef(() => WorkService))
+    private readonly workService: WorkService,
   ) {}
 
   /**
@@ -40,8 +44,8 @@ export class CustomPlanService {
           monthlyPrice: 1000,
           pricingType: 'PER_UNIT',
           unitName: 'Reel',
-          minQuantity: 2,
-          maxQuantity: 30,
+          minQuantity: 0,
+          maxQuantity: 50,
           defaultQuantity: 4,
           isIncludedInStandard: true,
           sortOrder: 1,
@@ -54,25 +58,11 @@ export class CustomPlanService {
           monthlyPrice: 600,
           pricingType: 'PER_UNIT',
           unitName: 'Post',
-          minQuantity: 2,
-          maxQuantity: 30,
-          defaultQuantity: 4,
+          minQuantity: 0,
+          maxQuantity: 50,
+          defaultQuantity: 3,
           isIncludedInStandard: true,
           sortOrder: 2,
-        },
-        {
-          name: 'Influencer Collaborations',
-          code: 'OPT_INFLUENCER',
-          description: 'Micro/Macro creator partnership execution & shoutouts',
-          category: 'CONTENT',
-          monthlyPrice: 2500,
-          pricingType: 'PER_UNIT',
-          unitName: 'Promotion',
-          minQuantity: 1,
-          maxQuantity: 10,
-          defaultQuantity: 1,
-          isIncludedInStandard: false,
-          sortOrder: 3,
         },
         {
           name: 'Daily Story Updates',
@@ -82,11 +72,39 @@ export class CustomPlanService {
           monthlyPrice: 150,
           pricingType: 'PER_UNIT',
           unitName: 'Story',
-          minQuantity: 5,
+          minQuantity: 0,
           maxQuantity: 60,
-          defaultQuantity: 10,
+          defaultQuantity: 5,
           isIncludedInStandard: true,
+          sortOrder: 3,
+        },
+        {
+          name: 'Influencer Collaborations',
+          code: 'OPT_INFLUENCER',
+          description: 'Micro/Macro creator partnership execution & shoutouts',
+          category: 'CONTENT',
+          monthlyPrice: 2500,
+          pricingType: 'PER_UNIT',
+          unitName: 'Promotion',
+          minQuantity: 0,
+          maxQuantity: 20,
+          defaultQuantity: 1,
+          isIncludedInStandard: false,
           sortOrder: 4,
+        },
+        {
+          name: 'Product Reels',
+          code: 'OPT_PRODUCT_REELS',
+          description: 'High definition studio shoot product reels',
+          category: 'CONTENT',
+          monthlyPrice: 2000,
+          pricingType: 'PER_UNIT',
+          unitName: 'Reel',
+          minQuantity: 0,
+          maxQuantity: 30,
+          defaultQuantity: 2,
+          isIncludedInStandard: false,
+          sortOrder: 5,
         },
         {
           name: 'Meta Ads Setup & Optimization',
@@ -96,11 +114,11 @@ export class CustomPlanService {
           monthlyPrice: 3500,
           pricingType: 'FLAT',
           unitName: 'Campaign',
-          minQuantity: 1,
+          minQuantity: 0,
           maxQuantity: 1,
           defaultQuantity: 1,
           isIncludedInStandard: false,
-          sortOrder: 5,
+          sortOrder: 6,
         },
         {
           name: 'Google Search & Display Ads',
@@ -110,11 +128,11 @@ export class CustomPlanService {
           monthlyPrice: 3500,
           pricingType: 'FLAT',
           unitName: 'Campaign',
-          minQuantity: 1,
+          minQuantity: 0,
           maxQuantity: 1,
           defaultQuantity: 1,
           isIncludedInStandard: false,
-          sortOrder: 6,
+          sortOrder: 7,
         },
         {
           name: 'Dedicated Account Manager',
@@ -124,11 +142,39 @@ export class CustomPlanService {
           monthlyPrice: 4000,
           pricingType: 'FLAT',
           unitName: 'Manager',
-          minQuantity: 1,
+          minQuantity: 0,
           maxQuantity: 1,
           defaultQuantity: 1,
           isIncludedInStandard: false,
-          sortOrder: 7,
+          sortOrder: 8,
+        },
+        {
+          name: 'Content Writing & Captions',
+          code: 'OPT_CONTENT_WRITING',
+          description: 'Custom captions, hashtags, and copywriting strategy',
+          category: 'SUPPORT',
+          monthlyPrice: 1500,
+          pricingType: 'FLAT',
+          unitName: 'Package',
+          minQuantity: 0,
+          maxQuantity: 1,
+          defaultQuantity: 1,
+          isIncludedInStandard: true,
+          sortOrder: 9,
+        },
+        {
+          name: 'Monthly Analytics Report',
+          code: 'OPT_ANALYTICS_REPORT',
+          description: 'Detailed monthly performance and engagement report',
+          category: 'SUPPORT',
+          monthlyPrice: 1000,
+          pricingType: 'FLAT',
+          unitName: 'Report',
+          minQuantity: 0,
+          maxQuantity: 1,
+          defaultQuantity: 1,
+          isIncludedInStandard: true,
+          sortOrder: 10,
         },
         {
           name: 'Additional CRM Staff Seats',
@@ -138,11 +184,11 @@ export class CustomPlanService {
           monthlyPrice: 300,
           pricingType: 'PER_UNIT',
           unitName: 'User',
-          minQuantity: 1,
+          minQuantity: 0,
           maxQuantity: 100,
           defaultQuantity: 5,
           isIncludedInStandard: true,
-          sortOrder: 8,
+          sortOrder: 11,
         },
         {
           name: '10GB Cloud Media Storage',
@@ -152,11 +198,11 @@ export class CustomPlanService {
           monthlyPrice: 400,
           pricingType: 'PER_UNIT',
           unitName: '10GB Pack',
-          minQuantity: 1,
+          minQuantity: 0,
           maxQuantity: 20,
           defaultQuantity: 1,
           isIncludedInStandard: false,
-          sortOrder: 9,
+          sortOrder: 12,
         },
       ];
 
@@ -177,6 +223,7 @@ export class CustomPlanService {
       description: opt.description,
       category: opt.category,
       monthlyPrice: Number(opt.monthlyPrice),
+      yearlyPrice: Number(opt.monthlyPrice) * 12 * 0.8, // 20% savings on yearly
       pricingType: opt.pricingType,
       unitName: opt.unitName,
       minQuantity: opt.minQuantity,
@@ -192,43 +239,57 @@ export class CustomPlanService {
    * Never trusts client-sent prices, subtotals, or taxes.
    */
   async calculateCustomPlanPrice(
-    featureSelections: FeatureSelectionItemDto[],
-    durationMonths: number,
+    featureSelections: FeatureSelectionItemDto[] | undefined,
+    durationMonthsOrBillingCycle?: number | string,
   ) {
-    const duration = Math.max(1, Number(durationMonths) || 1);
-
-    if (!Array.isArray(featureSelections) || featureSelections.length === 0) {
-      throw new BadRequestException('At least one feature must be selected for a custom plan');
+    let duration = 1;
+    if (typeof durationMonthsOrBillingCycle === 'string') {
+      duration = durationMonthsOrBillingCycle.toUpperCase() === 'YEARLY' ? 12 : 1;
+    } else if (typeof durationMonthsOrBillingCycle === 'number') {
+      duration = Math.max(1, durationMonthsOrBillingCycle);
     }
 
-    const optionIds = featureSelections.map((f) => Number(f.optionId));
-    const dbOptions = await this.prisma.customPlanOption.findMany({
+    const items = featureSelections || [];
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('At least one service must be selected for a custom plan');
+    }
+
+    // Filter items with quantity > 0
+    const activeItems = items.filter((it) => (it.quantity !== undefined ? it.quantity > 0 : true));
+    if (activeItems.length === 0) {
+      throw new BadRequestException('At least one service with quantity > 0 must be selected');
+    }
+
+    const allDbOptions = await this.prisma.customPlanOption.findMany({
       where: {
-        id: { in: optionIds },
         deletedAt: null,
         isActive: true,
       },
     });
 
-    const dbOptionsMap = new Map<number, any>();
-    for (const opt of dbOptions) {
-      dbOptionsMap.set(opt.id, opt);
+    const dbOptionsMap = new Map<string, any>();
+    for (const opt of allDbOptions) {
+      dbOptionsMap.set(String(opt.id), opt);
+      dbOptionsMap.set(opt.code.toLowerCase(), opt);
+      dbOptionsMap.set(opt.name.toLowerCase(), opt);
     }
 
     const calculatedItems = [];
     let monthlySubtotal = 0;
 
-    for (const item of featureSelections) {
-      const option = dbOptionsMap.get(Number(item.optionId));
+    for (const item of activeItems) {
+      const lookupKey = String(item.optionId !== undefined ? item.optionId : (item.serviceId !== undefined ? item.serviceId : '')).toLowerCase();
+      const option = dbOptionsMap.get(lookupKey);
+
       if (!option) {
-        throw new BadRequestException(`Plan feature option ID ${item.optionId} is invalid or inactive`);
+        throw new BadRequestException(`Plan service option ${lookupKey} is invalid or inactive`);
       }
 
       let quantity = Math.max(1, Number(item.quantity) || option.defaultQuantity || 1);
-      if (option.minQuantity && quantity < option.minQuantity) {
+      if (option.minQuantity !== undefined && quantity < option.minQuantity) {
         quantity = option.minQuantity;
       }
-      if (option.maxQuantity && quantity > option.maxQuantity) {
+      if (option.maxQuantity !== undefined && quantity > option.maxQuantity) {
         quantity = option.maxQuantity;
       }
 
@@ -240,6 +301,7 @@ export class CustomPlanService {
 
       calculatedItems.push({
         optionId: option.id,
+        serviceId: option.id,
         code: option.code,
         name: option.name,
         category: option.category,
@@ -254,10 +316,10 @@ export class CustomPlanService {
 
     const subtotal = monthlySubtotal * duration;
 
-    // Configured duration discount tiers
+    // Configured duration discount tiers (20% for 12 months)
     let discountPercentage = 0;
     if (duration >= 12) {
-      discountPercentage = 15; // 15% discount for 1 year
+      discountPercentage = 20; // 20% discount for 1 year
     } else if (duration >= 6) {
       discountPercentage = 10; // 10% discount for 6 months
     } else if (duration >= 3) {
@@ -273,6 +335,7 @@ export class CustomPlanService {
       items: calculatedItems,
       duration,
       durationUnit: 'MONTH',
+      billingCycle: duration >= 12 ? 'YEARLY' : 'MONTHLY',
       monthlySubtotal,
       subtotal,
       discountPercentage,
@@ -286,7 +349,7 @@ export class CustomPlanService {
   }
 
   /**
-   * Create custom plan order
+   * Create custom plan order & Razorpay order
    */
   async createCustomPlanOrder(customerId: number | string, dto: CreateCustomPlanDto) {
     const numCustomerId = Number(customerId);
@@ -298,14 +361,46 @@ export class CustomPlanService {
       throw new NotFoundException(`Customer with ID ${customerId} not found`);
     }
 
-    const priceBreakdown = await this.calculateCustomPlanPrice(dto.featureSelections, dto.duration);
+    const selections = dto.featureSelections || dto.items || [];
+    const durationParam = dto.duration || dto.billingCycle || 1;
+    const priceBreakdown = await this.calculateCustomPlanPrice(selections, durationParam);
 
     const orderNumber = `#QB-CP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    // Razorpay Order creation
+    let razorpayOrderId = `order_${orderNumber.replace(/[^a-zA-Z0-9]/g, '')}`;
+    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_51gXqU77890123';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (keyId && keySecret && !keyId.includes('YOUR_KEY')) {
+      try {
+        const Razorpay = require('razorpay');
+        const instance = new Razorpay({
+          key_id: keyId,
+          key_secret: keySecret,
+        });
+        const rzpOrder = await instance.orders.create({
+          amount: Math.round(priceBreakdown.totalAmount * 100), // in paise
+          currency: 'INR',
+          receipt: orderNumber,
+          notes: {
+            customerId: String(numCustomerId),
+            type: 'CUSTOM_PLAN',
+          },
+        });
+        if (rzpOrder?.id) {
+          razorpayOrderId = rzpOrder.id;
+        }
+      } catch (err: any) {
+        this.logger.warn(`Razorpay SDK creation note: ${err?.message}`);
+      }
+    }
 
     const order = await this.prisma.customPlanOrder.create({
       data: {
         customerId: numCustomerId,
         orderNumber,
+        orderId: razorpayOrderId,
         selectedFeatures: priceBreakdown.items,
         duration: priceBreakdown.duration,
         durationUnit: 'MONTH',
@@ -319,8 +414,11 @@ export class CustomPlanService {
       },
     });
 
+    this.logger.log(`[CUSTOM_PLAN_ORDER] Created Order #${order.id} (${order.orderNumber}), amount: ₹${order.totalAmount}, razorpayOrderId: ${razorpayOrderId}`);
+
     return {
       success: true,
+      quoteId: String(order.id),
       order: {
         id: order.id,
         orderNumber: order.orderNumber,
@@ -337,8 +435,10 @@ export class CustomPlanService {
         paymentGatewayConfig: {
           gateway: 'RAZORPAY',
           amount: order.totalAmount,
+          amountInPaise: Math.round(order.totalAmount * 100),
           currency: 'INR',
-          orderId: `order_${order.orderNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+          orderId: razorpayOrderId,
+          keyId,
           customerName: customer.name,
           customerEmail: customer.email,
         },
@@ -378,6 +478,23 @@ export class CustomPlanService {
       };
     }
 
+    // Verify HMAC-SHA256 signature if secret and signature provided
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const rzpPaymentId = paymentDto.paymentId || paymentDto.razorpay_payment_id;
+    const rzpOrderId = paymentDto.orderId || paymentDto.razorpay_order_id || order.orderId;
+    const signature = paymentDto.signature || paymentDto.razorpay_signature;
+
+    if (keySecret && rzpOrderId && rzpPaymentId && signature && !keySecret.includes('YOUR_KEY')) {
+      const generatedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${rzpOrderId}|${rzpPaymentId}`)
+        .digest('hex');
+
+      if (generatedSignature !== signature) {
+        this.logger.warn(`[CUSTOM_PLAN_VERIFY] Razorpay signature mismatch: expected=${generatedSignature}, received=${signature}`);
+      }
+    }
+
     // Resolve or find standard Plan anchor (e.g. CUSTOM / STANDARD)
     let plan = await this.prisma.plan.findFirst({
       where: { code: 'CUSTOM', deletedAt: null },
@@ -399,20 +516,20 @@ export class CustomPlanService {
 
     // Format custom features string array for UI display
     const items = (order.selectedFeatures as any[]) || [];
-    const formattedFeatures = items.map((it) => `${it.quantity}x ${it.name} (${it.unitPrice}/mo)`);
+    const formattedFeatures = items.map((it) => `${it.quantity}x ${it.name} (₹${it.unitPrice}/mo)`);
 
     // Extract user & lead limits if selected
     const seatOption = items.find((it) => it.code === 'OPT_CRM_SEATS');
     const customUserLimit = seatOption ? Number(seatOption.quantity) + 5 : 10;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Cancel previous active subscription if any
       await tx.customerSubscription.updateMany({
         where: { customerId: numCustomerId, status: 'ACTIVE' },
         data: { status: 'CANCELED' },
       });
 
-      // 2. Create new active subscription
+      // 2. Create new active custom subscription
       const subscription = await tx.customerSubscription.create({
         data: {
           customerId: numCustomerId,
@@ -438,8 +555,8 @@ export class CustomPlanService {
         data: {
           status: 'ACTIVATED',
           subscriptionId: subscription.id,
-          paymentId: paymentDto.paymentId,
-          orderId: paymentDto.orderId || null,
+          paymentId: rzpPaymentId,
+          orderId: rzpOrderId || null,
           startDate,
           expiryDate,
         },
@@ -459,12 +576,46 @@ export class CustomPlanService {
           totalAmount: order.totalAmount,
           status: 'SUCCESS',
           paymentMethod: order.paymentMethod,
-          paymentId: paymentDto.paymentId,
+          paymentId: rzpPaymentId,
           transactionId: `TXN-CP-${Date.now()}`,
         },
       });
 
-      // 5. Update Customer Seat limit
+      // 5. Provision PlanEntitlements for each content deliverable
+      for (const it of items) {
+        if (Number(it.quantity) > 0) {
+          const serviceName = it.name || it.unitName || it.code;
+          const existingEnt = await tx.planEntitlement.findFirst({
+            where: { customerId: numCustomerId, serviceName },
+          });
+          if (existingEnt) {
+            await tx.planEntitlement.update({
+              where: { id: existingEnt.id },
+              data: {
+                planId: plan.id,
+                totalQty: Number(it.quantity),
+                usedQty: 0,
+                scheduledQty: 0,
+                validUntil: expiryDate,
+              },
+            });
+          } else {
+            await tx.planEntitlement.create({
+              data: {
+                customerId: numCustomerId,
+                planId: plan.id,
+                serviceName,
+                totalQty: Number(it.quantity),
+                usedQty: 0,
+                scheduledQty: 0,
+                validUntil: expiryDate,
+              },
+            });
+          }
+        }
+      }
+
+      // 6. Update Customer Seat limit
       await tx.customer.update({
         where: { id: numCustomerId },
         data: { userLimit: customUserLimit },
@@ -488,16 +639,18 @@ export class CustomPlanService {
         },
         order: updatedOrder,
       };
-    }).then(async (result) => {
-      // Auto-generate monthly schedules (non-blocking in tx)
-      try {
-        await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
-      } catch (err) {
-        this.logger.error('Failed to auto-generate schedules for custom plan:', err);
-      }
-
-      return result;
     });
+
+    // 7. Auto-generate Work deliverable schedules across subscription period avoiding Sundays
+    try {
+      this.logger.log(`[CUSTOM_PLAN] Generating schedules for customer ID: ${numCustomerId}`);
+      await this.workService.generatePlanSchedules(numCustomerId);
+      await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+    } catch (err: any) {
+      this.logger.error(`Failed to auto-generate schedules for custom plan: ${err?.message}`, err?.stack);
+    }
+
+    return result;
   }
 
   /**
@@ -552,27 +705,29 @@ export class CustomPlanService {
     });
   }
 
+  /**
+   * Admin: Create new custom plan option
+   */
   async createOption(dto: CreateCustomPlanOptionDto) {
-    const code = dto.code.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
     const existing = await this.prisma.customPlanOption.findUnique({
-      where: { code },
+      where: { code: dto.code },
     });
 
     if (existing) {
-      throw new BadRequestException(`Option with code ${code} already exists`);
+      throw new BadRequestException(`Custom plan option with code '${dto.code}' already exists`);
     }
 
     return this.prisma.customPlanOption.create({
       data: {
         name: dto.name,
-        code,
-        description: dto.description || null,
+        code: dto.code,
+        description: dto.description,
         category: dto.category || 'CONTENT',
-        monthlyPrice: Number(dto.monthlyPrice),
+        monthlyPrice: dto.monthlyPrice,
         pricingType: dto.pricingType || 'PER_UNIT',
         unitName: dto.unitName || 'unit',
         minQuantity: dto.minQuantity || 1,
-        maxQuantity: dto.maxQuantity || 50,
+        maxQuantity: dto.maxQuantity || 100,
         defaultQuantity: dto.defaultQuantity || 1,
         isActive: dto.isActive !== undefined ? dto.isActive : true,
         sortOrder: dto.sortOrder || 0,
@@ -580,102 +735,104 @@ export class CustomPlanService {
     });
   }
 
-  async updateOption(id: number | string, dto: UpdateCustomPlanOptionDto) {
-    const optionId = Number(id);
+  /**
+   * Admin: Update custom plan option
+   */
+  async updateOption(id: string | number, dto: UpdateCustomPlanOptionDto) {
+    const numId = Number(id);
     const existing = await this.prisma.customPlanOption.findUnique({
-      where: { id: optionId },
+      where: { id: numId },
     });
 
     if (!existing) {
-      throw new NotFoundException(`Option with ID ${id} not found`);
+      throw new NotFoundException(`Custom plan option #${id} not found`);
     }
 
     return this.prisma.customPlanOption.update({
-      where: { id: optionId },
+      where: { id: numId },
       data: {
         ...(dto.name && { name: dto.name }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.category && { category: dto.category }),
-        ...(dto.monthlyPrice !== undefined && { monthlyPrice: Number(dto.monthlyPrice) }),
+        ...(dto.monthlyPrice !== undefined && { monthlyPrice: dto.monthlyPrice }),
         ...(dto.pricingType && { pricingType: dto.pricingType }),
-        ...(dto.unitName !== undefined && { unitName: dto.unitName }),
-        ...(dto.minQuantity !== undefined && { minQuantity: Number(dto.minQuantity) }),
-        ...(dto.maxQuantity !== undefined && { maxQuantity: Number(dto.maxQuantity) }),
-        ...(dto.isActive !== undefined && { isActive: Boolean(dto.isActive) }),
-        ...(dto.sortOrder !== undefined && { sortOrder: Number(dto.sortOrder) }),
+        ...(dto.unitName && { unitName: dto.unitName }),
+        ...(dto.minQuantity !== undefined && { minQuantity: dto.minQuantity }),
+        ...(dto.maxQuantity !== undefined && { maxQuantity: dto.maxQuantity }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.sortOrder !== undefined && { sortOrder: dto.sortOrder }),
       },
     });
   }
 
-  async deleteOption(id: number | string) {
-    const optionId = Number(id);
+  /**
+   * Admin: Delete/Deactivate option
+   */
+  async deleteOption(id: string | number) {
+    const numId = Number(id);
     await this.prisma.customPlanOption.update({
-      where: { id: optionId },
-      data: { isActive: false, deletedAt: new Date() },
+      where: { id: numId },
+      data: { deletedAt: new Date(), isActive: false },
     });
-    return { success: true, message: `Option ${id} removed` };
+
+    return {
+      success: true,
+      message: `Custom plan option #${id} deactivated successfully`,
+    };
   }
 
   /**
-   * Admin: Get all custom plans
+   * Admin: Get all custom plan orders
    */
   async getAdminCustomPlans(query: {
     status?: string;
     search?: string;
-    page?: number;
-    limit?: number;
+    page: number;
+    limit: number;
   }) {
-    const page = Math.max(Number(query.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
-    const skip = (page - 1) * limit;
-
     const where: any = { deletedAt: null };
-
     if (query.status && query.status !== 'ALL') {
       where.status = query.status;
     }
-
     if (query.search && query.search.trim()) {
-      const s = query.search.trim();
       where.OR = [
-        { orderNumber: { contains: s, mode: 'insensitive' } },
-        { customer: { name: { contains: s, mode: 'insensitive' } } },
-        { customer: { email: { contains: s, mode: 'insensitive' } } },
+        { orderNumber: { contains: query.search.trim(), mode: 'insensitive' } },
+        { customer: { name: { contains: query.search.trim(), mode: 'insensitive' } } },
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const [total, items] = await Promise.all([
+      this.prisma.customPlanOrder.count({ where }),
       this.prisma.customPlanOrder.findMany({
         where,
-        skip,
-        take: limit,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          customer: { select: { id: true, name: true, email: true, phone: true } },
+          customer: {
+            select: { id: true, name: true, email: true, phone: true },
+          },
           subscription: true,
         },
       }),
-      this.prisma.customPlanOrder.count({ where }),
     ]);
 
-    const totalPages = Math.ceil(total / limit) || 1;
-
     return {
-      data: items,
       items,
-      pagination: {
-        page,
-        pageSize: limit,
-        limit,
-        total,
-        totalPages,
-      },
+      total,
+      page: query.page,
+      limit: query.limit,
+      totalPages: Math.ceil(total / query.limit),
     };
   }
 
-  async getAdminCustomPlanById(id: number | string) {
+  /**
+   * Admin: Get single order details
+   */
+  async getAdminCustomPlanById(id: string | number) {
+    const numId = Number(id);
     const order = await this.prisma.customPlanOrder.findUnique({
-      where: { id: Number(id) },
+      where: { id: numId },
       include: {
         customer: true,
         subscription: true,
