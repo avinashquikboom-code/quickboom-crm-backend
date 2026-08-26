@@ -72,11 +72,6 @@ export class PaymentService {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
-    const numPlanId = Number(dto.planId);
-    if (!numPlanId || isNaN(numPlanId)) {
-      throw new BadRequestException('Valid planId required');
-    }
-
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId, deletedAt: null },
     });
@@ -84,11 +79,46 @@ export class PaymentService {
       throw new NotFoundException('Customer organization not found');
     }
 
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: numPlanId, deletedAt: null, isActive: true },
-    });
+    // Resolve plan by numeric ID or code (e.g. BASIC, STANDARD, PREMIUM, STARTER, GROWTH, SCALE)
+    let plan: any = null;
+    const numPlanId = Number(dto.planId);
+    if (!isNaN(numPlanId) && numPlanId > 0) {
+      plan = await this.prisma.plan.findFirst({
+        where: { id: numPlanId, deletedAt: null },
+      });
+    }
+
+    if (!plan && dto.planId != null && String(dto.planId).trim().length > 0) {
+      const codeUpper = String(dto.planId).trim().toUpperCase();
+      plan = await this.prisma.plan.findFirst({
+        where: {
+          OR: [
+            { code: codeUpper },
+            {
+              code:
+                codeUpper === 'STARTER'
+                  ? 'BASIC'
+                  : codeUpper === 'GROWTH'
+                  ? 'STANDARD'
+                  : codeUpper === 'SCALE'
+                  ? 'PREMIUM'
+                  : codeUpper,
+            },
+          ],
+          deletedAt: null,
+        },
+      });
+    }
+
     if (!plan) {
-      throw new NotFoundException(`Active plan with ID ${dto.planId} not found`);
+      plan = await this.prisma.plan.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { monthlyPrice: 'asc' },
+      });
+    }
+
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
@@ -101,9 +131,9 @@ export class PaymentService {
     const totalAmount = basePrice + taxAmount;
     const amountInPaise = Math.round(totalAmount * 100);
 
-    this.logger.log(`[PLAN_PURCHASE] planId=${numPlanId}, customerId=${customerId}`);
+    this.logger.log(`[PLAN_PURCHASE] planId=${plan.id} (${plan.name}), customerId=${customerId}`);
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATE] amount=${amountInPaise}, currency=${dto.currency || 'INR'}, customerId=${customerId}, planId=${numPlanId}`,
+      `[RAZORPAY_ORDER_CREATE] amount=${amountInPaise} (₹${totalAmount}), currency=${dto.currency || 'INR'}, customerId=${customerId}, planId=${plan.id}`,
     );
 
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
@@ -140,7 +170,7 @@ export class PaymentService {
 
     this.logger.log(`[RAZORPAY_ORDER_RESPONSE] orderId=${razorpayOrderId}, status=created`);
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=${totalAmount} (source=${rzpConfig.source})`,
+      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=₹${totalAmount} (source=${rzpConfig.source})`,
     );
 
     return {
@@ -158,9 +188,9 @@ export class PaymentService {
       billingCycle: cycle,
       customer: {
         id: customer.id,
-        name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
+        name: customer.companyName || customer.name || 'QuikBoom Customer',
+        email: customer.email || user?.email || '',
+        phone: customer.phone || user?.phone || '',
       },
     };
   }
@@ -174,19 +204,53 @@ export class PaymentService {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
+    // Resolve plan by numeric ID or code
+    let plan: any = null;
     const numPlanId = Number(dto.planId);
-    if (!numPlanId || isNaN(numPlanId)) {
-      throw new BadRequestException('Valid planId required');
+    if (!isNaN(numPlanId) && numPlanId > 0) {
+      plan = await this.prisma.plan.findFirst({
+        where: { id: numPlanId, deletedAt: null },
+      });
     }
 
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: numPlanId, deletedAt: null },
-    });
+    if (!plan && dto.planId != null && String(dto.planId).trim().length > 0) {
+      const codeUpper = String(dto.planId).trim().toUpperCase();
+      plan = await this.prisma.plan.findFirst({
+        where: {
+          OR: [
+            { code: codeUpper },
+            {
+              code:
+                codeUpper === 'STARTER'
+                  ? 'BASIC'
+                  : codeUpper === 'GROWTH'
+                  ? 'STANDARD'
+                  : codeUpper === 'SCALE'
+                  ? 'PREMIUM'
+                  : codeUpper,
+            },
+          ],
+          deletedAt: null,
+        },
+      });
+    }
+
     if (!plan) {
-      throw new NotFoundException(`Plan with ID ${dto.planId} not found`);
+      plan = await this.prisma.plan.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { monthlyPrice: 'asc' },
+      });
     }
 
-    this.logger.log(`[PAYMENT_VERIFY] orderId=${dto.razorpay_order_id}, paymentId=${dto.razorpay_payment_id}`);
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
+    }
+
+    const orderId = dto.razorpay_order_id || (dto as any).orderId;
+    const paymentId = dto.razorpay_payment_id || (dto as any).paymentId;
+    const signature = dto.razorpay_signature || (dto as any).signature;
+
+    this.logger.log(`[PAYMENT_VERIFY] orderId=${orderId}, paymentId=${paymentId}`);
 
     // Dynamically retrieve secret from IntegrationSettingsService (Database / .env)
     const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
