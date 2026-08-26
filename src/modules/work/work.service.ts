@@ -908,13 +908,14 @@ export class WorkService {
               r.title.toLowerCase().includes('subscription'),
           );
           if (!hasPlanEvent) {
+            const planName = activeSub.plan?.name || 'Active Plan';
             result.unshift({
               id: `sub-start-${activeSub.id}`,
-              purchaseId: `PUR-${String(activeSub.id).padStart(3, '0')}`,
-              productName: activeSub.plan?.name || 'Active Plan',
+              purchaseId: String(activeSub.id),
+              productName: planName,
               serviceName: 'Plan Activation',
-              planName: activeSub.plan?.name || 'Active Plan',
-              title: `${activeSub.plan?.name || 'Active Plan'} Started`,
+              planName: planName,
+              title: `${planName} Started`,
               date: subStart,
               scheduleDate: subStart,
               time: '09:00 AM',
@@ -929,7 +930,7 @@ export class WorkService {
               editorId: undefined,
               editorName: 'SSM Team',
               team: 'SSM Core Team',
-              notes: `Active ${activeSub.plan?.name || 'Plan'} billing period started. All plan quotas and deliverables activated.`,
+              notes: `Active ${planName} billing period started. All plan quotas and deliverables activated.`,
               outputUrl: null,
               feedback: null,
               revisionCount: 0,
