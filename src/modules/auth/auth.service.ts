@@ -238,10 +238,20 @@ export class AuthService {
 
     // Auto-generate / auto-increment employee record if not yet created
     const emp = await this.ensureEmployee(user);
+
+    const userRole = hasSuperAdminRole
+      ? 'SUPER_ADMIN'
+      : isEmployee
+      ? 'EMPLOYEE'
+      : (primaryRole as string);
+
+    // Generate role-based QB code (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
+    const qbCode = this.generateQbCode(userRole, user, emp);
+
     const employeeData = {
       id: emp.id,
-      employeeId: emp.employeeCode,
-      employeeCode: emp.employeeCode,
+      employeeId: qbCode,
+      employeeCode: qbCode,
       firstName: emp.firstName || user.firstName,
       lastName: emp.lastName || user.lastName,
       email: emp.email || user.email,
@@ -256,12 +266,6 @@ export class AuthService {
       joiningDate: emp.joiningDate || user.createdAt,
     };
 
-    const userRole = hasSuperAdminRole
-      ? 'SUPER_ADMIN'
-      : isEmployee
-      ? 'EMPLOYEE'
-      : (primaryRole as string);
-
     const userData = {
       id: user.id,
       email: user.email,
@@ -270,8 +274,9 @@ export class AuthService {
       lastName: user.lastName,
       role: userRole,
       roles: roles.length > 0 ? roles : [userRole],
-      employeeId: emp.id,
-      employeeCode: emp.employeeCode,
+      userId: qbCode,
+      employeeId: qbCode,
+      employeeCode: qbCode,
       employee: employeeData,
       // Conditional: Only include customerId and customerName for non-super-admin
       ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId || emp.customerId }),
@@ -508,10 +513,20 @@ export class AuthService {
     const roles = user.userRoles.map((ur) => ur.role.type);
 
     const emp = await this.ensureEmployee(user);
+
+    const isSuperAdmin = roles.includes(RoleType.SUPER_ADMIN);
+    const userRole = isSuperAdmin
+      ? 'SUPER_ADMIN'
+      : user.employee
+      ? 'EMPLOYEE'
+      : roles[0] || 'CUSTOMER';
+
+    const qbCode = this.generateQbCode(userRole, user, emp);
+
     const employeeData = {
       id: emp.id,
-      employeeId: emp.employeeCode,
-      employeeCode: emp.employeeCode,
+      employeeId: qbCode,
+      employeeCode: qbCode,
       firstName: emp.firstName || user.firstName,
       lastName: emp.lastName || user.lastName,
       email: emp.email || user.email,
@@ -526,23 +541,46 @@ export class AuthService {
       joiningDate: emp.joiningDate || user.createdAt,
     };
 
-    const isSuperAdmin = roles.includes(RoleType.SUPER_ADMIN);
-
     return {
       id: user.id,
       email: user.email,
       phone: user.phone,
       firstName: user.firstName,
       lastName: user.lastName,
+      role: userRole,
       roles,
+      userId: qbCode,
       employee: employeeData,
-      employeeId: emp.employeeCode,
-      employeeCode: emp.employeeCode,
+      employeeId: qbCode,
+      employeeCode: qbCode,
       createdAt: user.createdAt,
       // Conditional: Only include customerId and customerName for non-super-admin
       ...(!isSuperAdmin && { customerId: user.customerId || emp.customerId }),
       ...(!isSuperAdmin && { customerName: user.customer?.name || 'Enterprise Workspace' }),
     };
+  }
+
+  /**
+   * Generates standard role-based QB identifier (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
+   */
+  private generateQbCode(role: string, user: any, emp?: any): string {
+    const normalizedRole = (role || '').toUpperCase();
+    if (normalizedRole === 'SUPER_ADMIN') {
+      return `QB-ADMIN-${String(user.id).padStart(3, '0')}`;
+    }
+    if (normalizedRole === 'COMPANY_ADMIN' || normalizedRole === 'CUSTOMER_ADMIN') {
+      const tenantId = user.customerId || user.id;
+      return `QB-CADMIN-${String(tenantId).padStart(3, '0')}`;
+    }
+    if (normalizedRole === 'EMPLOYEE') {
+      const empId = emp?.id || user.employee?.id || user.id;
+      return `QB-EMP-${String(empId).padStart(3, '0')}`;
+    }
+    if (normalizedRole === 'CUSTOMER') {
+      const custId = user.customerId || user.id;
+      return `QB-CUST-${String(custId).padStart(3, '0')}`;
+    }
+    return `QB-USER-${String(user.id).padStart(3, '0')}`;
   }
 
   async getRoles(customerId?: number) {
