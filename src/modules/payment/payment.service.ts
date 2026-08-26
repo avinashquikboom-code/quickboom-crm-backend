@@ -13,6 +13,7 @@ import {
   VerifyRazorpayPaymentDto,
   SubscriptionBillingCycle,
 } from './dto/payment.dto';
+import { IntegrationSettingsService, RazorpayDynamicConfig } from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
@@ -20,47 +21,37 @@ const Razorpay = require('razorpay');
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
-  private razorpayInstance: any = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
     private readonly workService: WorkService,
-  ) {
-    this.initRazorpay();
-  }
+    private readonly integrationSettingsService: IntegrationSettingsService,
+  ) {}
 
-  private initRazorpay() {
-    const keyId = this.getRazorpayKeyId();
-    const keySecret = this.getRazorpayKeySecret();
-
-    if (keyId && keySecret) {
-      try {
-        this.razorpayInstance = new Razorpay({
-          key_id: keyId,
-          key_secret: keySecret,
-        });
-        this.logger.log(`[RAZORPAY_INIT] Initialized Razorpay with key ID: ${keyId.substring(0, 8)}...`);
-      } catch (err: any) {
-        this.logger.error(`[RAZORPAY_INIT_ERROR] Could not initialize Razorpay SDK: ${err?.message}`);
-      }
-    } else {
-      this.logger.error('[RAZORPAY_INIT_ERROR] RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET environment variables are not configured. Payment gateway is disabled.');
+  /**
+   * Dynamically resolves active Razorpay credentials from Database (or .env fallback)
+   * without requiring Docker rebuilds or application restarts.
+   */
+  private async getRazorpayClient(): Promise<{ instance: any; config: RazorpayDynamicConfig }> {
+    const config = await this.integrationSettingsService.getRazorpayConfig();
+    if (!config.isEnabled || !config.keyId || !config.keySecret) {
+      this.logger.error('[RAZORPAY_CONFIG_ERROR] Razorpay is disabled or missing credentials in database/settings');
+      throw new BadRequestException(
+        'Razorpay payment gateway is not configured or disabled. Please configure credentials in Admin Settings.',
+      );
     }
-  }
 
-  private getRazorpayKeyId(): string {
-    // No hardcoded fallback — missing key means gateway is disabled
-    return process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
-  }
-
-  private getRazorpayKeySecret(): string {
-    // No hardcoded fallback — missing secret means gateway is disabled
-    return process.env.RAZORPAY_KEY_SECRET || '';
-  }
-
-  private getRazorpayWebhookSecret(): string {
-    return process.env.RAZORPAY_WEBHOOK_SECRET || '';
+    try {
+      const instance = new Razorpay({
+        key_id: config.keyId,
+        key_secret: config.keySecret,
+      });
+      return { instance, config };
+    } catch (err: any) {
+      this.logger.error(`[RAZORPAY_CLIENT_INIT_ERROR] ${err?.message}`);
+      throw new BadRequestException('Could not initialize payment gateway client.');
+    }
   }
 
   /**
@@ -109,14 +100,10 @@ export class PaymentService {
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
     let razorpayOrderId: string;
 
-    if (!this.razorpayInstance) {
-      throw new BadRequestException(
-        'Payment gateway is not configured. Please contact support.',
-      );
-    }
+    const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
 
     try {
-      const order = await this.razorpayInstance.orders.create({
+      const order = await razorpayInstance.orders.create({
         amount: amountInPaise,
         currency: dto.currency || 'INR',
         receipt,
@@ -144,7 +131,7 @@ export class PaymentService {
 
     this.logger.log(`[RAZORPAY_ORDER_RESPONSE] orderId=${razorpayOrderId}, status=created`);
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=${totalAmount}`,
+      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=${totalAmount} (source=${rzpConfig.source})`,
     );
 
     return {
@@ -155,7 +142,7 @@ export class PaymentService {
       basePriceRupees: basePrice,
       taxAmountRupees: taxAmount,
       currency: dto.currency || 'INR',
-      razorpayKeyId: this.getRazorpayKeyId(),
+      razorpayKeyId: rzpConfig.keyId,
       planId: plan.id,
       planName: plan.name,
       planCode: plan.code,
@@ -192,10 +179,11 @@ export class PaymentService {
 
     this.logger.log(`[PAYMENT_VERIFY] orderId=${dto.razorpay_order_id}, paymentId=${dto.razorpay_payment_id}`);
 
-    // Verify HMAC SHA256 Signature (server-side only, using Razorpay key secret)
-    const keySecret = this.getRazorpayKeySecret();
+    // Dynamically retrieve secret from IntegrationSettingsService (Database / .env)
+    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+    const keySecret = rzpConfig.keySecret;
     if (!keySecret) {
-      this.logger.error('[RAZORPAY_VERIFY_ERROR] RAZORPAY_KEY_SECRET not configured — cannot verify signature.');
+      this.logger.error('[RAZORPAY_VERIFY_ERROR] Razorpay Key Secret not configured in Database or .env — cannot verify signature.');
       throw new BadRequestException('Payment gateway is not configured. Contact support.');
     }
 
@@ -454,7 +442,8 @@ export class PaymentService {
    * 3. Handle Razorpay Webhook Event Idempotently
    */
   async handleWebhook(rawBody: string, signature: string) {
-    const webhookSecret = this.getRazorpayWebhookSecret();
+    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+    const webhookSecret = rzpConfig.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET || '';
     if (!signature) {
       throw new BadRequestException('Webhook signature required');
     }

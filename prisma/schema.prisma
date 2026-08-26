@@ -2106,4 +2106,22 @@ model CustomPlanOrder {
   @@map("custom_plan_orders")
 }
 
+model IntegrationSetting {
+  id              Int       @id @default(autoincrement())
+  provider        String    @unique // e.g. "RAZORPAY", "GOOGLE_MAPS", "TWILIO", "WHATSAPP", "SENDGRID"
+  isEnabled       Boolean   @default(true)
+  environment     String    @default("LIVE") // "LIVE" | "TEST"
+  credentials     Json      // Encrypted payload of sensitive fields (e.g. keySecret, apiKey) + plain identifiers (e.g. keyId, webhookSecret)
+  config          Json?     // Provider-specific non-sensitive configurations (e.g. routing, geocoding options)
+  updatedByUserId Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@index([provider, isEnabled])
+  @@index([deletedAt])
+  @@map("integration_settings")
+}
+
+
 

@@ -12,6 +12,7 @@ import {
   RejectDataCaptureDto,
   BulkActionDto,
 } from './dto/data-capture.dto';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import {
   CapturedPlace,
   ExtractionJob,
@@ -44,6 +45,7 @@ export class DataCaptureService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly integrationSettingsService: IntegrationSettingsService,
   ) {}
 
   /**
@@ -65,7 +67,8 @@ export class DataCaptureService {
   }> {
     const numCustomerId = Number(customerId);
     const numUserId = Number(userId) || 1;
-    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
+    const apiKey = mapsConfig.apiKey;
     const requestedResults = Math.min(Math.max(dto.maxResults || 20, 1), 60);
     const textQuery = `${dto.keyword.trim()} in ${dto.location.trim()}`;
     const jobId = `job-${randomUUID().slice(0, 8)}`;
@@ -74,7 +77,7 @@ export class DataCaptureService {
     let googleApiRequests = 0;
     let nextPageToken: string | undefined = undefined;
 
-    if (apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
+    if (mapsConfig.isEnabled && apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
       try {
         let fetchMore = true;
 

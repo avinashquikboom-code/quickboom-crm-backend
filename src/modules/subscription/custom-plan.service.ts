@@ -10,6 +10,7 @@ import {
   UpdateCustomPlanOptionDto,
   FeatureSelectionItemDto,
 } from './dto/custom-plan.dto';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 import { PaymentMethod } from '@prisma/client';
 import * as crypto from 'crypto';
@@ -22,6 +23,7 @@ export class CustomPlanService {
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
     private readonly workService: WorkService,
+    private readonly integrationSettingsService: IntegrationSettingsService,
   ) {}
 
   /**
@@ -366,12 +368,13 @@ export class CustomPlanService {
 
     const orderNumber = `#QB-CP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    // Razorpay Order creation
+    // Razorpay Order creation using dynamic IntegrationSettingsService
     let razorpayOrderId = `order_${orderNumber.replace(/[^a-zA-Z0-9]/g, '')}`;
-    const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_51gXqU77890123';
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+    const keyId = rzpConfig.keyId;
+    const keySecret = rzpConfig.keySecret;
 
-    if (keyId && keySecret && !keyId.includes('YOUR_KEY')) {
+    if (rzpConfig.isEnabled && keyId && keySecret) {
       try {
         const Razorpay = require('razorpay');
         const instance = new Razorpay({
@@ -477,13 +480,14 @@ export class CustomPlanService {
       };
     }
 
-    // Verify HMAC-SHA256 signature if secret and signature provided
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    // Dynamically retrieve secret from IntegrationSettingsService (Database / .env)
+    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+    const keySecret = rzpConfig.keySecret;
     const rzpPaymentId = paymentDto.paymentId || paymentDto.razorpay_payment_id;
     const rzpOrderId = paymentDto.orderId || paymentDto.razorpay_order_id || order.orderId;
     const signature = paymentDto.signature || paymentDto.razorpay_signature;
 
-    if (keySecret && rzpOrderId && rzpPaymentId && signature && !keySecret.includes('YOUR_KEY')) {
+    if (keySecret && rzpOrderId && rzpPaymentId && signature) {
       const generatedSignature = crypto
         .createHmac('sha256', keySecret)
         .update(`${rzpOrderId}|${rzpPaymentId}`)
