@@ -986,22 +986,60 @@ export class WorkService {
       };
     }
 
-    const entitlements = await this.prisma.planEntitlement.findMany({
+    let entitlements = await this.prisma.planEntitlement.findMany({
       where: { customerId: numCustomerId },
       orderBy: { id: 'asc' },
     });
 
-    if (entitlements.length === 0) {
-      return {
-        success: true,
-        message: 'No entitlements found to generate schedules.',
-        createdCount: 0,
-        schedules: [],
-      };
-    }
-
     const startDate = activePlan.startDate ? new Date(activePlan.startDate) : new Date();
     const endDate = activePlan.endDate ? new Date(activePlan.endDate) : new Date(startDate.getTime() + 30 * 86400000);
+
+    if (entitlements.length === 0) {
+      // Auto-provision entitlements from active plan deliverables
+      const planCodeUpper = (activePlan.planCode || '').toUpperCase();
+      const isPremium = planCodeUpper.includes('PREMIUM');
+      const isStandard = planCodeUpper.includes('STANDARD');
+
+      const defaultQuotas = isPremium
+        ? [
+            { serviceName: 'Product Reels', totalQty: 2 },
+            { serviceName: 'Influencer Reels', totalQty: 8 },
+            { serviceName: 'Creative Posts', totalQty: 8 },
+            { serviceName: 'Stories', totalQty: 30 },
+          ]
+        : (isStandard
+            ? [
+                { serviceName: 'Reels', totalQty: 6 },
+                { serviceName: 'Creative Posts', totalQty: 4 },
+                { serviceName: 'Influencer Promotions', totalQty: 2 },
+                { serviceName: 'Stories', totalQty: 5 },
+              ]
+            : [
+                { serviceName: 'Reels', totalQty: 4 },
+                { serviceName: 'Creative Posts', totalQty: 3 },
+                { serviceName: 'Influencer Promotion', totalQty: 1 },
+                { serviceName: 'Stories', totalQty: 3 },
+              ]);
+
+      for (const q of defaultQuotas) {
+        await this.prisma.planEntitlement.create({
+          data: {
+            customerId: numCustomerId,
+            planId: activePlan.planId,
+            serviceName: q.serviceName,
+            totalQty: q.totalQty,
+            usedQty: 0,
+            scheduledQty: 0,
+            validUntil: endDate,
+          },
+        });
+      }
+
+      entitlements = await this.prisma.planEntitlement.findMany({
+        where: { customerId: numCustomerId },
+        orderBy: { id: 'asc' },
+      });
+    }
 
     let totalCreated = 0;
 
