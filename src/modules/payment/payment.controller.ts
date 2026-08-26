@@ -14,6 +14,7 @@ import {
   VerifyRazorpayPaymentDto,
 } from './dto/payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Payments & Razorpay')
@@ -22,25 +23,29 @@ export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
   @Post('razorpay/order')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create Razorpay Order for customer plan purchase' })
   async createRazorpayOrder(
     @CurrentUser() user: any,
+    @Req() req: any,
     @Body() dto: CreateRazorpayOrderDto,
   ) {
-    return this.paymentService.createRazorpayOrder(user, dto);
+    const customerId = req?.customerId || user?.customerId;
+    return this.paymentService.createRazorpayOrder(user, dto, customerId);
   }
 
   @Post('razorpay/verify')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Verify Razorpay payment signature & activate subscription with schedules' })
   async verifyRazorpayPayment(
     @CurrentUser() user: any,
+    @Req() req: any,
     @Body() dto: VerifyRazorpayPaymentDto,
   ) {
-    return this.paymentService.verifyRazorpayPayment(user, dto);
+    const customerId = req?.customerId || user?.customerId;
+    return this.paymentService.verifyRazorpayPayment(user, dto, customerId);
   }
 
   @Post('razorpay/webhook')
@@ -56,10 +61,12 @@ export class PaymentController {
 
   @Get('history')
   @Get('orders')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get authenticated customer purchase and payment transaction history' })
-  async getPaymentHistory(@CurrentUser() user: any) {
-    return this.paymentService.getPaymentHistory(user);
+  async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
+    const customerId = req?.customerId || user?.customerId;
+    return this.paymentService.getPaymentHistory(user, customerId);
   }
 }
+

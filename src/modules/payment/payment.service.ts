@@ -68,9 +68,9 @@ export class PaymentService {
   /**
    * 1. Create a Razorpay Order for a specific Plan & Billing Cycle
    */
-  async createRazorpayOrder(user: any, dto: CreateRazorpayOrderDto) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async createRazorpayOrder(user: any, dto: CreateRazorpayOrderDto, reqCustomerId?: number) {
+    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
@@ -158,9 +158,9 @@ export class PaymentService {
   /**
    * 2. Verify Razorpay Payment Signature, Activate Subscription, Provision Entitlements & Generate Schedules
    */
-  async verifyRazorpayPayment(user: any, dto: VerifyRazorpayPaymentDto) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async verifyRazorpayPayment(user: any, dto: VerifyRazorpayPaymentDto, reqCustomerId?: number) {
+    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
@@ -461,9 +461,9 @@ export class PaymentService {
   /**
    * 4. Get Customer Purchase / Payment History
    */
-  async getPaymentHistory(user: any) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async getPaymentHistory(user: any, reqCustomerId?: number) {
+    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
