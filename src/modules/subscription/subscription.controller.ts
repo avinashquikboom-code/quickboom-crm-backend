@@ -31,18 +31,22 @@ export class SubscriptionController {
   // ==========================================
 
   @Get('plans')
+  @Get('customer/plans')
   @ApiOperation({ summary: 'Get all active subscription plans (Customer & Public)' })
   async getPlans() {
     return this.subscriptionService.getPlans(false);
   }
 
   @Get('plans/:id')
+  @Get('customer/plans/:id')
   @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
   async getPlanById(@Param('id') id: string) {
     return this.subscriptionService.getPlanById(id);
   }
 
   @Get('subscriptions/effective-plan')
+  @Get('customer/subscription')
+  @Get('customer/usage')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active effective plan and usage for authenticated customer' })

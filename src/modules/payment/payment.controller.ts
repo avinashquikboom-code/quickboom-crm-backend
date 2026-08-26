@@ -23,6 +23,7 @@ export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
   @Post('razorpay/order')
+  @Post('create-order')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create Razorpay Order for customer plan purchase' })
@@ -36,6 +37,7 @@ export class PaymentController {
   }
 
   @Post('razorpay/verify')
+  @Post('verify')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Verify Razorpay payment signature & activate subscription with schedules' })

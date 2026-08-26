@@ -58,6 +58,8 @@ export class WorkController {
   }
 
   @Get('calendar')
+  @Get('customer/calendar')
+  @Get('admin/calendar')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get scheduled calendar events' })
