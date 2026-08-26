@@ -1,14 +1,25 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import {
+  CreateCustomerDto,
+  UpdateCustomerDto,
+  UpdateCustomerProfileDto,
+} from './dto/customer.dto';
 import { ScheduleService } from '../schedule/schedule.service';
 import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
+import { QBIdGenerator } from '../auth/qb-id.generator';
 
 @Injectable()
 export class CustomerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
+    private readonly qbIdGenerator: QBIdGenerator,
   ) {}
 
   /**
@@ -681,10 +692,16 @@ export class CustomerService {
     };
   }
 
-  async getCustomerProfile(userId: number, explicitCustomerId?: number | string) {
-    let resolvedCustomerId: number | null = explicitCustomerId ? Number(explicitCustomerId) : null;
+  /**
+   * Get authenticated customer profile strictly isolated by JWT identity.
+   */
+  async getMe(user: any) {
+    const userId = Number(user?.id || user?.userId || user?.sub);
+    if (!userId || isNaN(userId)) {
+      throw new UnauthorizedException('Invalid user session');
+    }
 
-    const user = await this.prisma.user.findUnique({
+    const userRecord = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
         customer: {
@@ -700,16 +717,17 @@ export class CustomerService {
       },
     });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
+    if (!userRecord || !userRecord.isActive || userRecord.deletedAt) {
+      throw new UnauthorizedException('User account inactive or missing');
     }
 
-    if (!resolvedCustomerId && user.customerId) {
-      resolvedCustomerId = user.customerId;
+    const customerId = userRecord.customerId || (user.customerId ? Number(user.customerId) : null);
+    if (!customerId) {
+      throw new ForbiddenException('User does not belong to any customer');
     }
 
-    const customer = user.customer || (resolvedCustomerId ? await this.prisma.customer.findUnique({
-      where: { id: resolvedCustomerId },
+    const customer = userRecord.customer || (await this.prisma.customer.findUnique({
+      where: { id: customerId },
       include: {
         subscriptions: {
           where: { deletedAt: null },
@@ -718,35 +736,134 @@ export class CustomerService {
           include: { plan: true },
         },
       },
-    }) : null);
+    }));
+
+    if (!customer || customer.deletedAt) {
+      throw new NotFoundException('Customer profile not found');
+    }
+
+    const activeSub = customer.subscriptions[0];
+    const qbCode = this.qbIdGenerator.generateQBUserId('CUSTOMER', customer.id);
+
+    const safeCustomer = this.serializeBigInt(customer);
 
     return {
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        isActive: user.isActive,
-      },
-      customer: customer ? {
+      success: true,
+      data: {
         id: customer.id,
+        customerId: qbCode,
         name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
+        companyName: customer.companyName || customer.name,
+        domain: customer.domain,
+        logo: customer.logo,
+        profileImage: customer.logo || userRecord.avatar,
+        phone: customer.phone || userRecord.phone,
+        alternatePhone: customer.alternatePhone,
+        email: customer.email || userRecord.email,
+        address: customer.address,
         city: customer.city,
+        state: customer.state,
+        country: customer.country || 'India',
+        pincode: customer.pincode,
+        customerType: customer.customerType || 'ENTERPRISE',
+        industry: customer.industry || 'General',
+        source: customer.source || 'DIRECT',
+        assignedEmployee: customer.assignedEmployee,
+        department: customer.department,
+        notes: customer.notes,
         isActive: customer.isActive,
-        activeSubscription: customer.subscriptions[0] ? {
-          id: customer.subscriptions[0].id,
-          planName: customer.subscriptions[0].plan.name,
-          planCode: customer.subscriptions[0].plan.code,
-          status: customer.subscriptions[0].status,
-          startDate: customer.subscriptions[0].startDate,
-          endDate: customer.subscriptions[0].endDate,
-          customPrice: customer.subscriptions[0].customPrice ? Number(customer.subscriptions[0].customPrice) : Number(customer.subscriptions[0].plan.monthlyPrice),
-        } : null,
-      } : null,
+        userLimit: customer.userLimit,
+        leadLimit: customer.leadLimit,
+        storageUsed: Number(customer.storageUsed || 0),
+        storageLimit: Number(customer.storageLimit || 0),
+        plan: activeSub?.plan?.name || 'Standard Plan',
+        planCode: activeSub?.plan?.code || 'STANDARD',
+        subscriptionStatus: activeSub?.status || 'ACTIVE',
+        subscriptionStartDate: activeSub?.startDate,
+        subscriptionEndDate: activeSub?.endDate,
+        user: {
+          id: userRecord.id,
+          email: userRecord.email,
+          phone: userRecord.phone,
+          firstName: userRecord.firstName,
+          lastName: userRecord.lastName,
+          avatar: userRecord.avatar,
+          designation: userRecord.designation,
+        },
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+      },
     };
+  }
+
+  /**
+   * Update authenticated customer profile data.
+   */
+  async updateMe(user: any, dto: UpdateCustomerProfileDto) {
+    const userId = Number(user?.id || user?.userId || user?.sub);
+    if (!userId || isNaN(userId)) {
+      throw new UnauthorizedException('Invalid user session');
+    }
+
+    const userRecord = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!userRecord || !userRecord.isActive || userRecord.deletedAt) {
+      throw new UnauthorizedException('User account inactive or missing');
+    }
+
+    const customerId = userRecord.customerId || (user.customerId ? Number(user.customerId) : null);
+    if (!customerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    const existingCustomer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!existingCustomer || existingCustomer.deletedAt) {
+      throw new NotFoundException('Customer profile not found');
+    }
+
+    const logoUrl = dto.logo !== undefined ? dto.logo : (dto.profileImage !== undefined ? dto.profileImage : undefined);
+
+    await this.prisma.customer.update({
+      where: { id: customerId },
+      data: {
+        name: dto.name !== undefined && dto.name.trim() !== '' ? dto.name.trim() : undefined,
+        companyName: dto.companyName !== undefined && dto.companyName.trim() !== '' ? dto.companyName.trim() : undefined,
+        phone: dto.phone !== undefined ? dto.phone.trim() : undefined,
+        alternatePhone: dto.alternatePhone !== undefined ? dto.alternatePhone.trim() : undefined,
+        address: dto.address !== undefined ? dto.address.trim() : undefined,
+        city: dto.city !== undefined ? dto.city.trim() : undefined,
+        state: dto.state !== undefined ? dto.state.trim() : undefined,
+        country: dto.country !== undefined ? dto.country.trim() : undefined,
+        pincode: dto.pincode !== undefined ? dto.pincode.trim() : undefined,
+        industry: dto.industry !== undefined ? dto.industry.trim() : undefined,
+        logo: logoUrl,
+      },
+    });
+
+    // Optionally update user name if contactPerson is provided
+    if (dto.contactPerson && dto.contactPerson.trim().length > 0) {
+      const parts = dto.contactPerson.trim().split(/\s+/);
+      const firstName = parts[0];
+      const lastName = parts.slice(1).join(' ') || '';
+      await this.prisma.user.update({
+        where: { id: userRecord.id },
+        data: {
+          firstName,
+          lastName: lastName.length > 0 ? lastName : userRecord.lastName,
+        },
+      });
+    }
+
+    return this.getMe(user);
+  }
+
+  async getCustomerProfile(userId: number, explicitCustomerId?: number | string) {
+    return this.getMe({ id: userId, customerId: explicitCustomerId });
   }
 }
 

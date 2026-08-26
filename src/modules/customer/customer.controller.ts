@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
-import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import {
+  CreateCustomerDto,
+  UpdateCustomerDto,
+  UpdateCustomerProfileDto,
+} from './dto/customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -22,10 +26,22 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
 
-  @Get('profile')
+  @Get('me')
   @ApiOperation({ summary: 'Get profile of current authenticated customer' })
+  async getMe(@CurrentUser() user: any) {
+    return this.customerService.getMe(user);
+  }
+
+  @Patch('me')
+  @ApiOperation({ summary: 'Update profile of current authenticated customer' })
+  async updateMe(@CurrentUser() user: any, @Body() dto: UpdateCustomerProfileDto) {
+    return this.customerService.updateMe(user, dto);
+  }
+
+  @Get('profile')
+  @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
   async getProfile(@CurrentUser() user: any) {
-    return this.customerService.getCustomerProfile(user.id || user.userId, user.customerId);
+    return this.customerService.getMe(user);
   }
 
   @Get('metrics')

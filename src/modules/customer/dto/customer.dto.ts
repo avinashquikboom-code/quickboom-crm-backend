@@ -199,3 +199,70 @@ export class UpdateCustomerDto {
   @IsOptional()
   leadLimit?: number;
 }
+
+export class UpdateCustomerProfileDto {
+  @ApiPropertyOptional({ example: 'Acme Enterprises' })
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'Acme Global Holdings Pvt Ltd' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @ApiPropertyOptional({ example: '+91 98765 43210' })
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @ApiPropertyOptional({ example: '+91 98765 00000' })
+  @IsString()
+  @IsOptional()
+  alternatePhone?: string;
+
+  @ApiPropertyOptional({ example: '101, Business Park, BKC' })
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'Maharashtra' })
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @ApiPropertyOptional({ example: 'India' })
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @ApiPropertyOptional({ example: '400051' })
+  @IsString()
+  @IsOptional()
+  pincode?: string;
+
+  @ApiPropertyOptional({ example: 'Information Technology' })
+  @IsString()
+  @IsOptional()
+  industry?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/logo.png' })
+  @IsString()
+  @IsOptional()
+  logo?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/logo.png' })
+  @IsString()
+  @IsOptional()
+  profileImage?: string;
+
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsOptional()
+  contactPerson?: string;
+}
