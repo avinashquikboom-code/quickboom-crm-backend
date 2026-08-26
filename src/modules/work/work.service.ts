@@ -913,6 +913,7 @@ export class WorkService {
               purchaseId: `PUR-${String(activeSub.id).padStart(3, '0')}`,
               productName: activeSub.plan?.name || 'Active Plan',
               serviceName: 'Plan Activation',
+              planName: activeSub.plan?.name || 'Active Plan',
               title: `${activeSub.plan?.name || 'Active Plan'} Started`,
               date: subStart,
               scheduleDate: subStart,
