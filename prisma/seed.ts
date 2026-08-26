@@ -151,6 +151,105 @@ async function main() {
     });
   }
 
+  // 7. Seed / Upsert standard subscription packages
+  const plans = [
+    {
+      name: 'Basic Package',
+      code: 'BASIC',
+      description: 'Starter Plan for emerging businesses',
+      monthlyPrice: 9999,
+      yearlyPrice: 95990,
+      userLimit: 5,
+      leadLimit: 500,
+      storageLimit: BigInt(5368709120),
+      features: [
+        '4 Reels',
+        '3 Creative Posts',
+        '1 Influencer Promotion',
+        '3 Stories',
+        'Social Media Account Management',
+        'Content Writing & Captions',
+        'Trending Hashtags',
+        'Meta Ads Campaign Setup & Management',
+        'Google Ads Campaign Setup & Management',
+        'Monthly Performance Report',
+        'Ads will run only during the content execution period.',
+        'Meta & Google Ads Budget will be paid by the client.',
+      ],
+    },
+    {
+      name: 'Standard Package',
+      code: 'STANDARD',
+      description: 'Growth Plan for expanding companies',
+      monthlyPrice: 14999,
+      yearlyPrice: 143990,
+      userLimit: 25,
+      leadLimit: 5000,
+      storageLimit: BigInt(26843545600),
+      features: [
+        '6 Reels',
+        '4 Creative Posts',
+        '2 Influencer Promotions',
+        '5 Stories',
+        'Social Media Account Management',
+        'Trending Hashtags',
+        'Meta Ads Campaign Setup & Management',
+        'Google Ads Campaign Setup & Management',
+        'Monthly Performance Report',
+        'Ads will run only during the content execution period.',
+        'Meta & Google Ads Budget will be paid by the client.',
+      ],
+    },
+    {
+      name: 'Premium Package',
+      code: 'PREMIUM',
+      description: 'Scale Plan for enterprise-level growth',
+      monthlyPrice: 25999,
+      yearlyPrice: 249590,
+      userLimit: 100,
+      leadLimit: 50000,
+      storageLimit: BigInt(107374182400),
+      features: [
+        '2 Product Reels',
+        '8 Influencer Reels (Total 10 Reels)',
+        '8 Creative Posts',
+        '30 Stories',
+        'Complete Social Media Management',
+        'Premium Content Strategy & Caption Writing',
+        'Advanced Hashtag Research',
+        'Meta Ads Campaign Setup & Management',
+        'Google Ads Campaign Setup & Management',
+        'Detailed Monthly Analytics Report',
+        'Priority Graphic Designing',
+        'Ads will run throughout the campaign/content execution period.',
+        'Meta & Google Ads Budget will be paid by the client.',
+      ],
+    },
+  ];
+
+  for (const p of plans) {
+    const existing = await prisma.plan.findUnique({
+      where: { code: p.code },
+    });
+    if (!existing) {
+      await prisma.plan.create({ data: p });
+      console.log(`✅ Created plan: ${p.name}`);
+    } else {
+      await prisma.plan.update({
+        where: { id: existing.id },
+        data: {
+          name: p.name,
+          monthlyPrice: p.monthlyPrice,
+          yearlyPrice: p.yearlyPrice,
+          description: p.description,
+          features: p.features,
+          isActive: true,
+        },
+      });
+      console.log(`✅ Refreshed plan: ${p.name}`);
+    }
+  }
+
   console.log(`✅ Ready: Admin (admin@quikboom.com) & Demo Employee (demo@gmail.com) with password: ${password}`);
 }
 

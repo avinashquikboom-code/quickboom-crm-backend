@@ -240,9 +240,9 @@ export class PlanAccessService {
         }))
       : [
           { serviceName: 'Reels', totalQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 10 : (basePlan.code === 'STANDARD' ? 6 : 4) },
-          { serviceName: 'Creative Posts', totalQty: basePlan.code === 'PREMIUM' ? 6 : (basePlan.code === 'STANDARD' ? 4 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 6 : (basePlan.code === 'STANDARD' ? 4 : 3) },
-          { serviceName: 'Stories', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 5 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 5 : 3) },
-          { serviceName: 'Influencer Promotion', totalQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 3 : (basePlan.code === 'STANDARD' ? 2 : 1) },
+          { serviceName: 'Creative Posts', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 4 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 4 : 3) },
+          { serviceName: 'Stories', totalQty: basePlan.code === 'PREMIUM' ? 30 : (basePlan.code === 'STANDARD' ? 5 : 3), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 30 : (basePlan.code === 'STANDARD' ? 5 : 3) },
+          { serviceName: 'Influencer Promotion', totalQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 2 : 1), usedQty: 0, scheduledQty: 0, remainingQty: basePlan.code === 'PREMIUM' ? 8 : (basePlan.code === 'STANDARD' ? 2 : 1) },
         ];
 
     const result: EffectivePlan = {

@@ -89,23 +89,25 @@ export class SubscriptionService {
         {
           name: 'Premium Package',
           code: 'PREMIUM',
-          description: 'Full-service enterprise scale suite',
-          monthlyPrice: 24999,
-          yearlyPrice: 239990,
+          description: 'Scale Plan for enterprise-level growth',
+          monthlyPrice: 25999,
+          yearlyPrice: 249590,
           userLimit: 100,
           leadLimit: 50000,
           storageLimit: BigInt(107374182400),
           features: [
-            '10 Reels',
-            '6 Creative Posts',
-            '3 Influencer Promotions',
-            '8 Stories',
-            'Social Media Account Management',
-            'Trending Hashtags',
+            '2 Product Reels',
+            '8 Influencer Reels (Total 10 Reels)',
+            '8 Creative Posts',
+            '30 Stories',
+            'Complete Social Media Management',
+            'Premium Content Strategy & Caption Writing',
+            'Advanced Hashtag Research',
             'Meta Ads Campaign Setup & Management',
             'Google Ads Campaign Setup & Management',
-            'Monthly Performance Report',
-            'Ads will run only during the content execution period.',
+            'Detailed Monthly Analytics Report',
+            'Priority Graphic Designing',
+            'Ads will run throughout the campaign/content execution period.',
             'Meta & Google Ads Budget will be paid by the client.',
           ],
         },
@@ -121,20 +123,29 @@ export class SubscriptionService {
       });
     }
 
-    return plans.map((p) => ({
-      id: p.id,
-      name: p.name,
-      code: p.code,
-      description: p.description,
-      monthlyPrice: Number(p.monthlyPrice),
-      yearlyPrice: Number(p.yearlyPrice),
-      userLimit: p.userLimit,
-      leadLimit: p.leadLimit,
-      storageLimitBytes: Number(p.storageLimit),
-      features: p.features,
-      isActive: p.isActive,
-      isRecommended: p.code === 'STANDARD',
-    }));
+    return plans.map((p) => {
+      let subtitle = 'Custom Plan';
+      if (p.code === 'BASIC') subtitle = 'Starter Plan';
+      else if (p.code === 'STANDARD') subtitle = 'Growth Plan';
+      else if (p.code === 'PREMIUM') subtitle = 'Scale Plan';
+      else if (p.description) subtitle = p.description;
+
+      return {
+        id: p.id,
+        name: p.name,
+        code: p.code,
+        subtitle,
+        description: p.description,
+        monthlyPrice: Number(p.monthlyPrice),
+        yearlyPrice: Number(p.yearlyPrice),
+        userLimit: p.userLimit,
+        leadLimit: p.leadLimit,
+        storageLimitBytes: Number(p.storageLimit),
+        features: p.features,
+        isActive: p.isActive,
+        isRecommended: p.code === 'STANDARD',
+      };
+    });
   }
 
   async getPlanById(id: number | string) {
@@ -142,14 +153,17 @@ export class SubscriptionService {
       where: { id: Number(id), deletedAt: null },
     });
 
-    if (!plan) {
-      throw new NotFoundException(`Plan with ID ${id} not found`);
-    }
+    let subtitle = 'Custom Plan';
+    if (plan.code === 'BASIC') subtitle = 'Starter Plan';
+    else if (plan.code === 'STANDARD') subtitle = 'Growth Plan';
+    else if (plan.code === 'PREMIUM') subtitle = 'Scale Plan';
+    else if (plan.description) subtitle = plan.description;
 
     return {
       id: plan.id,
       name: plan.name,
       code: plan.code,
+      subtitle,
       description: plan.description,
       monthlyPrice: Number(plan.monthlyPrice),
       yearlyPrice: Number(plan.yearlyPrice),

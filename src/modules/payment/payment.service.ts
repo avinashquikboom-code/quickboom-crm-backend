@@ -309,13 +309,13 @@ export class PaymentService {
         serviceQuotas.push({ serviceName: 'Reels', totalQty: plan.code === 'PREMIUM' ? 10 : (plan.code === 'STANDARD' ? 6 : 4) });
       }
       if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('post') || s.serviceName.toLowerCase().includes('creative'))) {
-        serviceQuotas.push({ serviceName: 'Creative Posts', totalQty: plan.code === 'PREMIUM' ? 6 : (plan.code === 'STANDARD' ? 4 : 3) });
+        serviceQuotas.push({ serviceName: 'Creative Posts', totalQty: plan.code === 'PREMIUM' ? 8 : (plan.code === 'STANDARD' ? 4 : 3) });
       }
       if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('story') || s.serviceName.toLowerCase().includes('stories'))) {
-        serviceQuotas.push({ serviceName: 'Stories', totalQty: plan.code === 'PREMIUM' ? 8 : (plan.code === 'STANDARD' ? 5 : 3) });
+        serviceQuotas.push({ serviceName: 'Stories', totalQty: plan.code === 'PREMIUM' ? 30 : (plan.code === 'STANDARD' ? 5 : 3) });
       }
       if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('influencer'))) {
-        serviceQuotas.push({ serviceName: 'Influencer Promotion', totalQty: plan.code === 'PREMIUM' ? 3 : (plan.code === 'STANDARD' ? 2 : 1) });
+        serviceQuotas.push({ serviceName: 'Influencer Promotion', totalQty: plan.code === 'PREMIUM' ? 8 : (plan.code === 'STANDARD' ? 2 : 1) });
       }
 
       for (const sq of serviceQuotas) {
