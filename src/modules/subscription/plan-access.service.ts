@@ -106,61 +106,20 @@ export class PlanAccessService {
 
     let basePlan = sub?.plan;
 
-    // If no subscription found, check if a default/fallback plan exists in DB
+    // If no subscription found, return null so frontend/controllers know customer has no active plan
     if (!sub || !basePlan) {
-      basePlan = await this.prisma.plan.findFirst({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { monthlyPrice: 'asc' },
-      });
-
-      if (!basePlan) {
-        // Fallback default structure
-        return {
-          customerId: numCustomerId,
-          planId: 0,
-          planName: 'Basic Package',
-          planCode: 'BASIC',
-          status: SubscriptionStatus.ACTIVE,
-          isExpired: false,
-          isActive: true,
-          billingCycle: 'MONTHLY',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          price: 9999,
-          basePrice: 9999,
-          customPrice: null,
-          isCustomized: false,
-          userLimit: 5,
-          leadLimit: 500,
-          storageLimitBytes: 5368709120,
-          scheduleLimit: 10,
-          usedSchedules: 0,
-          remainingSchedules: 10,
-          features: ['Customer Management', 'Calendar', 'Schedule', 'Works', 'Reports'],
-          services: [
-            { serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 0, remainingQty: 4 },
-            { serviceName: 'Creative Posts', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
-            { serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
-            { serviceName: 'Influencer Promotion', totalQty: 1, usedQty: 0, scheduledQty: 0, remainingQty: 1 },
-          ],
-          usage: {
-            currentUsers: 0,
-            currentLeads: 0,
-            currentStorageBytes: 0,
-            scheduledWorks: 0,
-          },
-        };
-      }
+      this.logger.debug(`[PLAN_DEBUG] No subscription found for customer ${numCustomerId}`);
+      return null as any;
     }
 
     // 2. Check expiration
     const now = new Date();
-    const isExpired = sub
-      ? sub.status === SubscriptionStatus.EXPIRED || (sub.endDate && now > new Date(sub.endDate))
-      : false;
-    const isCanceled = sub ? sub.status === SubscriptionStatus.CANCELED : false;
-    const isPastDue = sub ? sub.status === SubscriptionStatus.PAST_DUE : false;
-    const isActive = sub ? !isExpired && !isCanceled && !isPastDue : true;
+    const isExpired =
+      sub.status === SubscriptionStatus.EXPIRED ||
+      (sub.endDate ? now > new Date(sub.endDate) : false);
+    const isCanceled = sub.status === SubscriptionStatus.CANCELED;
+    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE;
+    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled && !isPastDue;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined

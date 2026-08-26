@@ -103,6 +103,11 @@ export class PaymentService {
     const totalAmount = basePrice + taxAmount;
     const amountInPaise = Math.round(totalAmount * 100);
 
+    this.logger.log(`[PLAN_PURCHASE] planId=${numPlanId}, customerId=${customerId}`);
+    this.logger.log(
+      `[RAZORPAY_ORDER_CREATE] amount=${amountInPaise}, currency=${dto.currency || 'INR'}, customerId=${customerId}, planId=${numPlanId}`,
+    );
+
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
     let razorpayOrderId = `order_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 
@@ -129,6 +134,7 @@ export class PaymentService {
       }
     }
 
+    this.logger.log(`[RAZORPAY_ORDER_RESPONSE] orderId=${razorpayOrderId}, status=created`);
     this.logger.log(
       `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=${totalAmount}`,
     );
@@ -176,6 +182,8 @@ export class PaymentService {
       throw new NotFoundException(`Plan with ID ${dto.planId} not found`);
     }
 
+    this.logger.log(`[PAYMENT_VERIFY] orderId=${dto.razorpay_order_id}, paymentId=${dto.razorpay_payment_id}`);
+
     // Verify HMAC SHA256 Signature
     const keySecret = this.getRazorpayKeySecret();
     const generatedSignature = crypto
@@ -196,6 +204,8 @@ export class PaymentService {
       );
       throw new BadRequestException('Invalid Razorpay payment signature');
     }
+
+    this.logger.log(`[SUBSCRIPTION_ACTIVATE] customerId=${customerId}, planId=${plan.id}`);
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
     const basePrice =

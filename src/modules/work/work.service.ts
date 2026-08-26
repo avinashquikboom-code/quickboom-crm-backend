@@ -774,19 +774,7 @@ export class WorkService {
       }
     }
 
-    // Auto-generate schedules in background if customer has active plan entitlements but 0 work items
-    if (numCustomerId) {
-      this.prisma.work.count({
-        where: { customerId: numCustomerId, status: { not: WorkStatus.CANCELLED } },
-      }).then((existingCount) => {
-        if (existingCount === 0) {
-          this.generatePlanSchedules(numCustomerId).catch((err) => {
-            this.logger.debug(`Background auto-schedule generation skipped: ${err}`);
-          });
-        }
-      }).catch(() => {});
-    }
-
+    // Target single date or range
     const queryStart = Date.now();
     this.logger.debug(`[CALENDAR_QUERY_START] customerId=${numCustomerId}, date=${query.date}`);
     const items = await this.prisma.work.findMany({
@@ -989,7 +977,7 @@ export class WorkService {
     }
 
     const activePlan = await this.planAccessService.getEffectivePlan(numCustomerId);
-    if (!activePlan.isActive || activePlan.isExpired) {
+    if (!activePlan || !activePlan.isActive || activePlan.isExpired) {
       return {
         success: false,
         message: 'Cannot generate schedules. Plan is inactive or expired.',

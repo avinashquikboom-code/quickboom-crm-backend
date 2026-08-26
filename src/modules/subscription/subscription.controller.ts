@@ -57,10 +57,19 @@ export class SubscriptionController {
     }
     try {
       const plan = await this.planAccessService.getEffectivePlan(customerId);
+      if (!plan || !plan.isActive || !plan.subscriptionId) {
+        return {
+          success: true,
+          data: null,
+          effectivePlan: null,
+          message: 'No active subscription found',
+        };
+      }
       return {
         success: true,
         data: {
           id: plan.planId,
+          subscriptionId: plan.subscriptionId,
           name: plan.planName,
           code: plan.planCode,
           billingCycle: plan.billingCycle,
@@ -95,6 +104,7 @@ export class SubscriptionController {
       return {
         success: true,
         data: null,
+        effectivePlan: null,
         message: err?.message || 'No active subscription found',
       };
     }
