@@ -28,6 +28,12 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       code: 'BASIC',
       monthlyPrice: 9999,
       yearlyPrice: 95990,
+      features: [
+        '4 Reels',
+        '3 Creative Posts',
+        '1 Influencer Promotion',
+        '3 Stories',
+      ],
     },
   });
 
@@ -53,6 +59,7 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       },
       customerSubscription: {
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
       },
       $transaction: jest.fn(async (cb) => {
         if (typeof cb === 'function') {
@@ -95,8 +102,8 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
     });
   });
 
-  describe('2. Basic Package (11 Deliverables) Multi-Stage Schedule Generation', () => {
-    it('generates multi-stage Reel workflows (Shoot, Edit, Upload) & deliverables for Basic Package', async () => {
+  describe('2. Basic Package (11 Deliverables) Schedule Generation', () => {
+    it('generates exact 1:1 purchased deliverables (4 Reels, 3 Posts, 1 Promo, 3 Stories = 11 activities) for Basic Package', async () => {
       const customerId = 101;
       const startDate = new Date('2026-08-20T00:00:00.000Z');
       const endDate = new Date('2026-09-20T00:00:00.000Z');
@@ -105,25 +112,19 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
         mockActiveSub(customerId, startDate, endDate),
       );
 
-      prisma.planEntitlement.findMany.mockResolvedValue([
-        { id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 0 },
-        { id: 2, serviceName: 'Creative Posts', totalQty: 3, usedQty: 0, scheduledQty: 0 },
-        { id: 3, serviceName: 'Influencer Promotion', totalQty: 1, usedQty: 0, scheduledQty: 0 },
-        { id: 4, serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0 },
-      ]);
+      prisma.planEntitlement.findFirst.mockResolvedValue(null);
+      prisma.planEntitlement.create.mockImplementation((args: any) => ({ id: Math.floor(Math.random() * 1000) + 1, ...args.data }));
+      prisma.planEntitlement.update.mockResolvedValue({});
 
       prisma.work.findMany.mockResolvedValue([]);
       prisma.work.create.mockImplementation((args: any) => ({ id: Math.floor(Math.random() * 1000) + 1, ...args.data }));
       prisma.work.count.mockResolvedValue(1);
-      prisma.planEntitlement.update.mockResolvedValue({});
 
       const result = await workService.generatePlanSchedules(customerId);
 
       expect(result.success).toBe(true);
-      expect(result.createdCount).toBe(19);
+      expect(result.createdCount).toBe(11);
       expect(prisma.workTask.createMany).toHaveBeenCalled();
-      const taskCalls = prisma.workTask.createMany.mock.calls;
-      expect(taskCalls.some((c: any) => c[0].data[0].title.includes('Reel Shoot') || c[0].data[0].title.includes('Rough Cut') || c[0].data[0].title.includes('Script'))).toBe(true);
     });
   });
 
@@ -137,16 +138,16 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
         mockActiveSub(customerId, startDate, endDate),
       );
 
-      prisma.planEntitlement.findMany.mockResolvedValue([
-        { id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 },
-      ]);
+      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 });
+      prisma.planEntitlement.update.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 });
 
       prisma.work.findMany.mockResolvedValue([
-        { id: 1, entitlementId: 1, title: 'Reels #1 - Shoot' },
-        { id: 2, entitlementId: 1, title: 'Reels #2 - Shoot' },
-        { id: 3, entitlementId: 1, title: 'Reels #3 - Shoot' },
-        { id: 4, entitlementId: 1, title: 'Reels #4 - Shoot' },
+        { id: 1, entitlementId: 1, title: 'Reels #1' },
+        { id: 2, entitlementId: 1, title: 'Reels #2' },
+        { id: 3, entitlementId: 1, title: 'Reels #3' },
+        { id: 4, entitlementId: 1, title: 'Reels #4' },
       ]);
+      prisma.work.count.mockResolvedValue(4);
 
       const result = await workService.generatePlanSchedules(customerId);
 

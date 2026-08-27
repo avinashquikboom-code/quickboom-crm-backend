@@ -20,6 +20,7 @@ import {
   maskKeyId,
 } from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus } from '@prisma/client';
+import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
 
@@ -437,59 +438,11 @@ export class PaymentService {
         data: { subscriptionId: sub.id },
       });
 
-      // 3. Provision Plan Entitlements based on Plan Code & Features
-      const planCodeUpper = (plan.code || '').toUpperCase();
-      const planNameUpper = (plan.name || '').toUpperCase();
-      const serviceQuotas: { serviceName: string; totalQty: number }[] = [];
-
-      if (planCodeUpper.includes('BASIC') || planNameUpper.includes('BASIC') || planNameUpper.includes('STARTER')) {
-        serviceQuotas.push(
-          { serviceName: 'Reels', totalQty: 4 },
-          { serviceName: 'Creative Posts', totalQty: 3 },
-          { serviceName: 'Influencer Promotion', totalQty: 1 },
-          { serviceName: 'Stories', totalQty: 3 },
-        );
-      } else if (planCodeUpper.includes('STANDARD') || planNameUpper.includes('STANDARD') || planNameUpper.includes('GROWTH')) {
-        serviceQuotas.push(
-          { serviceName: 'Reels', totalQty: 6 },
-          { serviceName: 'Creative Posts', totalQty: 4 },
-          { serviceName: 'Influencer Promotions', totalQty: 2 },
-          { serviceName: 'Stories', totalQty: 5 },
-        );
-      } else if (planCodeUpper.includes('PREMIUM') || planNameUpper.includes('PREMIUM') || planNameUpper.includes('SCALE')) {
-        serviceQuotas.push(
-          { serviceName: 'Product Reels', totalQty: 2 },
-          { serviceName: 'Influencer Reels', totalQty: 8 },
-          { serviceName: 'Creative Posts', totalQty: 8 },
-          { serviceName: 'Stories', totalQty: 30 },
-        );
-      } else {
-        const featureList = Array.isArray(plan.features) ? plan.features : [];
-        for (const item of featureList) {
-          const text = typeof item === 'string' ? item : ((item as any)?.name || (item as any)?.title || '');
-          const match = text.match(/^(\d+)\s+(.+)$/i);
-          if (match) {
-            const qty = parseInt(match[1], 10);
-            let name = match[2].trim();
-            name = name.replace(/\s*\(total\s+\d+\s+reels\)/i, '').trim();
-            serviceQuotas.push({ serviceName: name, totalQty: qty });
-          }
-        }
-        if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('reel'))) {
-          serviceQuotas.push({ serviceName: 'Reels', totalQty: 4 });
-        }
-        if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('post') || s.serviceName.toLowerCase().includes('creative'))) {
-          serviceQuotas.push({ serviceName: 'Creative Posts', totalQty: 3 });
-        }
-        if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('story') || s.serviceName.toLowerCase().includes('stories'))) {
-          serviceQuotas.push({ serviceName: 'Stories', totalQty: 3 });
-        }
-        if (!serviceQuotas.some((s) => s.serviceName.toLowerCase().includes('influencer'))) {
-          serviceQuotas.push({ serviceName: 'Influencer Promotion', totalQty: 1 });
-        }
-      }
+      // 3. Provision Plan Entitlements strictly from purchased plan features
+      const serviceQuotas = extractDeliverableQuotas(plan.features);
 
       for (const sq of serviceQuotas) {
+        if (sq.totalQty <= 0) continue;
         const existingEnt = await tx.planEntitlement.findFirst({
           where: { customerId, serviceName: sq.serviceName },
         });
@@ -523,7 +476,7 @@ export class PaymentService {
     // 4. Trigger Automatic Schedule Generation asynchronously
     try {
       await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
-      await this.workService.generatePlanSchedules(customerId);
+      await this.workService.generatePlanSchedules(customerId, result.subscription.id);
     } catch (schedErr: any) {
       this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
     }

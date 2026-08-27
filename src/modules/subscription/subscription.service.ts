@@ -8,6 +8,7 @@ import {
   RenewSubscriptionDto,
 } from './dto/subscription.dto';
 import { ScheduleService } from '../schedule/schedule.service';
+import { WorkService } from '../work/work.service';
 import {
   calculatePlanExpiry,
   calculateDaysRemaining,
@@ -22,6 +23,7 @@ export class SubscriptionService {
   constructor(
     private prisma: PrismaService,
     private scheduleService?: ScheduleService,
+    private workService?: WorkService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -1561,10 +1563,13 @@ export class SubscriptionService {
       return sub;
     });
 
-    // 5. Generate Monthly Schedules for the subscription period
+    // 5. Generate Monthly Schedules and Work deliverables for the subscription period
     try {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
+      }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(numCustomerId, newSub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed auto-generating schedule: ${err?.message}`);
@@ -1711,6 +1716,9 @@ export class SubscriptionService {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
       }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(oldSub.customerId, newSub.id);
+      }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on plan change: ${err?.message}`);
     }
@@ -1833,6 +1841,9 @@ export class SubscriptionService {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
       }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
+      }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on renewal: ${err?.message}`);
     }
@@ -1933,6 +1944,9 @@ export class SubscriptionService {
     try {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
+      }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on activation: ${err?.message}`);

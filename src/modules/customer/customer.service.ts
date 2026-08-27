@@ -12,6 +12,7 @@ import {
   UpdateCustomerProfileDto,
 } from './dto/customer.dto';
 import { ScheduleService } from '../schedule/schedule.service';
+import { WorkService } from '../work/work.service';
 import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 
@@ -23,6 +24,7 @@ export class CustomerService {
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
     private readonly qbIdGenerator: QBIdGenerator,
+    private readonly workService?: WorkService,
   ) {}
 
   /**
@@ -750,11 +752,16 @@ export class CustomerService {
       },
     });
 
-    // Auto-generate monthly schedule records based on anchor date and duration
+    // Auto-generate monthly schedule records and work deliverable schedules strictly for this plan
     let generatedSchedules = [];
     try {
-      const scheduleResult = await this.scheduleService.generateSchedulesForSubscription(newSubscription.id);
-      generatedSchedules = scheduleResult?.schedules || [];
+      if (this.scheduleService) {
+        const scheduleResult = await this.scheduleService.generateSchedulesForSubscription(newSubscription.id);
+        generatedSchedules = scheduleResult?.schedules || [];
+      }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(numericId, newSubscription.id);
+      }
     } catch (err) {
       // Non-blocking fallback
     }

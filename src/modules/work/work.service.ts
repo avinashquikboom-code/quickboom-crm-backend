@@ -8,6 +8,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
 import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus } from '@prisma/client';
+import {
+  extractDeliverableQuotas,
+  distributeDatesAcrossWorkingDays,
+} from '../../common/utils/plan-deliverable.util';
 
 @Injectable()
 export class WorkService {
@@ -776,11 +780,15 @@ export class WorkService {
       if (activeSubForCustomer) {
         where.subscriptionId = activeSubForCustomer.id;
         const subWorkCount = await this.prisma.work.count({
-          where: { customerId: numCustomerId, subscriptionId: activeSubForCustomer.id },
+          where: {
+            customerId: numCustomerId,
+            subscriptionId: activeSubForCustomer.id,
+            status: { not: WorkStatus.CANCELLED },
+          },
         });
         if (subWorkCount === 0) {
           try {
-            await this.generatePlanSchedules(numCustomerId);
+            await this.generatePlanSchedules(numCustomerId, activeSubForCustomer.id);
           } catch (e: any) {
             this.logger.warn(`Schedule generation on calendar query: ${e?.message}`);
           }
@@ -1043,328 +1051,177 @@ export class WorkService {
   }
 
   /**
-   * Automatically generate plan deliverable schedules based on active plan entitlements.
-   * Fully idempotent: only creates missing items, does not duplicate existing ones.
+   * Automatically generate plan deliverable schedules strictly from the customer's PURCHASED PLAN.
+   * Rules:
+   * 1. Read the exact plan & custom features purchased by the customer.
+   * 2. Only include services with quantity > 0. If quantity is 0, do not create any activity.
+   * 3. Generate exactly that many calendar activities (1:1 with purchased quantity).
+   * 4. Bounded strictly within [startDate, endDate], skipping non-working days (Sundays).
+   * 5. Fully idempotent: does not duplicate existing schedules for this subscription.
    */
-  async generatePlanSchedules(customerId: number | string) {
+  async generatePlanSchedules(customerId: number | string, subscriptionId?: number | string) {
     const numCustomerId = Number(customerId);
     if (!numCustomerId || isNaN(numCustomerId)) {
       throw new BadRequestException('Valid customer context required');
     }
 
-    const activePlan = await this.getActivePlanDirect(numCustomerId);
-    if (!activePlan || !activePlan.isActive || activePlan.isExpired) {
+    // 1. Resolve target subscription
+    let targetSub: any = null;
+    if (subscriptionId && !isNaN(Number(subscriptionId)) && Number(subscriptionId) > 0) {
+      targetSub = await this.prisma.customerSubscription.findUnique({
+        where: { id: Number(subscriptionId) },
+        include: { plan: true, customer: true },
+      });
+    }
+
+    if (!targetSub) {
+      targetSub = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true, customer: true },
+      });
+    }
+
+    if (!targetSub || !targetSub.plan) {
       return {
         success: false,
-        message: 'Cannot generate schedules. Plan is inactive or expired.',
+        message: 'Cannot generate schedules. No active or valid subscription found.',
         createdCount: 0,
         schedules: [],
       };
     }
 
-    let entitlements = await this.prisma.planEntitlement.findMany({
-      where: { customerId: numCustomerId },
-      orderBy: { id: 'asc' },
-    });
-
-    const startDate = activePlan.startDate ? new Date(activePlan.startDate) : new Date();
-    const endDate = activePlan.endDate ? new Date(activePlan.endDate) : new Date(startDate.getTime() + 30 * 86400000);
-
-    if (entitlements.length === 0) {
-      // Auto-provision entitlements from active plan deliverables
-      const planCodeUpper = (activePlan.planCode || '').toUpperCase();
-      const isPremium = planCodeUpper.includes('PREMIUM');
-      const isStandard = planCodeUpper.includes('STANDARD');
-
-      const defaultQuotas = isPremium
-        ? [
-            { serviceName: 'Product Reels', totalQty: 2 },
-            { serviceName: 'Influencer Reels', totalQty: 8 },
-            { serviceName: 'Creative Posts', totalQty: 8 },
-            { serviceName: 'Stories', totalQty: 30 },
-          ]
-        : (isStandard
-            ? [
-                { serviceName: 'Reels', totalQty: 6 },
-                { serviceName: 'Creative Posts', totalQty: 4 },
-                { serviceName: 'Influencer Promotions', totalQty: 2 },
-                { serviceName: 'Stories', totalQty: 5 },
-              ]
-            : [
-                { serviceName: 'Reels', totalQty: 4 },
-                { serviceName: 'Creative Posts', totalQty: 3 },
-                { serviceName: 'Influencer Promotion', totalQty: 1 },
-                { serviceName: 'Stories', totalQty: 3 },
-              ]);
-
-      for (const q of defaultQuotas) {
-        await this.prisma.planEntitlement.create({
-          data: {
-            customerId: numCustomerId,
-            planId: activePlan.planId,
-            serviceName: q.serviceName,
-            totalQty: q.totalQty,
-            usedQty: 0,
-            scheduledQty: 0,
-            validUntil: endDate,
-          },
-        });
-      }
-
-      entitlements = await this.prisma.planEntitlement.findMany({
-        where: { customerId: numCustomerId },
-        orderBy: { id: 'asc' },
-      });
+    const now = new Date();
+    const isExpired = targetSub.status === SubscriptionStatus.EXPIRED || (targetSub.endDate ? now > new Date(targetSub.endDate) : false);
+    if (isExpired && targetSub.status !== SubscriptionStatus.ACTIVE) {
+      return {
+        success: false,
+        message: 'Cannot generate schedules. Subscription is expired.',
+        createdCount: 0,
+        schedules: [],
+      };
     }
 
+    // 2. Extract exact deliverable quotas strictly from the purchased plan / custom features
+    const effectiveFeatures = targetSub.customFeatures || targetSub.plan.features || [];
+    const deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
+
+    if (deliverableQuotas.length === 0) {
+      return {
+        success: true,
+        message: 'No deliverable quotas configured in purchased plan.',
+        createdCount: 0,
+        schedules: [],
+      };
+    }
+
+    const startDate = targetSub.startDate ? new Date(targetSub.startDate) : new Date();
+    const endDate = targetSub.endDate ? new Date(targetSub.endDate) : new Date(startDate.getTime() + 30 * 86400000);
+
+    // Calculate total count of activities across all deliverable quotas
+    const totalDeliverablesCount = deliverableQuotas.reduce((sum, q) => sum + q.totalQty, 0);
+    const distributedDates = distributeDatesAcrossWorkingDays(startDate, endDate, totalDeliverablesCount);
+
     let totalCreated = 0;
+    let dateCursorIndex = 0;
 
     const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
       const createdItems: any[] = [];
 
-      // Resolve active customer subscription / purchase
-      const latestSub = await tx.customerSubscription.findFirst({
-        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
-        orderBy: { createdAt: 'desc' },
-      });
+      for (const quota of deliverableQuotas) {
+        if (quota.totalQty <= 0) continue;
 
-      // Helper to advance date by 1 working day (skipping Sunday)
-      const nextWorkingDay = (current: Date): Date => {
-        const next = new Date(current);
-        next.setDate(next.getDate() + 1);
-        if (next.getDay() === 0) {
-          next.setDate(next.getDate() + 1);
+        // Sync or provision PlanEntitlement for this service
+        let entitlement = await tx.planEntitlement.findFirst({
+          where: { customerId: numCustomerId, serviceName: quota.serviceName },
+        });
+
+        if (entitlement) {
+          entitlement = await tx.planEntitlement.update({
+            where: { id: entitlement.id },
+            data: {
+              planId: targetSub.planId,
+              totalQty: quota.totalQty,
+              validUntil: endDate,
+            },
+          });
+        } else {
+          entitlement = await tx.planEntitlement.create({
+            data: {
+              customerId: numCustomerId,
+              planId: targetSub.planId,
+              serviceName: quota.serviceName,
+              totalQty: quota.totalQty,
+              usedQty: 0,
+              scheduledQty: 0,
+              validUntil: endDate,
+            },
+          });
         }
-        return next > endDate ? new Date(endDate) : next;
-      };
 
-      let scheduleCursor = new Date(startDate);
-      if (scheduleCursor.getDay() === 0) {
-        scheduleCursor.setDate(scheduleCursor.getDate() + 1);
-      }
-
-      for (const ent of entitlements) {
-        if (ent.totalQty <= 0) continue;
-
-        // Query existing non-cancelled work items for this entitlement
+        // Query existing non-cancelled works for this subscription and entitlement
         const existingWorks = await tx.work.findMany({
           where: {
             customerId: numCustomerId,
-            entitlementId: ent.id,
+            subscriptionId: targetSub.id,
+            entitlementId: entitlement.id,
             status: { not: WorkStatus.CANCELLED },
           },
           orderBy: { id: 'asc' },
         });
 
-        const missingQty = ent.totalQty - existingWorks.length;
+        const missingQty = quota.totalQty - existingWorks.length;
         if (missingQty <= 0) {
+          dateCursorIndex += quota.totalQty;
           continue;
         }
 
-        const sNameLower = ent.serviceName.toLowerCase();
-        const isReel = sNameLower.includes('reel');
-        const isCreativePost = sNameLower.includes('post') || sNameLower.includes('creative');
-        const isStory = sNameLower.includes('story') || sNameLower.includes('stories');
-        const isInfluencer = sNameLower.includes('influencer');
-
         for (let i = 0; i < missingQty; i++) {
           const sequenceNumber = existingWorks.length + i + 1;
-          const targetDate = new Date(scheduleCursor);
+          const assignedDate = distributedDates[dateCursorIndex] || (distributedDates.length > 0 ? distributedDates[distributedDates.length - 1] : new Date(startDate));
+          dateCursorIndex++;
 
-          if (isReel) {
-            // Workflow: Shoot (Day 0) -> Editing (Day +1) -> Final Upload (Day +2)
-            const shootDate = new Date(scheduleCursor);
-            const editDate = nextWorkingDay(shootDate);
-            const uploadDate = nextWorkingDay(editDate);
+          const createdWork = await tx.work.create({
+            data: {
+              customerId: numCustomerId,
+              subscriptionId: targetSub.id,
+              planId: targetSub.planId,
+              entitlementId: entitlement.id,
+              workType: quota.workType,
+              title: `${quota.serviceName} #${sequenceNumber}`,
+              description: `${quota.serviceName} deliverable for ${targetSub.plan?.name || 'Customer Plan'}`,
+              scheduledDate: assignedDate,
+              scheduledTime: '11:00 AM',
+              priority: 'MEDIUM',
+              status: WorkStatus.SCHEDULED,
+            },
+          });
 
-            // 1. Reel - Shoot
-            const shootWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.REELS_SHOOT,
-                title: `${ent.serviceName} #${sequenceNumber} - Shoot`,
-                description: `Scripting & On-Location / Studio Shoot for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: shootDate,
-                scheduledTime: '11:00 AM',
-                priority: 'HIGH',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: shootWork.id, title: '1. Script & Audio Selection', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: shootWork.id, title: '2. Video Shoot & Footage Capture', stepOrder: 2, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(shootWork);
-            totalCreated++;
+          // Attach default deliverable workflow tasks
+          await tx.workTask.createMany({
+            data: [
+              { workId: createdWork.id, title: `1. Content Draft & Asset Creation`, stepOrder: 1, status: TaskStatus.PENDING },
+              { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING },
+              { workId: createdWork.id, title: `3. Final Publishing / Execution`, stepOrder: 3, status: TaskStatus.PENDING },
+            ],
+          });
 
-            // 2. Reel - Video Editing
-            const editWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.VIDEO_EDITING,
-                title: `${ent.serviceName} #${sequenceNumber} - Video Editing`,
-                description: `Color Grading, Transitions, Captions & Sound Design for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: editDate,
-                scheduledTime: '02:00 PM',
-                priority: 'MEDIUM',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: editWork.id, title: '1. Rough Cut & Color Grade', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: editWork.id, title: '2. Sound Design & Typography', stepOrder: 2, status: TaskStatus.PENDING },
-                { workId: editWork.id, title: '3. Customer Review Draft', stepOrder: 3, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(editWork);
-            totalCreated++;
-
-            // 3. Reel - Final Upload
-            const uploadWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.REEL,
-                title: `${ent.serviceName} #${sequenceNumber} - Upload`,
-                description: `Final Publishing, Trending Hashtag Optimization & Meta/Instagram Upload for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: uploadDate,
-                scheduledTime: '06:00 PM',
-                priority: 'MEDIUM',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: uploadWork.id, title: '1. Hashtags & SEO Captions', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: uploadWork.id, title: '2. Final Instagram / FB Upload', stepOrder: 2, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(uploadWork);
-            totalCreated++;
-
-            // Advance date cursor after Reel pipeline
-            scheduleCursor = nextWorkingDay(uploadDate);
-          } else if (isCreativePost) {
-            const postWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.POST_DESIGN,
-                title: `${ent.serviceName} #${sequenceNumber}`,
-                description: `Graphic Design & Carousel / Static Content Publishing for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: targetDate,
-                scheduledTime: '01:00 PM',
-                priority: 'MEDIUM',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: postWork.id, title: '1. Graphic Design / Copywriting', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: postWork.id, title: '2. Client Review & Approval', stepOrder: 2, status: TaskStatus.PENDING },
-                { workId: postWork.id, title: '3. Publishing & Hashtag Setup', stepOrder: 3, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(postWork);
-            totalCreated++;
-            scheduleCursor = nextWorkingDay(scheduleCursor);
-          } else if (isStory) {
-            const storyWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.STORY_DESIGN,
-                title: `${ent.serviceName} #${sequenceNumber}`,
-                description: `Interactive Story Design, Polls & Daily Updates for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: targetDate,
-                scheduledTime: '10:00 AM',
-                priority: 'MEDIUM',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: storyWork.id, title: '1. Story Graphic / Motion Design', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: storyWork.id, title: '2. Daily Story Publishing', stepOrder: 2, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(storyWork);
-            totalCreated++;
-            scheduleCursor = nextWorkingDay(scheduleCursor);
-          } else if (isInfluencer) {
-            const infWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.INFLUENCER_PROMO,
-                title: `${ent.serviceName} #${sequenceNumber}`,
-                description: `Creator Collaboration, Briefing & Influencer Shoutout Execution for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: targetDate,
-                scheduledTime: '04:00 PM',
-                priority: 'HIGH',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            await tx.workTask.createMany({
-              data: [
-                { workId: infWork.id, title: '1. Influencer Briefing & Product Handover', stepOrder: 1, status: TaskStatus.PENDING },
-                { workId: infWork.id, title: '2. Influencer Content Creation & Shoot', stepOrder: 2, status: TaskStatus.PENDING },
-                { workId: infWork.id, title: '3. Brand Review & Approval', stepOrder: 3, status: TaskStatus.PENDING },
-                { workId: infWork.id, title: '4. Influencer Posting & Tagging', stepOrder: 4, status: TaskStatus.PENDING },
-              ],
-            });
-            createdItems.push(infWork);
-            totalCreated++;
-            scheduleCursor = nextWorkingDay(scheduleCursor);
-          } else {
-            const genericWork = await tx.work.create({
-              data: {
-                customerId: numCustomerId,
-                subscriptionId: latestSub?.id || null,
-                planId: ent.planId || activePlan.planId,
-                entitlementId: ent.id,
-                workType: WorkType.SOCIAL_MEDIA_MANAGEMENT,
-                title: `${ent.serviceName} #${sequenceNumber}`,
-                description: `Scheduled deliverable for ${ent.serviceName} #${sequenceNumber}`,
-                scheduledDate: targetDate,
-                scheduledTime: '11:00 AM',
-                priority: 'MEDIUM',
-                status: WorkStatus.SCHEDULED,
-              },
-            });
-            createdItems.push(genericWork);
-            totalCreated++;
-            scheduleCursor = nextWorkingDay(scheduleCursor);
-          }
+          createdItems.push(createdWork);
+          totalCreated++;
         }
 
         // Update entitlement scheduledQty
         const activeCount = await tx.work.count({
           where: {
             customerId: numCustomerId,
-            entitlementId: ent.id,
-            status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED, WorkStatus.IN_PROGRESS, WorkStatus.CUSTOMER_REVIEW, WorkStatus.REVISION_REQUESTED, WorkStatus.COMPLETED, WorkStatus.APPROVED] },
+            subscriptionId: targetSub.id,
+            entitlementId: entitlement.id,
+            status: { not: WorkStatus.CANCELLED },
           },
         });
+
         await tx.planEntitlement.update({
-          where: { id: ent.id },
+          where: { id: entitlement.id },
           data: { scheduledQty: activeCount },
         });
       }
@@ -1374,7 +1231,7 @@ export class WorkService {
 
     return {
       success: true,
-      message: `Successfully generated ${totalCreated} plan deliverable schedules for customer ${numCustomerId}.`,
+      message: `Successfully generated ${totalCreated} purchased plan deliverable schedules for customer ${numCustomerId}.`,
       createdCount: totalCreated,
       schedules: allGeneratedWorks,
     };
