@@ -760,20 +760,162 @@ export class PaymentService {
   }
 
   /**
+   * 3. Create Offline Payment Request (Bank Transfer / Cash / Cheque)
+   * Subscription and Payment are set to PENDING status until Admin approval.
+   */
+  async createOfflinePayment(user: any, dto: any, reqCustomerId?: number) {
+    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if (!customerId || isNaN(customerId)) {
+      throw new ForbiddenException('User does not belong to any customer organization');
+    }
+
+    // Verify if offline payments are enabled in the database
+    const publicConfig = await this.getPublicPaymentConfig();
+    if (!publicConfig.data.offlinePaymentEnabled) {
+      throw new BadRequestException('Offline payment is currently disabled by Admin.');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer organization #${customerId} not found`);
+    }
+
+    // Resolve plan
+    let plan: any = null;
+    const numPlanId = Number(dto.planId);
+    if (!isNaN(numPlanId) && numPlanId > 0) {
+      plan = await this.prisma.plan.findFirst({
+        where: { id: numPlanId, deletedAt: null },
+      });
+    }
+
+    if (!plan && dto.planId != null) {
+      const codeUpper = String(dto.planId).trim().toUpperCase();
+      plan = await this.prisma.plan.findFirst({
+        where: {
+          OR: [
+            { code: codeUpper },
+            {
+              code:
+                codeUpper === 'STARTER'
+                  ? 'BASIC'
+                  : codeUpper === 'GROWTH'
+                  ? 'STANDARD'
+                  : codeUpper === 'SCALE'
+                  ? 'PREMIUM'
+                  : codeUpper,
+            },
+          ],
+          deletedAt: null,
+        },
+      });
+    }
+
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
+    }
+
+    const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
+    const basePrice = cycle === SubscriptionBillingCycle.YEARLY ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
+    const taxAmount = Math.round(basePrice * 0.18);
+    const totalAmount = basePrice + taxAmount;
+
+    const startDate = new Date();
+    const expiryDate = new Date(startDate);
+    if (cycle === SubscriptionBillingCycle.YEARLY) {
+      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+    } else {
+      expiryDate.setMonth(expiryDate.getMonth() + 1);
+    }
+
+    const orderNumber = `#QB-OFFLINE-${Date.now().toString(36).toUpperCase()}`;
+
+    // Create Subscription with status PENDING
+    const subscription = await this.prisma.customerSubscription.create({
+      data: {
+        customerId,
+        planId: plan.id,
+        status: SubscriptionStatus.PENDING,
+        startDate,
+        endDate: expiryDate,
+        billingCycle: cycle,
+        customUserLimit: plan.userLimit,
+        customLeadLimit: plan.leadLimit,
+        customStorageLimit: plan.storageLimit,
+      },
+    });
+
+    // Create PaymentHistory with status PENDING
+    const paymentMethodEnum =
+      dto.paymentMethod === 'CASH'
+        ? PaymentMethod.CASH
+        : dto.paymentMethod === 'OTHER'
+        ? PaymentMethod.OTHER
+        : PaymentMethod.BANK_TRANSFER;
+
+    const payment = await this.prisma.paymentHistory.create({
+      data: {
+        customerId,
+        subscriptionId: subscription.id,
+        amount: basePrice,
+        taxAmount,
+        totalAmount,
+        currency: 'INR',
+        paymentMethod: paymentMethodEnum,
+        paymentId: dto.referenceNumber || `OFFLINE-${Date.now()}`,
+        orderId: orderNumber,
+        status: 'PENDING',
+        orderNumber,
+        planId: plan.id,
+        planName: plan.name,
+        billingCycle: cycle,
+        transactionId: dto.referenceNumber || dto.notes || 'OFFLINE_PENDING',
+      },
+    });
+
+    this.logger.log(
+      `[OFFLINE_PAYMENT_REQUESTED] customerId=${customerId} plan=${plan.name} total=₹${totalAmount} subId=${subscription.id} orderNumber=${orderNumber}`,
+    );
+
+    return {
+      success: true,
+      message: 'Offline payment request submitted successfully and is pending Admin approval.',
+      orderNumber,
+      subscriptionId: subscription.id,
+      paymentId: payment.id,
+      totalAmountRupees: totalAmount,
+      currency: 'INR',
+      paymentStatus: 'PENDING',
+      subscriptionStatus: 'PENDING',
+      customer: {
+        id: customer.id,
+        name: customer.companyName || customer.name || 'QuikBoom Customer',
+      },
+    };
+  }
+
+  /**
    * Returns public, safe payment gateway settings from the Database for mobile and admin UI.
-   * Single source of truth: PostgreSQL IntegrationSetting table.
+   * Single source of truth: PostgreSQL Database. Never exposes secrets.
    */
   async getPublicPaymentConfig() {
     const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
     const rawConf = await this.integrationSettingsService.getIntegrationConfig('RAZORPAY');
     const config = rawConf?.config || {};
 
+    const razorpayEnabled = Boolean(rzpConfig.isEnabled && rzpConfig.isConfigured);
+    const offlinePaymentEnabled = Boolean(config.enableOfflinePayment ?? false);
+
     return {
       success: true,
       data: {
-        enableRazorpay: Boolean(rzpConfig.isEnabled && rzpConfig.isConfigured),
-        enableOfflinePayment: Boolean(config.enableOfflinePayment ?? false),
-        environment: rzpConfig.environment,
+        razorpayEnabled,
+        enableRazorpay: razorpayEnabled, // Alias for backward compatibility
+        offlinePaymentEnabled,
+        enableOfflinePayment: offlinePaymentEnabled, // Alias for backward compatibility
+        paymentMode: rzpConfig.environment,
         razorpayKeyId: rzpConfig.isEnabled ? rzpConfig.keyId : null,
         source: rzpConfig.source,
       },

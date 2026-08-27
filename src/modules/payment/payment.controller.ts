@@ -57,6 +57,20 @@ export class PaymentController {
     return this.paymentService.verifyRazorpayPayment(user, dto, customerId);
   }
 
+  @Post('offline/order')
+  @Post('offline/request')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create offline payment request (Bank Transfer / Cash) pending Admin approval' })
+  async createOfflinePayment(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() dto: any,
+  ) {
+    const customerId = req?.customerId || user?.customerId;
+    return this.paymentService.createOfflinePayment(user, dto, customerId);
+  }
+
   @Post('razorpay/webhook')
   @ApiOperation({ summary: 'Razorpay webhook handler for server-to-server payment updates' })
   async handleWebhook(

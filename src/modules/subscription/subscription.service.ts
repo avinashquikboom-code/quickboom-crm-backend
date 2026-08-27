@@ -1478,6 +1478,17 @@ export class SubscriptionService {
         },
       });
 
+      // Update any pending payment records for this subscription to SUCCESS (PAID)
+      await tx.paymentHistory.updateMany({
+        where: {
+          subscriptionId: sub.id,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'SUCCESS',
+        },
+      });
+
       return tx.customerSubscription.update({
         where: { id: sub.id },
         data: {

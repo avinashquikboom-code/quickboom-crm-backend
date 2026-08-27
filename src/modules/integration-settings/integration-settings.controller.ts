@@ -26,6 +26,22 @@ export class IntegrationSettingsController {
     private readonly integrationSettingsService: IntegrationSettingsService,
   ) {}
 
+  @Get('payment')
+  @ApiOperation({ summary: 'Get payment gateway and offline payment configuration for Admin Settings' })
+  async getPaymentSettings() {
+    return this.integrationSettingsService.getPaymentSettings();
+  }
+
+  @Put('payment')
+  @ApiOperation({ summary: 'Update payment gateway and offline payment settings in Database' })
+  async updatePaymentSettings(
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.updatePaymentSettings(dto, adminUserId);
+  }
+
   @Get()
   @ApiOperation({
     summary: 'Get all integration settings with masked secret values for Admin UI',

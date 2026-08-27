@@ -568,6 +568,136 @@ export class IntegrationSettingsService {
   }
 
   /**
+   * Retrieves full payment configuration for Admin Panel Settings (Single source of truth).
+   */
+  async getPaymentSettings() {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
+    const creds = conf?.credentials || {};
+    const config = conf?.config || {};
+    const isDb = conf?.source === 'DATABASE';
+
+    const testKeySecret = creds.testKeySecret || (conf?.environment === 'TEST' ? creds.keySecret : '');
+    const liveKeySecret = creds.liveKeySecret || (conf?.environment === 'LIVE' ? creds.keySecret : '');
+
+    const testSecretPresent = Boolean(testKeySecret && !testKeySecret.includes('***'));
+    const liveSecretPresent = Boolean(liveKeySecret && !liveKeySecret.includes('***'));
+
+    return {
+      success: true,
+      data: {
+        razorpayEnabled: Boolean(conf?.isEnabled ?? true),
+        paymentMode: ((conf?.environment || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST') as 'TEST' | 'LIVE',
+        razorpayTestKeyId: creds.testKeyId || (creds.keyId?.startsWith('rzp_test_') ? creds.keyId : '') || '',
+        razorpayTestKeySecret: testSecretPresent ? 'Configured' : '',
+        razorpayTestKeySecretConfigured: testSecretPresent,
+        razorpayLiveKeyId: creds.liveKeyId || (creds.keyId?.startsWith('rzp_live_') ? creds.keyId : '') || '',
+        razorpayLiveKeySecret: liveSecretPresent ? 'Configured' : '',
+        razorpayLiveKeySecretConfigured: liveSecretPresent,
+        offlinePaymentEnabled: Boolean(config.enableOfflinePayment ?? false),
+        webhookSecret: creds.webhookSecret || '',
+        source: isDb ? 'DATABASE' : 'DATABASE',
+      },
+    };
+  }
+
+  /**
+   * Updates payment settings in the database, invalidating cache immediately.
+   */
+  async updatePaymentSettings(dto: any, adminUserId?: number) {
+    const environment = (dto.paymentMode || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
+    const isEnabled = dto.razorpayEnabled !== undefined ? Boolean(dto.razorpayEnabled) : true;
+    const enableOfflinePayment = Boolean(dto.offlinePaymentEnabled);
+
+    const existingConf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
+    const existingCreds = existingConf?.credentials || {};
+
+    const testKeyId = dto.razorpayTestKeyId !== undefined ? dto.razorpayTestKeyId.trim() : (existingCreds.testKeyId || '');
+    const liveKeyId = dto.razorpayLiveKeyId !== undefined ? dto.razorpayLiveKeyId.trim() : (existingCreds.liveKeyId || '');
+
+    const credentials: Record<string, any> = {
+      testKeyId,
+      liveKeyId,
+      keyId: environment === 'TEST' ? testKeyId : liveKeyId,
+      webhookSecret: dto.webhookSecret !== undefined ? dto.webhookSecret.trim() : (existingCreds.webhookSecret || ''),
+    };
+
+    // Only update secrets if newly provided and not placeholder 'Configured' or '***'
+    if (dto.razorpayTestKeySecret && !dto.razorpayTestKeySecret.includes('***') && dto.razorpayTestKeySecret !== 'Configured') {
+      credentials.testKeySecret = dto.razorpayTestKeySecret.trim();
+      if (environment === 'TEST') {
+        credentials.keySecret = dto.razorpayTestKeySecret.trim();
+      }
+    } else if (existingCreds.testKeySecret) {
+      credentials.testKeySecret = existingCreds.testKeySecret;
+      if (environment === 'TEST') {
+        credentials.keySecret = existingCreds.testKeySecret;
+      }
+    }
+
+    if (dto.razorpayLiveKeySecret && !dto.razorpayLiveKeySecret.includes('***') && dto.razorpayLiveKeySecret !== 'Configured') {
+      credentials.liveKeySecret = dto.razorpayLiveKeySecret.trim();
+      if (environment === 'LIVE') {
+        credentials.keySecret = dto.razorpayLiveKeySecret.trim();
+      }
+    } else if (existingCreds.liveKeySecret) {
+      credentials.liveKeySecret = existingCreds.liveKeySecret;
+      if (environment === 'LIVE') {
+        credentials.keySecret = existingCreds.liveKeySecret;
+      }
+    }
+
+    await this.updateIntegrationConfig(
+      IntegrationProvider.RAZORPAY,
+      {
+        isEnabled,
+        environment,
+        credentials,
+        config: {
+          enableOfflinePayment,
+        },
+      },
+      adminUserId,
+    );
+
+    // Also persist to payment_settings table if table exists
+    try {
+      if ((this.prisma as any).paymentSetting) {
+        const existing = await (this.prisma as any).paymentSetting.findFirst();
+        if (existing) {
+          await (this.prisma as any).paymentSetting.update({
+            where: { id: existing.id },
+            data: {
+              razorpayEnabled: isEnabled,
+              paymentMode: environment,
+              razorpayTestKeyId: testKeyId,
+              razorpayTestKeySecret: credentials.testKeySecret ? encryptSecret(credentials.testKeySecret) : existing.razorpayTestKeySecret,
+              razorpayLiveKeyId: liveKeyId,
+              razorpayLiveKeySecret: credentials.liveKeySecret ? encryptSecret(credentials.liveKeySecret) : existing.razorpayLiveKeySecret,
+              offlinePaymentEnabled: enableOfflinePayment,
+              updatedByUserId: adminUserId,
+            },
+          });
+        } else {
+          await (this.prisma as any).paymentSetting.create({
+            data: {
+              razorpayEnabled: isEnabled,
+              paymentMode: environment,
+              razorpayTestKeyId: testKeyId,
+              razorpayTestKeySecret: credentials.testKeySecret ? encryptSecret(credentials.testKeySecret) : '',
+              razorpayLiveKeyId: liveKeyId,
+              razorpayLiveKeySecret: credentials.liveKeySecret ? encryptSecret(credentials.liveKeySecret) : '',
+              offlinePaymentEnabled: enableOfflinePayment,
+              updatedByUserId: adminUserId,
+            },
+          });
+        }
+      }
+    } catch (_) {}
+
+    return this.getPaymentSettings();
+  }
+
+  /**
    * Returns all supported integration settings with masked secrets for the Admin Panel.
    */
   async getAllIntegrationsMasked() {

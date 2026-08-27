@@ -1784,6 +1784,7 @@ enum RoleType {
 
 enum SubscriptionStatus {
   TRIAL
+  PENDING
   ACTIVE
   PAST_DUE
   CANCELED
@@ -2121,6 +2122,22 @@ model IntegrationSetting {
   @@index([provider, isEnabled])
   @@index([deletedAt])
   @@map("integration_settings")
+}
+
+model PaymentSetting {
+  id                    Int      @id @default(autoincrement())
+  razorpayEnabled       Boolean  @default(true)
+  paymentMode           String   @default("TEST") // "TEST" | "LIVE"
+  razorpayTestKeyId     String?  @default("")
+  razorpayTestKeySecret String?  @default("")
+  razorpayLiveKeyId     String?  @default("")
+  razorpayLiveKeySecret String?  @default("")
+  offlinePaymentEnabled Boolean  @default(false)
+  updatedByUserId       Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("payment_settings")
 }
 
 
