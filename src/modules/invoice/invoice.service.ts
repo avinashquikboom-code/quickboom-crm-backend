@@ -12,11 +12,12 @@ export class InvoiceService {
 
   async findAll(
     customerId: number | string,
-    query: { status?: InvoiceStatus; page?: number; limit?: number; search?: string },
+    query: { status?: InvoiceStatus; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
     user?: any,
   ) {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
-    const numCustomerId = Number(customerId);
+    const rawCustId = query?.customerId || query?.clientId || customerId;
+    const numCustomerId = Number(rawCustId);
 
     const where: any = { deletedAt: null };
 
@@ -40,6 +41,8 @@ export class InvoiceService {
         { invoiceNo: { contains: q, mode: 'insensitive' } },
         { contact: { firstName: { contains: q, mode: 'insensitive' } } },
         { contact: { lastName: { contains: q, mode: 'insensitive' } } },
+        { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { companyName: { contains: q, mode: 'insensitive' } } },
         { notes: { contains: q, mode: 'insensitive' } },
       ];
     }
@@ -52,28 +55,62 @@ export class InvoiceService {
         orderBy: { issueDate: 'desc' },
         include: {
           contact: true,
+          customer: true,
         },
       }),
       this.prisma.invoice.count({ where }),
     ]);
 
-    const formatted = items.map((inv) => ({
-      id: inv.id,
-      invoiceNumber: inv.invoiceNo,
-      invoiceNo: inv.invoiceNo,
-      clientName: inv.contact
+    const formatted = items.map((inv) => {
+      const contactFullName = inv.contact
         ? `${inv.contact.firstName || ''} ${inv.contact.lastName || ''}`.trim()
-        : 'Acme Enterprises',
-      issueDate: inv.issueDate,
-      dueDate: inv.dueDate,
-      amount: `₹${Number(inv.totalAmount || 0).toLocaleString('en-IN')}`,
-      totalAmount: Number(inv.totalAmount || 0),
-      subTotal: Number(inv.subTotal || 0),
-      taxAmount: Number(inv.taxAmount || 0),
-      status: inv.status,
-      notes: inv.notes,
-      contact: inv.contact,
-    }));
+        : '';
+      const clientDisplayName = contactFullName || inv.customer?.name || inv.customer?.companyName || 'General Client';
+
+      // Parse payment mode and plan from notes if recorded during subscription activation
+      let paymentMode = 'RAZORPAY';
+      if (inv.notes && inv.notes.includes('Payment Method:')) {
+        const afterMethod = inv.notes.split('Payment Method:')[1];
+        if (afterMethod) {
+          paymentMode = afterMethod.split('.')[0].trim();
+        }
+      }
+
+      let planName = 'CRM Subscription Plan';
+      if (inv.notes && inv.notes.includes('Subscription payment for')) {
+        const afterSub = inv.notes.split('Subscription payment for')[1];
+        if (afterSub) {
+          planName = afterSub.split('(')[0].trim();
+        }
+      }
+
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNo,
+        invoiceNo: inv.invoiceNo,
+        customerId: inv.customerId,
+        clientName: clientDisplayName,
+        customerName: inv.customer?.name || 'General Client',
+        companyName: inv.customer?.companyName || inv.customer?.name || 'General Client',
+        issueDate: inv.issueDate,
+        invoiceDate: inv.issueDate,
+        dueDate: inv.dueDate,
+        amount: `₹${Number(inv.totalAmount || 0).toLocaleString('en-IN')}`,
+        subTotal: Number(inv.subTotal || 0),
+        taxAmount: Number(inv.taxAmount || 0),
+        tax: Number(inv.taxAmount || 0),
+        totalAmount: Number(inv.totalAmount || 0),
+        total: Number(inv.totalAmount || 0),
+        status: inv.status,
+        paymentStatus: inv.status,
+        paymentMode,
+        paymentDate: inv.status === InvoiceStatus.PAID ? inv.issueDate : null,
+        planName,
+        notes: inv.notes,
+        contact: inv.contact,
+        customer: inv.customer,
+      };
+    });
 
     const totalPages = Math.ceil(total / limit) || 1;
 

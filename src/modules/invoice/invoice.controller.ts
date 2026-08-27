@@ -33,6 +33,8 @@ export class InvoiceController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'clientId', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
@@ -40,17 +42,68 @@ export class InvoiceController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('customerId') queryCustomerId?: string,
+    @Query('clientId') queryClientId?: string,
   ) {
-    return this.invoiceService.findAll(
-      customerId,
+    const targetCustomerId = queryCustomerId || queryClientId || customerId;
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+
+    console.log('[ADMIN_INVOICE_REQUEST]', {
+      clientId: targetCustomerId,
+      customerId: targetCustomerId,
+      companyId: user?.companyId || targetCustomerId,
+      page: pageNum,
+      limit: limitNum,
+      status,
+      search,
+    });
+
+    const response = await this.invoiceService.findAll(
+      targetCustomerId,
       {
         status,
         search,
-        page: page ? parseInt(page, 10) : 1,
-        limit: limit ? parseInt(limit, 10) : 20,
+        customerId: queryCustomerId || queryClientId,
+        page: pageNum,
+        limit: limitNum,
       },
       user,
     );
+
+    console.log('[ADMIN_INVOICE_RESPONSE]', {
+      status: 200,
+      count: response?.data?.length || response?.items?.length || 0,
+      total: response?.pagination?.total || response?.meta?.total || 0,
+    });
+
+    return response;
+  }
+
+  @Get('customers/:customerId/invoices')
+  @ApiOperation({ summary: 'Get invoices for specific customer' })
+  async findCustomerInvoices(
+    @Param('customerId') custId: string,
+    @CurrentUser() user: any,
+    @Query('status') status?: InvoiceStatus,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.findAll(custId, user, status, search, page, limit, custId);
+  }
+
+  @Get('admin/customers/:customerId/invoices')
+  @ApiOperation({ summary: 'Get invoices for specific customer (Admin alias)' })
+  async findAdminCustomerInvoices(
+    @Param('customerId') custId: string,
+    @CurrentUser() user: any,
+    @Query('status') status?: InvoiceStatus,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.findAll(custId, user, status, search, page, limit, custId);
   }
 
   @Get(':id')

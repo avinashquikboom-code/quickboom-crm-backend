@@ -20,12 +20,12 @@ export class CustomerGuard implements CanActivate {
 
     if (isSuperAdmin) {
       request.isSuperAdmin = true;
-      const explicitCustomerId = request.headers['x-customer-id'] || request.query?.customerId;
+      const explicitCustomerId = request.query?.customerId || request.query?.clientId || request.headers['x-target-customer-id'];
       if (explicitCustomerId) {
         const resolvedId = await this.resolveCustomerPk(explicitCustomerId);
         request.customerId = resolvedId !== undefined ? resolvedId : (typeof explicitCustomerId === 'number' ? explicitCustomerId : parseInt(explicitCustomerId, 10) || explicitCustomerId);
-      } else if (user?.customerId != null) {
-        request.customerId = Number(user.customerId);
+      } else {
+        request.customerId = undefined;
       }
       return true;
     }

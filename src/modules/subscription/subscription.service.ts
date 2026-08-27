@@ -765,6 +765,43 @@ export class SubscriptionService {
         },
       });
 
+      // Generate Invoice record for this subscription transaction
+      const invoiceNo = `INV-${new Date(startDate).getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+      let contact = await tx.contact.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+      });
+      if (!contact) {
+        const cust = await tx.customer.findUnique({ where: { id: numCustomerId } });
+        contact = await tx.contact.create({
+          data: {
+            customerId: numCustomerId,
+            firstName: cust?.name || 'Customer',
+            lastName: 'Account',
+            email: cust?.email || 'billing@customer.com',
+            phone: cust?.phone || 'N/A',
+          },
+        });
+      }
+      await tx.invoice.create({
+        data: {
+          customerId: numCustomerId,
+          contactId: contact.id,
+          invoiceNo,
+          status: InvoiceStatus.PAID,
+          issueDate: startDate,
+          dueDate: startDate,
+          subTotal: basePrice,
+          taxAmount: tax,
+          discount: 0,
+          totalAmount: total,
+          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: ${(dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY}. Order: ${orderNumber}`,
+        },
+      });
+      await tx.paymentHistory.update({
+        where: { id: payment.id },
+        data: { invoiceUrl: invoiceNo },
+      });
+
       // 3. Initialize or refresh service entitlements based on plan features
       const featureList = Array.isArray(plan.features) ? plan.features : [];
       const serviceQuotas: { serviceName: string; totalQty: number }[] = [];
