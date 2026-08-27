@@ -18,6 +18,7 @@ import { EmployeeModule } from './modules/employee/employee.module';
 import { TeamModule } from './modules/team/team.module';
 import { VisitModule } from './modules/visit/visit.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { ReceiptModule } from './modules/receipt/receipt.module';
 import { ReportModule } from './modules/report/report.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
@@ -60,6 +61,7 @@ import { AppController } from './app.controller';
     TeamModule,
     VisitModule,
     InvoiceModule,
+    ReceiptModule,
     ReportModule,
     NotificationModule,
     AuditLogModule,

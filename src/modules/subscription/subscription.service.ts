@@ -318,7 +318,7 @@ export class SubscriptionService {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
 
-    const [payments, customOrders, currentSub, customer] = await Promise.all([
+    const [payments, customOrders, currentSub, customer, invoices] = await Promise.all([
       this.prisma.paymentHistory.findMany({
         where: { customerId: numCustomerId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -345,6 +345,10 @@ export class SubscriptionService {
       this.prisma.customer.findUnique({
         where: { id: numCustomerId },
       }),
+      this.prisma.invoice.findMany({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
     const combinedOrders: any[] = [];
@@ -352,6 +356,7 @@ export class SubscriptionService {
     // Map standard / package payments
     for (const p of payments) {
       const isPaid = p.status === 'SUCCESS' || p.status === 'PAID';
+      const isPending = p.status === 'PENDING';
       const billingCycle = (p.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
       const baseAmount = Number(p.amount);
       const taxAmount = Number(p.taxAmount || (baseAmount * 0.18));
@@ -360,6 +365,60 @@ export class SubscriptionService {
       const purchaseDate = p.createdAt;
       const activationDate = p.createdAt;
       const expiryDate = p.subscription?.endDate || SubscriptionService.calculateExpiryDate(purchaseDate, billingCycle);
+
+      const receiptNo = p.invoiceUrl?.startsWith('REC-')
+        ? p.invoiceUrl
+        : `REC-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`;
+
+      // Check if this is an installment payment or full payment
+      const planPrice = billingCycle === SubscriptionBillingCycle.YEARLY
+        ? Number(p.subscription?.plan?.yearlyPrice || 0)
+        : Number(p.subscription?.plan?.monthlyPrice || 0);
+      const isAdvance = (p.billingCycle as any) === 'ADVANCE' || (planPrice > 0 && Number(p.amount) < planPrice);
+      const matchingInvoice = invoices.find((inv) => inv.id === p.id || inv.status === 'PAID');
+
+      // Installments structure
+      const installments: any[] = [];
+      if (isAdvance) {
+        // 2 Installments: 50% + 50%
+        installments.push({
+          number: 1,
+          title: 'First Installment (50% Advance)',
+          amount: totalAmount,
+          status: isPaid ? 'PAID' : (isPending ? 'PENDING' : 'FAILED'),
+          receiptAvailable: isPaid,
+          receiptId: isPaid ? receiptNo : null,
+          receiptNumber: isPaid ? receiptNo : null,
+          downloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
+          lockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
+        });
+        installments.push({
+          number: 2,
+          title: 'Second Installment (50% Balance)',
+          amount: totalAmount,
+          status: 'PENDING',
+          receiptAvailable: false,
+          receiptId: null,
+          receiptNumber: null,
+          downloadUrl: null,
+          lockReason: 'Available after second installment',
+        });
+      } else {
+        // 100% Full Payment
+        installments.push({
+          number: 1,
+          title: 'Full Payment (100%)',
+          amount: totalAmount,
+          status: isPaid ? 'PAID' : (isPending ? 'PENDING' : 'FAILED'),
+          receiptAvailable: isPaid,
+          receiptId: isPaid ? receiptNo : null,
+          receiptNumber: isPaid ? receiptNo : null,
+          downloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
+          lockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
+        });
+      }
+
+      const invoiceAvailable = isPaid && !isAdvance && !!matchingInvoice;
 
       combinedOrders.push({
         id: p.id,
@@ -375,8 +434,10 @@ export class SubscriptionService {
         discount: 0,
         taxAmount,
         totalAmount,
+        paidAmount: isPaid ? totalAmount : 0,
+        remainingAmount: isPaid ? (isAdvance ? totalAmount : 0) : totalAmount,
         status: isPaid ? 'PAID' : (p.status === 'FAILED' ? 'FAILED' : 'PENDING'),
-        paymentStatus: isPaid ? 'PAID' : (p.status === 'FAILED' ? 'FAILED' : 'PENDING'),
+        paymentStatus: isPaid ? (isAdvance ? 'PARTIALLY_PAID' : 'FULLY_PAID') : (p.status === 'FAILED' ? 'FAILED' : 'PENDING'),
         paymentMethod: p.paymentMethod || 'RAZORPAY',
         transactionId: p.transactionId || `TXN-${p.id.toString().padStart(8, '0')}`,
         purchaseDate,
@@ -386,6 +447,19 @@ export class SubscriptionService {
         customerName: customer?.name || 'Customer Account',
         customerEmail: customer?.email || '',
         features: p.subscription?.plan?.features || currentSub?.plan?.features || [],
+        receiptAvailable: isPaid,
+        receiptId: isPaid ? receiptNo : null,
+        receiptNumber: isPaid ? receiptNo : null,
+        receiptDownloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
+        receiptLockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
+        invoiceAvailable,
+        invoiceId: invoiceAvailable ? matchingInvoice.id : null,
+        invoiceNumber: invoiceAvailable ? matchingInvoice.invoiceNo : null,
+        invoiceDownloadUrl: invoiceAvailable ? `/invoices/${matchingInvoice.id}/download` : null,
+        invoiceLockReason: isAdvance
+          ? 'Available after complete payment'
+          : (!isPaid ? (isPending ? 'Pending admin approval' : 'Payment required') : null),
+        installments,
       });
     }
 
@@ -409,6 +483,10 @@ export class SubscriptionService {
             ? Object.entries(selectedFeats).map(([k, v]: [string, any]) => `${v?.name || k}: ${v?.quantity || v}`)
             : []);
 
+      const receiptNo = `REC-${co.createdAt.getFullYear()}-CP${String(co.id).padStart(4, '0')}`;
+      const matchingInvoice = invoices.find((inv) => inv.status === 'PAID');
+      const invoiceAvailable = isPaid && !!matchingInvoice;
+
       combinedOrders.push({
         id: co.id + 100000, // Namespace ID for custom orders
         customOrderId: co.id,
@@ -424,8 +502,10 @@ export class SubscriptionService {
         discount: Number(co.discount || 0),
         taxAmount: Number(co.tax || (co.subtotal * 0.18)),
         totalAmount: Number(co.totalAmount),
+        paidAmount: isPaid ? Number(co.totalAmount) : 0,
+        remainingAmount: isPaid ? 0 : Number(co.totalAmount),
         status: isPaid ? 'PAID' : (isPending ? 'PENDING' : co.status),
-        paymentStatus: isPaid ? 'PAID' : (isPending ? 'PENDING' : co.status),
+        paymentStatus: isPaid ? 'FULLY_PAID' : (isPending ? 'PENDING' : co.status),
         paymentMethod: co.paymentMethod || 'RAZORPAY',
         transactionId: co.transactionId || `TXN-CP-${co.id}`,
         purchaseDate,
@@ -435,6 +515,29 @@ export class SubscriptionService {
         customerName: customer?.name || 'Customer Account',
         customerEmail: customer?.email || '',
         features: featureList,
+        receiptAvailable: isPaid,
+        receiptId: isPaid ? receiptNo : null,
+        receiptNumber: isPaid ? receiptNo : null,
+        receiptDownloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
+        receiptLockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
+        invoiceAvailable,
+        invoiceId: invoiceAvailable ? matchingInvoice.id : null,
+        invoiceNumber: invoiceAvailable ? matchingInvoice.invoiceNo : null,
+        invoiceDownloadUrl: invoiceAvailable ? `/invoices/${matchingInvoice.id}/download` : null,
+        invoiceLockReason: !isPaid ? (isPending ? 'Pending admin approval' : 'Payment required') : null,
+        installments: [
+          {
+            number: 1,
+            title: 'Custom Plan Payment',
+            amount: Number(co.totalAmount),
+            status: isPaid ? 'PAID' : (isPending ? 'PENDING' : 'FAILED'),
+            receiptAvailable: isPaid,
+            receiptId: isPaid ? receiptNo : null,
+            receiptNumber: isPaid ? receiptNo : null,
+            downloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
+            lockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
+          },
+        ],
       });
     }
 

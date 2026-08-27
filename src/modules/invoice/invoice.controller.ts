@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -17,6 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Response } from 'express';
 
 @ApiTags('Invoices & Payments')
 @ApiBearerAuth()
@@ -59,6 +61,17 @@ export class InvoiceController {
     @Param('id') id: string,
   ) {
     return this.invoiceService.findOne(customerId, id, user);
+  }
+
+  @Get(':id/download')
+  @ApiOperation({ summary: 'Download final tax invoice PDF' })
+  async downloadInvoice(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    return this.invoiceService.downloadInvoicePdf(customerId, id, user, res);
   }
 
   @Post()
