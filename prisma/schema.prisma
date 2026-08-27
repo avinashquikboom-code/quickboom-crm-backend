@@ -2126,6 +2126,7 @@ model IntegrationSetting {
 
 model PaymentSetting {
   id                    Int      @id @default(autoincrement())
+  singletonKey          String   @unique @default("DEFAULT")
   razorpayEnabled       Boolean  @default(true)
   paymentMode           String   @default("TEST") // "TEST" | "LIVE"
   razorpayTestKeyId     String?  @default("")
