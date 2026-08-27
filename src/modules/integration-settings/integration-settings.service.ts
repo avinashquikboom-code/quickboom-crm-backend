@@ -834,6 +834,8 @@ export class IntegrationSettingsService {
       IntegrationProvider.RAZORPAY,
       IntegrationProvider.GOOGLE_MAPS,
       IntegrationProvider.WHATSAPP,
+      IntegrationProvider.AWS,
+      IntegrationProvider.MSG91,
     ];
     const results = [];
 
