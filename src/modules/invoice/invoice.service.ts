@@ -117,6 +117,7 @@ export class InvoiceService {
       include: {
         contact: true,
         items: true,
+        customer: true,
       },
     });
 
@@ -227,81 +228,133 @@ export class InvoiceService {
     const primaryColor = '#10B981';
     const darkColor = '#0F172A';
     const grayColor = '#64748B';
+    const borderCol = '#E2E8F0';
     const lightBg = '#F8FAFC';
 
-    // Header
-    doc.fillColor(primaryColor).fontSize(22).font('Helvetica-Bold').text('QuikBoom CRM', 40, 40);
-    doc.fillColor(grayColor).fontSize(9).font('Helvetica').text('Smart Growth for Smarter Businesses', 40, 65);
+    // Header & Company Info
+    doc.fillColor(primaryColor).fontSize(20).font('Helvetica-Bold').text('QUIKBOOM CRM', 40, 40);
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
+      .text('QuikBoom Marketing Solutions Pvt Ltd', 40, 62)
+      .text('Dynasty Business Park, Andheri-Kurla Road, Mumbai, Maharashtra 400059', 40, 74)
+      .text('GSTIN: 27AABCT3518Q1Z4 | PAN: AABCT3518Q | State Code: 27', 40, 86);
 
-    doc.fillColor(darkColor).fontSize(16).font('Helvetica-Bold').text('FINAL TAX INVOICE', 380, 40, { align: 'right' });
-    doc.fillColor(primaryColor).fontSize(10).font('Helvetica-Bold').text(invoiceNo, 380, 60, { align: 'right' });
+    doc.fillColor(darkColor).fontSize(16).font('Helvetica-Bold').text('FINAL TAX INVOICE', 350, 40, { align: 'right' });
+    doc.fillColor(primaryColor).fontSize(10).font('Helvetica-Bold').text(invoiceNo, 350, 60, { align: 'right' });
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
+      .text('Original for Recipient', 350, 74, { align: 'right' })
+      .text(`Invoice Date: ${new Date(invoice.issueDate).toLocaleDateString('en-IN')}`, 350, 86, { align: 'right' });
 
-    doc.moveTo(40, 85).lineTo(555, 85).strokeColor('#E2E8F0').lineWidth(1).stroke();
+    doc.moveTo(40, 102).lineTo(555, 102).strokeColor(borderCol).lineWidth(1).stroke();
 
-    // Meta details block
-    doc.fillColor(grayColor).fontSize(9).font('Helvetica-Bold').text('INVOICE DETAILS', 40, 100);
-    doc.fillColor(darkColor).fontSize(10).font('Helvetica').text(`Invoice Date: ${new Date(invoice.issueDate).toLocaleDateString('en-IN')}`, 40, 115);
-    doc.text(`Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('en-IN') : 'Immediate'}`, 40, 130);
-    doc.text(`Invoice Status: ${invoice.status}`, 40, 145);
-
+    // Customer & Invoice Details 2-Column Section
+    const metaTop = 112;
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica-Bold').text('BILLED TO (CUSTOMER)', 40, metaTop);
     const clientName = invoice.contact
       ? `${invoice.contact.firstName || ''} ${invoice.contact.lastName || ''}`.trim()
-      : 'Customer Account';
+      : ((invoice as any).customer?.name || 'Customer Account');
 
-    doc.fillColor(grayColor).fontSize(9).font('Helvetica-Bold').text('BILLED TO (CUSTOMER)', 320, 100);
-    doc.fillColor(darkColor).fontSize(10).font('Helvetica').text(clientName, 320, 115);
-    doc.text(`Email: ${invoice.contact?.email || 'N/A'}`, 320, 130);
-    doc.text(`Phone: ${invoice.contact?.phone || 'N/A'}`, 320, 145);
+    doc.fillColor(darkColor).fontSize(10).font('Helvetica-Bold').text(clientName, 40, metaTop + 14);
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
+      .text(`Email: ${invoice.contact?.email || (invoice as any).customer?.email || 'N/A'}`, 40, metaTop + 28)
+      .text(`Phone: ${invoice.contact?.phone || (invoice as any).customer?.phone || 'N/A'}`, 40, metaTop + 40)
+      .text(`Customer ID: #${invoice.customerId}`, 40, metaTop + 52);
 
-    // Items table header
-    const tableTop = 180;
-    doc.rect(40, tableTop, 515, 24).fill('#F1F5F9');
-    doc.fillColor(darkColor).fontSize(9).font('Helvetica-Bold');
-    doc.text('DESCRIPTION / SERVICES', 50, tableTop + 7);
-    doc.text('SUBTOTAL', 280, tableTop + 7);
-    doc.text('TAX (GST 18%)', 380, tableTop + 7);
-    doc.text('TOTAL AMOUNT', 460, tableTop + 7, { align: 'right' });
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica-Bold').text('INVOICE / ORDER METRICS', 350, metaTop);
+    doc.fillColor(darkColor).fontSize(8.5).font('Helvetica')
+      .text(`Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('en-IN') : 'Settled'}`, 350, metaTop + 14)
+      .text(`Payment Status: ${invoice.status}`, 350, metaTop + 28)
+      .text(`Place of Supply: Maharashtra (27)`, 350, metaTop + 40)
+      .text(`Billing Mode: Full Plan Settlement`, 350, metaTop + 52);
 
-    // Items table row
-    const rowTop = tableTop + 30;
+    doc.moveTo(40, metaTop + 70).lineTo(555, metaTop + 70).strokeColor(borderCol).stroke();
+
+    // Itemized Table Header
+    const tableTop = metaTop + 82;
+    doc.rect(40, tableTop, 515, 22).fill('#F1F5F9');
+    doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold');
+    doc.text('ITEM / SERVICE DESCRIPTION', 50, tableTop + 6);
+    doc.text('SAC CODE', 240, tableTop + 6);
+    doc.text('BASE AMT', 320, tableTop + 6);
+    doc.text('GST (18%)', 400, tableTop + 6);
+    doc.text('TOTAL (INR)', 470, tableTop + 6, { align: 'right' });
+
+    // Itemized Table Rows
     const subTotal = Number(invoice.subTotal || 0);
     const taxAmount = Number(invoice.taxAmount || 0);
     const totalAmount = Number(invoice.totalAmount || subTotal + taxAmount);
+    const cgst = taxAmount / 2;
+    const sgst = taxAmount / 2;
+    const rowTop = tableTop + 28;
 
-    doc.fillColor(darkColor).fontSize(10).font('Helvetica-Bold').text('QuikBoom CRM Plan & Marketing Package', 50, rowTop);
-    doc.fontSize(8).font('Helvetica').fillColor(grayColor).text(`Tax Invoice Reference: ${invoiceNo}`, 50, rowTop + 14);
+    doc.fillColor(darkColor).fontSize(9.5).font('Helvetica-Bold').text('QuikBoom CRM Plan & Growth Package', 50, rowTop);
+    doc.fontSize(8).font('Helvetica').fillColor(grayColor).text(`Tax Invoice Reference: ${invoiceNo} • 100% Fully Settled`, 50, rowTop + 13);
 
-    doc.fillColor(darkColor).fontSize(9).font('Helvetica').text(`₹${subTotal.toLocaleString('en-IN')}`, 280, rowTop);
-    doc.text(`₹${taxAmount.toLocaleString('en-IN')}`, 380, rowTop);
-    doc.font('Helvetica-Bold').text(`₹${totalAmount.toLocaleString('en-IN')}`, 460, rowTop, { align: 'right' });
+    doc.fillColor(darkColor).fontSize(8.5).font('Helvetica').text('998311', 240, rowTop);
+    doc.text(`₹${subTotal.toLocaleString('en-IN')}`, 320, rowTop);
+    doc.text(`₹${taxAmount.toLocaleString('en-IN')}`, 400, rowTop);
+    doc.font('Helvetica-Bold').text(`₹${totalAmount.toLocaleString('en-IN')}`, 470, rowTop, { align: 'right' });
 
-    doc.moveTo(40, rowTop + 35).lineTo(555, rowTop + 35).strokeColor('#E2E8F0').stroke();
+    doc.moveTo(40, rowTop + 32).lineTo(555, rowTop + 32).strokeColor(borderCol).stroke();
 
-    // Summary block
-    const summaryTop = rowTop + 50;
-    doc.rect(340, summaryTop, 215, 75).fill(lightBg);
-    doc.rect(340, summaryTop, 215, 75).strokeColor('#E2E8F0').stroke();
+    // Summary & Tax Breakdown Box
+    const summaryTop = rowTop + 44;
 
-    doc.fillColor(grayColor).fontSize(9).font('Helvetica').text('Subtotal:', 355, summaryTop + 12);
-    doc.fillColor(darkColor).text(`₹${subTotal.toLocaleString('en-IN')}`, 480, summaryTop + 12, { align: 'right' });
+    // Left Box: Tax Breakdown
+    doc.rect(40, summaryTop, 270, 95).fill(lightBg);
+    doc.rect(40, summaryTop, 270, 95).strokeColor(borderCol).stroke();
 
-    doc.fillColor(grayColor).text('GST (18%):', 355, summaryTop + 28);
-    doc.fillColor(darkColor).text(`₹${taxAmount.toLocaleString('en-IN')}`, 480, summaryTop + 28, { align: 'right' });
+    doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold').text('TAX BREAKDOWN (GST 18%)', 52, summaryTop + 10);
+    doc.fillColor(grayColor).fontSize(8).font('Helvetica')
+      .text('CGST (9.0%):', 52, summaryTop + 26)
+      .text(`₹${cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 26, { align: 'right' })
+      .text('SGST (9.0%):', 52, summaryTop + 42)
+      .text(`₹${sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 42, { align: 'right' })
+      .text('Total Tax Payable:', 52, summaryTop + 58)
+      .text(`₹${taxAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 58, { align: 'right' });
 
-    doc.moveTo(355, summaryTop + 44).lineTo(540, summaryTop + 44).strokeColor('#CBD5E1').stroke();
+    doc.moveTo(52, summaryTop + 72).lineTo(298, summaryTop + 72).strokeColor(borderCol).stroke();
+    doc.fillColor(primaryColor).fontSize(8.5).font('Helvetica-Bold')
+      .text('Tax Status: Paid in Full', 52, summaryTop + 78);
 
-    doc.fillColor(primaryColor).fontSize(11).font('Helvetica-Bold').text('Total Paid:', 355, summaryTop + 52);
-    doc.text(`₹${totalAmount.toLocaleString('en-IN')}`, 480, summaryTop + 52, { align: 'right' });
+    // Right Box: Total Settlement
+    doc.rect(330, summaryTop, 225, 95).fill(lightBg);
+    doc.rect(330, summaryTop, 225, 95).strokeColor(borderCol).stroke();
+
+    doc.fillColor(grayColor).fontSize(8.5).font('Helvetica').text('Taxable Value:', 342, summaryTop + 10);
+    doc.fillColor(darkColor).text(`₹${subTotal.toLocaleString('en-IN')}`, 470, summaryTop + 10, { align: 'right' });
+
+    doc.fillColor(grayColor).text('Total Tax (GST 18%):', 342, summaryTop + 26);
+    doc.fillColor(darkColor).text(`₹${taxAmount.toLocaleString('en-IN')}`, 470, summaryTop + 26, { align: 'right' });
+
+    doc.moveTo(342, summaryTop + 42).lineTo(543, summaryTop + 42).strokeColor('#CBD5E1').stroke();
+
+    doc.fillColor(primaryColor).fontSize(10.5).font('Helvetica-Bold').text('Total Paid Amount:', 342, summaryTop + 50);
+    doc.text(`₹${totalAmount.toLocaleString('en-IN')}`, 470, summaryTop + 50, { align: 'right' });
+
+    doc.fillColor(grayColor).fontSize(8).font('Helvetica').text('Balance Due:', 342, summaryTop + 72);
+    doc.fillColor('#059669').font('Helvetica-Bold').text('₹0.00 (PAID)', 470, summaryTop + 72, { align: 'right' });
+
+    // Official Verification Stamp & Signature Section
+    const signTop = summaryTop + 110;
 
     // Paid Stamp
-    doc.rect(40, summaryTop, 130, 45).fillAndStroke('#ECFDF5', '#10B981');
-    doc.fillColor('#065F46').fontSize(14).font('Helvetica-Bold').text('PAID', 65, summaryTop + 14);
-    doc.fontSize(8).font('Helvetica').text('Official Tax Invoice', 50, summaryTop + 30);
+    doc.rect(40, signTop, 130, 48).fillAndStroke('#ECFDF5', '#10B981');
+    doc.fillColor('#065F46').fontSize(14).font('Helvetica-Bold').text('PAID', 82, signTop + 12);
+    doc.fontSize(7.5).font('Helvetica').text('Official Tax Invoice • Digitally Verified', 48, signTop + 32);
 
-    // Footer note
+    // Signatory
+    doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold')
+      .text('For QuikBoom Marketing Solutions Pvt Ltd', 330, signTop + 8, { align: 'right' });
     doc.fillColor(grayColor).fontSize(8).font('Helvetica')
-      .text('Note: This is an official digitally-signed tax invoice for statutory compliance.', 40, 400);
-    doc.text('QuikBoom CRM • Support: support@quikboom.com • Web: https://quikboom.com', 40, 415);
+      .text('Authorized Signatory', 330, signTop + 34, { align: 'right' });
+
+    // Terms & Conditions Footer
+    const footerTop = signTop + 65;
+    doc.moveTo(40, footerTop).lineTo(555, footerTop).strokeColor(borderCol).stroke();
+    doc.fillColor(grayColor).fontSize(7.5).font('Helvetica')
+      .text('Terms & Conditions: This is a computer-generated tax invoice generated in compliance with GST Rules.', 40, footerTop + 10)
+      .text('Payment is non-refundable. For support or queries: support@quikboom.com | https://quikboom.com', 40, footerTop + 22)
+      .text('QuikBoom CRM • Enterprise Multi-Tenant SaaS Platform', 40, footerTop + 34, { align: 'center' });
 
     doc.end();
   }
