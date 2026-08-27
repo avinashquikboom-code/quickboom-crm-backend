@@ -198,7 +198,7 @@ export class BannerService {
       imageUrl = uploadResult.imageUrl;
       imagePublicId = uploadResult.imagePublicId || null;
 
-      // Clean up old Cloudinary image if replaced
+      // Clean up old Amazon S3 object if replaced
       if (existing.imagePublicId && existing.imagePublicId !== imagePublicId) {
         this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
       }

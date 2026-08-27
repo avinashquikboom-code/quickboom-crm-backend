@@ -107,8 +107,8 @@ describe('Marketing Module - Banner Service & Controller', () => {
   const mockUploadService = {
     uploadBannerImage: jest.fn().mockImplementation((file) =>
       Promise.resolve({
-        imageUrl: `https://res.cloudinary.com/qbapp/image/upload/v1/${file.originalname}`,
-        imagePublicId: `quikboom/banners/${file.originalname}`,
+        imageUrl: `https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/${file.originalname}`,
+        imagePublicId: `marketing/banners/${file.originalname}`,
       }),
     ),
     deleteBannerImage: jest.fn().mockResolvedValue(undefined),
@@ -144,7 +144,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
         title: 'Festival 50% Flash Offer',
         subtitle: 'Valid on annual subscriptions',
         description: 'Upgrade your gym management package today.',
-        imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/festival.jpg',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/festival.jpg',
         ctaText: 'Claim 50% Off',
         ctaUrl: 'https://quickboom.com/offers/50',
         priority: 50,
@@ -182,7 +182,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
 
       expect(result).toBeDefined();
       expect(result.imageUrl).toContain('promo_banner.png');
-      expect(result.imagePublicId).toBe('quikboom/banners/promo_banner.png');
+      expect(result.imagePublicId).toBe('marketing/banners/promo_banner.png');
     });
 
     it('rejects creation if neither image file nor imageUrl is provided', async () => {
@@ -198,7 +198,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
       const dto = {
         title: 'Invalid Date Banner',
-        imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/banner.jpg',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/banner.jpg',
         startAt: '2026-09-01T00:00:00.000Z',
         endAt: '2026-08-01T00:00:00.000Z',
       };
@@ -211,7 +211,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const banner = await service.create(
         {
           title: 'Draft Banner',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/draft.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/draft.jpg',
           isPublished: false,
         },
         user,
@@ -231,7 +231,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const banner = await service.create(
         {
           title: 'Active Banner',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/banner.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/banner.jpg',
           isActive: true,
         },
         user,
@@ -249,7 +249,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const banner = await service.create(
         {
           title: 'To Be Deleted',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/delete.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/delete.jpg',
         },
         user,
       );
@@ -270,7 +270,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'High Priority Offer',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/high.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/high.jpg',
           priority: 100,
           isActive: true,
           isPublished: true,
@@ -284,7 +284,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Medium Priority Offer',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/medium.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/medium.jpg',
           priority: 50,
           isActive: true,
           isPublished: true,
@@ -296,7 +296,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Draft Offer',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/draft.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/draft.jpg',
           priority: 999,
           isActive: true,
           isPublished: false,
@@ -308,7 +308,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Inactive Offer',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/inactive.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/inactive.jpg',
           priority: 999,
           isActive: false,
           isPublished: true,
@@ -320,7 +320,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Expired Offer',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/expired.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/expired.jpg',
           priority: 999,
           isActive: true,
           isPublished: true,
@@ -347,7 +347,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Company A Exclusive Banner',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/a.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/a.jpg',
           priority: 10,
           isActive: true,
           isPublished: true,
@@ -358,7 +358,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       await service.create(
         {
           title: 'Company B Exclusive Banner',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/b.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/b.jpg',
           priority: 10,
           isActive: true,
           isPublished: true,
@@ -384,7 +384,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const bannerB = await service.create(
         {
           title: 'Company B Banner',
-          imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/b.jpg',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/b.jpg',
         },
         companyAdminB,
       );
@@ -401,7 +401,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const customerUser = { id: 50, customerId: 101, role: 'CUSTOMER' };
       const dto = {
         title: 'Customer Banner Attempt',
-        imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/hack.jpg',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/hack.jpg',
       };
 
       await expect(
@@ -422,7 +422,7 @@ describe('Marketing Module - Banner Service & Controller', () => {
       const companyAdmin = { id: 1, customerId: 101, role: 'COMPANY_ADMIN' };
       const dto = {
         title: 'Admin Created Banner',
-        imageUrl: 'https://res.cloudinary.com/qbapp/image/upload/v1/admin.jpg',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/admin.jpg',
       };
 
       const banner = await controller.create('101', companyAdmin, dto);

@@ -26,12 +26,12 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'https://res.cloudinary.com/qbapp/image/upload/v123/banner.jpg' })
+  @ApiPropertyOptional({ example: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/banner.jpg' })
   @IsString()
   @IsOptional()
   imageUrl?: string;
 
-  @ApiPropertyOptional({ example: 'quikboom/banners/xyz123' })
+  @ApiPropertyOptional({ example: 'marketing/banners/1724783921-xyz123-banner.jpg' })
   @IsString()
   @IsOptional()
   imagePublicId?: string;
