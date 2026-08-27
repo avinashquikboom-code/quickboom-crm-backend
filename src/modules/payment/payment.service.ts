@@ -12,6 +12,7 @@ import {
   CreateRazorpayOrderDto,
   VerifyRazorpayPaymentDto,
   SubscriptionBillingCycle,
+  SendPaymentReminderDto,
 } from './dto/payment.dto';
 import { sanitizeSecret } from '../../common/utils/crypto.util';
 import {

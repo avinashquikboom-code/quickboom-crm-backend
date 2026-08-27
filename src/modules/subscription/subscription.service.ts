@@ -2198,6 +2198,8 @@ export class SubscriptionService {
     const fullTotalAmount = fullBaseAmount + fullGstAmount;
 
     const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+    let finalInvoiceNo: string | null = null;
+    let isFullyPaid = false;
 
     // Execute atomic transaction
     await this.prisma.$transaction(async (tx) => {
@@ -2237,11 +2239,12 @@ export class SubscriptionService {
         where: { subscriptionId: sub.id, status: 'SUCCESS' },
       });
       const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
-      const isFullyPaid = totalPaid >= fullTotalAmount;
+      isFullyPaid = totalPaid >= fullTotalAmount;
 
       // 5. Generate Final Invoice ONLY if 100% Fully Settled
       if (isFullyPaid) {
-        const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+        finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+        const invoiceNo = finalInvoiceNo;
 
         let contact = await tx.contact.findFirst({
           where: { customerId: sub.customerId, deletedAt: null },
@@ -2349,8 +2352,9 @@ export class SubscriptionService {
             paymentId: payment.id,
             subscriptionId: sub.id,
             planName: plan.name,
-            totalAmount,
-            invoiceNo,
+            totalAmount: fullTotalAmount,
+            receiptNo,
+            invoiceNo: finalInvoiceNo,
             approvedAt: new Date().toISOString(),
           },
         },
@@ -2359,10 +2363,13 @@ export class SubscriptionService {
 
     return {
       success: true,
-      message: `Offline payment request approved. Subscription for ${plan.name} is now ACTIVE and invoice ${invoiceNo} generated.`,
-      invoiceNumber: invoiceNo,
+      message: isFullyPaid
+        ? `Offline payment request approved. Subscription for ${plan.name} is now ACTIVE and invoice ${finalInvoiceNo} generated.`
+        : `Offline payment request approved. Receipt ${receiptNo} issued. Subscription is ACTIVE with 50% advance.`,
+      receiptNumber: receiptNo,
+      invoiceNumber: finalInvoiceNo,
       subscriptionId: sub.id,
-      paymentStatus: 'PAID',
+      paymentStatus: isFullyPaid ? 'FULLY_PAID' : 'PARTIALLY_PAID',
       subscriptionStatus: 'ACTIVE',
     };
   }
