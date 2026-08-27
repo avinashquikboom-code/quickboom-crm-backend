@@ -229,82 +229,89 @@ export class AuthService {
 
     let userRole: string;
     if (hasSuperAdminRole) {
-      userRole = 'SUPER_ADMIN';
-    } else if (isCustomer) {
-      userRole = 'CUSTOMER';
+      userRole = 'COMPANY_ADMIN';
     } else if (isEmployee) {
       userRole = 'EMPLOYEE';
+    } else if (isCustomer) {
+      userRole = 'CUSTOMER';
     } else {
-      userRole = user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || 'CUSTOMER';
+      const firstRoleName = user.userRoles[0]?.role?.name?.toUpperCase() || '';
+      if (firstRoleName.includes('ADMIN')) {
+        userRole = 'COMPANY_ADMIN';
+      } else if (firstRoleName.includes('EMPLOYEE') || firstRoleName.includes('STAFF')) {
+        userRole = 'EMPLOYEE';
+      } else {
+        userRole = 'CUSTOMER';
+      }
     }
 
-    // Dedicated Endpoint Exact Role Validation
+    // Strict Role-Based Login Validation
     const upperExpectedRole = (appType || '').trim().toUpperCase();
-    if (['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'].includes(upperExpectedRole)) {
-      if (upperExpectedRole === 'SUPER_ADMIN') {
-        if (!hasSuperAdminRole) {
-          throw new ForbiddenException('Only Super Admin can access admin panel');
-        }
-      } else if (upperExpectedRole === 'CUSTOMER') {
-        if (hasSuperAdminRole) {
-          throw new ForbiddenException('This user is SUPER_ADMIN, not CUSTOMER. Use /api/v1/admin/auth/login/super-admin');
-        }
-        if (userRole !== 'CUSTOMER' && userRole !== 'CUSTOMER_ADMIN') {
-          throw new ForbiddenException(`This user is ${userRole}, not CUSTOMER. Use correct endpoint for ${userRole.toLowerCase()} login`);
-        }
-      } else if (upperExpectedRole === 'EMPLOYEE') {
-        if (hasSuperAdminRole) {
-          throw new ForbiddenException('This user is SUPER_ADMIN, not EMPLOYEE. Use /api/v1/admin/auth/login/super-admin');
-        }
-        if (userRole !== 'EMPLOYEE') {
-          throw new ForbiddenException(`This user is ${userRole}, not EMPLOYEE. Use correct endpoint for ${userRole.toLowerCase()} login`);
-        }
-        if (user.employee?.status !== 'ACTIVE') {
+    if (['CUSTOMER', 'CUSTOMER_MOBILE'].includes(upperExpectedRole)) {
+      if (userRole !== 'CUSTOMER') {
+        throw new ForbiddenException('These credentials are not registered as a Customer account.');
+      }
+      if (!user.customerId) {
+        throw new UnauthorizedException('Customer workspace is missing for this account.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Customer account is inactive or suspended.');
+      }
+    } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes(upperExpectedRole)) {
+      if (userRole !== 'EMPLOYEE') {
+        throw new ForbiddenException('These credentials are not registered as an Employee account.');
+      }
+      if (user.employee && user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is inactive.');
+      }
+      if (user.employee && user.employee.mobileLoginEnabled === false) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (['COMPANY_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(upperExpectedRole)) {
+      if (userRole !== 'COMPANY_ADMIN') {
+        throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
+      }
+      if (!user.isActive) {
+        throw new UnauthorizedException('Company admin account is inactive.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (rawApp === 'mobile') {
+      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN'];
+      if (!allowedRoles.includes(userRole)) {
+        throw new ForbiddenException('This account cannot access the mobile application.');
+      }
+      if (userRole === 'EMPLOYEE') {
+        if (user.employee && user.employee.status !== 'ACTIVE') {
           throw new UnauthorizedException('Employee account is inactive.');
         }
-        if (!user.employee?.mobileLoginEnabled) {
+        if (user.employee && user.employee.mobileLoginEnabled === false) {
           throw new UnauthorizedException('Mobile login is disabled for this employee.');
         }
-      } else if (upperExpectedRole === 'COMPANY_ADMIN') {
-        if (hasSuperAdminRole) {
-          throw new ForbiddenException('This user is SUPER_ADMIN, not COMPANY_ADMIN. Use /api/v1/admin/auth/login/super-admin');
-        }
-        if (userRole !== 'COMPANY_ADMIN' && userRole !== 'CUSTOMER_ADMIN' && userRole !== 'CUSTOMER') {
-          throw new ForbiddenException(`This user is ${userRole}, not COMPANY_ADMIN. Use correct endpoint for ${userRole.toLowerCase()} login`);
-        }
-      }
-    } else if (rawApp === 'admin' || rawApp === 'super_admin') {
-      if (!hasSuperAdminRole) {
-        throw new ForbiddenException('Only Super Admin can access admin panel');
-      }
-    } else if (rawApp === 'mobile' || rawApp === 'employee_mobile' || rawApp === 'customer_mobile') {
-      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'CUSTOMER_ADMIN'];
-      if (!allowedRoles.includes(userRole) || hasSuperAdminRole) {
-        throw new ForbiddenException('This user cannot access mobile app');
-      }
-      if (isEmployee) {
-        if (user.employee?.status !== 'ACTIVE') {
-          throw new UnauthorizedException('Employee account is inactive.');
-        }
-        if (!user.employee?.mobileLoginEnabled) {
-          throw new UnauthorizedException('Mobile login is disabled for this employee.');
-        }
-      }
-    } else if (rawApp === 'customer') {
-      if (hasSuperAdminRole) {
-        throw new ForbiddenException('Access Denied: Admin accounts cannot access the Customer portal.');
-      }
-      if (isEmployee) {
-        throw new ForbiddenException('Access Denied: Employee accounts cannot access the Customer portal.');
       }
     } else {
-      // General login endpoint validation
-      if (isEmployee) {
-        if (user.employee?.status !== 'ACTIVE') {
+      // General login validations
+      if (userRole === 'CUSTOMER') {
+        if (user.customer && !user.customer.isActive) {
+          throw new UnauthorizedException('Your company/customer account is suspended.');
+        }
+      } else if (userRole === 'EMPLOYEE') {
+        if (user.employee && user.employee.status !== 'ACTIVE') {
           throw new UnauthorizedException('Employee account is inactive.');
         }
-        if (!user.employee?.mobileLoginEnabled) {
+        if (user.employee && user.employee.mobileLoginEnabled === false) {
           throw new UnauthorizedException('Mobile login is disabled for this employee.');
+        }
+        if (user.customer && !user.customer.isActive) {
+          throw new UnauthorizedException('Your company account is suspended.');
+        }
+      } else if (userRole === 'COMPANY_ADMIN') {
+        if (!user.isActive) {
+          throw new UnauthorizedException('Company admin account is inactive.');
         }
       }
     }
