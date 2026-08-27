@@ -450,6 +450,7 @@ export class SubscriptionService {
         receiptAvailable: isPaid,
         receiptId: isPaid ? receiptNo : null,
         receiptNumber: isPaid ? receiptNo : null,
+        documentNumber: isPaid ? receiptNo : `DOC-${p.id}`,
         receiptDownloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
         receiptLockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
         invoiceAvailable,
@@ -518,6 +519,7 @@ export class SubscriptionService {
         receiptAvailable: isPaid,
         receiptId: isPaid ? receiptNo : null,
         receiptNumber: isPaid ? receiptNo : null,
+        documentNumber: isPaid ? receiptNo : `DOC-${co.id + 100000}`,
         receiptDownloadUrl: isPaid ? `/receipts/${receiptNo}/download` : null,
         receiptLockReason: isPaid ? null : (isPending ? 'Pending admin approval' : 'Payment required'),
         invoiceAvailable,
@@ -2229,6 +2231,18 @@ export class SubscriptionService {
         requestDate: p.createdAt,
         startDate: sub?.startDate,
         endDate: sub?.endDate,
+        receiptId: (p.status === 'SUCCESS' || p.status === 'PAID')
+          ? (p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}`)
+          : null,
+        receiptNumber: (p.status === 'SUCCESS' || p.status === 'PAID')
+          ? (p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}`)
+          : null,
+        documentNumber: (p.status === 'SUCCESS' || p.status === 'PAID')
+          ? (p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}`)
+          : `DOC-${p.id}`,
+        receiptDownloadUrl: (p.status === 'SUCCESS' || p.status === 'PAID')
+          ? `/receipts/${p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}`}/download`
+          : null,
         invoiceNumber: p.invoiceUrl || (p.status === 'SUCCESS' ? `INV-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}` : null),
       };
     });
