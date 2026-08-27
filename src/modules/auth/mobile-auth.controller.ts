@@ -1,7 +1,7 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/auth.dto';
+import { LoginDto, SendOtpDto, VerifyMobileOtpDto } from './dto/auth.dto';
 import { SetMetadata } from '@nestjs/common';
 
 export const Public = () => SetMetadata('isPublic', true);
@@ -10,6 +10,26 @@ export const Public = () => SetMetadata('isPublic', true);
 @Controller('mobile/auth')
 export class MobileAuthController {
   constructor(private readonly authService: AuthService) {}
+
+  // ✅ SEND OTP (MSG91)
+  @Public()
+  @Post('send-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send 6-digit OTP to Indian mobile number via MSG91' })
+  @ApiResponse({ status: 200, description: 'OTP sent successfully' })
+  async sendOtp(@Body() dto: SendOtpDto) {
+    return this.authService.sendOtp(dto);
+  }
+
+  // ✅ VERIFY OTP
+  @Public()
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify mobile OTP and login' })
+  @ApiResponse({ status: 200, description: 'User logged in successfully' })
+  async verifyOtp(@Body() dto: VerifyMobileOtpDto) {
+    return this.authService.verifyOtp(dto);
+  }
 
   // ✅ CUSTOMER LOGIN
   @Public()

@@ -7,6 +7,8 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  SendOtpDto,
+  VerifyMobileOtpDto,
 } from './dto/auth.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -18,6 +20,24 @@ export const Public = () => SetMetadata('isPublic', true);
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Public()
+  @Post('send-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send 6-digit OTP to Indian mobile number via MSG91' })
+  @ApiResponse({ status: 200, description: 'OTP sent successfully' })
+  async sendOtp(@Body() dto: SendOtpDto) {
+    return this.authService.sendOtp(dto);
+  }
+
+  @Public()
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify OTP code and authenticate user' })
+  @ApiResponse({ status: 200, description: 'User authenticated successfully' })
+  async verifyOtp(@Body() dto: VerifyMobileOtpDto) {
+    return this.authService.verifyOtp(dto);
+  }
 
   @Public()
   @Post('register')

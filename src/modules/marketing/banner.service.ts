@@ -59,6 +59,7 @@ export class BannerService {
         description: dto.description?.trim() || null,
         imageUrl,
         imagePublicId,
+        imageKey: imagePublicId,
         ctaText: dto.ctaText?.trim() || null,
         ctaUrl: dto.ctaUrl?.trim() || null,
         priority: dto.priority !== undefined ? Number(dto.priority) : 0,
@@ -197,11 +198,6 @@ export class BannerService {
       const uploadResult = await this.uploadService.uploadBannerImage(file);
       imageUrl = uploadResult.imageUrl;
       imagePublicId = uploadResult.imagePublicId || null;
-
-      // Clean up old Amazon S3 object if replaced
-      if (existing.imagePublicId && existing.imagePublicId !== imagePublicId) {
-        this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
-      }
     }
 
     const startAt =
@@ -239,6 +235,7 @@ export class BannerService {
             : undefined,
         imageUrl: imageUrl !== undefined ? imageUrl : undefined,
         imagePublicId: imagePublicId !== undefined ? imagePublicId : undefined,
+        imageKey: imagePublicId !== undefined ? imagePublicId : undefined,
         ctaText:
           dto.ctaText !== undefined
             ? dto.ctaText
@@ -259,6 +256,11 @@ export class BannerService {
         endAt,
       },
     });
+
+    // Clean up old Amazon S3 object only AFTER database update succeeds
+    if (file && existing.imagePublicId && existing.imagePublicId !== imagePublicId) {
+      this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
+    }
 
     this.logger.log(`[MARKETING_BANNER_UPDATE]\nbannerId: ${id}`);
     return updated;

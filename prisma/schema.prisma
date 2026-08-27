@@ -202,8 +202,11 @@ model User {
   designation       String?
   isActive          Boolean          @default(true)
   isVerified        Boolean          @default(false)
+  isPhoneVerified   Boolean          @default(false)
   otpCode           String?
   otpExpiresAt      DateTime?
+  otpAttempts       Int              @default(0)
+  otpLastSentAt     DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   deletedAt         DateTime?
@@ -2242,6 +2245,7 @@ model MarketingBanner {
   description    String?
   imageUrl       String
   imagePublicId  String?
+  imageKey       String?
   mobileImageUrl String?
   ctaText        String?
   ctaUrl         String?

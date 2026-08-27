@@ -37,6 +37,8 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
 import { TrendingModule } from './modules/trending/trending.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
+import { S3Module } from './modules/s3/s3.module';
+import { Msg91Module } from './modules/msg91/msg91.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -46,6 +48,8 @@ import { AppController } from './app.controller';
       envFilePath: '.env',
     }),
     PrismaModule,
+    S3Module,
+    Msg91Module,
     IntegrationSettingsModule,
     AuthModule,
     CustomerModule,

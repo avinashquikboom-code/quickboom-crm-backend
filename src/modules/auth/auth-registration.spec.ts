@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { QBIdGenerator } from './qb-id.generator';
 import { ConflictException, BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { RoleType } from '@prisma/client';
+import { Msg91Service } from '../msg91/msg91.service';
 
 describe('Auth Service - Customer Registration & Role Isolation Tests', () => {
   let authService: AuthService;
@@ -69,6 +70,15 @@ describe('Auth Service - Customer Registration & Role Isolation Tests', () => {
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: configService },
         QBIdGenerator,
+        {
+          provide: Msg91Service,
+          useValue: {
+            normalizeMobile: jest.fn((m) => `91${m.slice(-10)}`),
+            extract10DigitMobile: jest.fn((m) => m.slice(-10)),
+            maskMobile: jest.fn(() => '9198XXXX3210'),
+            sendOtp: jest.fn().mockResolvedValue({ success: true }),
+          },
+        },
       ],
     }).compile();
 

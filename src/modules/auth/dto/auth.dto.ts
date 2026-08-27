@@ -98,3 +98,31 @@ export class VerifyOtpDto {
   @IsNotEmpty()
   otp: string;
 }
+
+export class SendOtpDto {
+  @ApiProperty({
+    example: '9876543210',
+    description: '10-digit Indian mobile number with or without +91',
+  })
+  @IsString()
+  @IsNotEmpty()
+  mobile: string;
+}
+
+export class VerifyMobileOtpDto {
+  @ApiProperty({
+    example: '9876543210',
+    description: '10-digit Indian mobile number with or without +91',
+  })
+  @IsString()
+  @IsNotEmpty()
+  mobile: string;
+
+  @ApiProperty({
+    example: '123456',
+    description: '6-digit OTP code received via SMS',
+  })
+  @IsString()
+  @IsNotEmpty()
+  otp: string;
+}

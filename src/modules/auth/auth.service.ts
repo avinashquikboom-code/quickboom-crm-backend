@@ -16,9 +16,12 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  SendOtpDto,
+  VerifyMobileOtpDto,
 } from './dto/auth.dto';
 import { RoleType } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
+import { Msg91Service } from '../msg91/msg91.service';
 
 @Injectable()
 export class AuthService {
@@ -29,6 +32,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private qbIdGenerator: QBIdGenerator,
+    private msg91Service: Msg91Service,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
@@ -623,6 +627,257 @@ export class AuthService {
     });
 
     return { message: 'Password reset successfully' };
+  }
+
+  /**
+   * Dispatches a 6-digit OTP to an Indian mobile number via MSG91.
+   */
+  async sendOtp(dto: SendOtpDto) {
+    const rawMobile = dto.mobile?.trim();
+    if (!rawMobile) {
+      throw new BadRequestException('Mobile number is required');
+    }
+
+    const normalizedFullMobile = this.msg91Service.normalizeMobile(rawMobile);
+    const tenDigit = this.msg91Service.extract10DigitMobile(rawMobile);
+    const maskedMobile = this.msg91Service.maskMobile(rawMobile);
+
+    // Look for existing user with 10-digit, 91+10-digit, or +91+10-digit phone
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: tenDigit },
+          { phone: `91${tenDigit}` },
+          { phone: `+91${tenDigit}` },
+        ],
+        deletedAt: null,
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found matching this mobile number. Please check the number or register first.');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('User account is deactivated. Please contact support.');
+    }
+
+    // Resend cooldown check (60 seconds)
+    if (user.otpLastSentAt) {
+      const secondsSinceLastSent = (Date.now() - new Date(user.otpLastSentAt).getTime()) / 1000;
+      if (secondsSinceLastSent < 60) {
+        const remainingSeconds = Math.ceil(60 - secondsSinceLastSent);
+        throw new BadRequestException(
+          `Please wait ${remainingSeconds} seconds before requesting a new OTP.`,
+        );
+      }
+    }
+
+    // Generate cryptographically secure 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiryMinutes = parseInt(process.env.MSG91_OTP_EXPIRY || '10', 10) || 10;
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
+
+    // Update user record with OTP and reset attempt counter
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode: otp,
+        otpExpiresAt: expiresAt,
+        otpAttempts: 0,
+        otpLastSentAt: new Date(),
+      },
+    });
+
+    // Send through MSG91 service
+    await this.msg91Service.sendOtp(normalizedFullMobile, otp);
+
+    this.logger.log(`[AUTH_OTP_SENT] OTP dispatched to ${maskedMobile} for userId: ${user.id}`);
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'OTP sent successfully to registered mobile number',
+    };
+  }
+
+  /**
+   * Verifies OTP code and logs the user in, issuing JWT tokens and roles.
+   */
+  async verifyOtp(dto: VerifyMobileOtpDto) {
+    const rawMobile = dto.mobile?.trim();
+    const otpCode = dto.otp?.trim();
+
+    if (!rawMobile || !otpCode) {
+      throw new BadRequestException('Mobile number and OTP code are required');
+    }
+
+    const tenDigit = this.msg91Service.extract10DigitMobile(rawMobile);
+    const maskedMobile = this.msg91Service.maskMobile(rawMobile);
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: tenDigit },
+          { phone: `91${tenDigit}` },
+          { phone: `+91${tenDigit}` },
+        ],
+        deletedAt: null,
+      },
+      include: {
+        customer: true,
+        employee: {
+          include: {
+            department: true,
+            designation: true,
+          },
+        },
+        userRoles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found matching this mobile number.');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('User account is deactivated. Please contact support.');
+    }
+
+    // Check if OTP was generated
+    if (!user.otpCode || !user.otpExpiresAt) {
+      throw new BadRequestException('No active OTP request found. Please request a new OTP.');
+    }
+
+    // Check expiry
+    if (new Date(user.otpExpiresAt) < new Date()) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    // Check maximum attempts (5 max)
+    if (user.otpAttempts >= 5) {
+      // Invalidate OTP
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { otpCode: null, otpExpiresAt: null },
+      });
+      throw new BadRequestException('Maximum OTP verification attempts exceeded. Please request a new OTP.');
+    }
+
+    // Validate OTP match
+    if (user.otpCode !== otpCode) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { otpAttempts: { increment: 1 } },
+      });
+      const remainingAttempts = 5 - (user.otpAttempts + 1);
+      throw new BadRequestException(
+        `Invalid OTP code. ${remainingAttempts > 0 ? `${remainingAttempts} attempt(s) remaining.` : 'Please request a new OTP.'}`,
+      );
+    }
+
+    // Success: Clear OTP & mark phone verified
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode: null,
+        otpExpiresAt: null,
+        otpAttempts: 0,
+        isPhoneVerified: true,
+        isVerified: true,
+      },
+    });
+
+    this.logger.log(`[AUTH_OTP_VERIFIED_SUCCESS] User ${user.id} logged in via mobile ${maskedMobile}`);
+
+    // Resolve primary role
+    const isEmployee = user.employee !== null;
+    const isCustomerAdmin = user.userRoles.some(
+      (ur) => ur.role.type === RoleType.CUSTOMER_ADMIN || (ur.role.type as string) === 'COMPANY_ADMIN',
+    );
+    const hasSuperAdminRole = user.userRoles.some(
+      (ur) => ur.role.type === RoleType.SUPER_ADMIN,
+    );
+
+    let userRole = 'CUSTOMER';
+    if (hasSuperAdminRole) {
+      userRole = 'SUPER_ADMIN';
+    } else if (isCustomerAdmin) {
+      userRole = 'COMPANY_ADMIN';
+    } else if (isEmployee) {
+      userRole = 'EMPLOYEE';
+    }
+
+    const roles = isEmployee && !hasSuperAdminRole
+      ? ['EMPLOYEE', RoleType.CUSTOM]
+      : user.userRoles.map((ur) => ur.role.type);
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
+
+    let emp: any = null;
+    let employeeData: any = null;
+    if (userRole === 'EMPLOYEE') {
+      emp = await this.ensureEmployee(user);
+      const targetNumericId = emp?.id || user.id;
+      const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      employeeData = {
+        id: emp.id,
+        employeeId: qbCode,
+        employeeCode: qbCode,
+        firstName: emp.firstName || user.firstName,
+        lastName: emp.lastName || user.lastName,
+        email: emp.email || user.email,
+        mobile: emp.phone || user.phone,
+        phone: emp.phone || user.phone,
+        branch: emp.branch || 'Head Office',
+        office: emp.branch || 'Head Office',
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        status: emp.status || 'ACTIVE',
+        mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+        joiningDate: emp.joiningDate || user.createdAt,
+      };
+    }
+
+    const targetNumericId = userRole === 'EMPLOYEE'
+      ? (emp?.id || user.id)
+      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
+    const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+
+    const userData: any = {
+      id: user.id,
+      email: user.email,
+      phone: user.phone || null,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: userRole,
+      roles: roles.length > 0 ? roles : [userRole],
+      userId: qbCode,
+      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId }),
+      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name ?? null }),
+    };
+
+    if (userRole === 'EMPLOYEE' && employeeData) {
+      userData.employeeId = qbCode;
+      userData.employeeCode = qbCode;
+      userData.employee = employeeData;
+    }
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Logged in successfully via mobile OTP verification',
+      data: {
+        user: userData,
+        tokens,
+      },
+      user: userData,
+      tokens,
+    };
   }
 
   async getProfile(userId: number | string) {
