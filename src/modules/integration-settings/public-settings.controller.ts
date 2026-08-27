@@ -15,20 +15,20 @@ export class PublicSettingsController {
       'Get dynamic public payment configuration from database (single source of truth for Mobile & Web clients)',
   })
   async getPublicPaymentConfig() {
-    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
-    const rawConf = await this.integrationSettingsService.getIntegrationConfig('RAZORPAY');
-    const config = rawConf?.config || {};
-
-    const razorpayEnabled = Boolean(rzpConfig.isEnabled && rzpConfig.isConfigured);
-    const offlinePaymentEnabled = Boolean(config.enableOfflinePayment ?? false);
+    const paymentSettings = await this.integrationSettingsService.getPaymentSettings();
+    const data = paymentSettings.data;
 
     return {
       success: true,
       data: {
-        razorpayEnabled,
-        offlinePaymentEnabled,
-        paymentMode: rzpConfig.environment,
-        razorpayKeyId: rzpConfig.isEnabled ? rzpConfig.keyId : null,
+        razorpayEnabled: data.razorpayEnabled,
+        enableRazorpay: data.razorpayEnabled,
+        offlinePaymentEnabled: data.offlinePaymentEnabled,
+        enableOfflinePayment: data.offlinePaymentEnabled,
+        paymentMode: data.paymentMode,
+        razorpayKeyId: data.razorpayEnabled
+          ? (data.paymentMode === 'LIVE' ? data.razorpayLiveKeyId : data.razorpayTestKeyId)
+          : null,
       },
     };
   }

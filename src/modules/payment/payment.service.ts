@@ -919,23 +919,21 @@ export class PaymentService {
    * Single source of truth: PostgreSQL Database. Never exposes secrets.
    */
   async getPublicPaymentConfig() {
-    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
-    const rawConf = await this.integrationSettingsService.getIntegrationConfig('RAZORPAY');
-    const config = rawConf?.config || {};
-
-    const razorpayEnabled = Boolean(rzpConfig.isEnabled && rzpConfig.isConfigured);
-    const offlinePaymentEnabled = Boolean(config.enableOfflinePayment ?? false);
+    const paymentSettings = await this.integrationSettingsService.getPaymentSettings();
+    const data = paymentSettings.data;
 
     return {
       success: true,
       data: {
-        razorpayEnabled,
-        enableRazorpay: razorpayEnabled, // Alias for backward compatibility
-        offlinePaymentEnabled,
-        enableOfflinePayment: offlinePaymentEnabled, // Alias for backward compatibility
-        paymentMode: rzpConfig.environment,
-        razorpayKeyId: rzpConfig.isEnabled ? rzpConfig.keyId : null,
-        source: rzpConfig.source,
+        razorpayEnabled: data.razorpayEnabled,
+        enableRazorpay: data.razorpayEnabled,
+        offlinePaymentEnabled: data.offlinePaymentEnabled,
+        enableOfflinePayment: data.offlinePaymentEnabled,
+        paymentMode: data.paymentMode,
+        razorpayKeyId: data.razorpayEnabled
+          ? (data.paymentMode === 'LIVE' ? data.razorpayLiveKeyId : data.razorpayTestKeyId)
+          : null,
+        source: data.source,
       },
     };
   }

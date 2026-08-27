@@ -571,10 +571,14 @@ export class IntegrationSettingsService {
    * Retrieves full payment configuration for Admin Panel Settings (Single source of truth).
    */
   async getPaymentSettings() {
+    let psRecord: any = null;
+    try {
+      psRecord = await (this.prisma as any).paymentSetting?.findFirst();
+    } catch (_) {}
+
     const conf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
     const creds = conf?.credentials || {};
     const config = conf?.config || {};
-    const isDb = conf?.source === 'DATABASE';
 
     const testKeySecret = creds.testKeySecret || (conf?.environment === 'TEST' ? creds.keySecret : '');
     const liveKeySecret = creds.liveKeySecret || (conf?.environment === 'LIVE' ? creds.keySecret : '');
@@ -582,20 +586,30 @@ export class IntegrationSettingsService {
     const testSecretPresent = Boolean(testKeySecret && !testKeySecret.includes('***'));
     const liveSecretPresent = Boolean(liveKeySecret && !liveKeySecret.includes('***'));
 
+    const offlinePaymentEnabled = psRecord?.offlinePaymentEnabled !== undefined
+      ? Boolean(psRecord.offlinePaymentEnabled)
+      : Boolean(config.enableOfflinePayment ?? true);
+
+    const razorpayEnabled = psRecord?.razorpayEnabled !== undefined
+      ? Boolean(psRecord.razorpayEnabled)
+      : Boolean(conf?.isEnabled ?? true);
+
+    const paymentMode = (psRecord?.paymentMode || conf?.environment || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
+
     return {
       success: true,
       data: {
-        razorpayEnabled: Boolean(conf?.isEnabled ?? true),
-        paymentMode: ((conf?.environment || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST') as 'TEST' | 'LIVE',
-        razorpayTestKeyId: creds.testKeyId || (creds.keyId?.startsWith('rzp_test_') ? creds.keyId : '') || '',
+        razorpayEnabled,
+        paymentMode: paymentMode as 'TEST' | 'LIVE',
+        razorpayTestKeyId: psRecord?.razorpayTestKeyId || creds.testKeyId || (creds.keyId?.startsWith('rzp_test_') ? creds.keyId : '') || '',
         razorpayTestKeySecret: testSecretPresent ? 'Configured' : '',
         razorpayTestKeySecretConfigured: testSecretPresent,
-        razorpayLiveKeyId: creds.liveKeyId || (creds.keyId?.startsWith('rzp_live_') ? creds.keyId : '') || '',
+        razorpayLiveKeyId: psRecord?.razorpayLiveKeyId || creds.liveKeyId || (creds.keyId?.startsWith('rzp_live_') ? creds.keyId : '') || '',
         razorpayLiveKeySecret: liveSecretPresent ? 'Configured' : '',
         razorpayLiveKeySecretConfigured: liveSecretPresent,
-        offlinePaymentEnabled: Boolean(config.enableOfflinePayment ?? false),
+        offlinePaymentEnabled,
         webhookSecret: creds.webhookSecret || '',
-        source: isDb ? 'DATABASE' : 'DATABASE',
+        source: 'DATABASE',
       },
     };
   }
