@@ -18,13 +18,163 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RoleType } from '@prisma/client';
 
+import { InstallmentService } from './installment.service';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
+
 @ApiTags('Subscriptions & Plans')
 @Controller()
 export class SubscriptionController {
   constructor(
     private readonly subscriptionService: SubscriptionService,
     private readonly planAccessService: PlanAccessService,
+    private readonly installmentService: InstallmentService,
   ) {}
+
+  // ==========================================
+  // Advance Payment & Installment Endpoints
+  // ==========================================
+
+  @Get('subscriptions/installments')
+  @Get('customer/installments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current customer installment schedule, buffer state, and outstanding balance' })
+  async getMyInstallments(@CurrentUser() user: any) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      return {
+        success: false,
+        message: 'No customer organization associated with current user',
+      };
+    }
+    const summary = await this.installmentService.getCustomerInstallmentSummary(customerId);
+    return {
+      success: true,
+      data: summary,
+    };
+  }
+
+  @Post('subscriptions/installments/:id/pay')
+  @Post('customer/installments/:id/pay')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Pay or renew an installment for authenticated customer' })
+  async payMyInstallment(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string },
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.payInstallment(customerId, id, {
+      paymentMethod: dto.paymentMethod,
+      transactionId: dto.transactionId,
+      orderId: dto.orderId,
+    });
+  }
+
+  @Get('admin/customers/:customerId/installments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get installment breakdown for specific customer (Admin)' })
+  async getAdminCustomerInstallments(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+  ) {
+    if (!isUserSuperAdmin(user) && user?.customerId !== Number(custId)) {
+      throw new ForbiddenException('Admin permissions required');
+    }
+    const summary = await this.installmentService.getCustomerInstallmentSummary(custId);
+    return {
+      success: true,
+      data: summary,
+    };
+  }
+
+  @Post('admin/customers/:customerId/installments/:id/pay')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Record manual installment payment for customer (Admin)' })
+  async recordAdminInstallmentPayment(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+    @Param('id') id: string,
+    @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string; notes?: string },
+  ) {
+    if (!isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Super Admin permissions required');
+    }
+    return this.installmentService.payInstallment(custId, id, {
+      paymentMethod: dto.paymentMethod || 'CASH',
+      transactionId: dto.transactionId,
+      orderId: dto.orderId,
+      paidByAdmin: true,
+      notes: dto.notes || 'Admin manual payment confirmation',
+    });
+  }
+
+  @Post('subscriptions/start-new-plan')
+  @Post('customer/start-new-plan')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Start a completely new plan when prior installment renewal has failed (Customer)' })
+  async startNewPlanCustomer(
+    @CurrentUser() user: any,
+    @Body() dto: {
+      planId?: number;
+      billingCycle?: string;
+      customPrice?: number;
+      totalInstallments?: number;
+      paymentMethod?: string;
+      transactionId?: string;
+      orderNumber?: string;
+    },
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.startNewPlan(customerId, dto);
+  }
+
+  @Post('admin/customers/:customerId/start-new-plan')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Start a completely new plan for customer (Admin)' })
+  async startNewPlanAdmin(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+    @Body() dto: {
+      planId?: number;
+      billingCycle?: string;
+      customPrice?: number;
+      totalInstallments?: number;
+      paymentMethod?: string;
+      transactionId?: string;
+      orderNumber?: string;
+    },
+  ) {
+    if (!isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Super Admin permissions required');
+    }
+    return this.installmentService.startNewPlan(custId, {
+      ...dto,
+      paymentMethod: dto.paymentMethod || 'CASH',
+    });
+  }
+
+  @Post('admin/installments/evaluate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Evaluate buffer expiry across all active installments (Admin / Cron)' })
+  async evaluateInstallmentBuffers(@CurrentUser() user: any) {
+    if (!isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Super Admin permissions required');
+    }
+    return this.installmentService.evaluateAllActiveInstallments();
+  }
 
   // ==========================================
   // Public & Customer Plan Endpoints

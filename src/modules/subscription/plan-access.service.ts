@@ -127,13 +127,20 @@ export class PlanAccessService {
       return null as any;
     }
 
-    // 2. Check expiration
-    const isExpired =
-      sub.status === SubscriptionStatus.EXPIRED ||
-      (sub.endDate ? now > new Date(sub.endDate) : false);
+    // 2. Check expiration & configurable buffer period (default 3 days)
+    const bufferDays = 3;
+    const subEndDate = sub.endDate ? new Date(sub.endDate) : null;
+    const bufferEndDate = subEndDate ? new Date(subEndDate.getTime() + bufferDays * 24 * 60 * 60 * 1000) : null;
+
+    const isDirectExpired = sub.status === SubscriptionStatus.EXPIRED || (subEndDate ? now > subEndDate : false);
+    const isBufferExpired = bufferEndDate ? now > bufferEndDate : isDirectExpired;
+    const isInBuffer = isDirectExpired && !isBufferExpired;
+
+    // During buffer period, existing plan access continues!
+    const isExpired = sub.status === SubscriptionStatus.EXPIRED || isBufferExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
-    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE;
-    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled && !isPastDue;
+    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE && !isInBuffer;
+    const isActive = (sub.status === SubscriptionStatus.ACTIVE || isInBuffer) && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined
@@ -242,19 +249,37 @@ export class PlanAccessService {
                   { serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
                 ]));
 
-    const payments = this.prisma.paymentHistory?.findMany
-      ? await this.prisma.paymentHistory.findMany({
-          where: { customerId: numCustomerId, status: 'SUCCESS' },
+    const installments = this.prisma.subscriptionInstallment?.findMany
+      ? await this.prisma.subscriptionInstallment.findMany({
+          where: { customerId: numCustomerId, deletedAt: null },
+          orderBy: { installmentNumber: 'asc' },
         })
       : [];
-    const totalPaid = Array.isArray(payments)
-      ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
-      : 0;
-    const fullTotalAmount = Math.round(effectivePrice * 1.18);
-    const firstInstallmentAmount = Math.round(fullTotalAmount * 0.5);
+
+    let totalPaid = 0;
+    let fullTotalAmount = Math.round(effectivePrice * 1.18);
+    let remainingBalance = fullTotalAmount;
+
+    if (installments.length > 0) {
+      fullTotalAmount = installments.reduce((sum, inst) => sum + Number(inst.totalAmount || 0), 0);
+      const paidInsts = installments.filter((inst) => inst.status === 'PAID');
+      totalPaid = paidInsts.reduce((sum, inst) => sum + Number(inst.totalAmount || 0), 0);
+      remainingBalance = Math.max(0, fullTotalAmount - totalPaid);
+    } else {
+      const payments = this.prisma.paymentHistory?.findMany
+        ? await this.prisma.paymentHistory.findMany({
+            where: { customerId: numCustomerId, status: 'SUCCESS' },
+          })
+        : [];
+      totalPaid = Array.isArray(payments)
+        ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
+        : 0;
+      remainingBalance = Math.max(0, fullTotalAmount - totalPaid);
+    }
+
+    const firstInstallmentAmount = Math.round(fullTotalAmount / (installments.length || 2));
     const secondInstallmentAmount = fullTotalAmount - firstInstallmentAmount;
-    const remainingBalance = Math.max(0, fullTotalAmount - totalPaid);
-    const isFullyPaid = totalPaid >= fullTotalAmount;
+    const isFullyPaid = remainingBalance === 0 && totalPaid >= fullTotalAmount;
     const isFirstInstallmentPaid = totalPaid > 0;
 
     let paymentStatus = 'PENDING_FIRST_INSTALLMENT';
@@ -266,10 +291,14 @@ export class PlanAccessService {
       scheduleUnlockStatus = 'UNLOCKED_FULL';
       unlockedDays = 30;
     } else if (isFirstInstallmentPaid) {
-      paymentStatus = 'FIRST_INSTALLMENT_PAID';
+      paymentStatus = isInBuffer ? 'IN_BUFFER_PERIOD' : 'FIRST_INSTALLMENT_PAID';
       scheduleUnlockStatus = 'UNLOCKED_15_DAYS';
       unlockedDays = 15;
     }
+
+    const bufferRemainingDays = isInBuffer && bufferEndDate
+      ? Math.max(0, Math.ceil((bufferEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+      : 0;
 
     const result: EffectivePlan = {
       customerId: numCustomerId,
@@ -302,13 +331,21 @@ export class PlanAccessService {
         totalAmount: fullTotalAmount,
         totalPaid,
         remainingBalance,
+        outstandingAmount: remainingBalance,
         firstInstallmentAmount,
         secondInstallmentAmount,
         isFullyPaid,
         isFirstInstallmentPaid,
         paymentStatus,
-        scheduleUnlockStatus,
-        unlockedDays,
+        isRenewalFailed: isDirectExpired && isBufferExpired && !isFullyPaid,
+        canRenewCurrentPlan: !isBufferExpired,
+        amountRequiredToRestart: fullTotalAmount,
+        termsMessage: isDirectExpired && isBufferExpired
+          ? 'Under our Terms & Conditions, after the renewal period expires, the previous installment plan cannot be continued and a new plan must be purchased at the applicable full plan price.'
+          : 'Please renew your plan within the buffer period to continue under your current installment plan.',
+        failureMessage: isDirectExpired && isBufferExpired
+          ? 'Your installment plan renewal period has expired. You failed to renew your plan within the allowed buffer period. To continue using our services, you must start a new plan.'
+          : null,
       },
       usage: {
         currentUsers,

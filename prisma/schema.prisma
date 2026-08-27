@@ -78,6 +78,7 @@ model Customer {
   subscriptions            CustomerSubscription[]
   monthlySchedules         MonthlySchedule[]
   customPlanOrders         CustomPlanOrder[]
+  installments             SubscriptionInstallment[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -130,6 +131,7 @@ model CustomerSubscription {
   monthlySchedules   MonthlySchedule[]
   customPlanOrders   CustomPlanOrder[]
   works              Work[]
+  installments       SubscriptionInstallment[]
   coupon             Coupon?                  @relation(fields: [couponId], references: [id])
   customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan               Plan                     @relation(fields: [planId], references: [id])
@@ -180,6 +182,7 @@ model PaymentHistory {
   deletedAt      DateTime?
   customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id])
+  installments   SubscriptionInstallment[]
 
   @@index([customerId])
   @@index([deletedAt])
@@ -752,6 +755,7 @@ model Invoice {
   customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   quotation   Quotation?    @relation(fields: [quotationId], references: [id])
   items       InvoiceItem[]
+  installments SubscriptionInstallment[]
 
   @@index([customerId])
   @@index([contactId])
@@ -1770,6 +1774,50 @@ model EmployeeClaim {
   @@index([employeeId])
   @@index([status])
   @@index([category])
+}
+
+enum InstallmentStatus {
+  PENDING
+  DUE
+  UPCOMING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model SubscriptionInstallment {
+  id                Int                  @id @default(autoincrement())
+  customerId        Int
+  subscriptionId    Int
+  installmentNumber Int                  @default(1)
+  totalInstallments Int                  @default(3)
+  title             String               @default("Installment")
+  amount            Float
+  taxAmount         Float                @default(0)
+  totalAmount       Float
+  status            InstallmentStatus    @default(PENDING)
+  dueDate           DateTime
+  expiryDate        DateTime
+  bufferDays        Int                  @default(3)
+  bufferEndDate     DateTime
+  paidAt            DateTime?
+  paymentHistoryId  Int?
+  invoiceId         Int?
+  notes             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  deletedAt         DateTime?
+  customer          Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription      CustomerSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  paymentHistory    PaymentHistory?      @relation(fields: [paymentHistoryId], references: [id])
+  invoice           Invoice?             @relation(fields: [invoiceId], references: [id])
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([bufferEndDate])
+  @@map("subscription_installments")
 }
 
 enum RoleType {

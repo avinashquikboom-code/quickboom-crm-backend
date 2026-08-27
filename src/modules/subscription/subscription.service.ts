@@ -802,6 +802,93 @@ export class SubscriptionService {
         data: { invoiceUrl: invoiceNo },
       });
 
+      // Generate 3 Installments for subscription
+      const totalInstallments = 3;
+      const rawInstAmt = Math.round((total / totalInstallments) * 100) / 100;
+      const baseInstAmt = Math.round((basePrice / totalInstallments) * 100) / 100;
+      const taxInstAmt = Math.round((tax / totalInstallments) * 100) / 100;
+
+      await tx.subscriptionInstallment.deleteMany({
+        where: { subscriptionId: updatedSub.id },
+      });
+
+      const inst1Expiry = new Date(startDate);
+      inst1Expiry.setDate(inst1Expiry.getDate() + 30);
+      const inst1BufferEnd = new Date(inst1Expiry);
+      inst1BufferEnd.setDate(inst1BufferEnd.getDate() + 3);
+
+      const createdInvoice = await tx.invoice.findFirst({ where: { invoiceNo } });
+
+      await tx.subscriptionInstallment.create({
+        data: {
+          customerId: numCustomerId,
+          subscriptionId: updatedSub.id,
+          installmentNumber: 1,
+          totalInstallments,
+          title: 'Installment 1 of 3 (Advance)',
+          amount: baseInstAmt,
+          taxAmount: taxInstAmt,
+          totalAmount: rawInstAmt,
+          status: 'PAID',
+          dueDate: startDate,
+          expiryDate: inst1Expiry,
+          bufferDays: 3,
+          bufferEndDate: inst1BufferEnd,
+          paidAt: startDate,
+          paymentHistoryId: payment.id,
+          invoiceId: createdInvoice?.id,
+          notes: 'Initial advance installment payment',
+        },
+      });
+
+      const inst2Start = new Date(inst1Expiry);
+      const inst2Expiry = new Date(inst2Start);
+      inst2Expiry.setDate(inst2Expiry.getDate() + 30);
+      const inst2BufferEnd = new Date(inst2Expiry);
+      inst2BufferEnd.setDate(inst2BufferEnd.getDate() + 3);
+
+      await tx.subscriptionInstallment.create({
+        data: {
+          customerId: numCustomerId,
+          subscriptionId: updatedSub.id,
+          installmentNumber: 2,
+          totalInstallments,
+          title: 'Installment 2 of 3',
+          amount: baseInstAmt,
+          taxAmount: taxInstAmt,
+          totalAmount: rawInstAmt,
+          status: 'DUE',
+          dueDate: inst2Start,
+          expiryDate: inst2Expiry,
+          bufferDays: 3,
+          bufferEndDate: inst2BufferEnd,
+        },
+      });
+
+      const inst3Start = new Date(inst2Expiry);
+      const inst3Expiry = new Date(inst3Start);
+      inst3Expiry.setDate(inst3Expiry.getDate() + 30);
+      const inst3BufferEnd = new Date(inst3Expiry);
+      inst3BufferEnd.setDate(inst3BufferEnd.getDate() + 3);
+
+      await tx.subscriptionInstallment.create({
+        data: {
+          customerId: numCustomerId,
+          subscriptionId: updatedSub.id,
+          installmentNumber: 3,
+          totalInstallments,
+          title: 'Installment 3 of 3',
+          amount: baseInstAmt,
+          taxAmount: taxInstAmt,
+          totalAmount: rawInstAmt,
+          status: 'UPCOMING',
+          dueDate: inst3Start,
+          expiryDate: inst3Expiry,
+          bufferDays: 3,
+          bufferEndDate: inst3BufferEnd,
+        },
+      });
+
       // 3. Initialize or refresh service entitlements based on plan features
       const featureList = Array.isArray(plan.features) ? plan.features : [];
       const serviceQuotas: { serviceName: string; totalQty: number }[] = [];

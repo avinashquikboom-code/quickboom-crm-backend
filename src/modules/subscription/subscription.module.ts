@@ -8,10 +8,12 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { ScheduleModule } from '../schedule/schedule.module';
 import { WorkModule } from '../work/work.module';
 
+import { InstallmentService } from './installment.service';
+
 @Module({
   imports: [PrismaModule, ScheduleModule, WorkModule], // ✅ Direct import — no forwardRef needed
   controllers: [SubscriptionController, CustomPlanController],
-  providers: [SubscriptionService, PlanAccessService, CustomPlanService],
-  exports: [SubscriptionService, PlanAccessService, CustomPlanService],
+  providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
+  exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
 })
 export class SubscriptionModule {}
