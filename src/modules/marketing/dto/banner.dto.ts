@@ -36,11 +36,6 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   imagePublicId?: string;
 
-  @ApiPropertyOptional({ example: 'https://res.cloudinary.com/qbapp/image/upload/v123/banner_mobile.jpg' })
-  @IsString()
-  @IsOptional()
-  mobileImageUrl?: string;
-
   @ApiPropertyOptional({ example: 'Claim Offer' })
   @IsString()
   @IsOptional()

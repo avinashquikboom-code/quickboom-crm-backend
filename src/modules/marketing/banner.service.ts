@@ -59,7 +59,6 @@ export class BannerService {
         description: dto.description?.trim() || null,
         imageUrl,
         imagePublicId,
-        mobileImageUrl: dto.mobileImageUrl?.trim() || null,
         ctaText: dto.ctaText?.trim() || null,
         ctaUrl: dto.ctaUrl?.trim() || null,
         priority: dto.priority !== undefined ? Number(dto.priority) : 0,
@@ -240,12 +239,6 @@ export class BannerService {
             : undefined,
         imageUrl: imageUrl !== undefined ? imageUrl : undefined,
         imagePublicId: imagePublicId !== undefined ? imagePublicId : undefined,
-        mobileImageUrl:
-          dto.mobileImageUrl !== undefined
-            ? dto.mobileImageUrl
-              ? dto.mobileImageUrl.trim()
-              : null
-            : undefined,
         ctaText:
           dto.ctaText !== undefined
             ? dto.ctaText
