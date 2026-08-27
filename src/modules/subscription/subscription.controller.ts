@@ -115,15 +115,60 @@ export class SubscriptionController {
     });
   }
 
+  @Get('subscriptions/current')
+  @Get('customer/subscriptions/current')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current customer subscription and installment status' })
+  async getCurrentSubscription(@CurrentUser() user: any) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.getCurrentSubscription(customerId);
+  }
+
+  @Get('subscriptions/renewal-status')
+  @Get('customer/subscriptions/renewal-status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get installment renewal and buffer period status' })
+  async getRenewalStatus(@CurrentUser() user: any) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.getRenewalStatus(customerId);
+  }
+
+  @Post('subscriptions/:subscriptionId/renew')
+  @Post('customer/subscriptions/:subscriptionId/renew')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Renew existing installment under active buffer period' })
+  async renewExistingInstallment(
+    @CurrentUser() user: any,
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() dto: { installmentId: number | string; paymentMethod?: string },
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.renewExistingInstallment(customerId, subscriptionId, dto);
+  }
+
+  @Post('subscriptions/new-plan')
+  @Post('customer/subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
   @Post('customer/start-new-plan')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Start a completely new plan when prior installment renewal has failed (Customer)' })
+  @ApiOperation({ summary: 'Start a completely new plan (full price) when prior renewal has failed' })
   async startNewPlanCustomer(
     @CurrentUser() user: any,
     @Body() dto: {
-      planId?: number;
+      planId?: number | string;
       billingCycle?: string;
       customPrice?: number;
       totalInstallments?: number;
@@ -136,7 +181,26 @@ export class SubscriptionController {
     if (!customerId) {
       throw new ForbiddenException('No customer organization associated with current user');
     }
-    return this.installmentService.startNewPlan(customerId, dto);
+    const result = await this.installmentService.startNewPlan(customerId, {
+      ...dto,
+      planId: dto.planId ? Number(dto.planId) : undefined,
+    });
+
+    return {
+      success: true,
+      message: 'New plan created successfully.',
+      data: {
+        subscriptionId: String(result.newSubscriptionId),
+        planId: String(result.summary.planId),
+        planName: result.summary.planName,
+        planValue: result.summary.originalPlanValue,
+        status: result.summary.planStatus,
+        startDate: new Date().toISOString(),
+        expiryDate: result.summary.nextDueDate
+          ? new Date(result.summary.nextDueDate).toISOString()
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    };
   }
 
   @Post('admin/customers/:customerId/start-new-plan')

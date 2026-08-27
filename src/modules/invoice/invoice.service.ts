@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
@@ -215,21 +215,17 @@ export class InvoiceService {
     let numCustomerId = Number(customerId);
 
     if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
-      if (isSuperAdmin) {
-        // Fallback to first active customer or contact's customer
+      if (isSuperAdmin && dto.contactId) {
         const contact = await this.prisma.contact.findUnique({
           where: { id: Number(dto.contactId) },
         });
         if (contact?.customerId) {
           numCustomerId = contact.customerId;
         } else {
-          const firstCustomer = await this.prisma.customer.findFirst({
-            where: { deletedAt: null },
-          });
-          numCustomerId = firstCustomer?.id || 1;
+          throw new BadRequestException('Valid customer context or customer-linked contact is required to create an invoice.');
         }
       } else {
-        throw new UnauthorizedException('Customer context is required');
+        throw new UnauthorizedException('Customer context is required to create an invoice.');
       }
     }
 

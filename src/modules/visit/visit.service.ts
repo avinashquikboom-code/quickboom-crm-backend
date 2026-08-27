@@ -21,26 +21,13 @@ export class VisitService {
             { domain: { equals: customerId.trim(), mode: 'insensitive' } },
             { name: { equals: customerId.trim(), mode: 'insensitive' } },
           ],
+          deletedAt: null,
         },
       });
       if (foundCustomer) return foundCustomer.id;
     }
 
-    const fallbackCustomer = await this.prisma.customer.findFirst({
-      where: { isActive: true },
-      orderBy: { id: 'asc' },
-    });
-
-    if (fallbackCustomer) return fallbackCustomer.id;
-
-    const created = await this.prisma.customer.create({
-      data: {
-        name: 'QuickBoom Demo Enterprise',
-        domain: 'quickboom.com',
-        isActive: true,
-      },
-    });
-    return created.id;
+    return undefined;
   }
 
   async getMetrics(customerId: number | string | undefined) {

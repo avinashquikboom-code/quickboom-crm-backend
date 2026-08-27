@@ -888,6 +888,161 @@ export class InstallmentService {
   }
 
   /**
+   * Returns current subscription details formatted for GET /subscriptions/current
+   */
+  async getCurrentSubscription(customerId: number | string) {
+    const numCustomerId = Number(customerId);
+    const summary = await this.getCustomerInstallmentSummary(numCustomerId);
+
+    this.logger.log(
+      `[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, subscriptionId: ${summary.subscriptionId}, planId: ${summary.planId}, status: ${summary.planStatus}`,
+    );
+
+    const paidInsts = summary.installments.filter((i) => i.status === InstallmentStatus.PAID);
+    const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
+    const currentInst = lastPaidInst || (summary.installments.length > 0 ? summary.installments[0] : null);
+
+    return {
+      success: true,
+      data: {
+        subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
+        customerId: String(numCustomerId),
+        planId: summary.planId ? String(summary.planId) : null,
+        planName: summary.planName || 'No Active Plan',
+        originalPlanValue: summary.originalPlanValue,
+        status: summary.planStatus,
+        currentInstallment: currentInst
+          ? {
+              number: currentInst.installmentNumber,
+              amount: currentInst.totalAmount,
+              paidAmount: currentInst.status === InstallmentStatus.PAID ? currentInst.totalAmount : 0,
+              status: currentInst.status,
+              expiryDate: currentInst.expiryDate
+                ? new Date(currentInst.expiryDate).toISOString().split('T')[0]
+                : null,
+            }
+          : null,
+        renewal: {
+          status: summary.planStatus,
+          canRenew: summary.canRenewCurrentPlan,
+          bufferStartDate: summary.bufferStartDate
+            ? new Date(summary.bufferStartDate).toISOString().split('T')[0]
+            : null,
+          bufferEndDate: summary.bufferEndDate
+            ? new Date(summary.bufferEndDate).toISOString().split('T')[0]
+            : null,
+          daysRemaining: summary.bufferRemainingDays,
+        },
+        newPlanRequired: summary.isRenewalFailed,
+        newPlanPrice: summary.isRenewalFailed ? summary.newPlanPrice : null,
+      },
+    };
+  }
+
+  /**
+   * Returns renewal status payload for GET /subscriptions/renewal-status
+   */
+  async getRenewalStatus(customerId: number | string) {
+    const numCustomerId = Number(customerId);
+    const summary = await this.getCustomerInstallmentSummary(numCustomerId);
+
+    this.logger.log(
+      `[RENEWAL_DEBUG] currentDate: ${new Date().toISOString()}, installmentExpiry: ${summary.nextDueDate?.toISOString() || 'NONE'}, bufferStart: ${summary.bufferStartDate?.toISOString() || 'NONE'}, bufferEnd: ${summary.bufferEndDate?.toISOString() || 'NONE'}, canRenew: ${summary.canRenewCurrentPlan}, renewalStatus: ${summary.planStatus}`,
+    );
+
+    const nextInst = summary.installments.find(
+      (i) => i.status === InstallmentStatus.DUE || i.status === InstallmentStatus.PENDING,
+    );
+
+    return {
+      success: true,
+      data: {
+        subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
+        status: summary.planStatus,
+        canRenew: summary.canRenewCurrentPlan,
+        bufferPeriodActive: summary.isInBuffer,
+        bufferStartDate: summary.bufferStartDate
+          ? new Date(summary.bufferStartDate).toISOString().split('T')[0]
+          : null,
+        bufferEndDate: summary.bufferEndDate
+          ? new Date(summary.bufferEndDate).toISOString().split('T')[0]
+          : null,
+        daysRemaining: summary.bufferRemainingDays,
+        originalPlanValue: summary.originalPlanValue,
+        nextInstallment: nextInst
+          ? {
+              number: nextInst.installmentNumber,
+              amount: nextInst.totalAmount,
+              status: nextInst.status,
+            }
+          : null,
+        newPlanRequired: summary.isRenewalFailed,
+      },
+    };
+  }
+
+  /**
+   * Initiates renewal for an existing installment under active buffer period
+   */
+  async renewExistingInstallment(
+    customerId: number | string,
+    subscriptionId: number | string,
+    dto: { installmentId: number | string; paymentMethod?: string },
+  ) {
+    const numCustomerId = Number(customerId);
+    const numSubId = Number(subscriptionId);
+    const numInstId = Number(dto.installmentId);
+
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { id: numSubId, customerId: numCustomerId, deletedAt: null },
+    });
+
+    if (!sub) {
+      throw new NotFoundException('Subscription not found or not owned by customer.');
+    }
+
+    const installment = await this.prisma.subscriptionInstallment.findFirst({
+      where: { id: numInstId, subscriptionId: numSubId, customerId: numCustomerId, deletedAt: null },
+    });
+
+    if (!installment) {
+      throw new NotFoundException('Installment not found on this subscription.');
+    }
+
+    if (installment.status === InstallmentStatus.PAID) {
+      throw new BadRequestException('This installment has already been paid.');
+    }
+
+    // Check offline payment setting if OFFLINE / CASH requested
+    const paymentMethodUpper = (dto.paymentMethod || 'ONLINE').toUpperCase();
+    if (paymentMethodUpper === 'OFFLINE' || paymentMethodUpper === 'CASH') {
+      const paymentSetting = await this.prisma.paymentSetting.findFirst({
+        orderBy: { createdAt: 'desc' },
+      });
+      if (paymentSetting && paymentSetting.offlinePaymentEnabled === false) {
+        throw new BadRequestException('Offline payment is currently disabled by Admin.');
+      }
+    }
+
+    // Process payment / initiation
+    const payResult = await this.payInstallment(numCustomerId, numInstId, {
+      paymentMethod: paymentMethodUpper as PaymentMethod,
+    });
+
+    return {
+      success: true,
+      message: 'Installment renewal initiated successfully.',
+      data: {
+        subscriptionId: String(numSubId),
+        installmentId: String(numInstId),
+        status: 'PENDING',
+        amount: installment.totalAmount,
+        nextAction: 'PAYMENT',
+      },
+    };
+  }
+
+  /**
    * Periodic scheduler to evaluate buffer expiry across active subscriptions.
    */
   async evaluateAllActiveInstallments(): Promise<{ evaluatedCount: number; overdueCount: number }> {

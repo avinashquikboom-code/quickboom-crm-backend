@@ -31,25 +31,13 @@ export class RemoteWorkService {
             { domain: { equals: customerId.trim(), mode: 'insensitive' } },
             { name: { equals: customerId.trim(), mode: 'insensitive' } },
           ],
+          deletedAt: null,
         },
       });
       if (foundCustomer) return foundCustomer.id;
     }
 
-    const fallback = await this.prisma.customer.findFirst({
-      where: { isActive: true },
-      orderBy: { id: 'asc' },
-    });
-    if (fallback) return fallback.id;
-
-    const created = await this.prisma.customer.create({
-      data: {
-        name: 'QuickBoom Demo Enterprise',
-        domain: 'quickboom.com',
-        isActive: true,
-      },
-    });
-    return created.id;
+    return undefined;
   }
 
   async getSummary(customerId: number | string | undefined) {

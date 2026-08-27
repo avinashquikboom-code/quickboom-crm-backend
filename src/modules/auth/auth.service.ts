@@ -613,7 +613,7 @@ export class AuthService {
       },
     });
 
-    return { message: 'Password reset OTP generated successfully', otpMock: otp };
+    return { message: 'Password reset OTP sent successfully' };
   }
 
   async resetPassword(dto: ResetPasswordDto) {

@@ -51,8 +51,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const roles: string[] = user.userRoles.map((ur) => ur.role.type);
 
-    // Fallback: If no explicit userRoles but user is platform super-admin
-    if (roles.length === 0 && (user.customerId === null || user.email === 'admin@quikboom.com')) {
+    // Fallback: If no explicit userRoles but user is platform super-admin (no customerId assigned)
+    if (roles.length === 0 && user.customerId === null) {
       roles.push(RoleType.SUPER_ADMIN);
     }
 

@@ -815,16 +815,18 @@ export class LeadRepository {
   }
 
   private async getOrCreateFallbackEmployee(customerId: number, userId: number): Promise<number> {
-    const existing = await this.prisma.employee.findFirst({ where: { customerId } });
+    const existing = await this.prisma.employee.findFirst({ where: { customerId, status: 'ACTIVE' } });
     if (existing) return existing.id;
 
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const fallback = await this.prisma.employee.create({
       data: {
         customerId,
-        employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
-        firstName: 'CRM',
-        lastName: 'Executive',
-        email: `rep_${Date.now()}@quikboom.com`,
+        userId: user?.id,
+        employeeCode: `EMP-${String(customerId).padStart(3, '0')}-${String(userId).padStart(3, '0')}`,
+        firstName: user?.firstName || 'Customer',
+        lastName: user?.lastName || 'Staff',
+        email: user?.email || `employee_${customerId}_${userId}@customer.local`,
       },
     });
     return fallback.id;
