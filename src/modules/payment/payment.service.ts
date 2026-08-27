@@ -790,7 +790,7 @@ export class PaymentService {
     // Verify if offline payments are enabled in the database
     const publicConfig = await this.getPublicPaymentConfig();
     if (!publicConfig.data.offlinePaymentEnabled) {
-      throw new BadRequestException('Offline payment is currently disabled by Admin.');
+      throw new BadRequestException('Cash payment is currently disabled by Admin.');
     }
 
     const customer = await this.prisma.customer.findUnique({
