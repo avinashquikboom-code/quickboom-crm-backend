@@ -68,7 +68,7 @@ export class DataManagementController {
     return this.dataManagementService.resetModule(
       customerId,
       userId,
-      userRole || 'CUSTOMER_ADMIN',
+      userRole,
       dto,
     );
   }
@@ -88,7 +88,7 @@ export class DataManagementController {
     return this.dataManagementService.resetAllTransactional(
       customerId,
       userId,
-      userRole || 'CUSTOMER_ADMIN',
+      userRole,
       dto,
     );
   }
@@ -122,7 +122,7 @@ export class DataManagementController {
     return this.dataManagementService.resetEmployeeModule(
       customerId,
       userId,
-      userRole || 'CUSTOMER_ADMIN',
+      userRole,
       employeeId,
       dto,
     );
@@ -144,7 +144,7 @@ export class DataManagementController {
     return this.dataManagementService.resetEmployeeAllTransactional(
       customerId,
       userId,
-      userRole || 'CUSTOMER_ADMIN',
+      userRole,
       employeeId,
       dto,
     );
