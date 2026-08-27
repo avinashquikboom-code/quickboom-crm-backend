@@ -435,6 +435,7 @@ export class SubscriptionController {
 
   @Get('admin/customers/:customerId/subscriptions/current')
   @Get('customers/:customerId/subscriptions/current')
+  @Get('admin/customers/:customerId/subscription')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription for Admin' })
@@ -446,7 +447,27 @@ export class SubscriptionController {
     };
   }
 
+  @Post('admin/customers/:customerId/subscriptions')
+  @Post('admin/customers/:customerId/subscription')
+  @Post('customers/:customerId/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Manually create/activate a plan subscription for a customer (Admin)' })
+  async createAdminCustomerSubscription(
+    @Param('customerId') customerId: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.createOrActivateCustomerSubscription(
+      customerId,
+      dto,
+      user?.id,
+    );
+  }
+
+  @Post('admin/subscriptions/:subscriptionId/activate')
   @Patch('admin/subscriptions/:subscriptionId/activate')
+  @Post('subscriptions/:subscriptionId/activate')
   @Patch('subscriptions/:subscriptionId/activate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -458,7 +479,9 @@ export class SubscriptionController {
     return this.subscriptionService.activateCustomerSubscription(subscriptionId, user?.id);
   }
 
+  @Post('admin/subscriptions/:subscriptionId/deactivate')
   @Patch('admin/subscriptions/:subscriptionId/deactivate')
+  @Post('subscriptions/:subscriptionId/deactivate')
   @Patch('subscriptions/:subscriptionId/deactivate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -468,6 +491,34 @@ export class SubscriptionController {
     @CurrentUser() user: any,
   ) {
     return this.subscriptionService.deactivateCustomerSubscription(subscriptionId, user?.id);
+  }
+
+  @Post('admin/subscriptions/:subscriptionId/change-plan')
+  @Patch('admin/subscriptions/:subscriptionId/change-plan')
+  @Post('subscriptions/:subscriptionId/change-plan')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change customer subscription plan (Admin)' })
+  async changeSubscriptionPlan(
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.changeCustomerPlan(subscriptionId, dto, user?.id);
+  }
+
+  @Post('admin/subscriptions/:subscriptionId/renew')
+  @Patch('admin/subscriptions/:subscriptionId/renew')
+  @Post('subscriptions/:subscriptionId/renew')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Renew a customer subscription (Admin)' })
+  async renewSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.renewCustomerSubscription(subscriptionId, dto, user?.id);
   }
 
   @Delete('admin/subscriptions/:subscriptionId')

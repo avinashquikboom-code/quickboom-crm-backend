@@ -7,6 +7,7 @@ import {
   CreateOrderDto,
   RenewSubscriptionDto,
 } from './dto/subscription.dto';
+import { ScheduleService } from '../schedule/schedule.service';
 import {
   calculatePlanExpiry,
   calculateDaysRemaining,
@@ -18,7 +19,10 @@ import {
 export class SubscriptionService {
   private readonly logger = new Logger(SubscriptionService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private scheduleService?: ScheduleService,
+  ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
     const months = durationMonths || (cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1);
@@ -1440,6 +1444,423 @@ export class SubscriptionService {
   }
 
   /**
+   * Admin: Create and Activate a subscription manually for a customer
+   */
+  async createOrActivateCustomerSubscription(
+    customerId: number | string,
+    dto: {
+      planId: number | string;
+      billingCycle?: SubscriptionBillingCycle | string;
+      startDate?: string;
+      endDate?: string;
+      customPrice?: number;
+      customUserLimit?: number;
+      customLeadLimit?: number;
+      customStorageLimit?: number | bigint;
+      customFeatures?: any;
+      notes?: string;
+    },
+    adminUserId?: number,
+  ) {
+    const numCustomerId = Number(customerId);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
+
+    const numPlanId = Number(dto.planId);
+    const plan = await this.prisma.plan.findUnique({
+      where: { id: numPlanId },
+    });
+    if (!plan) {
+      throw new NotFoundException(`Plan #${dto.planId} not found`);
+    }
+
+    const cycle =
+      dto.billingCycle === 'YEARLY'
+        ? SubscriptionBillingCycle.YEARLY
+        : SubscriptionBillingCycle.MONTHLY;
+
+    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const endDate = dto.endDate
+      ? new Date(dto.endDate)
+      : calculatePlanExpiry(startDate, durationMonths);
+
+    const basePrice =
+      dto.customPrice !== undefined && dto.customPrice !== null
+        ? Number(dto.customPrice)
+        : cycle === SubscriptionBillingCycle.YEARLY
+        ? Number(plan.yearlyPrice)
+        : Number(plan.monthlyPrice);
+
+    const gst = Math.round(basePrice * 0.18);
+    const totalAmount = basePrice + gst;
+
+    const newSub = await this.prisma.$transaction(async (tx) => {
+      // 1. Deactivate any existing active subscriptions for this customer
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId: numCustomerId,
+          status: SubscriptionStatus.ACTIVE,
+        },
+        data: {
+          status: SubscriptionStatus.EXPIRED,
+        },
+      });
+
+      // 2. Create the new active subscription
+      const sub = await tx.customerSubscription.create({
+        data: {
+          customerId: numCustomerId,
+          planId: plan.id,
+          billingCycle: cycle,
+          status: SubscriptionStatus.ACTIVE,
+          startDate,
+          endDate,
+          duration: durationMonths,
+          customPrice: dto.customPrice !== undefined ? dto.customPrice : null,
+          customUserLimit: dto.customUserLimit || null,
+          customLeadLimit: dto.customLeadLimit || null,
+          customStorageLimit: dto.customStorageLimit ? BigInt(dto.customStorageLimit) : null,
+          customFeatures: dto.customFeatures || null,
+        },
+        include: { plan: true },
+      });
+
+      // 3. Record payment history as PAID / SUCCESS
+      await tx.paymentHistory.create({
+        data: {
+          customerId: numCustomerId,
+          subscriptionId: sub.id,
+          planId: plan.id,
+          planName: plan.name,
+          billingCycle: cycle,
+          amount: totalAmount,
+          taxAmount: gst,
+          totalAmount,
+          currency: 'INR',
+          status: 'SUCCESS',
+          paymentMethod: PaymentMethod.BANK_TRANSFER,
+          transactionId: `ADMIN-MANUAL-${Date.now()}`,
+          orderId: `ORD-${Date.now()}`,
+          orderNumber: `#QB-MANUAL-${Date.now().toString(36).toUpperCase()}`,
+        },
+      });
+
+      // 4. Update customer active status
+      await tx.customer.update({
+        where: { id: numCustomerId },
+        data: {
+          isActive: true,
+        },
+      });
+
+      return sub;
+    });
+
+    // 5. Generate Monthly Schedules for the subscription period
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[SCHEDULE_GEN_WARN] Failed auto-generating schedule: ${err?.message}`);
+    }
+
+    // 6. Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'MANUAL_ACTIVATE_SUBSCRIPTION',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: numCustomerId,
+          details: {
+            subscriptionId: newSub.id,
+            planName: plan.name,
+            billingCycle: cycle,
+            totalAmount,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            mode: 'ADMIN_MANUAL',
+          },
+        },
+      });
+    } catch (_) {}
+
+    return this.getAdminCustomerSubscriptions(numCustomerId);
+  }
+
+  /**
+   * Admin: Change customer's subscription plan
+   */
+  async changeCustomerPlan(
+    subscriptionId: number | string,
+    dto: {
+      newPlanId: number | string;
+      billingCycle?: SubscriptionBillingCycle | string;
+      startDate?: string;
+      customPrice?: number;
+      notes?: string;
+    },
+    adminUserId?: number,
+  ) {
+    const numSubId = Number(subscriptionId);
+    const oldSub = await this.prisma.customerSubscription.findUnique({
+      where: { id: numSubId },
+      include: { plan: true },
+    });
+
+    if (!oldSub) {
+      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+    }
+
+    const numNewPlanId = Number(dto.newPlanId);
+    const newPlan = await this.prisma.plan.findUnique({
+      where: { id: numNewPlanId },
+    });
+
+    if (!newPlan) {
+      throw new NotFoundException(`New Plan #${dto.newPlanId} not found`);
+    }
+
+    const cycle =
+      dto.billingCycle === 'YEARLY'
+        ? SubscriptionBillingCycle.YEARLY
+        : dto.billingCycle === 'MONTHLY'
+        ? SubscriptionBillingCycle.MONTHLY
+        : oldSub.billingCycle || SubscriptionBillingCycle.MONTHLY;
+
+    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const endDate = calculatePlanExpiry(startDate, durationMonths);
+
+    const basePrice =
+      dto.customPrice !== undefined && dto.customPrice !== null
+        ? Number(dto.customPrice)
+        : cycle === SubscriptionBillingCycle.YEARLY
+        ? Number(newPlan.yearlyPrice)
+        : Number(newPlan.monthlyPrice);
+
+    const gst = Math.round(basePrice * 0.18);
+    const totalAmount = basePrice + gst;
+
+    const newSub = await this.prisma.$transaction(async (tx) => {
+      // 1. Mark current and older subscriptions as EXPIRED
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId: oldSub.customerId,
+          status: SubscriptionStatus.ACTIVE,
+        },
+        data: {
+          status: SubscriptionStatus.EXPIRED,
+        },
+      });
+
+      // 2. Create the new subscription
+      const sub = await tx.customerSubscription.create({
+        data: {
+          customerId: oldSub.customerId,
+          planId: newPlan.id,
+          billingCycle: cycle,
+          status: SubscriptionStatus.ACTIVE,
+          startDate,
+          endDate,
+          duration: durationMonths,
+          customPrice: dto.customPrice !== undefined ? dto.customPrice : null,
+        },
+        include: { plan: true },
+      });
+
+      // 3. Record payment history
+      await tx.paymentHistory.create({
+        data: {
+          customerId: oldSub.customerId,
+          subscriptionId: sub.id,
+          planId: newPlan.id,
+          planName: newPlan.name,
+          billingCycle: cycle,
+          amount: totalAmount,
+          taxAmount: gst,
+          totalAmount,
+          currency: 'INR',
+          status: 'SUCCESS',
+          paymentMethod: PaymentMethod.BANK_TRANSFER,
+          transactionId: `PLAN-CHANGE-${Date.now()}`,
+          orderId: `ORD-${Date.now()}`,
+          orderNumber: `#QB-CHG-${Date.now().toString(36).toUpperCase()}`,
+        },
+      });
+
+      // 4. Update customer active status
+      await tx.customer.update({
+        where: { id: oldSub.customerId },
+        data: {
+          isActive: true,
+        },
+      });
+
+      return sub;
+    });
+
+    // 5. Generate schedules for new plan
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on plan change: ${err?.message}`);
+    }
+
+    // 6. Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'CHANGE_PLAN',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: oldSub.customerId,
+          details: {
+            oldSubscriptionId: oldSub.id,
+            oldPlanName: oldSub.plan?.name,
+            newSubscriptionId: newSub.id,
+            newPlanName: newPlan.name,
+            billingCycle: cycle,
+            totalAmount,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return this.getAdminCustomerSubscriptions(oldSub.customerId);
+  }
+
+  /**
+   * Admin: Renew a customer subscription
+   */
+  async renewCustomerSubscription(
+    subscriptionId: number | string,
+    dto: {
+      billingCycle?: SubscriptionBillingCycle | string;
+      customPrice?: number;
+      notes?: string;
+    },
+    adminUserId?: number,
+  ) {
+    const numSubId = Number(subscriptionId);
+    const sub = await this.prisma.customerSubscription.findUnique({
+      where: { id: numSubId },
+      include: { plan: true },
+    });
+
+    if (!sub) {
+      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+    }
+
+    const cycle =
+      dto.billingCycle === 'YEARLY'
+        ? SubscriptionBillingCycle.YEARLY
+        : dto.billingCycle === 'MONTHLY'
+        ? SubscriptionBillingCycle.MONTHLY
+        : sub.billingCycle || SubscriptionBillingCycle.MONTHLY;
+
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const now = new Date();
+
+    // If currently expired, start from today. If currently active, extend from existing endDate.
+    const isCurrentlyExpired = now > new Date(sub.endDate);
+    const newStartDate = isCurrentlyExpired ? now : sub.startDate;
+    const newEndDate = isCurrentlyExpired
+      ? calculatePlanExpiry(now, durationMonths)
+      : calculatePlanExpiry(new Date(sub.endDate), durationMonths);
+
+    const basePrice =
+      dto.customPrice !== undefined && dto.customPrice !== null
+        ? Number(dto.customPrice)
+        : cycle === SubscriptionBillingCycle.YEARLY
+        ? Number(sub.plan.yearlyPrice)
+        : Number(sub.plan.monthlyPrice);
+
+    const gst = Math.round(basePrice * 0.18);
+    const totalAmount = basePrice + gst;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.customerSubscription.update({
+        where: { id: sub.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          startDate: newStartDate,
+          endDate: newEndDate,
+          billingCycle: cycle,
+          deletedAt: null,
+        },
+      });
+
+      await tx.paymentHistory.create({
+        data: {
+          customerId: sub.customerId,
+          subscriptionId: sub.id,
+          planId: sub.planId,
+          planName: sub.plan.name,
+          billingCycle: cycle,
+          amount: totalAmount,
+          taxAmount: gst,
+          totalAmount,
+          currency: 'INR',
+          status: 'SUCCESS',
+          paymentMethod: PaymentMethod.BANK_TRANSFER,
+          transactionId: `RENEWAL-${Date.now()}`,
+          orderId: `ORD-RNW-${Date.now()}`,
+          orderNumber: `#QB-RNW-${Date.now().toString(36).toUpperCase()}`,
+        },
+      });
+
+      await tx.customer.update({
+        where: { id: sub.customerId },
+        data: {
+          isActive: true,
+        },
+      });
+    });
+
+    // Generate schedules
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on renewal: ${err?.message}`);
+    }
+
+    // Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'RENEW_SUBSCRIPTION',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: sub.customerId,
+          details: {
+            subscriptionId: sub.id,
+            planName: sub.plan.name,
+            billingCycle: cycle,
+            totalAmount,
+            startDate: newStartDate.toISOString(),
+            endDate: newEndDate.toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return this.getAdminCustomerSubscriptions(sub.customerId);
+  }
+
+  /**
    * Admin: Manually activate a customer subscription
    */
   async activateCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
@@ -1489,6 +1910,13 @@ export class SubscriptionService {
         },
       });
 
+      await tx.customer.update({
+        where: { id: sub.customerId },
+        data: {
+          isActive: true,
+        },
+      });
+
       return tx.customerSubscription.update({
         where: { id: sub.id },
         data: {
@@ -1500,6 +1928,15 @@ export class SubscriptionService {
         include: { plan: true },
       });
     });
+
+    // Generate monthly schedules
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on activation: ${err?.message}`);
+    }
 
     // Write audit log
     try {
@@ -1543,7 +1980,6 @@ export class SubscriptionService {
       data: {
         status: SubscriptionStatus.CANCELED,
       },
-      include: { plan: true },
     });
 
     // Write audit log
@@ -1613,5 +2049,6 @@ export class SubscriptionService {
     };
   }
 }
+
 
 

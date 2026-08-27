@@ -92,17 +92,31 @@ export class PlanAccessService {
     if (!customerId) {
       throw new BadRequestException('customerId is required for plan resolution');
     }
-    const numCustomerId = this.resolveCustomerId(customerId) || 1;
+    const numCustomerId = this.resolveCustomerId(customerId);
+    if (!numCustomerId) {
+      throw new BadRequestException('Valid customerId is required for plan resolution');
+    }
     this.logger.debug(`[PLAN_DEBUG] Start getEffectivePlan for customerId=${customerId} (resolved: ${numCustomerId})`);
 
-    // 1. Fetch latest customer subscription
+    // 1. Fetch customer subscriptions
     const subStart = Date.now();
-    const sub = await this.prisma.customerSubscription.findFirst({
+    const subs = await this.prisma.customerSubscription.findMany({
       where: { customerId: numCustomerId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
-    this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms`);
+    this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms (count=${subs.length})`);
+
+    const now = new Date();
+    // Prioritize active non-expired subscription, otherwise latest active, otherwise latest created
+    const sub =
+      subs.find(
+        (s) =>
+          s.status === SubscriptionStatus.ACTIVE &&
+          (!s.endDate || new Date(s.endDate) >= now),
+      ) ||
+      subs.find((s) => s.status === SubscriptionStatus.ACTIVE) ||
+      subs[0];
 
     let basePlan = sub?.plan;
 
@@ -113,7 +127,6 @@ export class PlanAccessService {
     }
 
     // 2. Check expiration
-    const now = new Date();
     const isExpired =
       sub.status === SubscriptionStatus.EXPIRED ||
       (sub.endDate ? now > new Date(sub.endDate) : false);

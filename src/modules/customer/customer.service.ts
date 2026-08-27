@@ -159,8 +159,8 @@ export class CustomerService {
         orderBy,
         include: {
           subscriptions: {
+            where: { deletedAt: null },
             include: { plan: true },
-            take: 1,
             orderBy: { createdAt: 'desc' },
           },
           _count: {
@@ -178,12 +178,43 @@ export class CustomerService {
       this.prisma.customer.count({ where }),
     ]);
 
+    const now = new Date();
     const formatted = items.map((c) => {
-      const activeSub = c.subscriptions[0];
-      const planName = activeSub?.plan?.name || 'Starter Plan';
+      // Find latest valid active subscription, otherwise latest created
+      const activeSub =
+        c.subscriptions.find(
+          (s) =>
+            s.status === 'ACTIVE' &&
+            (!s.endDate || new Date(s.endDate) >= now),
+        ) || c.subscriptions[0];
+
+      const isSubActive =
+        activeSub &&
+        activeSub.status === 'ACTIVE' &&
+        (!activeSub.endDate || new Date(activeSub.endDate) >= now);
+
+      const planName = activeSub?.plan?.name || 'No Active Plan';
+      const planCode = activeSub?.plan?.code || 'NONE';
+      const billingCycle = activeSub?.billingCycle || 'MONTHLY';
+      const subStatus = activeSub
+        ? isSubActive
+          ? 'ACTIVE'
+          : activeSub.status === 'ACTIVE'
+          ? 'EXPIRED'
+          : activeSub.status
+        : 'NO_PLAN';
+
+      const basePrice = activeSub?.plan
+        ? billingCycle === 'YEARLY'
+          ? Number(activeSub.plan.yearlyPrice)
+          : Number(activeSub.plan.monthlyPrice)
+        : 0;
+
+      const gst = Math.round(basePrice * 0.18);
+      const totalAmount = basePrice + gst;
       const mrr = activeSub?.plan?.monthlyPrice
         ? `₹${Number(activeSub.plan.monthlyPrice).toLocaleString('en-IN')}`
-        : '₹4,999';
+        : '₹0';
 
       return {
         id: c.id,
@@ -209,6 +240,14 @@ export class CustomerService {
         isActive: c.isActive,
         status: c.isActive ? 'ACTIVE' : 'INACTIVE',
         plan: planName,
+        planCode,
+        billingCycle,
+        subscriptionStatus: subStatus,
+        subscriptionStartDate: activeSub?.startDate || null,
+        subscriptionEndDate: activeSub?.endDate || null,
+        subscriptionAmount: totalAmount,
+        baseAmount: basePrice,
+        gstAmount: gst,
         users: c._count.users || 1,
         leads: c._count.leads || 0,
         deals: c._count.deals || 0,
@@ -258,6 +297,7 @@ export class CustomerService {
       where: { id: numericId },
       include: {
         subscriptions: {
+          where: { deletedAt: null },
           include: { plan: true },
           orderBy: { createdAt: 'desc' },
         },
@@ -290,15 +330,57 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
-    const activeSub = customer.subscriptions[0];
+    const now = new Date();
+    const activeSub =
+      customer.subscriptions.find(
+        (s) =>
+          s.status === 'ACTIVE' &&
+          (!s.endDate || new Date(s.endDate) >= now),
+      ) || customer.subscriptions[0];
+
+    const isSubActive =
+      activeSub &&
+      activeSub.status === 'ACTIVE' &&
+      (!activeSub.endDate || new Date(activeSub.endDate) >= now);
+
     const safeCustomer = this.serializeBigInt(customer);
+
+    const planName = activeSub?.plan?.name || 'No Active Plan';
+
+    const subStatus = activeSub
+      ? isSubActive
+        ? 'ACTIVE'
+        : activeSub.status === 'ACTIVE'
+        ? 'EXPIRED'
+        : activeSub.status
+      : 'NO_PLAN';
 
     return {
       ...safeCustomer,
       customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
       company: customer.companyName || customer.name,
-      plan: activeSub?.plan?.name || 'Starter Plan',
-      subscriptionStatus: activeSub?.status || 'ACTIVE',
+      plan: planName,
+      planCode: activeSub?.plan?.code || 'NONE',
+      billingCycle: activeSub?.billingCycle || 'MONTHLY',
+      subscriptionStatus: subStatus,
+      subscriptionStartDate: activeSub?.startDate || null,
+      subscriptionEndDate: activeSub?.endDate || null,
+      currentSubscription: activeSub
+        ? {
+            id: activeSub.id,
+            planId: activeSub.planId,
+            planName: activeSub.plan.name,
+            planCode: activeSub.plan.code,
+            billingCycle: activeSub.billingCycle,
+            status: subStatus,
+            startDate: activeSub.startDate,
+            endDate: activeSub.endDate,
+            basePrice:
+              activeSub.billingCycle === 'YEARLY'
+                ? Number(activeSub.plan.yearlyPrice)
+                : Number(activeSub.plan.monthlyPrice),
+          }
+        : null,
       userCount: customer._count.users,
       leadCount: customer._count.leads,
       dealCount: customer._count.deals,
