@@ -429,7 +429,7 @@ export class AuthService {
       userId: qbCode,
       // Conditional: Only include customerId and customerName for non-super-admin
       ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId }),
-      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name || 'Enterprise Workspace' }),
+      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name ?? null }),
     };
 
     if (userRole === 'EMPLOYEE' && employeeData) {
@@ -461,23 +461,7 @@ export class AuthService {
     try {
       let customerId = user.customerId;
       if (!customerId) {
-        let defaultCustomer = await this.prisma.customer.findFirst({
-          where: { isActive: true },
-        });
-        if (!defaultCustomer) {
-          defaultCustomer = await this.prisma.customer.create({
-            data: {
-              name: 'Enterprise Workspace',
-              email: user.email,
-              isActive: true,
-            },
-          });
-        }
-        customerId = defaultCustomer.id;
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { customerId },
-        });
+        throw new Error(`User ${user.id} has no customerId assigned. Cannot auto-provision employee without a real customer.`);
       }
 
       // Generate next sequential EMP code
@@ -732,7 +716,7 @@ export class AuthService {
       createdAt: user.createdAt,
       // Conditional: Only include customerId and customerName for non-super-admin
       ...(!hasSuperAdminRole && { customerId: user.customerId }),
-      ...(!hasSuperAdminRole && { customerName: user.customer?.name || 'Enterprise Workspace' }),
+      ...(!hasSuperAdminRole && { customerName: user.customer?.name ?? null }),
     };
 
     if (userRole === 'EMPLOYEE' && employeeData) {

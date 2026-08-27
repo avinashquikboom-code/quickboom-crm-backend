@@ -207,7 +207,7 @@ export class ScheduleService {
       customerId: item.customerId,
       customerName: item.customer?.name || 'N/A',
       planId: item.planId,
-      planName: item.plan?.name || 'Standard Plan',
+      planName: item.plan?.name ?? null,
       subscriptionId: item.subscriptionId,
       month: item.month,
       year: item.year,
