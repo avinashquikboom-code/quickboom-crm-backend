@@ -1251,5 +1251,356 @@ export class SubscriptionService {
       timestamp: new Date().toISOString(),
     };
   }
+
+  /**
+   * Admin: Get all subscription details for a specific customer
+   */
+  async getAdminCustomerSubscriptions(customerId: number | string) {
+    const numCustomerId = Number(customerId);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new BadRequestException('Invalid customerId');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId },
+      include: {
+        _count: { select: { users: true, leads: true, works: true } },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
+
+    // Fetch all non-deleted subscriptions for this customer
+    const subscriptions = await this.prisma.customerSubscription.findMany({
+      where: { customerId: numCustomerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        plan: true,
+        payments: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        },
+        customPlanOrders: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        _count: {
+          select: { works: true },
+        },
+      },
+    });
+
+    const now = new Date();
+
+    // Map each subscription to formatted object with exact quota snapshot and payment data
+    const formattedList = subscriptions.map((sub) => {
+      const isExpired = sub.status === SubscriptionStatus.EXPIRED || (sub.endDate ? now > new Date(sub.endDate) : false);
+      const isCanceled = sub.status === SubscriptionStatus.CANCELED;
+      const isPastDue = sub.status === SubscriptionStatus.PAST_DUE;
+      const isTrial = sub.status === SubscriptionStatus.TRIAL;
+
+      let displayStatus = 'ACTIVE';
+      if (isCanceled) {
+        displayStatus = 'DEACTIVATED';
+      } else if (isExpired) {
+        displayStatus = 'EXPIRED';
+      } else if (isPastDue) {
+        displayStatus = 'PAST_DUE';
+      } else if (isTrial) {
+        displayStatus = isExpired ? 'EXPIRED' : 'TRIAL';
+      } else if (sub.status === SubscriptionStatus.ACTIVE) {
+        displayStatus = isExpired ? 'EXPIRED' : 'ACTIVE';
+      }
+
+      const customOrder = sub.customPlanOrders?.[0];
+      const isCustomPlan = Boolean(
+        customOrder ||
+        sub.plan?.code === 'CUSTOM' ||
+        sub.customFeatures ||
+        sub.customPrice !== null,
+      );
+
+      const planType = isCustomPlan ? 'CUSTOM' : 'STANDARD';
+      const planName = isCustomPlan
+        ? (sub.plan?.name === 'Custom Plan' ? 'Custom Plan' : (sub.plan?.name || 'Custom Marketing Plan'))
+        : (sub.plan?.name || 'Starter Plan');
+
+      const planMonthlyPrice = sub.plan ? Number(sub.plan.monthlyPrice) : 0;
+      const planYearlyPrice = sub.plan ? Number(sub.plan.yearlyPrice) : 0;
+      const basePrice = sub.customPrice !== null && sub.customPrice !== undefined
+        ? Number(sub.customPrice)
+        : (customOrder?.totalAmount !== undefined
+            ? Number(customOrder.totalAmount)
+            : (sub.billingCycle === SubscriptionBillingCycle.YEARLY ? planYearlyPrice : planMonthlyPrice));
+
+      const gst = Math.round(basePrice * 0.18);
+      const totalAmount = basePrice + gst;
+
+      const latestPayment = sub.payments?.[0];
+      const paymentStatus = latestPayment?.status || (sub.status === SubscriptionStatus.ACTIVE ? 'PAID' : 'PENDING');
+      const paymentMethod = latestPayment?.paymentMethod || 'RAZORPAY';
+      const paymentId = latestPayment?.paymentId || latestPayment?.transactionId || (latestPayment ? `TXN-${latestPayment.id}` : null);
+      const orderId = latestPayment?.orderId || latestPayment?.orderNumber || (customOrder?.orderNumber || null);
+
+      const userLimit = sub.customUserLimit || sub.plan?.userLimit || 5;
+      const leadLimit = sub.customLeadLimit || sub.plan?.leadLimit || 500;
+      const storageLimit = sub.customStorageLimit ? Number(sub.customStorageLimit) : Number(sub.plan?.storageLimit || 5368709120);
+
+      // Quotas / Deliverables calculation
+      let deliverablesQuota: Array<{ name: string; total: number; used: number; remaining: number }> = [];
+
+      if (customOrder && customOrder.selectedFeatures && typeof customOrder.selectedFeatures === 'object') {
+        const feats = customOrder.selectedFeatures as any[];
+        if (Array.isArray(feats)) {
+          deliverablesQuota = feats.map((f: any) => ({
+            name: f.name || f.optionName || f.optionId || 'Deliverable',
+            total: Number(f.quantity || f.qty || 1),
+            used: 0,
+            remaining: Number(f.quantity || f.qty || 1),
+          }));
+        }
+      }
+
+      if (deliverablesQuota.length === 0 && sub.plan?.features) {
+        const feats = sub.plan.features as any;
+        if (Array.isArray(feats)) {
+          deliverablesQuota = feats.map((f: any) => ({
+            name: String(f),
+            total: 1,
+            used: 0,
+            remaining: 1,
+          }));
+        } else if (typeof feats === 'object' && feats !== null) {
+          deliverablesQuota = Object.entries(feats).map(([k, v]: [string, any]) => ({
+            name: v?.name || k,
+            total: Number(v?.quantity || v || 1),
+            used: 0,
+            remaining: Number(v?.quantity || v || 1),
+          }));
+        }
+      }
+
+      return {
+        id: sub.id,
+        subscriptionId: `SUB-${String(sub.id).padStart(4, '0')}`,
+        customerId: sub.customerId,
+        planId: sub.planId,
+        planName,
+        planCode: sub.plan?.code || 'CUSTOM',
+        planType,
+        billingCycle: sub.billingCycle || SubscriptionBillingCycle.MONTHLY,
+        startDate: sub.startDate,
+        expiryDate: sub.endDate,
+        endDate: sub.endDate,
+        baseAmount: basePrice,
+        gst,
+        totalAmount,
+        paymentStatus,
+        paymentMethod,
+        paymentId,
+        orderId,
+        paymentDate: latestPayment?.createdAt || sub.createdAt,
+        subscriptionStatus: displayStatus,
+        rawStatus: sub.status,
+        isActive: displayStatus === 'ACTIVE',
+        isCurrent: false,
+        includedUsers: `${customer._count.users || 1} / ${userLimit} Users`,
+        userLimit,
+        leadLimit,
+        storageLimit,
+        quotas: deliverablesQuota,
+        createdAt: sub.createdAt,
+        updatedAt: sub.updatedAt,
+      };
+    });
+
+    // Determine current subscription:
+    // Prefer the first one that is ACTIVE, otherwise latest created
+    let currentSub = formattedList.find((s) => s.subscriptionStatus === 'ACTIVE');
+    if (!currentSub && formattedList.length > 0) {
+      currentSub = formattedList[0];
+    }
+
+    if (currentSub) {
+      currentSub.isCurrent = true;
+    }
+
+    const previousSubscriptions = formattedList.filter((s) => s.id !== currentSub?.id);
+
+    return {
+      success: true,
+      currentSubscription: currentSub || null,
+      subscriptionHistory: formattedList,
+      previousSubscriptions,
+      totalCount: formattedList.length,
+    };
+  }
+
+  /**
+   * Admin: Manually activate a customer subscription
+   */
+  async activateCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
+    const numSubId = Number(subscriptionId);
+    const sub = await this.prisma.customerSubscription.findUnique({
+      where: { id: numSubId },
+      include: { plan: true },
+    });
+
+    if (!sub) {
+      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+    }
+
+    const now = new Date();
+    const durationMonths = sub.duration || (sub.billingCycle === SubscriptionBillingCycle.YEARLY ? 12 : 1);
+    let startDate = sub.startDate;
+    let endDate = sub.endDate;
+
+    // If previously expired or in the past, reset the start and end dates forward
+    if (now > new Date(sub.endDate)) {
+      startDate = now;
+      endDate = calculatePlanExpiry(now, durationMonths);
+    }
+
+    // Atomic transaction to deactivate other active subscriptions and set this one to ACTIVE
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Deactivate any other currently ACTIVE subscriptions for this customer
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId: sub.customerId,
+          id: { not: sub.id },
+          status: SubscriptionStatus.ACTIVE,
+        },
+        data: {
+          status: SubscriptionStatus.EXPIRED,
+        },
+      });
+
+      return tx.customerSubscription.update({
+        where: { id: sub.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          startDate,
+          endDate,
+          deletedAt: null,
+        },
+        include: { plan: true },
+      });
+    });
+
+    // Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'ACTIVATE_SUBSCRIPTION',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: sub.customerId,
+          details: {
+            subscriptionId: sub.id,
+            planName: sub.plan.name,
+            startDate: updated.startDate.toISOString(),
+            endDate: updated.endDate.toISOString(),
+            mode: 'MANUAL_ADMIN_ACTIVATION',
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return this.getAdminCustomerSubscriptions(sub.customerId);
+  }
+
+  /**
+   * Admin: Deactivate an active subscription
+   */
+  async deactivateCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
+    const numSubId = Number(subscriptionId);
+    const sub = await this.prisma.customerSubscription.findUnique({
+      where: { id: numSubId },
+      include: { plan: true },
+    });
+
+    if (!sub) {
+      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+    }
+
+    await this.prisma.customerSubscription.update({
+      where: { id: numSubId },
+      data: {
+        status: SubscriptionStatus.CANCELED,
+      },
+      include: { plan: true },
+    });
+
+    // Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'DEACTIVATE_SUBSCRIPTION',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: sub.customerId,
+          details: {
+            subscriptionId: sub.id,
+            planName: sub.plan.name,
+            previousStatus: sub.status,
+            newStatus: 'CANCELED',
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return this.getAdminCustomerSubscriptions(sub.customerId);
+  }
+
+  /**
+   * Admin: Safely soft-delete a customer subscription
+   */
+  async deleteCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
+    const numSubId = Number(subscriptionId);
+    const sub = await this.prisma.customerSubscription.findUnique({
+      where: { id: numSubId },
+      include: { plan: true },
+    });
+
+    if (!sub) {
+      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+    }
+
+    await this.prisma.customerSubscription.update({
+      where: { id: numSubId },
+      data: {
+        deletedAt: new Date(),
+        status: SubscriptionStatus.CANCELED,
+      },
+    });
+
+    // Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'DELETE_SUBSCRIPTION',
+          module: 'SUBSCRIPTIONS',
+          userId: adminUserId,
+          customerId: sub.customerId,
+          details: {
+            subscriptionId: sub.id,
+            planName: sub.plan.name,
+            deletedAt: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return {
+      success: true,
+      message: `Subscription #${subscriptionId} deleted successfully`,
+    };
+  }
 }
+
 

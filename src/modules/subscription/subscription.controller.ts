@@ -418,5 +418,69 @@ export class SubscriptionController {
   async runExpiryCheck() {
     return this.subscriptionService.runDailyExpiryCheck();
   }
+
+  // ==========================================
+  // Customer Subscription Lifecycle (Admin)
+  // ==========================================
+
+  @Get('admin/customers/:customerId/subscriptions')
+  @Get('admin/customers/:customerId/subscriptions/history')
+  @Get('customers/:customerId/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all customer subscriptions (current & history) for Admin' })
+  async getAdminCustomerSubscriptions(@Param('customerId') customerId: string) {
+    return this.subscriptionService.getAdminCustomerSubscriptions(customerId);
+  }
+
+  @Get('admin/customers/:customerId/subscriptions/current')
+  @Get('customers/:customerId/subscriptions/current')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current customer subscription for Admin' })
+  async getAdminCustomerCurrentSubscription(@Param('customerId') customerId: string) {
+    const res = await this.subscriptionService.getAdminCustomerSubscriptions(customerId);
+    return {
+      success: true,
+      data: res.currentSubscription,
+    };
+  }
+
+  @Patch('admin/subscriptions/:subscriptionId/activate')
+  @Patch('subscriptions/:subscriptionId/activate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Activate a customer subscription (Admin)' })
+  async activateSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.activateCustomerSubscription(subscriptionId, user?.id);
+  }
+
+  @Patch('admin/subscriptions/:subscriptionId/deactivate')
+  @Patch('subscriptions/:subscriptionId/deactivate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Deactivate a customer subscription (Admin)' })
+  async deactivateSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.deactivateCustomerSubscription(subscriptionId, user?.id);
+  }
+
+  @Delete('admin/subscriptions/:subscriptionId')
+  @Delete('subscriptions/:subscriptionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Soft-delete a customer subscription (Admin)' })
+  async deleteSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user?.id);
+  }
 }
+
 

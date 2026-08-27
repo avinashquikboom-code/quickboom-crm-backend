@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -16,6 +17,8 @@ import { QBIdGenerator } from '../auth/qb-id.generator';
 
 @Injectable()
 export class CustomerService {
+  private readonly logger = new Logger(CustomerService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
@@ -221,6 +224,10 @@ export class CustomerService {
 
     const totalPages = Math.ceil(total / limit) || 1;
 
+    this.logger.log(
+      `[ADMIN_GET_CUSTOMERS] Total count: ${total}, Returned customer IDs: [${items.map((c) => c.id).join(', ')}]`,
+    );
+
     return {
       data: formatted,
       items: formatted,
@@ -244,6 +251,9 @@ export class CustomerService {
    */
   async findOne(id: number | string) {
     const numericId = Number(id);
+    this.logger.log(
+      `[ADMIN_GET_CUSTOMER_DETAILS] Fetching details for customerId=${numericId}`,
+    );
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
       include: {

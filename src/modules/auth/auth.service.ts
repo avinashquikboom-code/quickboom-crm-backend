@@ -55,12 +55,17 @@ export class AuthService {
 
     return this.prisma.$transaction(async (tx) => {
       // Create Customer
+      const companyOrCustomerName = (dto.companyName || dto.fullName || 'Customer').trim();
       const customer = await tx.customer.create({
         data: {
-          name: dto.companyName,
+          name: companyOrCustomerName,
+          companyName: companyOrCustomerName,
           email: dto.email,
           phone: dto.phone,
           city: dto.city,
+          isActive: true,
+          source: 'APP_REGISTRATION',
+          customerType: 'ENTERPRISE',
         },
       });
 
@@ -125,6 +130,10 @@ export class AuthService {
       });
 
       const tokens = await this.generateTokens(user.id, customer.id, user.email);
+
+      this.logger.log(
+        `[CUSTOMER_REGISTERED] Customer created → customerId=${customer.id} (${customer.name}), email=${customer.email}, user=${user.email}`,
+      );
 
       return {
         user: {
