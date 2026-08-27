@@ -34,12 +34,12 @@ export class TransformInterceptor<T>
     const response = context.switchToHttp().getResponse();
     return next.handle().pipe(
       map((data) => {
-        // If data contains pagination or meta
+        // If data contains pagination or meta or custom data object
         if (data && typeof data === 'object' && 'data' in data) {
           return {
             statusCode: response.statusCode,
-            success: true,
-            message: 'Operation completed successfully',
+            success: typeof data.success === 'boolean' ? data.success : true,
+            message: data.message || 'Operation completed successfully',
             data: data.data,
             pagination: data.pagination,
             meta: data.meta,
@@ -48,8 +48,8 @@ export class TransformInterceptor<T>
 
         return {
           statusCode: response.statusCode,
-          success: true,
-          message: 'Operation completed successfully',
+          success: typeof data?.success === 'boolean' ? data.success : true,
+          message: data?.message || 'Operation completed successfully',
           data,
         };
       }),
