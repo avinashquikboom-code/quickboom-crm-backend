@@ -16,6 +16,7 @@ import { InvoiceStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Invoices & Payments')
 @ApiBearerAuth()
@@ -32,53 +33,62 @@ export class InvoiceController {
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query('status') status?: InvoiceStatus,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.invoiceService.findAll(customerId, {
-      status,
-      search,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-    });
+    return this.invoiceService.findAll(
+      customerId,
+      {
+        status,
+        search,
+        page: page ? parseInt(page, 10) : 1,
+        limit: limit ? parseInt(limit, 10) : 20,
+      },
+      user,
+    );
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get single invoice details' })
   async findOne(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
   ) {
-    return this.invoiceService.findOne(customerId, id);
+    return this.invoiceService.findOne(customerId, id, user);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create new invoice' })
   async create(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Body() dto: CreateInvoiceDto,
   ) {
-    return this.invoiceService.create(customerId, dto);
+    return this.invoiceService.create(customerId, dto, user);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update invoice status' })
   async update(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
     @Body() dto: UpdateInvoiceDto,
   ) {
-    return this.invoiceService.update(customerId, id, dto);
+    return this.invoiceService.update(customerId, id, dto, user);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Cancel invoice' })
   async remove(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
   ) {
-    return this.invoiceService.remove(customerId, id);
+    return this.invoiceService.remove(customerId, id, user);
   }
 }

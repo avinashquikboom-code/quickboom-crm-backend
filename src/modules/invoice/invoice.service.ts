@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/co
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class InvoiceService {
@@ -10,17 +11,22 @@ export class InvoiceService {
   async findAll(
     customerId: number | string,
     query: { status?: InvoiceStatus; page?: number; limit?: number; search?: string },
+    user?: any,
   ) {
+    const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
     const numCustomerId = Number(customerId);
-    if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
+
+    const where: any = { deletedAt: null };
+
+    if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
       throw new UnauthorizedException('Customer context is required');
     }
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
-
-    const where: any = { customerId: numCustomerId, deletedAt: null };
 
     if (query.status && (query.status as string) !== 'ALL') {
       where.status = query.status;
@@ -88,19 +94,24 @@ export class InvoiceService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string, id: number | string, user?: any) {
+    const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
     const numCustomerId = Number(customerId);
-    if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
+    const numId = Number(id);
+
+    const where: any = {
+      id: numId,
+      deletedAt: null,
+    };
+
+    if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
       throw new UnauthorizedException('Customer context is required');
     }
 
-    const numId = Number(id);
     const invoice = await this.prisma.invoice.findFirst({
-      where: {
-        id: numId,
-        customerId: numCustomerId,
-        deletedAt: null,
-      },
+      where,
       include: {
         contact: true,
         items: true,
@@ -114,29 +125,47 @@ export class InvoiceService {
     return invoice;
   }
 
-  async create(customerId: number | string, dto: CreateInvoiceDto) {
-    const numCustomerId = Number(customerId);
+  async create(customerId: number | string, dto: CreateInvoiceDto, user?: any) {
+    const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
+    let numCustomerId = Number(customerId);
+
     if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new UnauthorizedException('Customer context is required');
+      if (isSuperAdmin) {
+        // Fallback to first active customer or contact's customer
+        const contact = await this.prisma.contact.findUnique({
+          where: { id: Number(dto.contactId) },
+        });
+        if (contact?.customerId) {
+          numCustomerId = contact.customerId;
+        } else {
+          const firstCustomer = await this.prisma.customer.findFirst({
+            where: { deletedAt: null },
+          });
+          numCustomerId = firstCustomer?.id || 1;
+        }
+      } else {
+        throw new UnauthorizedException('Customer context is required');
+      }
     }
 
-    // Verify contact belongs to the authenticated customer
-    const contact = await this.prisma.contact.findFirst({
-      where: {
-        id: Number(dto.contactId),
-        customerId: numCustomerId,
-        deletedAt: null,
-      },
-    });
-
-    if (!contact) {
-      throw new NotFoundException(`Contact with ID ${dto.contactId} not found for this customer`);
+    // Verify contact belongs to the customer if contactId is provided
+    let contactId: number | null = null;
+    if (dto.contactId) {
+      const contact = await this.prisma.contact.findFirst({
+        where: {
+          id: Number(dto.contactId),
+          deletedAt: null,
+        },
+      });
+      if (contact) {
+        contactId = contact.id;
+      }
     }
 
     return this.prisma.invoice.create({
       data: {
         customerId: numCustomerId,
-        contactId: contact.id,
+        contactId: contactId,
         invoiceNo: dto.invoiceNo,
         issueDate: new Date(dto.issueDate),
         dueDate: new Date(dto.dueDate),
@@ -152,10 +181,9 @@ export class InvoiceService {
     });
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateInvoiceDto) {
-    const numCustomerId = Number(customerId);
+  async update(customerId: number | string, id: number | string, dto: UpdateInvoiceDto, user?: any) {
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(customerId, numId, user);
 
     return this.prisma.invoice.update({
       where: { id: numId },
@@ -168,10 +196,9 @@ export class InvoiceService {
     });
   }
 
-  async remove(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async remove(customerId: number | string, id: number | string, user?: any) {
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(customerId, numId, user);
 
     return this.prisma.invoice.update({
       where: { id: numId },
