@@ -474,15 +474,8 @@ export class SubscriptionService {
     return {
       success: true,
       items: paginatedItems,
-      data: {
-        items: paginatedItems,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages,
-        },
-      },
+      data: paginatedItems,
+      orders: paginatedItems,
       pagination: {
         page,
         limit,
