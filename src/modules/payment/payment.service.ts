@@ -142,13 +142,35 @@ export class PaymentService {
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const basePrice =
+    const fullBasePrice =
       cycle === SubscriptionBillingCycle.YEARLY
         ? Number(plan.yearlyPrice)
         : Number(plan.monthlyPrice);
 
-    const taxAmount = Math.round(basePrice * 0.18);
-    const totalAmount = basePrice + taxAmount;
+    const fullTaxAmount = Math.round(fullBasePrice * 0.18);
+    const fullTotalAmount = fullBasePrice + fullTaxAmount;
+
+    // Determine payment option: FULL (100%), ADVANCE (50%), or BALANCE (remaining)
+    const paymentOption = (dto.paymentOption || 'FULL').toUpperCase();
+    let basePrice = fullBasePrice;
+    let taxAmount = fullTaxAmount;
+    let totalAmount = fullTotalAmount;
+
+    if (paymentOption === 'ADVANCE' || paymentOption === 'HALF') {
+      totalAmount = Math.round(fullTotalAmount * 0.5);
+      taxAmount = Math.round(fullTaxAmount * 0.5);
+      basePrice = totalAmount - taxAmount;
+    } else if (paymentOption === 'BALANCE') {
+      // Find existing successful payments for this customer's active subscription
+      const successfulPayments = await this.prisma.paymentHistory.findMany({
+        where: { customerId, status: 'SUCCESS' },
+      });
+      const previousTotalPaid = successfulPayments.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+      totalAmount = Math.max(0, fullTotalAmount - previousTotalPaid);
+      taxAmount = Math.round(totalAmount - (totalAmount / 1.18));
+      basePrice = totalAmount - taxAmount;
+    }
+
     const amountInPaise = Math.round(totalAmount * 100);
 
     const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
@@ -163,6 +185,7 @@ export class PaymentService {
         planId: String(plan.id),
         planName: plan.name,
         billingCycle: cycle,
+        paymentOption,
       },
     };
 
@@ -170,13 +193,9 @@ export class PaymentService {
     this.logger.log('[RAZORPAY_ORDER_CREATE_REQUEST] Outgoing Order to Razorpay API:');
     this.logger.log(`Customer ID: ${customerId} (${customer.companyName || customer.name})`);
     this.logger.log(`Plan: ${plan.name} (ID: ${plan.id}, Code: ${plan.code})`);
-    this.logger.log(`Billing Cycle: ${cycle}`);
-    this.logger.log(`Base Amount: ₹${basePrice}`);
-    this.logger.log(`Calculated GST (18%): ₹${taxAmount}`);
-    this.logger.log(`Total Amount: ₹${totalAmount}`);
-    this.logger.log(`Amount in Paise: ${amountInPaise}`);
+    this.logger.log(`Billing Cycle: ${cycle} | Payment Option: ${paymentOption}`);
+    this.logger.log(`Full Plan Total: ₹${fullTotalAmount} | Charged Amount: ₹${totalAmount}`);
     this.logger.log(`Payment Environment: ${rzpConfig.environment}`);
-    this.logger.log(`Key ID: ${maskKeyId(rzpConfig.keyId)}`);
     this.logger.log(`Payload (Secrets omitted): ${JSON.stringify(razorpayPayload)}`);
     this.logger.log('==================================================');
 
@@ -223,7 +242,7 @@ export class PaymentService {
     }
 
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=₹${totalAmount}`,
+      `[PAYMENT_CREATE] orderId: ${razorpayOrderId} customerId: CUST-${customerId} totalAmount: ${fullTotalAmount} paymentType: ${paymentOption} calculatedAmount: ${totalAmount}`,
     );
 
     return {
@@ -231,8 +250,10 @@ export class PaymentService {
       orderId: razorpayOrderId,
       amount: amountInPaise,
       totalAmountRupees: totalAmount,
+      fullPlanAmountRupees: fullTotalAmount,
       basePriceRupees: basePrice,
       taxAmountRupees: taxAmount,
+      paymentOption,
       currency: dto.currency || 'INR',
       razorpayKeyId: rzpConfig.keyId,
       planId: plan.id,
@@ -346,12 +367,32 @@ export class PaymentService {
     this.logger.log(`[SUBSCRIPTION_ACTIVATE] customerId=${customerId}, planId=${plan.id}`);
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const basePrice =
+    const fullBasePrice =
       cycle === SubscriptionBillingCycle.YEARLY
         ? Number(plan.yearlyPrice)
         : Number(plan.monthlyPrice);
-    const tax = Math.round(basePrice * 0.18);
-    const total = basePrice + tax;
+    const fullTaxAmount = Math.round(fullBasePrice * 0.18);
+    const fullTotalAmount = fullBasePrice + fullTaxAmount;
+
+    // Calculate charged amount based on payment option
+    const paymentOption = (dto.paymentOption || 'FULL').toUpperCase();
+    let chargedBase = fullBasePrice;
+    let chargedTax = fullTaxAmount;
+    let chargedTotal = fullTotalAmount;
+
+    if (paymentOption === 'ADVANCE' || paymentOption === 'HALF') {
+      chargedTotal = Math.round(fullTotalAmount * 0.5);
+      chargedTax = Math.round(fullTaxAmount * 0.5);
+      chargedBase = chargedTotal - chargedTax;
+    } else if (paymentOption === 'BALANCE') {
+      const priorPayments = await this.prisma.paymentHistory.findMany({
+        where: { customerId, status: 'SUCCESS' },
+      });
+      const priorTotal = priorPayments.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+      chargedTotal = Math.max(0, fullTotalAmount - priorTotal);
+      chargedTax = Math.round(chargedTotal - (chargedTotal / 1.18));
+      chargedBase = chargedTotal - chargedTax;
+    }
 
     const startDate = new Date();
     const expiryDate = new Date(startDate);
@@ -384,9 +425,9 @@ export class PaymentService {
             orderId: dto.razorpay_order_id,
             paymentId: dto.razorpay_payment_id,
             billingCycle: cycle as any,
-            amount: basePrice,
-            taxAmount: tax,
-            totalAmount: total,
+            amount: chargedBase,
+            taxAmount: chargedTax,
+            totalAmount: chargedTotal,
             status: 'SUCCESS',
             paymentMethod: PaymentMethod.RAZORPAY,
             transactionId,
@@ -394,7 +435,7 @@ export class PaymentService {
         });
       }
 
-      // 2. Create or update CustomerSubscription
+      // 2. Create or update CustomerSubscription (Active so work starts on 50% advance)
       let sub = await tx.customerSubscription.findFirst({
         where: { customerId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -432,56 +473,90 @@ export class PaymentService {
         });
       }
 
-      const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+      // 3. Generate Receipt for this payment
+      const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
 
-      // Link payment to subscription & attach invoice number
+      // Link payment to subscription & attach receipt number
       await tx.paymentHistory.update({
         where: { id: payment.id },
         data: {
           subscriptionId: sub.id,
-          invoiceUrl: invoiceNo,
+          invoiceUrl: receiptNo,
         },
       });
 
-      // 3. Find or create primary contact for customer to issue official invoice
-      let contact = await tx.contact.findFirst({
-        where: { customerId, deletedAt: null },
+      // 4. Calculate total paid across all successful payments for this subscription
+      const allPayments = await tx.paymentHistory.findMany({
+        where: { subscriptionId: sub.id, status: 'SUCCESS' },
       });
+      const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
+      const balanceAmount = Math.max(0, fullTotalAmount - totalPaid);
+      const isFullyPaid = totalPaid >= fullTotalAmount;
+      const paymentStatus = isFullyPaid ? 'FULLY_PAID' : 'PARTIALLY_PAID';
 
-      if (!contact) {
-        const customer = await tx.customer.findUnique({
-          where: { id: customerId },
+      this.logger.log(
+        `[PAYMENT_SUCCESS] paymentId: ${payment.id} amount: ${chargedTotal} totalPaid: ${totalPaid} balance: ${balanceAmount} status: ${paymentStatus}`,
+      );
+
+      let finalInvoiceNo: string | null = null;
+
+      // 5. Final Invoice Generation ONLY when 100% Fully Paid
+      if (isFullyPaid) {
+        finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+
+        let contact = await tx.contact.findFirst({
+          where: { customerId, deletedAt: null },
         });
 
-        contact = await tx.contact.create({
-          data: {
-            customerId,
-            firstName: customer?.companyName || customer?.name || 'Customer',
-            lastName: 'Account',
-            email: customer?.email || `billing-${customerId}@quikboom.com`,
-            phone: customer?.phone || 'N/A',
-          },
+        if (!contact) {
+          const customer = await tx.customer.findUnique({
+            where: { id: customerId },
+          });
+
+          contact = await tx.contact.create({
+            data: {
+              customerId,
+              firstName: customer?.companyName || customer?.name || 'Customer',
+              lastName: 'Account',
+              email: customer?.email || `billing-${customerId}@quikboom.com`,
+              phone: customer?.phone || 'N/A',
+            },
+          });
+        }
+
+        // Check if invoice already exists for this subscription
+        const existingInvoice = await tx.invoice.findFirst({
+          where: { customerId, invoiceNo: finalInvoiceNo },
         });
+
+        if (!existingInvoice) {
+          await tx.invoice.create({
+            data: {
+              customerId,
+              contactId: contact.id,
+              invoiceNo: finalInvoiceNo,
+              status: InvoiceStatus.PAID,
+              issueDate: startDate,
+              dueDate: startDate,
+              subTotal: fullBasePrice,
+              taxAmount: fullTaxAmount,
+              discount: 0,
+              totalAmount: fullTotalAmount,
+              notes: `Subscription payment for ${plan.name} (${cycle} billing). Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+            },
+          });
+        }
+
+        this.logger.log(
+          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: true invoiceNo: ${finalInvoiceNo}`,
+        );
+      } else {
+        this.logger.log(
+          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: false`,
+        );
       }
 
-      // Generate Paid Invoice record
-      await tx.invoice.create({
-        data: {
-          customerId,
-          contactId: contact.id,
-          invoiceNo,
-          status: InvoiceStatus.PAID,
-          issueDate: startDate,
-          dueDate: startDate,
-          subTotal: basePrice,
-          taxAmount: tax,
-          discount: 0,
-          totalAmount: total,
-          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: RAZORPAY. Order: ${payment.orderNumber || payment.orderId}`,
-        },
-      });
-
-      // 4. Provision Plan Entitlements strictly from purchased plan features
+      // 6. Provision Plan Entitlements strictly from purchased plan features
       const serviceQuotas = extractDeliverableQuotas(plan.features);
 
       for (const sq of serviceQuotas) {
@@ -513,12 +588,22 @@ export class PaymentService {
         }
       }
 
-      return { payment, subscription: sub, invoiceNo };
+      return {
+        payment,
+        subscription: sub,
+        receiptNo,
+        invoiceNo: finalInvoiceNo,
+        isFullyPaid,
+        totalPaid,
+        balanceAmount,
+      };
     });
 
-    // 4. Trigger Automatic Schedule Generation asynchronously
+    // 4. Trigger Automatic Dynamic Schedule Generation
     try {
-      await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+      }
       await this.workService.generatePlanSchedules(customerId, result.subscription.id);
     } catch (schedErr: any) {
       this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
@@ -540,11 +625,17 @@ export class PaymentService {
           planId: plan.id,
           planName: plan.name,
           billingCycle: cycle,
-          amount: basePrice,
-          taxAmount: tax,
-          totalAmount: total,
+          amount: chargedBase,
+          taxAmount: chargedTax,
+          totalAmount: chargedTotal,
+          fullPlanAmount: fullTotalAmount,
+          totalPaid: result.totalPaid,
+          balanceAmount: result.balanceAmount,
+          isFullyPaid: result.isFullyPaid,
+          receiptNumber: result.receiptNo,
+          invoiceUrl: result.invoiceNo,
           currency: 'INR',
-          paymentStatus: 'PAID',
+          paymentStatus: result.isFullyPaid ? 'PAID' : 'PARTIALLY_PAID',
           paymentMethod: 'RAZORPAY',
           transactionId,
           purchaseDate: startDate,
@@ -562,7 +653,7 @@ export class PaymentService {
           billingCycle: cycle,
           startDate,
           endDate: expiryDate,
-          price: basePrice,
+          price: fullBasePrice,
           userLimit: plan.userLimit,
           leadLimit: plan.leadLimit,
           features: plan.features,
@@ -737,9 +828,8 @@ export class PaymentService {
   }
 
   /**
-   * 5. Get Customer Purchase / Payment History
+   * 5. Get Customer Purchase / Payment History with Receipts and Invoice status
    */
-
   async getPaymentHistory(user: any, reqCustomerId?: number) {
     const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
     if (!customerId || isNaN(customerId)) {
@@ -752,9 +842,34 @@ export class PaymentService {
       include: { subscription: { include: { plan: true } } },
     });
 
-    return {
-      success: true,
-      data: payments.map((p) => ({
+    // Check active subscription total paid vs total amount
+    const activeSub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true },
+    });
+
+    let activeSubTotalAmount = 0;
+    let activeSubTotalPaid = 0;
+    if (activeSub && activeSub.plan) {
+      const cycle = activeSub.billingCycle || 'MONTHLY';
+      const base = cycle === 'YEARLY' ? Number(activeSub.plan.yearlyPrice) : Number(activeSub.plan.monthlyPrice);
+      activeSubTotalAmount = base + Math.round(base * 0.18);
+      const subPayments = payments.filter((p) => p.subscriptionId === activeSub.id && p.status === 'SUCCESS');
+      activeSubTotalPaid = subPayments.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+    }
+
+    const mapped = payments.map((p) => {
+      const isSuccess = p.status === 'SUCCESS';
+      const receiptNo = p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`;
+      const subFullTotal = p.subscription?.plan
+        ? (Number(p.subscription.billingCycle === 'YEARLY' ? p.subscription.plan.yearlyPrice : p.subscription.plan.monthlyPrice) * 1.18)
+        : Number(p.totalAmount || 0);
+
+      const isFullyPaid = isSuccess && (activeSubTotalPaid >= activeSubTotalAmount || Number(p.totalAmount || 0) >= subFullTotal);
+      const invoiceUrl = isFullyPaid ? (p.invoiceUrl?.startsWith('INV-') ? p.invoiceUrl : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`) : null;
+
+      return {
         id: p.id,
         orderNumber: p.orderNumber || `#QB-${p.id}`,
         orderId: p.orderId,
@@ -766,19 +881,30 @@ export class PaymentService {
         taxAmount: Number(p.taxAmount || 0),
         totalAmount: Number(p.totalAmount || p.amount),
         currency: p.currency || 'INR',
-        paymentStatus: p.status === 'SUCCESS' ? 'PAID' : p.status,
+        paymentStatus: isSuccess ? 'PAID' : p.status,
         paymentMethod: p.paymentMethod || 'RAZORPAY',
         transactionId: p.transactionId || `TXN-${p.id}`,
+        receiptNumber: receiptNo,
+        isFullyPaid,
+        invoiceAvailable: isFullyPaid,
+        invoiceUrl,
+        totalPaid: activeSubTotalPaid > 0 ? activeSubTotalPaid : Number(p.totalAmount || 0),
+        balanceAmount: Math.max(0, activeSubTotalAmount - activeSubTotalPaid),
         purchaseDate: p.createdAt,
         activationDate: p.createdAt,
         expiryDate: p.subscription?.endDate,
         features: p.subscription?.plan?.features || [],
-      })),
+      };
+    });
+
+    return {
+      success: true,
+      data: mapped,
     };
   }
 
   /**
-   * 3. Create Offline Payment Request (Bank Transfer / Cash / Cheque)
+   * 6. Create Offline Payment Request (Bank Transfer / Cash / Cheque)
    * Subscription and Payment are set to PENDING status until Admin approval.
    */
   async createOfflinePayment(user: any, dto: any, reqCustomerId?: number) {
@@ -836,9 +962,29 @@ export class PaymentService {
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const basePrice = cycle === SubscriptionBillingCycle.YEARLY ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
-    const taxAmount = Math.round(basePrice * 0.18);
-    const totalAmount = basePrice + taxAmount;
+    const fullBasePrice = cycle === SubscriptionBillingCycle.YEARLY ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
+    const fullTaxAmount = Math.round(fullBasePrice * 0.18);
+    const fullTotalAmount = fullBasePrice + fullTaxAmount;
+
+    // Calculate advance vs full
+    const paymentOption = (dto.paymentOption || 'FULL').toUpperCase();
+    let basePrice = fullBasePrice;
+    let taxAmount = fullTaxAmount;
+    let totalAmount = fullTotalAmount;
+
+    if (paymentOption === 'ADVANCE' || paymentOption === 'HALF') {
+      totalAmount = Math.round(fullTotalAmount * 0.5);
+      taxAmount = Math.round(fullTaxAmount * 0.5);
+      basePrice = totalAmount - taxAmount;
+    } else if (paymentOption === 'BALANCE') {
+      const previousPayments = await this.prisma.paymentHistory.findMany({
+        where: { customerId, status: 'SUCCESS' },
+      });
+      const previousTotal = previousPayments.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+      totalAmount = Math.max(0, fullTotalAmount - previousTotal);
+      taxAmount = Math.round(totalAmount - (totalAmount / 1.18));
+      basePrice = totalAmount - taxAmount;
+    }
 
     const startDate = new Date();
     const expiryDate = new Date(startDate);
@@ -894,7 +1040,7 @@ export class PaymentService {
     });
 
     this.logger.log(
-      `[OFFLINE_PAYMENT_REQUESTED] customerId=${customerId} plan=${plan.name} total=₹${totalAmount} subId=${subscription.id} orderNumber=${orderNumber}`,
+      `[OFFLINE_PAYMENT_REQUESTED] customerId=${customerId} plan=${plan.name} paymentOption=${paymentOption} charged=₹${totalAmount} full=₹${fullTotalAmount} subId=${subscription.id} orderNumber=${orderNumber}`,
     );
 
     return {
@@ -904,12 +1050,98 @@ export class PaymentService {
       subscriptionId: subscription.id,
       paymentId: payment.id,
       totalAmountRupees: totalAmount,
+      fullPlanAmountRupees: fullTotalAmount,
+      paymentOption,
       currency: 'INR',
       paymentStatus: 'PENDING',
       subscriptionStatus: 'PENDING',
       customer: {
         id: customer.id,
         name: customer.companyName || customer.name || 'QuikBoom Customer',
+      },
+    };
+  }
+
+  /**
+   * 7. Send Payment Reminder Notification for Partially Paid Subscriptions
+   */
+  async sendPaymentReminder(adminUser: any, dto: SendPaymentReminderDto) {
+    const numCustomerId = Number(dto.customerId);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId, deletedAt: null },
+      include: { users: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${numCustomerId} not found`);
+    }
+
+    let sub: any = null;
+    if (dto.subscriptionId) {
+      sub = await this.prisma.customerSubscription.findUnique({
+        where: { id: Number(dto.subscriptionId) },
+        include: { plan: true },
+      });
+    } else {
+      sub = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true },
+      });
+    }
+
+    if (!sub || !sub.plan) {
+      throw new BadRequestException('No active plan subscription found for this customer');
+    }
+
+    const cycle = sub.billingCycle || 'MONTHLY';
+    const basePrice = cycle === 'YEARLY' ? Number(sub.plan.yearlyPrice) : Number(sub.plan.monthlyPrice);
+    const fullTotal = basePrice + Math.round(basePrice * 0.18);
+    const paidPayments = await this.prisma.paymentHistory.findMany({
+      where: { subscriptionId: sub.id, status: 'SUCCESS' },
+    });
+    const totalPaid = paidPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
+    const balance = Math.max(0, fullTotal - totalPaid);
+
+    if (balance <= 0) {
+      throw new BadRequestException('Subscription is already fully paid. No balance reminder needed.');
+    }
+
+    const dueDateStr = sub.endDate ? new Date(sub.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Work Completion';
+    const defaultMsg = `Your remaining balance payment of ₹${balance.toLocaleString('en-IN')} for ${sub.plan.name} is due by ${dueDateStr}. Please complete payment before final work delivery.`;
+    const message = dto.customMessage || defaultMsg;
+
+    const targetUser = customer.users?.[0] || adminUser;
+
+    const notif = await this.prisma.notification.create({
+      data: {
+        customerId: numCustomerId,
+        userId: targetUser.id,
+        title: 'Payment Reminder: Remaining Balance Due',
+        message,
+        type: 'PAYMENT_REMINDER',
+        data: {
+          subscriptionId: sub.id,
+          planName: sub.plan.name,
+          totalAmount: fullTotal,
+          totalPaid,
+          balanceAmount: balance,
+          dueDate: sub.endDate,
+        },
+      },
+    });
+
+    this.logger.log(`[PAYMENT_REMINDER_SENT] customerId: CUST-${numCustomerId} balance: ₹${balance} notificationId: ${notif.id}`);
+
+    return {
+      success: true,
+      message: 'Payment reminder notification sent successfully to customer.',
+      data: {
+        notificationId: notif.id,
+        customerId: numCustomerId,
+        subscriptionId: sub.id,
+        balanceAmount: balance,
+        message,
       },
     };
   }
@@ -938,3 +1170,4 @@ export class PaymentService {
     };
   }
 }
+

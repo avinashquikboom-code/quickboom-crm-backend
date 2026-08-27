@@ -10,7 +10,8 @@ import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkD
 import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus } from '@prisma/client';
 import {
   extractDeliverableQuotas,
-  distributeDatesAcrossWorkingDays,
+  extractReelCount,
+  generateReelWorkflowActivities,
 } from '../../common/utils/plan-deliverable.util';
 
 @Injectable()
@@ -805,27 +806,26 @@ export class WorkService {
 
     if (query.status) where.status = query.status;
 
-    let queriedDate: Date | undefined;
+    let targetDateStr: string | undefined;
     let targetYear: number | undefined;
     let targetMonth: number | undefined;
     let targetDay: number | undefined;
 
     if (query.date) {
-      const parts = query.date.split('-').map(Number);
+      targetDateStr = query.date.trim();
+      const parts = targetDateStr.split('-').map(Number);
       if (parts.length === 3 && !parts.some(isNaN)) {
         const [y, m, day] = parts;
         targetYear = y;
         targetMonth = m;
         targetDay = day;
-        queriedDate = new Date(Date.UTC(y, m - 1, day, 12, 0, 0));
-        // Expand query window by ±14 hours to catch any timezone-offset timestamps stored in DB
-        const startWindow = new Date(Date.UTC(y, m - 1, day - 1, 10, 0, 0, 0));
-        const endWindow = new Date(Date.UTC(y, m - 1, day + 1, 14, 0, 0, 0));
+        // Expand query window by ±24 hours to ensure capturing any timezone-stored records
+        const startWindow = new Date(Date.UTC(y, m - 1, day - 1, 0, 0, 0, 0));
+        const endWindow = new Date(Date.UTC(y, m - 1, day + 1, 23, 59, 59, 999));
         where.scheduledDate = { gte: startWindow, lte: endWindow };
       } else {
         const d = new Date(query.date);
         if (!isNaN(d.getTime())) {
-          queriedDate = d;
           targetYear = d.getFullYear();
           targetMonth = d.getMonth() + 1;
           targetDay = d.getDate();
@@ -850,9 +850,10 @@ export class WorkService {
       }
     }
 
-    // Target single date or range
-    const queryStart = Date.now();
-    this.logger.debug(`[CALENDAR_QUERY_START] customerId=${numCustomerId}, date=${query.date}`);
+    this.logger.log(
+      `[CALENDAR_QUERY] authenticatedCustomerId: CUST-${numCustomerId || scopedCustomerId} date: ${query.date || 'ALL'}`,
+    );
+
     const items = await this.prisma.work.findMany({
       where,
       orderBy: { scheduledDate: 'asc' },
@@ -870,9 +871,8 @@ export class WorkService {
         },
       },
     });
-    this.logger.debug(`[CALENDAR_QUERY_END] main query took ${Date.now() - queryStart}ms, returned ${items.length} items`);
 
-    // Filter items to strictly match the requested day in either UTC or local representation
+    // Date-only precision filtering to strictly match target day without timezone shifts
     const filteredItems = (targetYear && targetMonth && targetDay)
       ? items.filter((w) => {
           if (!w.scheduledDate) return false;
@@ -925,81 +925,9 @@ export class WorkService {
       };
     });
 
-    // Inject active subscription start event if applicable
-    if (numCustomerId) {
-      const subStart = Date.now();
-      const activeSub = await this.prisma.customerSubscription.findFirst({
-        where: { customerId: numCustomerId, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          startDate: true,
-          plan: { select: { name: true } },
-          customer: { select: { name: true } },
-        },
-      });
-      this.logger.debug(`[CALENDAR_SUB_QUERY] subscription lookup took ${Date.now() - subStart}ms`);
-
-      if (activeSub && activeSub.startDate) {
-        const subStart = new Date(activeSub.startDate);
-        let shouldIncludeSubEvent = false;
-
-        if (targetYear && targetMonth && targetDay) {
-          const isSameDay =
-            (subStart.getUTCFullYear() === targetYear &&
-              subStart.getUTCMonth() + 1 === targetMonth &&
-              subStart.getUTCDate() === targetDay) ||
-            (subStart.getFullYear() === targetYear &&
-              subStart.getMonth() + 1 === targetMonth &&
-              subStart.getDate() === targetDay);
-          shouldIncludeSubEvent = isSameDay;
-        } else {
-          // If no single date filter, always include plan start in all-activities list
-          shouldIncludeSubEvent = true;
-        }
-
-        if (shouldIncludeSubEvent) {
-          const hasPlanEvent = result.some(
-            (r) =>
-              r.title.toLowerCase().includes('plan started') ||
-              r.title.toLowerCase().includes('subscription'),
-          );
-          if (!hasPlanEvent) {
-            const planName = activeSub.plan?.name || 'Active Plan';
-            result.unshift({
-              id: `sub-start-${activeSub.id}`,
-              purchaseId: String(activeSub.id),
-              productName: planName,
-              serviceName: 'Plan Activation',
-              planName: planName,
-              title: `${planName} Started`,
-              date: subStart,
-              scheduleDate: subStart,
-              time: '09:00 AM',
-              startTime: '09:00 AM',
-              endTime: '10:00 AM',
-              type: 'SOCIAL_MEDIA_MANAGEMENT' as any,
-              status: WorkStatus.SCHEDULED,
-              customerId: String(numCustomerId),
-              customerName: activeSub.customer?.name || 'Customer',
-              assignedToId: undefined,
-              assignedEmployee: 'Account Manager',
-              editorId: undefined,
-              editorName: 'SSM Team',
-              team: 'SSM Core Team',
-              notes: `Active ${planName} billing period started. All plan quotas and deliverables activated.`,
-              outputUrl: null,
-              feedback: null,
-              revisionCount: 0,
-            });
-          }
-        }
-      }
-    }
-
     const duration = Date.now() - startTime;
     this.logger.log(
-      `[CALENDAR_DEBUG] authenticatedUserId: ${scopedCustomerId} | authenticatedCustomer: ${scopedCustomerId} | resolvedCustomerDbId: ${numCustomerId} | requestedDate: ${query.date ?? 'ALL'} | queryCustomerId: ${numCustomerId} | resultCount: ${result.length} | queryDurationMs: ${duration}`,
+      `[CALENDAR_RESULT] count: ${result.length}`,
     );
     this.logger.log(
       `[API_PERFORMANCE] GET /works/calendar customerId=${scopedCustomerId} DB duration=${duration}ms total=${duration}ms`,
@@ -1051,13 +979,16 @@ export class WorkService {
   }
 
   /**
-   * Automatically generate plan deliverable schedules strictly from the customer's PURCHASED PLAN.
-   * Rules:
-   * 1. Read the exact plan & custom features purchased by the customer.
-   * 2. Only include services with quantity > 0. If quantity is 0, do not create any activity.
-   * 3. Generate exactly that many calendar activities (1:1 with purchased quantity).
-   * 4. Bounded strictly within [startDate, endDate], skipping non-working days (Sundays).
-   * 5. Fully idempotent: does not duplicate existing schedules for this subscription.
+   * Automatically generate plan deliverable schedules dynamically according to the customer's PURCHASED PLAN.
+   * Core Business Rules:
+   * 1. 1 Reel = 1 Week workflow.
+   * 2. Each Reel produces 3 activities:
+   *    - Shoot: startDate + (reelIndex * 7 days)
+   *    - Editing: shootDate + 2 days
+   *    - Post: shootDate + 4 days
+   * 3. Total activities = reelCount * 3 (e.g. 1 Reel = 3, 4 Reels = 12, 8 Reels = 24, 12 Reels = 36).
+   * 4. Idempotency: Does NOT create duplicate schedules if already processed.
+   * 5. Expiry guard: Bounded within subscription.endDate.
    */
   async generatePlanSchedules(customerId: number | string, subscriptionId?: number | string) {
     const numCustomerId = Number(customerId);
@@ -1102,14 +1033,23 @@ export class WorkService {
       };
     }
 
-    // 2. Extract exact deliverable quotas strictly from the purchased plan / custom features
+    // 2. Extract Reel Count dynamically from purchased plan / custom features
     const effectiveFeatures = targetSub.customFeatures || targetSub.plan.features || [];
-    const deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
+    let reelCount = extractReelCount(effectiveFeatures);
 
-    if (deliverableQuotas.length === 0) {
+    // Fallback: If no reels found, check generic deliverable quotas
+    if (reelCount <= 0) {
+      const deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
+      const reelQuota = deliverableQuotas.find((q) => q.serviceName.toLowerCase().includes('reel'));
+      if (reelQuota) {
+        reelCount = reelQuota.totalQty;
+      }
+    }
+
+    if (reelCount <= 0) {
       return {
         success: true,
-        message: 'No deliverable quotas configured in purchased plan.',
+        message: 'No Reel deliverable quotas configured in purchased plan.',
         createdCount: 0,
         schedules: [],
       };
@@ -1118,120 +1058,133 @@ export class WorkService {
     const startDate = targetSub.startDate ? new Date(targetSub.startDate) : new Date();
     const endDate = targetSub.endDate ? new Date(targetSub.endDate) : new Date(startDate.getTime() + 30 * 86400000);
 
-    // Calculate total count of activities across all deliverable quotas
-    const totalDeliverablesCount = deliverableQuotas.reduce((sum, q) => sum + q.totalQty, 0);
-    const distributedDates = distributeDatesAcrossWorkingDays(startDate, endDate, totalDeliverablesCount);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    this.logger.log(
+      `[PLAN_SCHEDULE_GENERATION] customerId: CUST-${numCustomerId} subscriptionId: SUB-${targetSub.id} planId: PLAN-${targetSub.planId} reelCount: ${reelCount} startDate: ${startDateStr} endDate: ${endDateStr}`,
+    );
+
+    // Generate dynamic Reel workflow activities (Shoot, Editing, Post)
+    const reelActivities = generateReelWorkflowActivities(startDate, endDate, reelCount);
+
+    // Log individual reel workflow dates
+    for (let r = 1; r <= reelCount; r++) {
+      const shootAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'SHOOT');
+      const editAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'EDITING');
+      const postAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'POST');
+      if (shootAct && editAct && postAct) {
+        const shootStr = shootAct.scheduledDate.toISOString().split('T')[0];
+        const editStr = editAct.scheduledDate.toISOString().split('T')[0];
+        const postStr = postAct.scheduledDate.toISOString().split('T')[0];
+        this.logger.log(`[REEL_${r}] shoot: ${shootStr} editing: ${editStr} post: ${postStr}`);
+      }
+    }
 
     let totalCreated = 0;
-    let dateCursorIndex = 0;
 
     const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
-      const createdItems: any[] = [];
+      // 1. Sync or provision PlanEntitlement for Reels
+      let entitlement = await tx.planEntitlement.findFirst({
+        where: { customerId: numCustomerId, serviceName: 'Reels' },
+      });
 
-      for (const quota of deliverableQuotas) {
-        if (quota.totalQty <= 0) continue;
-
-        // Sync or provision PlanEntitlement for this service
-        let entitlement = await tx.planEntitlement.findFirst({
-          where: { customerId: numCustomerId, serviceName: quota.serviceName },
-        });
-
-        if (entitlement) {
-          entitlement = await tx.planEntitlement.update({
-            where: { id: entitlement.id },
-            data: {
-              planId: targetSub.planId,
-              totalQty: quota.totalQty,
-              validUntil: endDate,
-            },
-          });
-        } else {
-          entitlement = await tx.planEntitlement.create({
-            data: {
-              customerId: numCustomerId,
-              planId: targetSub.planId,
-              serviceName: quota.serviceName,
-              totalQty: quota.totalQty,
-              usedQty: 0,
-              scheduledQty: 0,
-              validUntil: endDate,
-            },
-          });
-        }
-
-        // Query existing non-cancelled works for this subscription and entitlement
-        const existingWorks = await tx.work.findMany({
-          where: {
-            customerId: numCustomerId,
-            subscriptionId: targetSub.id,
-            entitlementId: entitlement.id,
-            status: { not: WorkStatus.CANCELLED },
-          },
-          orderBy: { id: 'asc' },
-        });
-
-        const missingQty = quota.totalQty - existingWorks.length;
-        if (missingQty <= 0) {
-          dateCursorIndex += quota.totalQty;
-          continue;
-        }
-
-        for (let i = 0; i < missingQty; i++) {
-          const sequenceNumber = existingWorks.length + i + 1;
-          const assignedDate = distributedDates[dateCursorIndex] || (distributedDates.length > 0 ? distributedDates[distributedDates.length - 1] : new Date(startDate));
-          dateCursorIndex++;
-
-          const createdWork = await tx.work.create({
-            data: {
-              customerId: numCustomerId,
-              subscriptionId: targetSub.id,
-              planId: targetSub.planId,
-              entitlementId: entitlement.id,
-              workType: quota.workType,
-              title: `${quota.serviceName} #${sequenceNumber}`,
-              description: `${quota.serviceName} deliverable for ${targetSub.plan?.name || 'Customer Plan'}`,
-              scheduledDate: assignedDate,
-              scheduledTime: '11:00 AM',
-              priority: 'MEDIUM',
-              status: WorkStatus.SCHEDULED,
-            },
-          });
-
-          // Attach default deliverable workflow tasks
-          await tx.workTask.createMany({
-            data: [
-              { workId: createdWork.id, title: `1. Content Draft & Asset Creation`, stepOrder: 1, status: TaskStatus.PENDING },
-              { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING },
-              { workId: createdWork.id, title: `3. Final Publishing / Execution`, stepOrder: 3, status: TaskStatus.PENDING },
-            ],
-          });
-
-          createdItems.push(createdWork);
-          totalCreated++;
-        }
-
-        // Update entitlement scheduledQty
-        const activeCount = await tx.work.count({
-          where: {
-            customerId: numCustomerId,
-            subscriptionId: targetSub.id,
-            entitlementId: entitlement.id,
-            status: { not: WorkStatus.CANCELLED },
-          },
-        });
-
-        await tx.planEntitlement.update({
+      if (entitlement) {
+        entitlement = await tx.planEntitlement.update({
           where: { id: entitlement.id },
-          data: { scheduledQty: activeCount },
+          data: {
+            planId: targetSub.planId,
+            totalQty: reelCount,
+            validUntil: endDate,
+          },
+        });
+      } else {
+        entitlement = await tx.planEntitlement.create({
+          data: {
+            customerId: numCustomerId,
+            planId: targetSub.planId,
+            serviceName: 'Reels',
+            totalQty: reelCount,
+            usedQty: 0,
+            scheduledQty: 0,
+            validUntil: endDate,
+          },
         });
       }
 
-      return createdItems;
+      // 2. Query existing non-cancelled works for this subscription to ensure strict IDEMPOTENCY
+      const existingWorks = await tx.work.findMany({
+        where: {
+          customerId: numCustomerId,
+          subscriptionId: targetSub.id,
+          status: { not: WorkStatus.CANCELLED },
+        },
+        orderBy: { id: 'asc' },
+      });
+
+      // If full set of activities already generated for this subscription, do NOT duplicate
+      if (existingWorks.length >= reelActivities.length) {
+        return existingWorks;
+      }
+
+      const existingTitles = new Set(existingWorks.map((w) => w.title.toLowerCase().trim()));
+      const createdItems: any[] = [];
+
+      for (const act of reelActivities) {
+        // Idempotency: Skip if activity with this title already exists for this subscription
+        if (existingTitles.has(act.title.toLowerCase().trim())) {
+          continue;
+        }
+
+        const createdWork = await tx.work.create({
+          data: {
+            customerId: numCustomerId,
+            subscriptionId: targetSub.id,
+            planId: targetSub.planId,
+            entitlementId: entitlement.id,
+            workType: act.workType,
+            title: act.title,
+            description: act.description,
+            scheduledDate: act.scheduledDate,
+            scheduledTime: act.scheduledTime,
+            priority: 'MEDIUM',
+            status: WorkStatus.SCHEDULED,
+          },
+        });
+
+        // Attach workflow task tracking
+        await tx.workTask.createMany({
+          data: [
+            { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING },
+            { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING },
+            { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING },
+          ],
+        });
+
+        createdItems.push(createdWork);
+        totalCreated++;
+      }
+
+      // Update entitlement scheduled count
+      const activeCount = await tx.work.count({
+        where: {
+          customerId: numCustomerId,
+          subscriptionId: targetSub.id,
+          status: { not: WorkStatus.CANCELLED },
+        },
+      });
+
+      await tx.planEntitlement.update({
+        where: { id: entitlement.id },
+        data: { scheduledQty: Math.min(activeCount, reelCount) },
+      });
+
+      return [...existingWorks, ...createdItems];
     });
 
     return {
       success: true,
-      message: `Successfully generated ${totalCreated} purchased plan deliverable schedules for customer ${numCustomerId}.`,
+      message: `Successfully generated ${totalCreated} Reel workflow activities for customer CUST-${numCustomerId}.`,
       createdCount: totalCreated,
       schedules: allGeneratedWorks,
     };

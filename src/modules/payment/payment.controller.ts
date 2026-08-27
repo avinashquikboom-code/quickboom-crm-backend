@@ -12,6 +12,7 @@ import { PaymentService } from './payment.service';
 import {
   CreateRazorpayOrderDto,
   VerifyRazorpayPaymentDto,
+  SendPaymentReminderDto,
 } from './dto/payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -90,6 +91,14 @@ export class PaymentController {
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
     const customerId = req?.customerId || user?.customerId;
     return this.paymentService.getPaymentHistory(user, customerId);
+  }
+
+  @Post('remind')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send payment reminder notification to customer with remaining balance' })
+  async sendPaymentReminder(@CurrentUser() user: any, @Body() dto: SendPaymentReminderDto) {
+    return this.paymentService.sendPaymentReminder(user, dto);
   }
 }
 

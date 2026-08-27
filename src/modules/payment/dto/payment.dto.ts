@@ -6,6 +6,12 @@ export enum SubscriptionBillingCycle {
   YEARLY = 'YEARLY',
 }
 
+export enum PaymentOption {
+  FULL = 'FULL',
+  ADVANCE = 'ADVANCE',
+  BALANCE = 'BALANCE',
+}
+
 export class CreateRazorpayOrderDto {
   @ApiProperty({ example: 1, description: 'Plan ID from database' })
   @IsNotEmpty()
@@ -15,6 +21,15 @@ export class CreateRazorpayOrderDto {
   @IsOptional()
   @IsEnum(SubscriptionBillingCycle)
   billingCycle?: SubscriptionBillingCycle;
+
+  @ApiPropertyOptional({ enum: PaymentOption, default: PaymentOption.FULL, description: 'FULL (100%), ADVANCE (50%), or BALANCE (remaining 50%)' })
+  @IsOptional()
+  @IsString()
+  paymentOption?: string;
+
+  @ApiPropertyOptional({ example: 101, description: 'Optional Subscription ID when paying balance' })
+  @IsOptional()
+  subscriptionId?: number | string;
 
   @ApiPropertyOptional({ example: 'INR', default: 'INR' })
   @IsOptional()
@@ -46,6 +61,15 @@ export class VerifyRazorpayPaymentDto {
   @IsOptional()
   @IsEnum(SubscriptionBillingCycle)
   billingCycle?: SubscriptionBillingCycle;
+
+  @ApiPropertyOptional({ enum: PaymentOption, default: PaymentOption.FULL })
+  @IsOptional()
+  @IsString()
+  paymentOption?: string;
+
+  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
+  @IsOptional()
+  subscriptionId?: number | string;
 }
 
 export class CreateOfflinePaymentDto {
@@ -57,6 +81,15 @@ export class CreateOfflinePaymentDto {
   @IsOptional()
   @IsEnum(SubscriptionBillingCycle)
   billingCycle?: SubscriptionBillingCycle;
+
+  @ApiPropertyOptional({ enum: PaymentOption, default: PaymentOption.FULL })
+  @IsOptional()
+  @IsString()
+  paymentOption?: string;
+
+  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
+  @IsOptional()
+  subscriptionId?: number | string;
 
   @ApiPropertyOptional({ example: 'BANK_TRANSFER', description: 'Offline payment method' })
   @IsOptional()
@@ -72,6 +105,21 @@ export class CreateOfflinePaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class SendPaymentReminderDto {
+  @ApiProperty({ example: 101, description: 'Target Customer ID' })
+  @IsNotEmpty()
+  customerId: number | string;
+
+  @ApiPropertyOptional({ example: 501, description: 'Target Subscription ID' })
+  @IsOptional()
+  subscriptionId?: number | string;
+
+  @ApiPropertyOptional({ example: 'Your balance payment is due in 3 days.', description: 'Custom reminder note' })
+  @IsOptional()
+  @IsString()
+  customMessage?: string;
 }
 
 export class UpdatePaymentSettingsDto {

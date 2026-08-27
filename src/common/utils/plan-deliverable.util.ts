@@ -157,56 +157,185 @@ export function extractDeliverableQuotas(features: any): DeliverableQuota[] {
   return quotas;
 }
 
+export interface ReelActivityDefinition {
+  reelNumber: number;
+  activityType: 'SHOOT' | 'EDITING' | 'POST';
+  workType: WorkType;
+  title: string;
+  description: string;
+  scheduledDate: Date;
+  scheduledTime: string;
+  stepOrder: number;
+}
+
 /**
- * Distribute N activity dates evenly across working days (skipping Sundays) within [startDate, endDate].
- * Guarantees all returned dates are within the subscription validity window.
+ * Extract total Reel count dynamically from plan features or custom features.
+ * Supports:
+ * - Numeric values / direct reel count
+ * - String arrays: "4 Reels", "1 Reel", "8 Influencer Reels", "2 Product Reels"
+ * - Object arrays: [{ name: "Reels", quantity: 4 }]
+ * - Object maps: { reels: 4 }, { OPT_REELS: 4 }
  */
-export function distributeDatesAcrossWorkingDays(
+export function extractReelCount(features: any): number {
+  if (!features) return 0;
+
+  if (typeof features === 'number') {
+    return Math.max(0, Math.floor(features));
+  }
+
+  // Key-value object map
+  if (typeof features === 'object' && !Array.isArray(features)) {
+    let total = 0;
+    for (const [key, val] of Object.entries(features)) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes('reel')) {
+        let count = 0;
+        if (typeof val === 'number') count = val;
+        else if (typeof val === 'string') count = parseInt(val, 10);
+        else if (typeof val === 'object' && val !== null) {
+          count = Number((val as any).quantity ?? (val as any).totalQty ?? (val as any).qty ?? (val as any).count ?? 0);
+        }
+        if (!isNaN(count) && count > 0) {
+          total += count;
+        }
+      }
+    }
+    if (total > 0) return total;
+  }
+
+  // Array format
+  if (Array.isArray(features)) {
+    let total = 0;
+    for (const item of features) {
+      if (!item) continue;
+
+      if (typeof item === 'object') {
+        const name = (item.name || item.serviceName || item.title || item.code || '').toString().toLowerCase();
+        if (name.includes('reel')) {
+          const qty = Number(item.quantity ?? item.totalQty ?? item.qty ?? item.count ?? 0);
+          if (!isNaN(qty) && qty > 0) {
+            total += qty;
+          }
+        }
+        continue;
+      }
+
+      if (typeof item === 'string') {
+        const text = item.trim();
+        const lower = text.toLowerCase();
+        if (lower.includes('reel')) {
+          // Check parenthetical total first: "(Total 10 Reels)"
+          const parenMatch = text.match(/\(Total\s+(\d+)\s+Reels?\)/i);
+          if (parenMatch) {
+            return parseInt(parenMatch[1], 10);
+          }
+
+          // "4 Reels", "1 Reel", "2 Product Reels", "8 Influencer Reels"
+          const leadingMatch = text.match(/^(\d+)\s*x?\s+(.*reel.*)$/i);
+          if (leadingMatch) {
+            const qty = parseInt(leadingMatch[1], 10);
+            if (!isNaN(qty) && qty > 0) {
+              total += qty;
+            }
+            continue;
+          }
+
+          // "Reels: 4" or "Reels = 4"
+          const trailingMatch = text.match(/^([^:=]*reel[^:=]*)[:=]\s*(\d+)$/i);
+          if (trailingMatch) {
+            const qty = parseInt(trailingMatch[2], 10);
+            if (!isNaN(qty) && qty > 0) {
+              total += qty;
+            }
+            continue;
+          }
+        }
+      }
+    }
+    if (total > 0) return total;
+  }
+
+  return 0;
+}
+
+/**
+ * Generate weekly Reel workflow activities dynamically according to the core business rule:
+ * ONE REEL = ONE WEEK.
+ * Each Reel produces:
+ * 1. SHOOT: startDate + (reelIndex * 7 days)
+ * 2. EDITING: shootDate + 2 days
+ * 3. POST: shootDate + 4 days (editingDate + 2 days)
+ *
+ * All dates are calculated safely from startDate and bounded within endDate.
+ */
+export function generateReelWorkflowActivities(
   startDate: Date,
   endDate: Date,
-  activityCount: number,
-): Date[] {
-  if (activityCount <= 0) return [];
+  reelCount: number,
+): ReelActivityDefinition[] {
+  if (reelCount <= 0) return [];
 
+  const activities: ReelActivityDefinition[] = [];
   const start = new Date(startDate);
-  const end = new Date(endDate);
+  // Normalize start to date-only at 10:00 AM UTC/local
+  const startYear = start.getUTCFullYear();
+  const startMonth = start.getUTCMonth();
+  const startDay = start.getUTCDate();
 
-  // Collect all working days (Mon-Sat, skipping Sunday = 0)
-  const workingDays: Date[] = [];
-  const cursor = new Date(start);
+  const endLimit = new Date(endDate);
 
-  while (cursor <= end) {
-    if (cursor.getDay() !== 0) {
-      // Mon-Sat: Valid working day
-      workingDays.push(new Date(cursor));
+  for (let reelIndex = 0; reelIndex < reelCount; reelIndex++) {
+    const reelNumber = reelIndex + 1;
+
+    // Reel Shoot: startDate + (reelIndex * 7 days)
+    const shootDate = new Date(Date.UTC(startYear, startMonth, startDay + (reelIndex * 7), 10, 0, 0, 0));
+    // Reel Editing: shootDate + 2 days
+    const editingDate = new Date(Date.UTC(startYear, startMonth, startDay + (reelIndex * 7) + 2, 10, 0, 0, 0));
+    // Reel Post: shootDate + 4 days
+    const postDate = new Date(Date.UTC(startYear, startMonth, startDay + (reelIndex * 7) + 4, 10, 0, 0, 0));
+
+    // 1. Shoot Activity
+    if (shootDate <= endLimit) {
+      activities.push({
+        reelNumber,
+        activityType: 'SHOOT',
+        workType: WorkType.SHOOT,
+        title: `Reel #${reelNumber}: Shoot`,
+        description: `Reel #${reelNumber} Video & Asset Shoot on location`,
+        scheduledDate: shootDate,
+        scheduledTime: '10:00 AM',
+        stepOrder: 1,
+      });
     }
-    cursor.setDate(cursor.getDate() + 1);
+
+    // 2. Editing Activity
+    if (editingDate <= endLimit) {
+      activities.push({
+        reelNumber,
+        activityType: 'EDITING',
+        workType: WorkType.EDITING,
+        title: `Reel #${reelNumber}: Editing`,
+        description: `Reel #${reelNumber} Video Editing, Color Grading & Audio Sync`,
+        scheduledDate: editingDate,
+        scheduledTime: '10:00 AM',
+        stepOrder: 2,
+      });
+    }
+
+    // 3. Post Activity
+    if (postDate <= endLimit) {
+      activities.push({
+        reelNumber,
+        activityType: 'POST',
+        workType: WorkType.POST_DESIGN,
+        title: `Reel #${reelNumber}: Post`,
+        description: `Reel #${reelNumber} Final Review & Publishing`,
+        scheduledDate: postDate,
+        scheduledTime: '10:00 AM',
+        stepOrder: 3,
+      });
+    }
   }
 
-  // Fallback if validity window has zero non-Sundays
-  if (workingDays.length === 0) {
-    workingDays.push(new Date(start));
-  }
-
-  const distributedDates: Date[] = [];
-
-  if (activityCount === 1) {
-    // Single activity scheduled around 3rd working day or midpoint
-    const midIdx = Math.min(2, Math.floor(workingDays.length / 2));
-    distributedDates.push(workingDays[midIdx]);
-    return distributedDates;
-  }
-
-  // Evenly step through available working days
-  const step = (workingDays.length - 1) / (activityCount - 1);
-
-  for (let i = 0; i < activityCount; i++) {
-    const dayIndex = Math.min(
-      Math.round(i * step),
-      workingDays.length - 1,
-    );
-    distributedDates.push(new Date(workingDays[dayIndex]));
-  }
-
-  return distributedDates;
+  return activities;
 }

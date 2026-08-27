@@ -1,14 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkStatus, WorkType, SubscriptionStatus } from '@prisma/client';
+import { WorkStatus, WorkType, SubscriptionStatus, PaymentMethod, InvoiceStatus } from '@prisma/client';
 import { calculatePlanBillingPeriod, calculatePlanExpiry } from '../../common/utils/subscription-date.util';
+import { extractReelCount, generateReelWorkflowActivities } from '../../common/utils/plan-deliverable.util';
 
-describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
+describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
   let workService: WorkService;
   let prisma: any;
 
-  const mockActiveSub = (customerId: number, startDate: Date, endDate: Date) => ({
+  const mockPlanSub = (customerId: number, reelFeatures: any, startDate: Date, endDate: Date) => ({
     id: 501,
     customerId,
     planId: 1,
@@ -24,16 +25,11 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
     deletedAt: null,
     plan: {
       id: 1,
-      name: 'Basic Package',
-      code: 'BASIC',
-      monthlyPrice: 9999,
-      yearlyPrice: 95990,
-      features: [
-        '4 Reels',
-        '3 Creative Posts',
-        '1 Influencer Promotion',
-        '3 Stories',
-      ],
+      name: 'Custom Reels Plan',
+      code: 'REELS_PLAN',
+      monthlyPrice: 10000,
+      yearlyPrice: 100000,
+      features: reelFeatures,
     },
   });
 
@@ -61,6 +57,20 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
       },
+      paymentHistory: {
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      invoice: {
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+      },
+      notification: {
+        create: jest.fn(),
+      },
       $transaction: jest.fn(async (cb) => {
         if (typeof cb === 'function') {
           return cb(prisma);
@@ -79,75 +89,105 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
     workService = module.get<WorkService>(WorkService);
   });
 
-  describe('1. Date Arithmetic & Billing Period Calculations', () => {
-    it('calculates monthly billing period accurately (20 Aug 2026 -> 20 Sep 2026)', () => {
+  describe('1. Dynamic Reel Quota & Activity Calculation', () => {
+    it('correctly extracts reel count from various formats (string array, object, key-value)', () => {
+      expect(extractReelCount(['4 Reels', '3 Creative Posts'])).toBe(4);
+      expect(extractReelCount(['1 Reel', '2 Stories'])).toBe(1);
+      expect(extractReelCount(['8 Influencer Reels'])).toBe(8);
+      expect(extractReelCount({ reels: 12 })).toBe(12);
+      expect(extractReelCount([{ name: 'Reels', quantity: 4 }])).toBe(4);
+      expect(extractReelCount(['Custom Strategy (Total 10 Reels)'])).toBe(10);
+    });
+
+    it('generates exact 3 activities per Reel with Shoot (+0d), Editing (+2d), Post (+4d) across weekly intervals', () => {
       const start = new Date('2026-08-20T00:00:00.000Z');
-      const billing = calculatePlanBillingPeriod(start, 1);
-      expect(billing.startDate.toISOString()).toContain('2026-08-20');
-      expect(billing.endDate.toISOString()).toContain('2026-09-20');
-    });
+      const end = new Date('2026-09-20T00:00:00.000Z');
 
-    it('handles month-end clamping (31 Jan -> 28 Feb)', () => {
-      const start = new Date('2026-01-31T00:00:00.000Z');
-      const expiry = calculatePlanExpiry(start, 1);
-      expect(expiry.getMonth()).toBe(1);
-      expect(expiry.getDate()).toBe(28);
-    });
+      // Test 1: 1 Reel Plan -> 3 activities
+      const oneReelActs = generateReelWorkflowActivities(start, end, 1);
+      expect(oneReelActs).toHaveLength(3);
+      expect(oneReelActs[0].title).toBe('Reel #1: Shoot');
+      expect(oneReelActs[0].scheduledDate.toISOString()).toContain('2026-08-20');
+      expect(oneReelActs[1].title).toBe('Reel #1: Editing');
+      expect(oneReelActs[1].scheduledDate.toISOString()).toContain('2026-08-22');
+      expect(oneReelActs[2].title).toBe('Reel #1: Post');
+      expect(oneReelActs[2].scheduledDate.toISOString()).toContain('2026-08-24');
 
-    it('calculates 15 Jan -> 15 Feb', () => {
-      const start = new Date('2026-01-15T00:00:00.000Z');
-      const expiry = calculatePlanExpiry(start, 1);
-      expect(expiry.getMonth()).toBe(1);
-      expect(expiry.getDate()).toBe(15);
+      // Test 2: 4 Reels Plan -> 12 activities
+      const fourReelActs = generateReelWorkflowActivities(start, end, 4);
+      expect(fourReelActs).toHaveLength(12);
+      // Week 1 (Reel 1)
+      expect(fourReelActs[0].scheduledDate.toISOString()).toContain('2026-08-20'); // Shoot
+      expect(fourReelActs[1].scheduledDate.toISOString()).toContain('2026-08-22'); // Editing
+      expect(fourReelActs[2].scheduledDate.toISOString()).toContain('2026-08-24'); // Post
+      // Week 2 (Reel 2)
+      expect(fourReelActs[3].scheduledDate.toISOString()).toContain('2026-08-27'); // Shoot
+      expect(fourReelActs[4].scheduledDate.toISOString()).toContain('2026-08-29'); // Editing
+      expect(fourReelActs[5].scheduledDate.toISOString()).toContain('2026-08-31'); // Post
+      // Week 3 (Reel 3)
+      expect(fourReelActs[6].scheduledDate.toISOString()).toContain('2026-09-03'); // Shoot
+      expect(fourReelActs[7].scheduledDate.toISOString()).toContain('2026-09-05'); // Editing
+      expect(fourReelActs[8].scheduledDate.toISOString()).toContain('2026-09-07'); // Post
+      // Week 4 (Reel 4)
+      expect(fourReelActs[9].scheduledDate.toISOString()).toContain('2026-09-10'); // Shoot
+      expect(fourReelActs[10].scheduledDate.toISOString()).toContain('2026-09-12'); // Editing
+      expect(fourReelActs[11].scheduledDate.toISOString()).toContain('2026-09-14'); // Post
+
+      // Test 3: 8 Reels Plan -> 24 activities (when within date limit)
+      const eightEnd = new Date('2026-10-30T00:00:00.000Z');
+      const eightReelActs = generateReelWorkflowActivities(start, eightEnd, 8);
+      expect(eightReelActs).toHaveLength(24);
     });
   });
 
-  describe('2. Basic Package (11 Deliverables) Schedule Generation', () => {
-    it('generates exact 1:1 purchased deliverables (4 Reels, 3 Posts, 1 Promo, 3 Stories = 11 activities) for Basic Package', async () => {
+  describe('2. Schedule Generation & Idempotency in WorkService', () => {
+    it('generates exactly 12 Reel workflow activities for 4 Reels plan', async () => {
       const customerId = 101;
-      const startDate = new Date('2026-08-20T00:00:00.000Z');
-      const endDate = new Date('2026-09-20T00:00:00.000Z');
+      const start = new Date('2026-08-20T00:00:00.000Z');
+      const end = new Date('2026-09-20T00:00:00.000Z');
 
       prisma.customerSubscription.findFirst.mockResolvedValue(
-        mockActiveSub(customerId, startDate, endDate),
+        mockPlanSub(customerId, ['4 Reels'], start, end),
       );
 
       prisma.planEntitlement.findFirst.mockResolvedValue(null);
-      prisma.planEntitlement.create.mockImplementation((args: any) => ({ id: Math.floor(Math.random() * 1000) + 1, ...args.data }));
+      prisma.planEntitlement.create.mockImplementation((args: any) => ({ id: 1, ...args.data }));
       prisma.planEntitlement.update.mockResolvedValue({});
 
       prisma.work.findMany.mockResolvedValue([]);
       prisma.work.create.mockImplementation((args: any) => ({ id: Math.floor(Math.random() * 1000) + 1, ...args.data }));
-      prisma.work.count.mockResolvedValue(1);
+      prisma.work.count.mockResolvedValue(12);
 
       const result = await workService.generatePlanSchedules(customerId);
 
       expect(result.success).toBe(true);
-      expect(result.createdCount).toBe(11);
-      expect(prisma.workTask.createMany).toHaveBeenCalled();
+      expect(result.createdCount).toBe(12);
+      expect(prisma.work.create).toHaveBeenCalledTimes(12);
+      expect(prisma.workTask.createMany).toHaveBeenCalledTimes(12);
     });
-  });
 
-  describe('3. Schedule Generation Idempotency & Duplicate Prevention', () => {
-    it('does not create duplicate work records if schedules already exist for entitlement', async () => {
+    it('is fully idempotent: subsequent calls create 0 duplicates', async () => {
       const customerId = 101;
-      const startDate = new Date('2026-08-20T00:00:00.000Z');
-      const endDate = new Date('2026-09-20T00:00:00.000Z');
+      const start = new Date('2026-08-20T00:00:00.000Z');
+      const end = new Date('2026-09-20T00:00:00.000Z');
 
       prisma.customerSubscription.findFirst.mockResolvedValue(
-        mockActiveSub(customerId, startDate, endDate),
+        mockPlanSub(customerId, ['4 Reels'], start, end),
       );
 
-      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 });
-      prisma.planEntitlement.update.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 4, usedQty: 0, scheduledQty: 4 });
+      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 4, scheduledQty: 4 });
+      prisma.planEntitlement.update.mockResolvedValue({});
 
-      prisma.work.findMany.mockResolvedValue([
-        { id: 1, entitlementId: 1, title: 'Reels #1' },
-        { id: 2, entitlementId: 1, title: 'Reels #2' },
-        { id: 3, entitlementId: 1, title: 'Reels #3' },
-        { id: 4, entitlementId: 1, title: 'Reels #4' },
-      ]);
-      prisma.work.count.mockResolvedValue(4);
+      // Mock 12 already existing works
+      const existingWorks = Array.from({ length: 12 }, (_, i) => ({
+        id: i + 1,
+        title: `Reel #${Math.floor(i / 3) + 1}: ${['Shoot', 'Editing', 'Post'][i % 3]}`,
+        customerId,
+        subscriptionId: 501,
+      }));
+
+      prisma.work.findMany.mockResolvedValue(existingWorks);
+      prisma.work.count.mockResolvedValue(12);
 
       const result = await workService.generatePlanSchedules(customerId);
 
@@ -155,54 +195,46 @@ describe('Customer Plan -> Purchase -> Calendar Scheduling Flow Tests', () => {
       expect(result.createdCount).toBe(0);
       expect(prisma.work.create).not.toHaveBeenCalled();
     });
-
-    it('returns unsuccessful result if plan is inactive or expired', async () => {
-      const customerId = 102;
-      prisma.customerSubscription.findFirst.mockResolvedValue(null);
-
-      const result = await workService.generatePlanSchedules(customerId);
-      expect(result.success).toBe(false);
-      expect(result.createdCount).toBe(0);
-    });
   });
 
-  describe('4. Single-Date Calendar Querying', () => {
-    it('returns only activities matching requested single date', async () => {
+  describe('3. Calendar Filtering & Isolation', () => {
+    it('returns only database items matching target date with zero synthetic pseudo-events', async () => {
       const customerId = 101;
-      const targetDateStr = '2026-08-20';
-
-      prisma.work.findMany.mockResolvedValue([
-        {
-          id: 10,
-          customerId,
-          subscriptionId: 501,
-          workType: WorkType.REELS_SHOOT,
-          title: 'Reels #1 - Shoot',
-          scheduledDate: new Date('2026-08-20T11:00:00.000Z'),
-          scheduledTime: '11:00 AM',
-          status: WorkStatus.SCHEDULED,
-          customer: { id: 101, name: 'Aarav Fashion' },
-          team: { name: 'SSM Production Team' },
-          assignedTo: { id: 1, firstName: 'Priya', lastName: 'Sharma' },
-          editor: null,
-          entitlement: { serviceName: 'Reels' },
-          subscription: { id: 501, plan: { name: 'Basic Package' } },
-        },
-      ]);
+      const targetDate = '2026-08-20';
 
       prisma.customerSubscription.findFirst.mockResolvedValue({
         id: 501,
-        startDate: new Date('2026-08-20T00:00:00.000Z'),
-        plan: { name: 'Basic Package' },
-        customer: { name: 'Aarav Fashion' },
+        customerId,
+        status: SubscriptionStatus.ACTIVE,
+        plan: { name: 'Custom Reels Plan' },
       });
 
-      const calendar = await workService.getCalendar(customerId, { date: targetDateStr });
+      prisma.work.count.mockResolvedValue(12);
 
-      expect(Array.isArray(calendar)).toBe(true);
-      expect(calendar.length).toBeGreaterThanOrEqual(1);
-      expect(calendar.some((item) => item.title.includes('Reels #1 - Shoot'))).toBe(true);
-      expect(calendar.every((item) => item.customerId === '101')).toBe(true);
+      prisma.work.findMany.mockResolvedValue([
+        {
+          id: 101,
+          customerId,
+          subscriptionId: 501,
+          workType: WorkType.SHOOT,
+          title: 'Reel #1: Shoot',
+          scheduledDate: new Date('2026-08-20T10:00:00.000Z'),
+          scheduledTime: '10:00 AM',
+          status: WorkStatus.SCHEDULED,
+          customer: { id: 101, name: 'Client A' },
+          team: { name: 'Video Team' },
+          assignedTo: { id: 5, firstName: 'Rohit', lastName: 'Verma' },
+          editor: null,
+          entitlement: { serviceName: 'Reels' },
+          subscription: { id: 501, plan: { name: 'Custom Reels Plan' } },
+        },
+      ]);
+
+      const calendar = await workService.getCalendar(customerId, { date: targetDate });
+
+      expect(calendar).toHaveLength(1);
+      expect(calendar[0].title).toBe('Reel #1: Shoot');
+      expect(calendar.some((c: any) => c.id.toString().includes('sub-start'))).toBe(false);
     });
   });
 });

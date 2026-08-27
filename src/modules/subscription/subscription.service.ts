@@ -2193,11 +2193,11 @@ export class SubscriptionService {
     const startDate = new Date();
     const endDate = calculatePlanExpiry(startDate, durationMonths);
 
-    const baseAmount = payment.amount;
-    const gstAmount = payment.taxAmount || Math.round(baseAmount * 0.18);
-    const totalAmount = payment.totalAmount || (baseAmount + gstAmount);
+    const fullBaseAmount = cycle === 'YEARLY' ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
+    const fullGstAmount = Math.round(fullBaseAmount * 0.18);
+    const fullTotalAmount = fullBaseAmount + fullGstAmount;
 
-    const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+    const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
 
     // Execute atomic transaction
     await this.prisma.$transaction(async (tx) => {
@@ -2222,49 +2222,73 @@ export class SubscriptionService {
         },
       });
 
-      // 3. Mark payment as SUCCESS (PAID) & attach invoice number
+      // 3. Mark payment as SUCCESS (PAID) & attach receipt number
       await tx.paymentHistory.update({
         where: { id: payment.id },
         data: {
           status: 'SUCCESS',
-          invoiceUrl: invoiceNo,
+          invoiceUrl: receiptNo,
           updatedAt: new Date(),
         },
       });
 
-      // 4. Find or create primary contact for customer to issue official invoice
-      let contact = await tx.contact.findFirst({
-        where: { customerId: sub.customerId, deletedAt: null },
+      // 4. Calculate total paid across all approved payments for this subscription
+      const allPayments = await tx.paymentHistory.findMany({
+        where: { subscriptionId: sub.id, status: 'SUCCESS' },
       });
+      const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
+      const isFullyPaid = totalPaid >= fullTotalAmount;
 
-      if (!contact) {
-        contact = await tx.contact.create({
-          data: {
-            customerId: sub.customerId,
-            firstName: payment.customer?.name || 'Customer',
-            lastName: 'Account',
-            email: payment.customer?.email || `billing-${sub.customerId}@quikboom.com`,
-            phone: payment.customer?.phone || 'N/A',
-          },
+      // 5. Generate Final Invoice ONLY if 100% Fully Settled
+      if (isFullyPaid) {
+        const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+
+        let contact = await tx.contact.findFirst({
+          where: { customerId: sub.customerId, deletedAt: null },
         });
-      }
 
-      // 5. Generate Paid Invoice record
-      await tx.invoice.create({
-        data: {
-          customerId: sub.customerId,
-          contactId: contact.id,
-          invoiceNo,
-          status: InvoiceStatus.PAID,
-          issueDate: startDate,
-          dueDate: startDate,
-          subTotal: baseAmount,
-          taxAmount: gstAmount,
-          discount: 0,
-          totalAmount,
-          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Order: ${payment.orderNumber || payment.orderId}`,
-        },
-      });
+        if (!contact) {
+          contact = await tx.contact.create({
+            data: {
+              customerId: sub.customerId,
+              firstName: payment.customer?.name || 'Customer',
+              lastName: 'Account',
+              email: payment.customer?.email || `billing-${sub.customerId}@quikboom.com`,
+              phone: payment.customer?.phone || 'N/A',
+            },
+          });
+        }
+
+        const existingInvoice = await tx.invoice.findFirst({
+          where: { customerId: sub.customerId, invoiceNo },
+        });
+
+        if (!existingInvoice) {
+          await tx.invoice.create({
+            data: {
+              customerId: sub.customerId,
+              contactId: contact.id,
+              invoiceNo,
+              status: InvoiceStatus.PAID,
+              issueDate: startDate,
+              dueDate: startDate,
+              subTotal: fullBaseAmount,
+              taxAmount: fullGstAmount,
+              discount: 0,
+              totalAmount: fullTotalAmount,
+              notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+            },
+          });
+        }
+
+        this.logger.log(
+          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: true invoiceNo: ${invoiceNo}`,
+        );
+      } else {
+        this.logger.log(
+          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: false`,
+        );
+      }
 
       // 6. Provision Plan Entitlements strictly from purchased plan features
       const deliverableFeatures = sub.customFeatures || plan.features;
