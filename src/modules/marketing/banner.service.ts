@@ -51,25 +51,39 @@ export class BannerService {
 
     const customerId = user.customerId ?? null;
 
-    const banner = await this.prisma.marketingBanner.create({
-      data: {
-        customerId,
-        title: dto.title.trim(),
-        subtitle: dto.subtitle?.trim() || null,
-        description: dto.description?.trim() || null,
-        imageUrl,
-        imagePublicId,
-        imageKey: imagePublicId,
-        ctaText: dto.ctaText?.trim() || null,
-        ctaUrl: dto.ctaUrl?.trim() || null,
-        priority: dto.priority !== undefined ? Number(dto.priority) : 0,
-        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
-        isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
-        startAt,
-        endAt,
-        createdBy: user.id,
-      },
-    });
+    let banner: any;
+    try {
+      banner = await this.prisma.marketingBanner.create({
+        data: {
+          customerId,
+          title: dto.title.trim(),
+          subtitle: dto.subtitle?.trim() || null,
+          description: dto.description?.trim() || null,
+          imageUrl,
+          imagePublicId,
+          imageKey: imagePublicId,
+          ctaText: dto.ctaText?.trim() || null,
+          ctaUrl: dto.ctaUrl?.trim() || null,
+          priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+          isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+          isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
+          startAt,
+          endAt,
+          createdBy: user.id,
+        },
+      });
+    } catch (dbErr: any) {
+      // Rollback: delete the S3 object to prevent orphaned uploads
+      if (file && imagePublicId) {
+        this.logger.warn(
+          `[BANNER_CREATE_ROLLBACK] DB create failed after S3 upload. Deleting orphan S3 object: ${imagePublicId}`,
+        );
+        await this.uploadService.deleteBannerImage(imagePublicId).catch((delErr) =>
+          this.logger.error(`[BANNER_ROLLBACK_DELETE_FAILED] ${delErr?.message}`),
+        );
+      }
+      throw dbErr;
+    }
 
     this.logger.log(
       `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}\nimageUrl: ${imageUrl}`,

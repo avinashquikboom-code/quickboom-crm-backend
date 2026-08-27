@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import * as crypto from 'crypto';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 
 export interface S3UploadResult {
   imageUrl: string;
@@ -11,52 +11,47 @@ export interface S3UploadResult {
 @Injectable()
 export class S3Service {
   private readonly logger = new Logger(S3Service.name);
-  private readonly s3Client: S3Client | null = null;
-  private readonly bucketName: string;
-  private readonly region: string;
-  private readonly isS3Configured: boolean;
 
-  constructor(private readonly configService: ConfigService) {
-    this.region =
-      this.configService.get<string>('AWS_REGION') ||
-      process.env.AWS_REGION ||
-      'ap-south-1';
-    this.bucketName =
-      this.configService.get<string>('AWS_S3_BUCKET') ||
-      this.configService.get<string>('S3_BUCKET') ||
-      process.env.AWS_S3_BUCKET ||
-      process.env.S3_BUCKET ||
-      'quikboom-marketing-banners';
+  constructor(private readonly integrationSettings: IntegrationSettingsService) {}
 
-    const accessKeyId =
-      this.configService.get<string>('AWS_ACCESS_KEY_ID') ||
-      process.env.AWS_ACCESS_KEY_ID;
-    const secretAccessKey =
-      this.configService.get<string>('AWS_SECRET_ACCESS_KEY') ||
-      process.env.AWS_SECRET_ACCESS_KEY;
-    const endpoint =
-      this.configService.get<string>('AWS_S3_ENDPOINT') ||
-      process.env.AWS_S3_ENDPOINT;
+  /**
+   * Resolves AWS S3 credentials dynamically from IntegrationSettingsService.
+   * Priority: Admin Settings (DB with 5-min cache) → ENV fallback.
+   * This ensures that Admin Panel changes take effect immediately.
+   */
+  private async resolveS3Client(): Promise<{
+    client: S3Client;
+    bucket: string;
+    region: string;
+    customDomain: string;
+  }> {
+    const config = await this.integrationSettings.getAwsS3Config();
 
-    if (accessKeyId && secretAccessKey) {
-      this.s3Client = new S3Client({
-        region: this.region,
-        credentials: {
-          accessKeyId,
-          secretAccessKey,
-        },
-        ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
-      });
-      this.isS3Configured = true;
-      this.logger.log(`Amazon S3 initialized for bucket "${this.bucketName}" in region "${this.region}"`);
-    } else {
-      this.isS3Configured = false;
-      this.logger.warn('AWS credentials not found in environment. Using fallback data URI in local/test environment.');
+    if (!config.isConfigured) {
+      throw new BadRequestException(
+        'Amazon S3 is not configured. Please set AWS credentials in Admin → Settings → Integrations.',
+      );
     }
+
+    const client = new S3Client({
+      region: config.region,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+
+    return {
+      client,
+      bucket: config.bucket,
+      region: config.region,
+      customDomain: config.customDomain || '',
+    };
   }
 
   /**
    * Uploads a file buffer to Amazon S3.
+   * Credentials are fetched dynamically — Admin Setting changes take effect immediately.
    */
   async uploadFile(
     file: Express.Multer.File,
@@ -88,62 +83,55 @@ export class S3Service {
       .toLowerCase();
     const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
 
-    if (this.isS3Configured && this.s3Client) {
-      try {
-        const command = new PutObjectCommand({
-          Bucket: this.bucketName,
-          Key: imageKey,
-          Body: file.buffer,
-          ContentType: file.mimetype,
-        });
+    const { client, bucket, region, customDomain } = await this.resolveS3Client();
 
-        await this.s3Client.send(command);
+    try {
+      const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: imageKey,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+      });
 
-        const customDomain =
-          this.configService.get<string>('AWS_S3_CUSTOM_DOMAIN') ||
-          process.env.AWS_S3_CUSTOM_DOMAIN;
+      await client.send(command);
 
-        const imageUrl = customDomain
-          ? `https://${customDomain}/${imageKey}`
-          : `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${imageKey}`;
+      const imageUrl = customDomain
+        ? `https://${customDomain}/${imageKey}`
+        : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
 
-        this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${imageUrl}, key: ${imageKey}`);
+      this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${imageUrl}, key: ${imageKey}`);
 
-        return {
-          imageUrl,
-          imageKey,
-        };
-      } catch (err: any) {
-        this.logger.error(`[S3_UPLOAD_ERROR] ${err?.message || err}`);
-        throw new BadRequestException(
-          `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
-        );
-      }
+      return { imageUrl, imageKey };
+    } catch (err: any) {
+      this.logger.error(`[S3_UPLOAD_ERROR] ${err?.message || err}`);
+      throw new BadRequestException(
+        `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
+      );
     }
-
-    // Fallback data URI when AWS S3 credentials are not set locally
-    const base64Data = file.buffer.toString('base64');
-    const dataUri = `data:${file.mimetype};base64,${base64Data}`;
-    this.logger.log(`[LOCAL_UPLOAD_SUCCESS] Generated data URI for ${file.originalname}`);
-
-    return {
-      imageUrl: dataUri,
-      imageKey,
-    };
   }
 
   /**
    * Deletes an object from Amazon S3 by key.
+   * Silently warns on failure (non-critical — DB is source of truth).
    */
   async deleteFile(imageKey?: string | null): Promise<void> {
-    if (!imageKey || !this.isS3Configured || !this.s3Client) return;
+    if (!imageKey) return;
+
+    let client: S3Client;
+    let bucket: string;
 
     try {
-      const command = new DeleteObjectCommand({
-        Bucket: this.bucketName,
-        Key: imageKey,
-      });
-      await this.s3Client.send(command);
+      const resolved = await this.resolveS3Client();
+      client = resolved.client;
+      bucket = resolved.bucket;
+    } catch {
+      this.logger.warn(`[S3_DELETE_SKIP] S3 not configured — cannot delete key: ${imageKey}`);
+      return;
+    }
+
+    try {
+      const command = new DeleteObjectCommand({ Bucket: bucket, Key: imageKey });
+      await client.send(command);
       this.logger.log(`[S3_DELETE_SUCCESS] key: ${imageKey}`);
     } catch (err: any) {
       this.logger.warn(`[S3_DELETE_WARN] Could not delete S3 object ${imageKey}: ${err?.message}`);
@@ -151,15 +139,21 @@ export class S3Service {
   }
 
   /**
-   * Generates public URL for a given S3 key.
+   * Generates public URL for a given S3 key using current config.
    */
-  getFileUrl(imageKey: string): string {
-    const customDomain =
-      this.configService.get<string>('AWS_S3_CUSTOM_DOMAIN') ||
-      process.env.AWS_S3_CUSTOM_DOMAIN;
+  async getFileUrl(imageKey: string): Promise<string> {
+    const config = await this.integrationSettings.getAwsS3Config();
+    return config.customDomain
+      ? `https://${config.customDomain}/${imageKey}`
+      : `https://${config.bucket}.s3.${config.region}.amazonaws.com/${imageKey}`;
+  }
 
-    return customDomain
-      ? `https://${customDomain}/${imageKey}`
-      : `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${imageKey}`;
+  /**
+   * Tests S3 connectivity by listing objects (max 1) — used by testIntegration.
+   */
+  async testConnection(): Promise<{ success: boolean; bucket: string; region: string }> {
+    const { client, bucket, region } = await this.resolveS3Client();
+    await client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }));
+    return { success: true, bucket, region };
   }
 }

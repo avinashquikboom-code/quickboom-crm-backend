@@ -25,6 +25,7 @@ export enum IntegrationProvider {
   WHATSAPP = 'WHATSAPP',
   SENDGRID = 'SENDGRID',
   AWS = 'AWS',
+  MSG91 = 'MSG91',
   SHIPROCKET = 'SHIPROCKET',
 }
 
@@ -39,9 +40,31 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'TWILIO') return IntegrationProvider.TWILIO;
   if (norm === 'WHATSAPP') return IntegrationProvider.WHATSAPP;
   if (norm === 'SENDGRID') return IntegrationProvider.SENDGRID;
-  if (norm === 'AWS' || norm === 'AMAZON') return IntegrationProvider.AWS;
+  if (norm === 'AWS' || norm === 'AMAZON' || norm === 'S3' || norm === 'AWS_S3' || norm === 'AMAZON_S3') return IntegrationProvider.AWS;
+  if (norm === 'MSG91' || norm === 'MSG_91' || norm === 'SMS_MSG91' || norm === 'OTP_MSG91') return IntegrationProvider.MSG91;
   if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
   return norm;
+}
+
+export interface AwsS3DynamicConfig {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+  bucket: string;
+  customDomain?: string;
+  isEnabled: boolean;
+  isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+}
+
+export interface Msg91DynamicConfig {
+  authKey: string;
+  templateId: string;
+  senderId: string;
+  otpExpiry: number;
+  isEnabled: boolean;
+  isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
 export interface RazorpayDynamicConfig {
@@ -301,6 +324,39 @@ export class IntegrationSettingsService {
         };
       }
 
+      case IntegrationProvider.AWS: {
+        const accessKeyId = (process.env.AWS_ACCESS_KEY_ID || '').trim();
+        const secretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || '').trim();
+        const region = (process.env.AWS_REGION || 'ap-south-1').trim();
+        const bucket = (process.env.AWS_S3_BUCKET || '').trim();
+        const customDomain = (process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+
+        return {
+          provider: IntegrationProvider.AWS,
+          isEnabled: Boolean(accessKeyId && secretAccessKey && bucket),
+          environment: 'LIVE',
+          credentials: { accessKeyId, secretAccessKey, region, bucket, customDomain },
+          config: {},
+          source: 'ENV_FALLBACK',
+        };
+      }
+
+      case IntegrationProvider.MSG91: {
+        const authKey = (process.env.MSG91_AUTH_KEY || '').trim();
+        const templateId = (process.env.MSG91_TEMPLATE_ID || '').trim();
+        const senderId = (process.env.MSG91_SENDER_ID || 'QUIKBM').trim();
+        const otpExpiry = parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10);
+
+        return {
+          provider: IntegrationProvider.MSG91,
+          isEnabled: Boolean(authKey && templateId),
+          environment: 'LIVE',
+          credentials: { authKey, templateId, senderId },
+          config: { otpExpiry },
+          source: 'ENV_FALLBACK',
+        };
+      }
+
       default:
         return {
           provider: normProvider,
@@ -431,6 +487,65 @@ export class IntegrationSettingsService {
       config: conf?.config || {},
       source,
     };
+  }
+
+  /**
+   * Typed helper for AWS S3 dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getAwsS3Config(): Promise<AwsS3DynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.AWS);
+    const creds = conf?.credentials || {};
+
+    const accessKeyId = sanitizeSecret(
+      String(creds.accessKeyId || creds.access_key_id || process.env.AWS_ACCESS_KEY_ID || ''),
+    );
+    const secretAccessKey = sanitizeSecret(
+      String(creds.secretAccessKey || creds.secret_access_key || process.env.AWS_SECRET_ACCESS_KEY || ''),
+    );
+    const region = String(creds.region || process.env.AWS_REGION || 'ap-south-1').trim();
+    const bucket = String(creds.bucket || creds.bucketName || creds.bucket_name || process.env.AWS_S3_BUCKET || '').trim();
+    const customDomain = String(creds.customDomain || creds.custom_domain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+
+    const isConfigured = Boolean(accessKeyId && secretAccessKey && bucket);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
+
+    this.logger.log(
+      `[AWS_S3_CONFIG] Bucket: ${bucket || 'NOT_SET'} | Region: ${region} | Configured: ${isConfigured} | Source: ${source}`,
+    );
+
+    return { accessKeyId, secretAccessKey, region, bucket, customDomain, isEnabled, isConfigured, source };
+  }
+
+  /**
+   * Typed helper for MSG91 dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getMsg91Config(): Promise<Msg91DynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.MSG91);
+    const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
+
+    const authKey = sanitizeSecret(
+      String(creds.authKey || creds.auth_key || creds.apiKey || process.env.MSG91_AUTH_KEY || ''),
+    );
+    const templateId = String(creds.templateId || creds.template_id || process.env.MSG91_TEMPLATE_ID || '').trim();
+    const senderId = String(creds.senderId || creds.sender_id || process.env.MSG91_SENDER_ID || 'QUIKBM').trim();
+    const otpExpiry = parseInt(
+      String(cfg.otpExpiry || cfg.otp_expiry || process.env.MSG91_OTP_EXPIRY || '300'),
+      10,
+    );
+
+    const isConfigured = Boolean(authKey && templateId);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
+
+    this.logger.log(
+      `[MSG91_CONFIG] TemplateId: ${templateId || 'NOT_SET'} | SenderId: ${senderId} | Configured: ${isConfigured} | Source: ${source}`,
+    );
+
+    return { authKey, templateId, senderId, otpExpiry, isEnabled, isConfigured, source };
   }
 
   /**
@@ -914,6 +1029,76 @@ export class IntegrationSettingsService {
             tokenPrefix: apiKey.substring(0, 8) + '...',
           },
         };
+      }
+
+      case IntegrationProvider.AWS: {
+        const accessKeyId = resolvedCreds.accessKeyId || resolvedCreds.access_key_id;
+        const secretAccessKey = resolvedCreds.secretAccessKey || resolvedCreds.secret_access_key;
+        const region = resolvedCreds.region || 'ap-south-1';
+        const bucket = resolvedCreds.bucket || resolvedCreds.bucketName || resolvedCreds.bucket_name;
+
+        if (!accessKeyId || !secretAccessKey || !bucket) {
+          throw new BadRequestException('AWS Access Key ID, Secret Access Key, and Bucket Name are required to test connection');
+        }
+
+        try {
+          const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+          const s3Client = new S3Client({
+            region,
+            credentials: { accessKeyId, secretAccessKey },
+          });
+          await s3Client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }));
+          return {
+            success: true,
+            provider: 'AWS',
+            status: 'CONNECTED',
+            message: 'Amazon S3 bucket access verified successfully!',
+            details: { bucket, region, keyPrefix: accessKeyId.substring(0, 8) + '...' },
+          };
+        } catch (err: any) {
+          this.logger.error(`[AWS_S3_TEST_FAILED] ${err?.message}`);
+          const errMsg = err?.message || 'Could not connect to Amazon S3';
+          throw new BadRequestException(`AWS S3 connection test failed: ${errMsg}`);
+        }
+      }
+
+      case IntegrationProvider.MSG91: {
+        const authKey = resolvedCreds.authKey || resolvedCreds.auth_key || resolvedCreds.apiKey;
+        const templateId = resolvedCreds.templateId || resolvedCreds.template_id;
+
+        if (!authKey || !templateId) {
+          throw new BadRequestException('MSG91 Auth Key and Template ID are required to test connection');
+        }
+
+        // Validate credentials by calling the MSG91 balance/account info endpoint (no OTP sent)
+        try {
+          const response = await axios.get('https://control.msg91.com/api/v5/balance', {
+            headers: { authkey: authKey },
+            timeout: 8000,
+          });
+
+          if (response.status === 200) {
+            return {
+              success: true,
+              provider: 'MSG91',
+              status: 'CONNECTED',
+              message: 'MSG91 credentials verified successfully!',
+              details: {
+                templateId,
+                authKeyPrefix: authKey.substring(0, 8) + '...',
+              },
+            };
+          }
+          throw new Error(`Unexpected response: ${response.status}`);
+        } catch (err: any) {
+          this.logger.error(`[MSG91_TEST_FAILED] ${err?.message}`);
+          const errMsg =
+            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            err?.message ||
+            'Could not authenticate with MSG91';
+          throw new BadRequestException(`MSG91 connection test failed: ${errMsg}`);
+        }
       }
 
       default:

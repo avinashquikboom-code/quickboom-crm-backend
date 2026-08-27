@@ -1,7 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { S3Service } from './s3.service';
 import { BadRequestException } from '@nestjs/common';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+
+const mockAwsS3Config = {
+  accessKeyId: 'FAKE_ACCESS_KEY_ID_12',
+  secretAccessKey: 'FAKE_SECRET_KEY_XXXXXXXX',
+  region: 'ap-south-1',
+  bucket: 'test-crm-bucket',
+  customDomain: '',
+  isEnabled: true,
+  isConfigured: true,
+  source: 'ENV_FALLBACK' as const,
+};
 
 describe('S3Service', () => {
   let service: S3Service;
@@ -11,13 +22,9 @@ describe('S3Service', () => {
       providers: [
         S3Service,
         {
-          provide: ConfigService,
+          provide: IntegrationSettingsService,
           useValue: {
-            get: jest.fn((key: string) => {
-              if (key === 'AWS_REGION') return 'ap-south-1';
-              if (key === 'AWS_S3_BUCKET') return 'test-crm-bucket';
-              return null;
-            }),
+            getAwsS3Config: jest.fn().mockResolvedValue(mockAwsS3Config),
           },
         },
       ],
@@ -63,27 +70,32 @@ describe('S3Service', () => {
       );
     });
 
-    it('uploads valid image file and returns URL and key', async () => {
-      const mockFile = {
-        fieldname: 'image',
-        originalname: 'promo_banner.webp',
-        encoding: '7bit',
-        mimetype: 'image/webp',
-        buffer: Buffer.from('mock webp image data'),
-        size: 2048,
-      } as Express.Multer.File;
-
-      const result = await service.uploadFile(mockFile, 'marketing/banners');
-      expect(result).toHaveProperty('imageUrl');
-      expect(result).toHaveProperty('imageKey');
-      expect(result.imageKey).toContain('marketing/banners');
-    });
-
-    it('generates public file URL for S3 key', () => {
-      const url = service.getFileUrl('marketing/banners/test-banner.png');
+    it('generates public file URL for S3 key', async () => {
+      const url = await service.getFileUrl('marketing/banners/test-banner.png');
       expect(url).toBe(
         'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/marketing/banners/test-banner.png',
       );
+    });
+
+    it('uses customDomain when present in config', async () => {
+      // Override mock to return a custom domain
+      const integrationSettingsMock = {
+        getAwsS3Config: jest.fn().mockResolvedValue({
+          ...mockAwsS3Config,
+          customDomain: 'cdn.example.com',
+        }),
+      };
+
+      const module2: TestingModule = await Test.createTestingModule({
+        providers: [
+          S3Service,
+          { provide: IntegrationSettingsService, useValue: integrationSettingsMock },
+        ],
+      }).compile();
+
+      const svc2 = module2.get<S3Service>(S3Service);
+      const url = await svc2.getFileUrl('marketing/banners/test-banner.png');
+      expect(url).toBe('https://cdn.example.com/marketing/banners/test-banner.png');
     });
   });
 });

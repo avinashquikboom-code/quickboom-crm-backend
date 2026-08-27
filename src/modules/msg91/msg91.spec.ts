@@ -1,33 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { Msg91Service } from './msg91.service';
 import { BadRequestException } from '@nestjs/common';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+
+const mockMsg91Config = {
+  authKey: 'test_msg91_auth_key_12345',
+  templateId: '60b9f9123456789',
+  senderId: 'QKBOM',
+  otpExpiry: 600,
+  isEnabled: false, // false so tests hit simulation path (no real HTTP calls)
+  isConfigured: false,
+  source: 'ENV_FALLBACK' as const,
+};
 
 describe('Msg91Service', () => {
   let service: Msg91Service;
-  let configService: ConfigService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         Msg91Service,
         {
-          provide: ConfigService,
+          provide: IntegrationSettingsService,
           useValue: {
-            get: jest.fn((key: string) => {
-              if (key === 'MSG91_AUTH_KEY') return 'test_msg91_auth_key_12345';
-              if (key === 'MSG91_TEMPLATE_ID') return '60b9f9123456789';
-              if (key === 'MSG91_SENDER_ID') return 'QKBOM';
-              if (key === 'MSG91_OTP_EXPIRY') return '10';
-              return null;
-            }),
+            getMsg91Config: jest.fn().mockResolvedValue(mockMsg91Config),
           },
         },
       ],
     }).compile();
 
     service = module.get<Msg91Service>(Msg91Service);
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   describe('Indian Mobile Number Normalization', () => {
@@ -67,10 +69,15 @@ describe('Msg91Service', () => {
   });
 
   describe('OTP Dispatch', () => {
-    it('dispatches OTP successfully', async () => {
+    it('dispatches OTP successfully (simulation mode when not configured)', async () => {
       const result = await service.sendOtp('9876543210', '123456');
       expect(result.success).toBe(true);
       expect(result.message).toContain('OTP sent');
+    });
+
+    it('returns true for verifyOtpViaApi in simulation mode', async () => {
+      const result = await service.verifyOtpViaApi('9876543210', '123456');
+      expect(result).toBe(true);
     });
   });
 });

@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import {
   LoginDto,
   RegisterCustomerDto,
@@ -673,8 +674,8 @@ export class AuthService {
       }
     }
 
-    // Generate cryptographically secure 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate cryptographically secure 6-digit OTP (crypto.randomInt is CSPRNG-backed)
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiryMinutes = parseInt(process.env.MSG91_OTP_EXPIRY || '10', 10) || 10;
     const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
 

@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 
 export interface Msg91SendOtpResponse {
   success: boolean;
@@ -10,44 +10,8 @@ export interface Msg91SendOtpResponse {
 @Injectable()
 export class Msg91Service {
   private readonly logger = new Logger(Msg91Service.name);
-  private readonly authKey: string | null;
-  private readonly templateId: string | null;
-  private readonly senderId: string | null;
-  private readonly otpExpiryMinutes: number;
-  private readonly isConfigured: boolean;
 
-  constructor(private readonly configService: ConfigService) {
-    this.authKey =
-      this.configService.get<string>('MSG91_AUTH_KEY') ||
-      process.env.MSG91_AUTH_KEY ||
-      null;
-    this.templateId =
-      this.configService.get<string>('MSG91_TEMPLATE_ID') ||
-      process.env.MSG91_TEMPLATE_ID ||
-      null;
-    this.senderId =
-      this.configService.get<string>('MSG91_SENDER_ID') ||
-      process.env.MSG91_SENDER_ID ||
-      null;
-
-    const expiryStr =
-      this.configService.get<string>('MSG91_OTP_EXPIRY') ||
-      process.env.MSG91_OTP_EXPIRY ||
-      '10';
-    this.otpExpiryMinutes = parseInt(expiryStr, 10) || 10;
-
-    this.isConfigured = Boolean(this.authKey && this.templateId);
-
-    if (this.isConfigured) {
-      this.logger.log(
-        `MSG91 OTP Service initialized with template ID "${this.templateId}" and expiry ${this.otpExpiryMinutes}m`,
-      );
-    } else {
-      this.logger.warn(
-        'MSG91 credentials not found in environment. Operating in development/simulation mode.',
-      );
-    }
-  }
+  constructor(private readonly integrationSettings: IntegrationSettingsService) {}
 
   /**
    * Normalizes an Indian mobile number to the 91XXXXXXXXXX international format.
@@ -100,29 +64,33 @@ export class Msg91Service {
   }
 
   /**
-   * Sends an OTP via MSG91 API or safe local simulation.
+   * Sends an OTP via MSG91 API.
+   * Credentials are fetched dynamically from IntegrationSettingsService —
+   * Admin Settings changes take effect immediately without a service restart.
    */
   async sendOtp(mobile: string, otp: string): Promise<Msg91SendOtpResponse> {
     const normalizedMobile = this.normalizeMobile(mobile);
     const masked = this.maskMobile(normalizedMobile);
 
-    if (this.isConfigured && this.authKey && this.templateId) {
+    const config = await this.integrationSettings.getMsg91Config();
+
+    if (config.isConfigured && config.authKey && config.templateId) {
       try {
         const url = new URL('https://control.msg91.com/api/v5/otp');
-        url.searchParams.append('template_id', this.templateId);
+        url.searchParams.append('template_id', config.templateId);
         url.searchParams.append('mobile', normalizedMobile);
-        url.searchParams.append('authkey', this.authKey);
+        url.searchParams.append('authkey', config.authKey);
         url.searchParams.append('otp', otp);
-        url.searchParams.append('otp_expiry', String(this.otpExpiryMinutes));
-        if (this.senderId) {
-          url.searchParams.append('sender', this.senderId);
+        // otpExpiry from DB config is in seconds; MSG91 expects minutes
+        const expiryMinutes = Math.ceil((config.otpExpiry || 300) / 60);
+        url.searchParams.append('otp_expiry', String(expiryMinutes));
+        if (config.senderId) {
+          url.searchParams.append('sender', config.senderId);
         }
 
         const response = await fetch(url.toString(), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
         });
 
         const data: any = await response.json().catch(() => ({}));
@@ -149,9 +117,9 @@ export class Msg91Service {
       }
     }
 
-    // Development/Test fallback
+    // Development/Test fallback — MSG91 not configured
     this.logger.log(
-      `[MSG91_DEV_SIMULATION] OTP generated for ${masked} (valid for ${this.otpExpiryMinutes} minutes)`,
+      `[MSG91_DEV_SIMULATION] OTP generated for ${masked} (MSG91 not configured — simulation mode)`,
     );
 
     return {
@@ -163,17 +131,20 @@ export class Msg91Service {
 
   /**
    * Verifies an OTP with MSG91 verify API or local fallback.
+   * Credentials are fetched dynamically.
    */
   async verifyOtpViaApi(mobile: string, otp: string): Promise<boolean> {
     const normalizedMobile = this.normalizeMobile(mobile);
     const masked = this.maskMobile(normalizedMobile);
 
-    if (this.isConfigured && this.authKey) {
+    const config = await this.integrationSettings.getMsg91Config();
+
+    if (config.isConfigured && config.authKey) {
       try {
         const url = new URL('https://control.msg91.com/api/v5/otp/verify');
         url.searchParams.append('mobile', normalizedMobile);
         url.searchParams.append('otp', otp.trim());
-        url.searchParams.append('authkey', this.authKey);
+        url.searchParams.append('authkey', config.authKey);
 
         const response = await fetch(url.toString(), { method: 'GET' });
         const data: any = await response.json().catch(() => ({}));
