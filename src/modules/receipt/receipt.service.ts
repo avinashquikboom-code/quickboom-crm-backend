@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Response } from 'express';
-import PDFDocument from 'pdfkit';
+import PDFDocument = require('pdfkit');
 
 export interface NormalizedReceiptPayment {
   id: number;

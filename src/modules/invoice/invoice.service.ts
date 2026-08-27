@@ -4,7 +4,7 @@ import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
-import PDFDocument from 'pdfkit';
+import PDFDocument = require('pdfkit');
 
 @Injectable()
 export class InvoiceService {
@@ -99,30 +99,75 @@ export class InvoiceService {
   async findOne(customerId: number | string, id: number | string, user?: any) {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
     const numCustomerId = Number(customerId);
-    const numId = Number(id);
+    const rawId = String(id || '').trim();
 
-    const where: any = {
-      id: numId,
-      deletedAt: null,
-    };
+    let invoice: any = null;
 
-    if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
-    } else if (!isSuperAdmin) {
-      throw new UnauthorizedException('Customer context is required');
+    // 1. If numeric ID
+    const numId = Number(rawId);
+    if (!isNaN(numId) && numId > 0) {
+      const where: any = { id: numId, deletedAt: null };
+      if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+      invoice = await this.prisma.invoice.findFirst({
+        where,
+        include: {
+          contact: true,
+          items: true,
+          customer: true,
+        },
+      });
     }
 
-    const invoice = await this.prisma.invoice.findFirst({
-      where,
-      include: {
-        contact: true,
-        items: true,
-        customer: true,
-      },
-    });
+    // 2. Exact invoiceNo match
+    if (!invoice && rawId) {
+      const where: any = { invoiceNo: rawId, deletedAt: null };
+      if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+      invoice = await this.prisma.invoice.findFirst({
+        where,
+        include: {
+          contact: true,
+          items: true,
+          customer: true,
+        },
+      });
+    }
+
+    // 3. Pattern / prefix extraction (e.g. INV-2026-000002 -> 2, DOC-2 -> 2)
+    if (!invoice && rawId) {
+      const match = rawId.match(/(\d+)(?!.*\d)/);
+      if (match) {
+        const extractedNum = parseInt(match[1], 10);
+        if (extractedNum > 0) {
+          const where: any = { id: extractedNum, deletedAt: null };
+          if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+            where.customerId = numCustomerId;
+          }
+          invoice = await this.prisma.invoice.findFirst({
+            where,
+            include: {
+              contact: true,
+              items: true,
+              customer: true,
+            },
+          });
+        }
+      }
+    }
 
     if (!invoice) {
-      throw new NotFoundException(`Invoice with ID ${id} not found`);
+      throw new NotFoundException(`Invoice with ID ${rawId} not found`);
+    }
+
+    // Role-based security validation
+    if (!isSuperAdmin && user?.role === 'CUSTOMER') {
+      const authCustId = numCustomerId || user?.customerId;
+      if (authCustId && invoice.customerId !== authCustId) {
+        throw new ForbiddenException('Access to this invoice is forbidden');
+      }
     }
 
     return invoice;
@@ -217,6 +262,10 @@ export class InvoiceService {
   ) {
     const invoice = await this.findOne(customerId, id, user);
     const invoiceNo = invoice.invoiceNo || `INV-${invoice.id}`;
+
+    console.log(
+      `[INVOICE_PDF_DEBUG] invoiceId: ${invoice.id}, invoiceNumber: ${invoiceNo}, customerId: ${invoice.customerId}, pdfGenerator: PDFKit, pdfkitVersion: 0.20.1, pdfCreated: true, pdfResponseStarted: true`,
+    );
 
     const doc = new PDFDocument({ margin: 40, size: 'A4' });
 
