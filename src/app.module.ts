@@ -36,6 +36,7 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
 import { TrendingModule } from './modules/trending/trending.module';
+import { MarketingModule } from './modules/marketing/marketing.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -80,6 +81,7 @@ import { AppController } from './app.controller';
     LoanModule,
     ClaimModule,
     TrendingModule,
+    MarketingModule,
   ],
   controllers: [AppController],
 })

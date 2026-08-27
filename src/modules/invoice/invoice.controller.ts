@@ -38,7 +38,7 @@ export class InvoiceController {
   async findAll(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Query('status') status?: InvoiceStatus,
+    @Query('status') status?: InvoiceStatus | string,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -49,20 +49,20 @@ export class InvoiceController {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
 
-    console.log('[ADMIN_INVOICE_REQUEST]', {
-      clientId: targetCustomerId,
-      customerId: targetCustomerId,
+    console.log('[INVOICE_DEBUG]', {
+      userId: user?.id,
+      role: user?.role,
+      customerId: user?.customerId || targetCustomerId,
       companyId: user?.companyId || targetCustomerId,
       page: pageNum,
       limit: limitNum,
       status,
-      search,
     });
 
     const response = await this.invoiceService.findAll(
       targetCustomerId,
       {
-        status,
+        status: status as any,
         search,
         customerId: queryCustomerId || queryClientId,
         page: pageNum,

@@ -77,6 +77,35 @@ describe('Customer Orders & Invoices Data Isolation & Generation Tests', () => {
       expect(result.pagination.total).toBe(0);
     });
 
+    it('filters correctly with status=PENDING mapping to unpaid states', async () => {
+      const customerId = 101;
+      const user = { id: 5, customerId: 101, role: 'CUSTOMER' };
+
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.count.mockResolvedValue(0);
+
+      const result = await invoiceService.findAll(
+        customerId,
+        { status: 'PENDING', page: 1, limit: 20 },
+        user,
+      );
+
+      expect(result.data).toEqual([]);
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            customerId: 101,
+            deletedAt: null,
+            status: {
+              in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT],
+            },
+          }),
+          skip: 0,
+          take: 20,
+        }),
+      );
+    });
+
     it('rejects unauthenticated requests without customer context', async () => {
       await expect(
         invoiceService.findAll(0, {}, { id: 10, role: 'USER' }),
@@ -84,3 +113,4 @@ describe('Customer Orders & Invoices Data Isolation & Generation Tests', () => {
     });
   });
 });
+

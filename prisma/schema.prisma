@@ -80,6 +80,7 @@ model Customer {
   customPlanOrders         CustomPlanOrder[]
   installments             SubscriptionInstallment[]
   trendingContents         TrendingContent[]
+  marketingBanners         MarketingBanner[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -225,6 +226,7 @@ model User {
   customer          Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userRoles         UserRole[]
   createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
+  createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
 
   @@index([customerId])
   @@index([email])
@@ -1915,6 +1917,7 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   CANCELLED
+  PENDING
 }
 
 enum QuotationStatus {
@@ -2230,5 +2233,32 @@ model TrendingContent {
   @@map("trending_contents")
 }
 
+model MarketingBanner {
+  id             Int       @id @default(autoincrement())
+  customerId     Int?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title          String
+  subtitle       String?
+  description    String?
+  imageUrl       String
+  mobileImageUrl String?
+  ctaText        String?
+  ctaUrl         String?
+  priority       Int       @default(0)
+  isActive       Boolean   @default(true)
+  isPublished    Boolean   @default(true)
+  startAt        DateTime?
+  endAt          DateTime?
+  createdBy      Int?
+  createdByUser  User?     @relation("CreatedMarketingBanners", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
-
+  @@index([customerId, isActive, isPublished])
+  @@index([priority])
+  @@index([startAt, endAt])
+  @@index([deletedAt])
+  @@map("marketing_banners")
+}

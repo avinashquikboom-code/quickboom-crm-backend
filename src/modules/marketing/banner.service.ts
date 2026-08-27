@@ -1,0 +1,339 @@
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  CreateMarketingBannerDto,
+  QueryMarketingBannerDto,
+  UpdateMarketingBannerDto,
+} from './dto/banner.dto';
+
+@Injectable()
+export class BannerService {
+  private readonly logger = new Logger(BannerService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Create a new marketing banner (Company Admin / Super Admin)
+   */
+  async create(
+    dto: CreateMarketingBannerDto,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    const startAt = dto.startAt ? new Date(dto.startAt) : null;
+    const endAt = dto.endAt ? new Date(dto.endAt) : null;
+
+    if (startAt && endAt && endAt < startAt) {
+      throw new BadRequestException('endAt cannot be earlier than startAt');
+    }
+
+    const customerId = user.customerId ?? null;
+
+    const banner = await this.prisma.marketingBanner.create({
+      data: {
+        customerId,
+        title: dto.title.trim(),
+        subtitle: dto.subtitle?.trim() || null,
+        description: dto.description?.trim() || null,
+        imageUrl: dto.imageUrl.trim(),
+        mobileImageUrl: dto.mobileImageUrl?.trim() || null,
+        ctaText: dto.ctaText?.trim() || null,
+        ctaUrl: dto.ctaUrl?.trim() || null,
+        priority: dto.priority ?? 0,
+        isActive: dto.isActive ?? true,
+        isPublished: dto.isPublished ?? true,
+        startAt,
+        endAt,
+        createdBy: user.id,
+      },
+    });
+
+    this.logger.log(
+      `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}`,
+    );
+
+    return banner;
+  }
+
+  /**
+   * List banners for Company Admin with search, filters, pagination
+   */
+  async findAllAdmin(
+    query: QueryMarketingBannerDto,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? query.limit : 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      deletedAt: null,
+    };
+
+    // Workspace scoping: If user belongs to a customer/tenant, limit to that customer or global
+    if (user.customerId) {
+      where.OR = [{ customerId: user.customerId }, { customerId: null }];
+    }
+
+    if (query.isActive !== undefined) {
+      where.isActive = query.isActive;
+    }
+
+    if (query.isPublished !== undefined) {
+      where.isPublished = query.isPublished;
+    }
+
+    if (query.search) {
+      const s = query.search.trim();
+      where.AND = [
+        {
+          OR: [
+            { title: { contains: s, mode: 'insensitive' } },
+            { subtitle: { contains: s, mode: 'insensitive' } },
+            { description: { contains: s, mode: 'insensitive' } },
+            { ctaText: { contains: s, mode: 'insensitive' } },
+          ],
+        },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.marketingBanner.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+        include: {
+          createdByUser: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+        },
+      }),
+      this.prisma.marketingBanner.count({ where }),
+    ]);
+
+    return {
+      items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Find single banner by ID
+   */
+  async findOne(
+    id: number,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    const banner = await this.prisma.marketingBanner.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+      },
+      include: {
+        createdByUser: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+      },
+    });
+
+    if (!banner) {
+      throw new NotFoundException(`Marketing banner with ID ${id} not found`);
+    }
+
+    if (
+      user.customerId &&
+      banner.customerId &&
+      banner.customerId !== user.customerId
+    ) {
+      throw new NotFoundException(`Marketing banner with ID ${id} not found`);
+    }
+
+    return banner;
+  }
+
+  /**
+   * Update marketing banner
+   */
+  async update(
+    id: number,
+    dto: UpdateMarketingBannerDto,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    const existing = await this.findOne(id, user);
+
+    const startAt =
+      dto.startAt !== undefined
+        ? dto.startAt
+          ? new Date(dto.startAt)
+          : null
+        : existing.startAt;
+    const endAt =
+      dto.endAt !== undefined
+        ? dto.endAt
+          ? new Date(dto.endAt)
+          : null
+        : existing.endAt;
+
+    if (startAt && endAt && endAt < startAt) {
+      throw new BadRequestException('endAt cannot be earlier than startAt');
+    }
+
+    const updated = await this.prisma.marketingBanner.update({
+      where: { id },
+      data: {
+        title: dto.title !== undefined ? dto.title.trim() : undefined,
+        subtitle:
+          dto.subtitle !== undefined
+            ? dto.subtitle
+              ? dto.subtitle.trim()
+              : null
+            : undefined,
+        description:
+          dto.description !== undefined
+            ? dto.description
+              ? dto.description.trim()
+              : null
+            : undefined,
+        imageUrl:
+          dto.imageUrl !== undefined ? dto.imageUrl.trim() : undefined,
+        mobileImageUrl:
+          dto.mobileImageUrl !== undefined
+            ? dto.mobileImageUrl
+              ? dto.mobileImageUrl.trim()
+              : null
+            : undefined,
+        ctaText:
+          dto.ctaText !== undefined
+            ? dto.ctaText
+              ? dto.ctaText.trim()
+              : null
+            : undefined,
+        ctaUrl:
+          dto.ctaUrl !== undefined
+            ? dto.ctaUrl
+              ? dto.ctaUrl.trim()
+              : null
+            : undefined,
+        priority: dto.priority !== undefined ? dto.priority : undefined,
+        isActive: dto.isActive !== undefined ? dto.isActive : undefined,
+        isPublished:
+          dto.isPublished !== undefined ? dto.isPublished : undefined,
+        startAt,
+        endAt,
+      },
+    });
+
+    this.logger.log(`[MARKETING_BANNER_UPDATE]\nbannerId: ${id}`);
+    return updated;
+  }
+
+  /**
+   * Soft delete a marketing banner
+   */
+  async remove(
+    id: number,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    await this.findOne(id, user);
+
+    await this.prisma.marketingBanner.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    this.logger.log(`[MARKETING_BANNER_DELETE]\nbannerId: ${id}`);
+    return { success: true, message: `Marketing banner ${id} deleted successfully` };
+  }
+
+  /**
+   * Set published state
+   */
+  async setPublished(
+    id: number,
+    isPublished: boolean,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    await this.findOne(id, user);
+
+    const updated = await this.prisma.marketingBanner.update({
+      where: { id },
+      data: { isPublished },
+    });
+
+    this.logger.log(
+      `[MARKETING_BANNER_PUBLISH]\nbannerId: ${id}\nisPublished: ${isPublished}`,
+    );
+    return updated;
+  }
+
+  /**
+   * Set active state
+   */
+  async setStatus(
+    id: number,
+    isActive: boolean,
+    user: { id: number; customerId?: number | null; role?: string },
+  ) {
+    await this.findOne(id, user);
+
+    const updated = await this.prisma.marketingBanner.update({
+      where: { id },
+      data: { isActive },
+    });
+
+    this.logger.log(
+      `[MARKETING_BANNER_STATUS]\nbannerId: ${id}\nisActive: ${isActive}`,
+    );
+    return updated;
+  }
+
+  /**
+   * Fetch active, published, scheduled banners for Customer Home Screen
+   */
+  async findAllCustomer(user: {
+    id: number;
+    customerId?: number | null;
+    role?: string;
+  }) {
+    const now = new Date();
+
+    this.logger.log(
+      `[CUSTOMER_BANNERS_REQUEST]\nuserId: ${user.id}\ncustomerId: ${user.customerId ?? 'NONE'}\ncompanyId: ${user.customerId ?? 'GLOBAL'}`,
+    );
+
+    const customerScope: any = user.customerId
+      ? { OR: [{ customerId: user.customerId }, { customerId: null }] }
+      : { customerId: null };
+
+    const banners = await this.prisma.marketingBanner.findMany({
+      where: {
+        ...customerScope,
+        isActive: true,
+        isPublished: true,
+        deletedAt: null,
+        AND: [
+          {
+            OR: [{ startAt: null }, { startAt: { lte: now } }],
+          },
+          {
+            OR: [{ endAt: null }, { endAt: { gte: now } }],
+          },
+        ],
+      },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${banners.length}`);
+    return banners;
+  }
+}

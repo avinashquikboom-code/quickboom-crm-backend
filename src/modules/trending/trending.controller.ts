@@ -58,7 +58,7 @@ export class TrendingController {
 
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
-  @Post('admin/trending')
+  @Post(['admin/trending', 'admin/marketing/trending'])
   @ApiOperation({ summary: 'Create new trending content item (Company Admin only)' })
   async create(
     @CurrentCustomer() customerId: string,
@@ -70,7 +70,7 @@ export class TrendingController {
     return this.trendingService.create(customerId, user?.id, dto, isSuperAdmin);
   }
 
-  @Get('admin/trending')
+  @Get(['admin/trending', 'admin/marketing/trending'])
   @ApiOperation({ summary: 'List trending content for Admin with filters and pagination' })
   async findAllAdmin(
     @CurrentCustomer() customerId: string,
@@ -82,7 +82,7 @@ export class TrendingController {
     return this.trendingService.findAllAdmin(customerId, query, isSuperAdmin);
   }
 
-  @Get('admin/trending/:id')
+  @Get(['admin/trending/:id', 'admin/marketing/trending/:id'])
   @ApiOperation({ summary: 'Get single trending content details (Company Admin only)' })
   async findOne(
     @CurrentCustomer() customerId: string,
@@ -94,7 +94,7 @@ export class TrendingController {
     return this.trendingService.findOne(customerId, id, isSuperAdmin);
   }
 
-  @Patch('admin/trending/:id')
+  @Patch(['admin/trending/:id', 'admin/marketing/trending/:id'])
   @ApiOperation({ summary: 'Update trending content (Company Admin only)' })
   async update(
     @CurrentCustomer() customerId: string,
@@ -107,7 +107,7 @@ export class TrendingController {
     return this.trendingService.update(customerId, id, dto, isSuperAdmin);
   }
 
-  @Delete('admin/trending/:id')
+  @Delete(['admin/trending/:id', 'admin/marketing/trending/:id'])
   @ApiOperation({ summary: 'Delete trending content (Company Admin only)' })
   async remove(
     @CurrentCustomer() customerId: string,
@@ -119,7 +119,7 @@ export class TrendingController {
     return this.trendingService.remove(customerId, id, isSuperAdmin);
   }
 
-  @Patch('admin/trending/:id/publish')
+  @Patch(['admin/trending/:id/publish', 'admin/marketing/trending/:id/publish'])
   @ApiOperation({ summary: 'Publish or unpublish trending content (Company Admin only)' })
   async setPublished(
     @CurrentCustomer() customerId: string,
@@ -132,7 +132,7 @@ export class TrendingController {
     return this.trendingService.setPublished(customerId, id, dto.isPublished, isSuperAdmin);
   }
 
-  @Patch('admin/trending/:id/status')
+  @Patch(['admin/trending/:id/status', 'admin/marketing/trending/:id/status'])
   @ApiOperation({ summary: 'Set active/inactive status for trending content (Company Admin only)' })
   async setStatus(
     @CurrentCustomer() customerId: string,
@@ -147,7 +147,7 @@ export class TrendingController {
 
   // ── Customer Endpoint ───────────────────────────────────────────────────────
 
-  @Get('customer/trending')
+  @Get(['customer/trending', 'customer/marketing/trending'])
   @ApiOperation({ summary: 'Get active published trending content for customer' })
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
   async findAllCustomer(

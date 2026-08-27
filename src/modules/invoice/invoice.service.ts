@@ -12,7 +12,7 @@ export class InvoiceService {
 
   async findAll(
     customerId: number | string,
-    query: { status?: InvoiceStatus; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
+    query: { status?: InvoiceStatus | string; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
     user?: any,
   ) {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
@@ -32,7 +32,16 @@ export class InvoiceService {
     const skip = (page - 1) * limit;
 
     if (query.status && (query.status as string) !== 'ALL') {
-      where.status = query.status;
+      const rawStatus = (query.status as string).trim().toUpperCase();
+      if (rawStatus === 'PENDING' || rawStatus === 'UNPAID') {
+        where.status = {
+          in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT],
+        };
+      } else if (Object.values(InvoiceStatus).includes(rawStatus as InvoiceStatus)) {
+        where.status = rawStatus as InvoiceStatus;
+      } else {
+        where.status = query.status;
+      }
     }
 
     if (query.search && query.search.trim()) {
@@ -47,19 +56,37 @@ export class InvoiceService {
       ];
     }
 
-    const [items, total] = await Promise.all([
-      this.prisma.invoice.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { issueDate: 'desc' },
-        include: {
-          contact: true,
-          customer: true,
-        },
-      }),
-      this.prisma.invoice.count({ where }),
-    ]);
+    console.log('[INVOICE_QUERY]', {
+      queryParameters: query,
+      resolvedCustomerCompany: numCustomerId || 'ALL_SUPER_ADMIN',
+      databaseQuery: JSON.stringify(where),
+    });
+
+    let items: any[] = [];
+    let total = 0;
+
+    try {
+      [items, total] = await Promise.all([
+        this.prisma.invoice.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { issueDate: 'desc' },
+          include: {
+            contact: true,
+            customer: true,
+          },
+        }),
+        this.prisma.invoice.count({ where }),
+      ]);
+    } catch (err: any) {
+      console.error('[INVOICE_ERROR]', {
+        errorName: err?.name || 'Error',
+        errorMessage: err?.message || String(err),
+        prismaErrorCode: err?.code || null,
+      });
+      throw err;
+    }
 
     const formatted = items.map((inv) => {
       const contactFullName = inv.contact
