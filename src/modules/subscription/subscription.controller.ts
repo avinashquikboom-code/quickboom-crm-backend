@@ -532,6 +532,57 @@ export class SubscriptionController {
   ) {
     return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user?.id);
   }
+
+  // ==========================================
+  // Offline Payment Requests (Admin)
+  // ==========================================
+
+  @Get('admin/subscriptions/offline-requests')
+  @Get('admin/offline-requests')
+  @Get('admin/payments/offline-requests')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all offline payment requests for Admin review' })
+  async getAdminOfflinePaymentRequests(
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.subscriptionService.getAdminOfflinePaymentRequests({
+      status,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
+
+  @Post('admin/subscriptions/offline-requests/:id/approve')
+  @Post('admin/offline-requests/:id/approve')
+  @Post('admin/payments/offline-requests/:id/approve')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Approve an offline payment request and activate subscription' })
+  async approveOfflinePaymentRequest(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.approveOfflinePaymentRequest(id, user?.id);
+  }
+
+  @Post('admin/subscriptions/offline-requests/:id/reject')
+  @Post('admin/offline-requests/:id/reject')
+  @Post('admin/payments/offline-requests/:id/reject')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reject an offline payment request' })
+  async rejectOfflinePaymentRequest(
+    @Param('id') id: string,
+    @Body() dto: { reason?: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.rejectOfflinePaymentRequest(id, user?.id, dto?.reason);
+  }
 }
 
 

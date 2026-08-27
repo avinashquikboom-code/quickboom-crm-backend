@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   SubscriptionBillingCycle,
@@ -9,6 +9,7 @@ import {
 } from './dto/subscription.dto';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
+import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
   calculateDaysRemaining,
@@ -2060,6 +2061,356 @@ export class SubscriptionService {
     return {
       success: true,
       message: `Subscription #${subscriptionId} deleted successfully`,
+    };
+  }
+
+  /**
+   * Admin: List all Offline Payment Requests with status filter & pagination
+   */
+  async getAdminOfflinePaymentRequests(query: { status?: string; search?: string; page?: number; limit?: number } = {}) {
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      paymentMethod: { in: [PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.OTHER] },
+      deletedAt: null,
+    };
+
+    if (query.status && query.status !== 'ALL') {
+      where.status = query.status;
+    }
+
+    if (query.search && query.search.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { orderNumber: { contains: q, mode: 'insensitive' } },
+        { paymentId: { contains: q, mode: 'insensitive' } },
+        { planName: { contains: q, mode: 'insensitive' } },
+        { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { companyName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.paymentHistory.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          customer: true,
+          subscription: {
+            include: { plan: true },
+          },
+        },
+      }),
+      this.prisma.paymentHistory.count({ where }),
+    ]);
+
+    const formatted = items.map((p) => {
+      const sub = p.subscription;
+      const plan = sub?.plan;
+      return {
+        id: p.id,
+        paymentId: p.id,
+        subscriptionId: p.subscriptionId,
+        orderNumber: p.orderNumber || `#QB-OFFLINE-${p.id}`,
+        transactionId: p.transactionId || p.paymentId,
+        customerId: p.customerId,
+        customerName: p.customer?.name || 'Customer',
+        businessName: p.customer?.companyName || p.customer?.name || 'Customer Business',
+        planId: p.planId || plan?.id,
+        planName: p.planName || plan?.name || 'Custom Plan',
+        billingCycle: p.billingCycle || sub?.billingCycle || 'MONTHLY',
+        baseAmount: p.amount,
+        gst: p.taxAmount || Math.round(p.amount * 0.18),
+        totalAmount: p.totalAmount || (p.amount + (p.taxAmount || Math.round(p.amount * 0.18))),
+        paymentMethod: 'OFFLINE',
+        paymentMethodDetail: p.paymentMethod,
+        paymentStatus: p.status, // PENDING, SUCCESS, REJECTED, FAILED
+        subscriptionStatus: sub?.status || 'PENDING',
+        requestDate: p.createdAt,
+        startDate: sub?.startDate,
+        endDate: sub?.endDate,
+        invoiceNumber: p.invoiceUrl || (p.status === 'SUCCESS' ? `INV-${new Date(p.createdAt).getFullYear()}-${String(p.id).padStart(6, '0')}` : null),
+      };
+    });
+
+    return {
+      success: true,
+      items: formatted,
+      data: formatted,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  /**
+   * Admin: Approve Offline Payment Request
+   * 1. Sets paymentStatus = PAID (SUCCESS), subscriptionStatus = ACTIVE, paymentMethod = OFFLINE
+   * 2. Sets startDate = now, calculates endDate from duration & billing cycle
+   * 3. Activates the customer plan, provisions quotas & 1:1 calendar deliverables
+   * 4. Generates Paid Invoice (INV-YYYY-XXXXXX)
+   */
+  async approveOfflinePaymentRequest(requestIdOrSubId: number | string, adminUserId?: number) {
+    const numId = Number(requestIdOrSubId);
+    if (!numId || isNaN(numId)) {
+      throw new BadRequestException('Valid payment request ID is required');
+    }
+
+    // Try finding by PaymentHistory ID or Subscription ID
+    let payment = await this.prisma.paymentHistory.findFirst({
+      where: {
+        OR: [{ id: numId }, { subscriptionId: numId }],
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
+    }
+
+    const sub = payment.subscription;
+    if (!sub) {
+      throw new NotFoundException(`Subscription linked to payment request #${payment.id} not found`);
+    }
+
+    const plan = sub.plan;
+    if (!plan) {
+      throw new NotFoundException(`Plan linked to subscription #${sub.id} not found`);
+    }
+
+    const cycle = sub.billingCycle || SubscriptionBillingCycle.MONTHLY;
+    const durationMonths = sub.duration || (cycle === 'YEARLY' ? 12 : 1);
+    const startDate = new Date();
+    const endDate = calculatePlanExpiry(startDate, durationMonths);
+
+    const baseAmount = payment.amount;
+    const gstAmount = payment.taxAmount || Math.round(baseAmount * 0.18);
+    const totalAmount = payment.totalAmount || (baseAmount + gstAmount);
+
+    const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+
+    // Execute atomic transaction
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Expire other active subscriptions for this customer
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId: sub.customerId,
+          id: { not: sub.id },
+          status: SubscriptionStatus.ACTIVE,
+        },
+        data: { status: SubscriptionStatus.EXPIRED },
+      });
+
+      // 2. Activate target subscription
+      await tx.customerSubscription.update({
+        where: { id: sub.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          startDate,
+          endDate,
+          updatedAt: new Date(),
+        },
+      });
+
+      // 3. Mark payment as SUCCESS (PAID) & attach invoice number
+      await tx.paymentHistory.update({
+        where: { id: payment.id },
+        data: {
+          status: 'SUCCESS',
+          invoiceUrl: invoiceNo,
+          updatedAt: new Date(),
+        },
+      });
+
+      // 4. Find or create primary contact for customer to issue official invoice
+      let contact = await tx.contact.findFirst({
+        where: { customerId: sub.customerId, deletedAt: null },
+      });
+
+      if (!contact) {
+        contact = await tx.contact.create({
+          data: {
+            customerId: sub.customerId,
+            firstName: payment.customer?.name || 'Customer',
+            lastName: 'Account',
+            email: payment.customer?.email || `billing-${sub.customerId}@quikboom.com`,
+            phone: payment.customer?.phone || 'N/A',
+          },
+        });
+      }
+
+      // 5. Generate Paid Invoice record
+      await tx.invoice.create({
+        data: {
+          customerId: sub.customerId,
+          contactId: contact.id,
+          invoiceNo,
+          status: InvoiceStatus.PAID,
+          issueDate: startDate,
+          dueDate: startDate,
+          subTotal: baseAmount,
+          taxAmount: gstAmount,
+          discount: 0,
+          totalAmount,
+          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Order: ${payment.orderNumber || payment.orderId}`,
+        },
+      });
+
+      // 6. Provision Plan Entitlements strictly from purchased plan features
+      const deliverableFeatures = sub.customFeatures || plan.features;
+      const quotas = extractDeliverableQuotas(deliverableFeatures);
+
+      for (const q of quotas) {
+        if (q.totalQty <= 0) continue;
+        const existingEnt = await tx.planEntitlement.findFirst({
+          where: { customerId: sub.customerId, serviceName: q.serviceName },
+        });
+
+        if (existingEnt) {
+          await tx.planEntitlement.update({
+            where: { id: existingEnt.id },
+            data: {
+              planId: plan.id,
+              totalQty: q.totalQty,
+              validUntil: endDate,
+            },
+          });
+        } else {
+          await tx.planEntitlement.create({
+            data: {
+              customerId: sub.customerId,
+              planId: plan.id,
+              serviceName: q.serviceName,
+              totalQty: q.totalQty,
+              usedQty: 0,
+              scheduledQty: 0,
+              validUntil: endDate,
+            },
+          });
+        }
+      }
+    });
+
+    // 7. Auto-generate Schedules & Work Deliverables
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
+      }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
+      }
+    } catch (err: any) {
+      this.logger.warn(`[OFFLINE_APPROVE_SCHEDULE_WARN] ${err?.message}`);
+    }
+
+    // 8. Write Audit Log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'APPROVE_OFFLINE_PAYMENT',
+          module: 'PAYMENTS',
+          userId: adminUserId,
+          customerId: sub.customerId,
+          details: {
+            paymentId: payment.id,
+            subscriptionId: sub.id,
+            planName: plan.name,
+            totalAmount,
+            invoiceNo,
+            approvedAt: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return {
+      success: true,
+      message: `Offline payment request approved. Subscription for ${plan.name} is now ACTIVE and invoice ${invoiceNo} generated.`,
+      invoiceNumber: invoiceNo,
+      subscriptionId: sub.id,
+      paymentStatus: 'PAID',
+      subscriptionStatus: 'ACTIVE',
+    };
+  }
+
+  /**
+   * Admin: Reject Offline Payment Request
+   * Sets paymentStatus = REJECTED, subscriptionStatus = REJECTED
+   */
+  async rejectOfflinePaymentRequest(requestIdOrSubId: number | string, adminUserId?: number, reason?: string) {
+    const numId = Number(requestIdOrSubId);
+    if (!numId || isNaN(numId)) {
+      throw new BadRequestException('Valid payment request ID is required');
+    }
+
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: {
+        OR: [{ id: numId }, { subscriptionId: numId }],
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentHistory.update({
+        where: { id: payment.id },
+        data: {
+          status: 'REJECTED',
+          transactionId: reason ? `REJECTED: ${reason}` : payment.transactionId,
+          updatedAt: new Date(),
+        },
+      });
+
+      if (payment.subscriptionId) {
+        await tx.customerSubscription.update({
+          where: { id: payment.subscriptionId },
+          data: {
+            status: SubscriptionStatus.CANCELED,
+            updatedAt: new Date(),
+          },
+        });
+      }
+    });
+
+    // Write audit log
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'REJECT_OFFLINE_PAYMENT',
+          module: 'PAYMENTS',
+          userId: adminUserId,
+          customerId: payment.customerId,
+          details: {
+            paymentId: payment.id,
+            subscriptionId: payment.subscriptionId,
+            reason: reason || 'Offline payment details could not be verified',
+            rejectedAt: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (_) {}
+
+    return {
+      success: true,
+      message: 'Offline payment request has been rejected.',
+      paymentStatus: 'REJECTED',
+      subscriptionStatus: 'REJECTED',
     };
   }
 }

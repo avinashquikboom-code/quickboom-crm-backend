@@ -3,6 +3,7 @@ import { CustomPlanService } from './custom-plan.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PaymentMethod } from '@prisma/client';
 
@@ -138,6 +139,18 @@ describe('Custom Plan Service & Calculation Tests', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ScheduleService, useValue: scheduleService },
         { provide: WorkService, useValue: workService },
+        {
+          provide: IntegrationSettingsService,
+          useValue: {
+            getRazorpayConfig: jest.fn().mockResolvedValue({
+              keyId: 'rzp_test_123',
+              keySecret: 'secret_123',
+              environment: 'TEST',
+              isEnabled: true,
+              source: 'DATABASE',
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -264,7 +277,7 @@ describe('Custom Plan Service & Calculation Tests', () => {
       });
 
       expect(res.success).toBe(true);
-      expect(workService.generatePlanSchedules).toHaveBeenCalledWith(101);
+      expect(workService.generatePlanSchedules).toHaveBeenCalledWith(101, 201);
     });
   });
 });

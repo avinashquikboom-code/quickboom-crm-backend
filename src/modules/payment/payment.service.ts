@@ -19,7 +19,7 @@ import {
   RazorpayDynamicConfig,
   maskKeyId,
 } from '../integration-settings/integration-settings.service';
-import { PaymentMethod, SubscriptionStatus } from '@prisma/client';
+import { PaymentMethod, SubscriptionStatus, InvoiceStatus } from '@prisma/client';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
@@ -432,13 +432,56 @@ export class PaymentService {
         });
       }
 
-      // Link payment to subscription
+      const invoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+
+      // Link payment to subscription & attach invoice number
       await tx.paymentHistory.update({
         where: { id: payment.id },
-        data: { subscriptionId: sub.id },
+        data: {
+          subscriptionId: sub.id,
+          invoiceUrl: invoiceNo,
+        },
       });
 
-      // 3. Provision Plan Entitlements strictly from purchased plan features
+      // 3. Find or create primary contact for customer to issue official invoice
+      let contact = await tx.contact.findFirst({
+        where: { customerId, deletedAt: null },
+      });
+
+      if (!contact) {
+        const customer = await tx.customer.findUnique({
+          where: { id: customerId },
+        });
+
+        contact = await tx.contact.create({
+          data: {
+            customerId,
+            firstName: customer?.companyName || customer?.name || 'Customer',
+            lastName: 'Account',
+            email: customer?.email || `billing-${customerId}@quikboom.com`,
+            phone: customer?.phone || 'N/A',
+          },
+        });
+      }
+
+      // Generate Paid Invoice record
+      await tx.invoice.create({
+        data: {
+          customerId,
+          contactId: contact.id,
+          invoiceNo,
+          status: InvoiceStatus.PAID,
+          issueDate: startDate,
+          dueDate: startDate,
+          subTotal: basePrice,
+          taxAmount: tax,
+          discount: 0,
+          totalAmount: total,
+          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: RAZORPAY. Order: ${payment.orderNumber || payment.orderId}`,
+        },
+      });
+
+      // 4. Provision Plan Entitlements strictly from purchased plan features
       const serviceQuotas = extractDeliverableQuotas(plan.features);
 
       for (const sq of serviceQuotas) {
@@ -470,7 +513,7 @@ export class PaymentService {
         }
       }
 
-      return { payment, subscription: sub };
+      return { payment, subscription: sub, invoiceNo };
     });
 
     // 4. Trigger Automatic Schedule Generation asynchronously

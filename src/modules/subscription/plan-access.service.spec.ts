@@ -39,9 +39,14 @@ describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
   };
 
   beforeEach(async () => {
+    const subFindFirst = jest.fn();
     prisma = {
       customerSubscription: {
-        findFirst: jest.fn(),
+        findFirst: subFindFirst,
+        findMany: jest.fn(async (args) => {
+          const res = await subFindFirst(args);
+          return res ? [res] : [];
+        }),
       },
       plan: {
         findFirst: jest.fn(),
