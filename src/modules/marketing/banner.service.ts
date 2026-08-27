@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BannerUploadService } from './banner-upload.service';
 import {
   CreateMarketingBannerDto,
   QueryMarketingBannerDto,
@@ -15,7 +16,10 @@ import {
 export class BannerService {
   private readonly logger = new Logger(BannerService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadService: BannerUploadService,
+  ) {}
 
   /**
    * Create a new marketing banner (Company Admin / Super Admin)
@@ -23,7 +27,21 @@ export class BannerService {
   async create(
     dto: CreateMarketingBannerDto,
     user: { id: number; customerId?: number | null; role?: string },
+    file?: Express.Multer.File,
   ) {
+    let imageUrl = dto.imageUrl?.trim();
+    let imagePublicId = dto.imagePublicId?.trim() || null;
+
+    if (file) {
+      const uploadResult = await this.uploadService.uploadBannerImage(file);
+      imageUrl = uploadResult.imageUrl;
+      imagePublicId = uploadResult.imagePublicId || null;
+    }
+
+    if (!imageUrl) {
+      throw new BadRequestException('Banner image file is required');
+    }
+
     const startAt = dto.startAt ? new Date(dto.startAt) : null;
     const endAt = dto.endAt ? new Date(dto.endAt) : null;
 
@@ -39,13 +57,14 @@ export class BannerService {
         title: dto.title.trim(),
         subtitle: dto.subtitle?.trim() || null,
         description: dto.description?.trim() || null,
-        imageUrl: dto.imageUrl.trim(),
+        imageUrl,
+        imagePublicId,
         mobileImageUrl: dto.mobileImageUrl?.trim() || null,
         ctaText: dto.ctaText?.trim() || null,
         ctaUrl: dto.ctaUrl?.trim() || null,
-        priority: dto.priority ?? 0,
-        isActive: dto.isActive ?? true,
-        isPublished: dto.isPublished ?? true,
+        priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+        isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
         startAt,
         endAt,
         createdBy: user.id,
@@ -53,7 +72,7 @@ export class BannerService {
     });
 
     this.logger.log(
-      `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}`,
+      `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}\nimageUrl: ${imageUrl}`,
     );
 
     return banner;
@@ -168,8 +187,23 @@ export class BannerService {
     id: number,
     dto: UpdateMarketingBannerDto,
     user: { id: number; customerId?: number | null; role?: string },
+    file?: Express.Multer.File,
   ) {
     const existing = await this.findOne(id, user);
+
+    let imageUrl = dto.imageUrl !== undefined ? dto.imageUrl.trim() : undefined;
+    let imagePublicId = dto.imagePublicId !== undefined ? dto.imagePublicId.trim() : undefined;
+
+    if (file) {
+      const uploadResult = await this.uploadService.uploadBannerImage(file);
+      imageUrl = uploadResult.imageUrl;
+      imagePublicId = uploadResult.imagePublicId || null;
+
+      // Clean up old Cloudinary image if replaced
+      if (existing.imagePublicId && existing.imagePublicId !== imagePublicId) {
+        this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
+      }
+    }
 
     const startAt =
       dto.startAt !== undefined
@@ -204,8 +238,8 @@ export class BannerService {
               ? dto.description.trim()
               : null
             : undefined,
-        imageUrl:
-          dto.imageUrl !== undefined ? dto.imageUrl.trim() : undefined,
+        imageUrl: imageUrl !== undefined ? imageUrl : undefined,
+        imagePublicId: imagePublicId !== undefined ? imagePublicId : undefined,
         mobileImageUrl:
           dto.mobileImageUrl !== undefined
             ? dto.mobileImageUrl
@@ -224,10 +258,10 @@ export class BannerService {
               ? dto.ctaUrl.trim()
               : null
             : undefined,
-        priority: dto.priority !== undefined ? dto.priority : undefined,
-        isActive: dto.isActive !== undefined ? dto.isActive : undefined,
+        priority: dto.priority !== undefined ? Number(dto.priority) : undefined,
+        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : undefined,
         isPublished:
-          dto.isPublished !== undefined ? dto.isPublished : undefined,
+          dto.isPublished !== undefined ? Boolean(dto.isPublished) : undefined,
         startAt,
         endAt,
       },
@@ -244,12 +278,16 @@ export class BannerService {
     id: number,
     user: { id: number; customerId?: number | null; role?: string },
   ) {
-    await this.findOne(id, user);
+    const existing = await this.findOne(id, user);
 
     await this.prisma.marketingBanner.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    if (existing.imagePublicId) {
+      this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
+    }
 
     this.logger.log(`[MARKETING_BANNER_DELETE]\nbannerId: ${id}`);
     return { success: true, message: `Marketing banner ${id} deleted successfully` };

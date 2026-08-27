@@ -2241,6 +2241,7 @@ model MarketingBanner {
   subtitle       String?
   description    String?
   imageUrl       String
+  imagePublicId  String?
   mobileImageUrl String?
   ctaText        String?
   ctaUrl         String?

@@ -9,9 +9,12 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { BannerService } from './banner.service';
 import {
   CreateMarketingBannerDto,
@@ -75,15 +78,18 @@ export class BannerController {
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
   @Post('admin/marketing/banners')
-  @ApiOperation({ summary: 'Create a new marketing banner (Company Admin only)' })
+  @ApiOperation({ summary: 'Create a new marketing banner with file upload (Company Admin only)' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('image'))
   async create(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: CreateMarketingBannerDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
     this.checkCompanyAdminAccess(user);
     const context = this.resolveCustomerContext(customerId, user);
-    return this.bannerService.create(dto, context);
+    return this.bannerService.create(dto, context, file);
   }
 
   @Get('admin/marketing/banners')
@@ -111,16 +117,19 @@ export class BannerController {
   }
 
   @Patch('admin/marketing/banners/:id')
-  @ApiOperation({ summary: 'Update marketing banner (Company Admin only)' })
+  @ApiOperation({ summary: 'Update marketing banner with optional image replace (Company Admin only)' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('image'))
   async update(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateMarketingBannerDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
     this.checkCompanyAdminAccess(user);
     const context = this.resolveCustomerContext(customerId, user);
-    return this.bannerService.update(id, dto, context);
+    return this.bannerService.update(id, dto, context, file);
   }
 
   @Delete('admin/marketing/banners/:id')

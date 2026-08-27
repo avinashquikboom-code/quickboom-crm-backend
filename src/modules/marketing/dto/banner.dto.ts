@@ -6,10 +6,9 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUrl,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateMarketingBannerDto {
   @ApiProperty({ example: 'Festival Super Sale 50% Off' })
@@ -27,10 +26,15 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ example: 'https://res.cloudinary.com/qbapp/image/upload/v123/banner.jpg' })
+  @ApiPropertyOptional({ example: 'https://res.cloudinary.com/qbapp/image/upload/v123/banner.jpg' })
   @IsString()
-  @IsNotEmpty()
-  imageUrl: string;
+  @IsOptional()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ example: 'quikboom/banners/xyz123' })
+  @IsString()
+  @IsOptional()
+  imagePublicId?: string;
 
   @ApiPropertyOptional({ example: 'https://res.cloudinary.com/qbapp/image/upload/v123/banner_mobile.jpg' })
   @IsString()
@@ -56,11 +60,13 @@ export class CreateMarketingBannerDto {
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
+  @Transform(({ value }) => (value === 'false' || value === false || value === 0 || value === '0') ? false : true)
   isActive?: boolean;
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
+  @Transform(({ value }) => (value === 'false' || value === false || value === 0 || value === '0') ? false : true)
   isPublished?: boolean;
 
   @ApiPropertyOptional({ example: '2026-08-20T00:00:00.000Z' })

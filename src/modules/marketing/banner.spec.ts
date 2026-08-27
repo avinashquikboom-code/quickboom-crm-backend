@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { BannerService } from './banner.service';
+import { BannerUploadService } from './banner-upload.service';
 import { BannerController } from './banner.controller';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -103,6 +104,16 @@ describe('Marketing Module - Banner Service & Controller', () => {
     },
   };
 
+  const mockUploadService = {
+    uploadBannerImage: jest.fn().mockImplementation((file) =>
+      Promise.resolve({
+        imageUrl: `https://res.cloudinary.com/qbapp/image/upload/v1/${file.originalname}`,
+        imagePublicId: `quikboom/banners/${file.originalname}`,
+      }),
+    ),
+    deleteBannerImage: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     mockMarketingBanners.length = 0;
     bannerIdCounter = 1;
@@ -114,6 +125,10 @@ describe('Marketing Module - Banner Service & Controller', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: BannerUploadService,
+          useValue: mockUploadService,
         },
       ],
     }).compile();
@@ -146,6 +161,37 @@ describe('Marketing Module - Banner Service & Controller', () => {
       expect(result.customerId).toBe(101);
       expect(result.isPublished).toBe(true);
       expect(result.isActive).toBe(true);
+    });
+
+    it('creates a new marketing banner with uploaded image file', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        title: 'Uploaded Photo Banner',
+        subtitle: 'From local device upload',
+        ctaText: 'View More',
+        priority: 60,
+      };
+      const mockFile = {
+        originalname: 'promo_banner.png',
+        mimetype: 'image/png',
+        size: 204800,
+        buffer: Buffer.from('test-image-data'),
+      } as Express.Multer.File;
+
+      const result = await service.create(dto as any, user, mockFile);
+
+      expect(result).toBeDefined();
+      expect(result.imageUrl).toContain('promo_banner.png');
+      expect(result.imagePublicId).toBe('quikboom/banners/promo_banner.png');
+    });
+
+    it('rejects creation if neither image file nor imageUrl is provided', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        title: 'No Image Banner',
+      };
+
+      await expect(service.create(dto as any, user)).rejects.toThrow(BadRequestException);
     });
 
     it('rejects creation if startAt is later than endAt', async () => {
