@@ -50,8 +50,36 @@ export interface RazorpayDynamicConfig {
   webhookSecret: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  environment: string;
+  environment: 'TEST' | 'LIVE';
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+}
+
+export function maskKeyId(keyId: string): string {
+  if (!keyId) return 'none';
+  const clean = keyId.trim();
+  if (clean.length <= 12) return clean.substring(0, 4) + '***';
+  return clean.substring(0, 8) + '***' + clean.substring(clean.length - 4);
+}
+
+export function validateRazorpayEnvironmentConfig(config: RazorpayDynamicConfig): void {
+  if (!config.isConfigured || !config.keyId) return;
+
+  const env = config.environment;
+  const keyId = config.keyId.trim();
+
+  if (env === 'TEST') {
+    if (!keyId.startsWith('rzp_test_')) {
+      throw new BadRequestException(
+        `Razorpay Environment Mismatch: Configured environment is TEST, but Key ID is "${maskKeyId(keyId)}" (expected key starting with "rzp_test_"). Please update your configuration or switch environment to LIVE.`,
+      );
+    }
+  } else if (env === 'LIVE') {
+    if (!keyId.startsWith('rzp_live_')) {
+      throw new BadRequestException(
+        `Razorpay Environment Mismatch: Configured environment is LIVE, but Key ID is "${maskKeyId(keyId)}" (expected key starting with "rzp_live_"). Please update your configuration or switch environment to TEST.`,
+      );
+    }
+  }
 }
 
 export interface GoogleMapsDynamicConfig {
@@ -141,7 +169,7 @@ export class IntegrationSettingsService {
       result = {
         provider: dbRecord.provider,
         isEnabled: dbRecord.isEnabled,
-        environment: dbRecord.environment || 'LIVE',
+        environment: (dbRecord.environment || 'TEST').toUpperCase(),
         credentials: decryptedCreds,
         config: (dbRecord.config as Record<string, any>) || {},
         source: 'DATABASE',
@@ -169,21 +197,59 @@ export class IntegrationSettingsService {
     const normProvider = normalizeProvider(provider);
     switch (normProvider) {
       case IntegrationProvider.RAZORPAY: {
-        const keyId = (
-          process.env.RAZORPAY_KEY_ID ||
-          process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
-          ''
-        ).trim();
-        const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+        const envVar = (
+          process.env.RAZORPAY_ENVIRONMENT ||
+          process.env.RAZORPAY_ENV ||
+          'TEST'
+        ).trim().toUpperCase();
+        const activeEnv: 'TEST' | 'LIVE' = envVar === 'LIVE' ? 'LIVE' : 'TEST';
+
+        let keyId = '';
+        let keySecret = '';
+
+        if (activeEnv === 'TEST') {
+          keyId = (
+            process.env.RAZORPAY_TEST_KEY_ID ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_ID : '') ||
+            ''
+          ).trim();
+          keySecret = (
+            process.env.RAZORPAY_TEST_KEY_SECRET ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
+            ''
+          ).trim();
+        } else {
+          keyId = (
+            process.env.RAZORPAY_LIVE_KEY_ID ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_ID : '') ||
+            ''
+          ).trim();
+          keySecret = (
+            process.env.RAZORPAY_LIVE_KEY_SECRET ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
+            ''
+          ).trim();
+        }
+
+        // Generic fallback if environment-specific is not set
+        if (!keyId && process.env.RAZORPAY_KEY_ID) {
+          keyId = process.env.RAZORPAY_KEY_ID.trim();
+          keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+        }
+
         const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
 
         return {
           provider: IntegrationProvider.RAZORPAY,
           isEnabled: Boolean(keyId && keySecret),
-          environment: keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST',
+          environment: activeEnv,
           credentials: {
             keyId,
             keySecret,
+            testKeyId: (process.env.RAZORPAY_TEST_KEY_ID || '').trim(),
+            testKeySecret: (process.env.RAZORPAY_TEST_KEY_SECRET || '').trim(),
+            liveKeyId: (process.env.RAZORPAY_LIVE_KEY_ID || '').trim(),
+            liveKeySecret: (process.env.RAZORPAY_LIVE_KEY_SECRET || '').trim(),
             webhookSecret,
           },
           config: {},
@@ -248,32 +314,102 @@ export class IntegrationSettingsService {
   }
 
   /**
-   * Typed helper for Razorpay dynamic configuration.
+   * Typed helper for Razorpay dynamic configuration with dual-environment support and strict mismatch validation.
    */
   async getRazorpayConfig(): Promise<RazorpayDynamicConfig> {
     const conf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
     const creds = conf?.credentials || {};
 
-    const keyId = sanitizeSecret(String(creds.keyId || creds.key_id || creds.apiKey || ''));
-    const keySecret = sanitizeSecret(String(creds.keySecret || creds.key_secret || creds.apiSecret || creds.secret || ''));
-    const webhookSecret = sanitizeSecret(String(creds.webhookSecret || creds.webhook_secret || ''));
+    const envRaw = (
+      conf?.environment ||
+      process.env.RAZORPAY_ENVIRONMENT ||
+      process.env.RAZORPAY_ENV ||
+      'TEST'
+    ).trim().toUpperCase();
+    const environment: 'TEST' | 'LIVE' = envRaw === 'LIVE' ? 'LIVE' : 'TEST';
+
+    let keyId = '';
+    let keySecret = '';
+
+    if (environment === 'TEST') {
+      keyId = sanitizeSecret(
+        String(
+          creds.testKeyId ||
+          creds.test_key_id ||
+          (creds.keyId?.startsWith?.('rzp_test_') ? creds.keyId : '') ||
+          creds.keyId ||
+          creds.apiKey ||
+          process.env.RAZORPAY_TEST_KEY_ID ||
+          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_ID : '') ||
+          '',
+        ),
+      );
+      keySecret = sanitizeSecret(
+        String(
+          creds.testKeySecret ||
+          creds.test_key_secret ||
+          creds.keySecret ||
+          creds.key_secret ||
+          creds.apiSecret ||
+          creds.secret ||
+          process.env.RAZORPAY_TEST_KEY_SECRET ||
+          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
+          '',
+        ),
+      );
+    } else {
+      keyId = sanitizeSecret(
+        String(
+          creds.liveKeyId ||
+          creds.live_key_id ||
+          (creds.keyId?.startsWith?.('rzp_live_') ? creds.keyId : '') ||
+          creds.keyId ||
+          creds.apiKey ||
+          process.env.RAZORPAY_LIVE_KEY_ID ||
+          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_ID : '') ||
+          '',
+        ),
+      );
+      keySecret = sanitizeSecret(
+        String(
+          creds.liveKeySecret ||
+          creds.live_key_secret ||
+          creds.keySecret ||
+          creds.key_secret ||
+          creds.apiSecret ||
+          creds.secret ||
+          process.env.RAZORPAY_LIVE_KEY_SECRET ||
+          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
+          '',
+        ),
+      );
+    }
+
+    const webhookSecret = sanitizeSecret(
+      String(creds.webhookSecret || creds.webhook_secret || process.env.RAZORPAY_WEBHOOK_SECRET || ''),
+    );
     const isConfigured = Boolean(keyId && keySecret);
-    const isEnabled = conf?.isEnabled ?? false;
+    const isEnabled = conf?.isEnabled ?? isConfigured;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
-    this.logger.log(
-      `[RAZORPAY_CONFIG] provider=RAZORPAY configured=${isConfigured} enabled=${isEnabled} keyIdPrefix=${keyId ? keyId.substring(0, 8) + '...' : 'none'} keySecretPresent=${Boolean(keySecret)} environment=${conf?.environment || (keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST')} source=${source}`,
-    );
-
-    return {
+    const config: RazorpayDynamicConfig = {
       keyId,
       keySecret,
       webhookSecret,
       isEnabled,
       isConfigured,
-      environment: conf?.environment || (keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST'),
+      environment,
       source,
     };
+
+    // Strict validation against key/environment mismatch
+    validateRazorpayEnvironmentConfig(config);
+
+    this.logger.log(
+      `[RAZORPAY_CONFIG] Payment Environment: ${environment} | Key ID: ${maskKeyId(keyId)} | Configured: ${isConfigured} | Enabled: ${isEnabled} | Source: ${source}`,
+    );
+
+    return config;
   }
 
   /**
@@ -510,12 +646,40 @@ export class IntegrationSettingsService {
 
     switch (normProvider) {
       case IntegrationProvider.RAZORPAY: {
-        const keyId = resolvedCreds.keyId || resolvedCreds.key_id;
-        const keySecret = resolvedCreds.keySecret || resolvedCreds.key_secret;
+        const env: 'TEST' | 'LIVE' = (
+          (dto?.environment as string) ||
+          active?.environment ||
+          (resolvedCreds.keyId?.startsWith('rzp_live') ? 'LIVE' : 'TEST')
+        ).toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
+
+        const keyId = (
+          (env === 'TEST' ? resolvedCreds.testKeyId : resolvedCreds.liveKeyId) ||
+          resolvedCreds.keyId ||
+          resolvedCreds.key_id ||
+          resolvedCreds.apiKey
+        )?.trim();
+
+        const keySecret = (
+          (env === 'TEST' ? resolvedCreds.testKeySecret : resolvedCreds.liveKeySecret) ||
+          resolvedCreds.keySecret ||
+          resolvedCreds.key_secret ||
+          resolvedCreds.apiSecret ||
+          resolvedCreds.secret
+        )?.trim();
 
         if (!keyId || !keySecret) {
-          throw new BadRequestException('Razorpay Key ID and Key Secret are required to test connection');
+          throw new BadRequestException(`Razorpay Key ID and Key Secret for ${env} environment are required to test connection`);
         }
+
+        validateRazorpayEnvironmentConfig({
+          keyId,
+          keySecret,
+          webhookSecret: '',
+          isEnabled: true,
+          isConfigured: true,
+          environment: env,
+          source: 'DATABASE',
+        });
 
         try {
           const rzp = new Razorpay({
@@ -529,10 +693,10 @@ export class IntegrationSettingsService {
             success: true,
             provider: 'RAZORPAY',
             status: 'CONNECTED',
-            message: 'Razorpay API credentials verified successfully!',
+            message: `Razorpay API ${env} credentials verified successfully!`,
             details: {
-              keyIdPrefix: keyId.substring(0, 8) + '...',
-              environment: keyId.startsWith('rzp_live') ? 'LIVE' : 'TEST',
+              keyIdPrefix: maskKeyId(keyId),
+              environment: env,
               ordersQuerySuccessful: Boolean(testOrder),
             },
           };

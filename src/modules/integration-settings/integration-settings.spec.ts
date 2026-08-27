@@ -58,15 +58,16 @@ describe('Integration Settings & Gateway Dynamic System', () => {
 
   describe('2. Dynamic Precedence: Database Overrides .env Fallback', () => {
     it('returns .env fallback when no database record exists', async () => {
-      process.env.RAZORPAY_KEY_ID = 'rzp_env_fallback_key';
-      process.env.RAZORPAY_KEY_SECRET = 'rzp_env_fallback_secret';
+      process.env.RAZORPAY_ENVIRONMENT = 'TEST';
+      process.env.RAZORPAY_TEST_KEY_ID = 'rzp_test_env_fallback_key';
+      process.env.RAZORPAY_TEST_KEY_SECRET = 'rzp_sec_env_fallback_secret';
       mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
 
       const config = await service.getRazorpayConfig();
 
       expect(config.source).toBe('ENV_FALLBACK');
-      expect(config.keyId).toBe('rzp_env_fallback_key');
-      expect(config.keySecret).toBe('rzp_env_fallback_secret');
+      expect(config.keyId).toBe('rzp_test_env_fallback_key');
+      expect(config.keySecret).toBe('rzp_sec_env_fallback_secret');
     });
 
     it('prioritizes database record over .env variables immediately', async () => {
@@ -247,16 +248,78 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       expect(config.isEnabled).toBe(false);
       expect(config.isConfigured).toBe(true);
     });
+  });
 
-    it('identifies unconfigured state when keys are empty', async () => {
-      delete process.env.RAZORPAY_KEY_ID;
-      delete process.env.RAZORPAY_KEY_SECRET;
+  describe('6. Environment-Driven Dual Configuration (TEST vs LIVE) & Mismatch Protection', () => {
+    it('resolves TEST environment credentials when RAZORPAY_ENVIRONMENT=TEST', async () => {
+      process.env.RAZORPAY_ENVIRONMENT = 'TEST';
+      process.env.RAZORPAY_TEST_KEY_ID = 'rzp_test_testmode_key123';
+      process.env.RAZORPAY_TEST_KEY_SECRET = 'rzp_sec_testmode_secret456';
+      process.env.RAZORPAY_LIVE_KEY_ID = 'rzp_live_livemode_key789';
+      process.env.RAZORPAY_LIVE_KEY_SECRET = 'rzp_sec_livemode_secret012';
+
       mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
 
       const config = await service.getRazorpayConfig();
-      expect(config.isConfigured).toBe(false);
-      expect(config.keyId).toBe('');
-      expect(config.keySecret).toBe('');
+      expect(config.environment).toBe('TEST');
+      expect(config.keyId).toBe('rzp_test_testmode_key123');
+      expect(config.keySecret).toBe('rzp_sec_testmode_secret456');
+    });
+
+    it('resolves LIVE environment credentials when RAZORPAY_ENVIRONMENT=LIVE', async () => {
+      process.env.RAZORPAY_ENVIRONMENT = 'LIVE';
+      process.env.RAZORPAY_TEST_KEY_ID = 'rzp_test_testmode_key123';
+      process.env.RAZORPAY_TEST_KEY_SECRET = 'rzp_sec_testmode_secret456';
+      process.env.RAZORPAY_LIVE_KEY_ID = 'rzp_live_livemode_key789';
+      process.env.RAZORPAY_LIVE_KEY_SECRET = 'rzp_sec_livemode_secret012';
+
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+
+      const config = await service.getRazorpayConfig();
+      expect(config.environment).toBe('LIVE');
+      expect(config.keyId).toBe('rzp_live_livemode_key789');
+      expect(config.keySecret).toBe('rzp_sec_livemode_secret012');
+    });
+
+    it('throws BadRequestException if TEST environment is configured with a LIVE key (rzp_live_...) mismatch', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: true,
+        environment: 'TEST',
+        credentials: {
+          keyId: 'rzp_live_accidentally_live_key',
+          keySecret: encryptSecret('rzp_sec_some_secret'),
+        },
+        config: {},
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      await expect(service.getRazorpayConfig()).rejects.toThrow(
+        /Razorpay Environment Mismatch: Configured environment is TEST, but Key ID is/i,
+      );
+    });
+
+    it('throws BadRequestException if LIVE environment is configured with a TEST key (rzp_test_...) mismatch', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: true,
+        environment: 'LIVE',
+        credentials: {
+          keyId: 'rzp_test_accidentally_test_key',
+          keySecret: encryptSecret('rzp_sec_some_secret'),
+        },
+        config: {},
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      await expect(service.getRazorpayConfig()).rejects.toThrow(
+        /Razorpay Environment Mismatch: Configured environment is LIVE, but Key ID is/i,
+      );
     });
   });
 });
+

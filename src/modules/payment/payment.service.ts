@@ -14,7 +14,11 @@ import {
   SubscriptionBillingCycle,
 } from './dto/payment.dto';
 import { sanitizeSecret } from '../../common/utils/crypto.util';
-import { IntegrationSettingsService, RazorpayDynamicConfig } from '../integration-settings/integration-settings.service';
+import {
+  IntegrationSettingsService,
+  RazorpayDynamicConfig,
+  maskKeyId,
+} from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
@@ -56,7 +60,7 @@ export class PaymentService {
     }
 
     this.logger.log(
-      `[RAZORPAY_AUTH_DIAGNOSTICS] keyIdPrefix=${sanitizedKeyId.substring(0, 8)}... keySecretPresent=true environment=${config.environment} source=${config.source}`,
+      `[RAZORPAY_CLIENT] Payment Environment: ${config.environment} | Razorpay Key ID: ${maskKeyId(sanitizedKeyId)} | Source: ${config.source}`,
     );
 
     try {
@@ -146,15 +150,14 @@ export class PaymentService {
     const totalAmount = basePrice + taxAmount;
     const amountInPaise = Math.round(totalAmount * 100);
 
-    this.logger.log(`[PLAN_PURCHASE] planId=${plan.id} (${plan.name}), customerId=${customerId}`);
+    const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
+
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATE] amount=${amountInPaise} (₹${totalAmount}), currency=${dto.currency || 'INR'}, customerId=${customerId}, planId=${plan.id}`,
+      `[RAZORPAY_ORDER_CREATE] Payment Environment: ${rzpConfig.environment} | Razorpay Key ID: ${maskKeyId(rzpConfig.keyId)} | Amount: ₹${totalAmount} (${amountInPaise} paise) | Currency: ${dto.currency || 'INR'} | CustomerId: ${customerId} | Plan: ${plan.name} (${plan.id})`,
     );
 
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
     let razorpayOrderId: string;
-
-    const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
 
     try {
       const order = await razorpayInstance.orders.create({
@@ -313,7 +316,9 @@ export class PaymentService {
       throw new BadRequestException('Payment signature verification failed. Transaction rejected.');
     }
 
-    this.logger.log(`[RAZORPAY_SIGNATURE_VERIFIED] orderId=${dto.razorpay_order_id} paymentId=${dto.razorpay_payment_id}`);
+    this.logger.log(
+      `[RAZORPAY_SIGNATURE_VERIFIED] Payment Environment: ${rzpConfig.environment} | Order ID: ${dto.razorpay_order_id} | Payment ID: ${dto.razorpay_payment_id}`,
+    );
 
     this.logger.log(`[SUBSCRIPTION_ACTIVATE] customerId=${customerId}, planId=${plan.id}`);
 
