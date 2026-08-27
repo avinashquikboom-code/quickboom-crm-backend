@@ -758,4 +758,25 @@ export class PaymentService {
       })),
     };
   }
+
+  /**
+   * Returns public, safe payment gateway settings from the Database for mobile and admin UI.
+   * Single source of truth: PostgreSQL IntegrationSetting table.
+   */
+  async getPublicPaymentConfig() {
+    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
+    const rawConf = await this.integrationSettingsService.getIntegrationConfig('RAZORPAY');
+    const config = rawConf?.config || {};
+
+    return {
+      success: true,
+      data: {
+        enableRazorpay: Boolean(rzpConfig.isEnabled && rzpConfig.isConfigured),
+        enableOfflinePayment: Boolean(config.enableOfflinePayment ?? false),
+        environment: rzpConfig.environment,
+        razorpayKeyId: rzpConfig.isEnabled ? rzpConfig.keyId : null,
+        source: rzpConfig.source,
+      },
+    };
+  }
 }

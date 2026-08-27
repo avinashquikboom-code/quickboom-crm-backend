@@ -22,6 +22,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
+  @Get('config')
+  @Get('settings')
+  @ApiOperation({ summary: 'Get dynamic public payment configuration from database (single source of truth)' })
+  async getPaymentConfig() {
+    return this.paymentService.getPublicPaymentConfig();
+  }
+
   @Post('razorpay/order')
   @Post('create-order')
   @UseGuards(JwtAuthGuard, CustomerGuard)

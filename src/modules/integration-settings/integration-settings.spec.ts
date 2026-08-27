@@ -321,5 +321,65 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       );
     });
   });
+
+  describe('7. Database as Single Source of Truth (Zero .env dependency)', () => {
+    it('persists and resolves dual TEST & LIVE keys and offline payment dynamically from database', async () => {
+      // Simulate Database holding complete dynamic Payment Settings
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: true,
+        environment: 'TEST',
+        credentials: {
+          testKeyId: 'rzp_test_db_source_test_key',
+          testKeySecret: encryptSecret('rzp_sec_db_source_test_secret'),
+          liveKeyId: 'rzp_live_db_source_live_key',
+          liveKeySecret: encryptSecret('rzp_sec_db_source_live_secret'),
+          webhookSecret: encryptSecret('whsec_db_shared_2026'),
+        },
+        config: {
+          enableOfflinePayment: true,
+        },
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      // 1. In TEST mode, resolves test keys from database
+      const testConfig = await service.getRazorpayConfig();
+      expect(testConfig.source).toBe('DATABASE');
+      expect(testConfig.environment).toBe('TEST');
+      expect(testConfig.keyId).toBe('rzp_test_db_source_test_key');
+      expect(testConfig.keySecret).toBe('rzp_sec_db_source_test_secret');
+      expect(testConfig.isEnabled).toBe(true);
+
+      // 2. When admin switches DB setting to LIVE, cache is invalidated & resolves live keys from database
+      service.clearCache();
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        id: 1,
+        provider: 'RAZORPAY',
+        isEnabled: true,
+        environment: 'LIVE',
+        credentials: {
+          testKeyId: 'rzp_test_db_source_test_key',
+          testKeySecret: encryptSecret('rzp_sec_db_source_test_secret'),
+          liveKeyId: 'rzp_live_db_source_live_key',
+          liveKeySecret: encryptSecret('rzp_sec_db_source_live_secret'),
+          webhookSecret: encryptSecret('whsec_db_shared_2026'),
+        },
+        config: {
+          enableOfflinePayment: true,
+        },
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      const liveConfig = await service.getRazorpayConfig();
+      expect(liveConfig.source).toBe('DATABASE');
+      expect(liveConfig.environment).toBe('LIVE');
+      expect(liveConfig.keyId).toBe('rzp_live_db_source_live_key');
+      expect(liveConfig.keySecret).toBe('rzp_sec_db_source_live_secret');
+    });
+  });
 });
+
 
