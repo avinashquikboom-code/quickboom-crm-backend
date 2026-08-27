@@ -152,55 +152,77 @@ export class PaymentService {
 
     const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
 
-    this.logger.log(
-      `[RAZORPAY_ORDER_CREATE] Payment Environment: ${rzpConfig.environment} | Razorpay Key ID: ${maskKeyId(rzpConfig.keyId)} | Amount: ₹${totalAmount} (${amountInPaise} paise) | Currency: ${dto.currency || 'INR'} | CustomerId: ${customerId} | Plan: ${plan.name} (${plan.id})`,
-    );
-
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
+    const razorpayPayload = {
+      amount: amountInPaise,
+      currency: dto.currency || 'INR',
+      receipt,
+      notes: {
+        customerId: String(customerId),
+        planId: String(plan.id),
+        planName: plan.name,
+        billingCycle: cycle,
+      },
+    };
+
+    this.logger.log('==================================================');
+    this.logger.log('[RAZORPAY_ORDER_CREATE_REQUEST] Outgoing Order to Razorpay API:');
+    this.logger.log(`Customer ID: ${customerId} (${customer.companyName || customer.name})`);
+    this.logger.log(`Plan: ${plan.name} (ID: ${plan.id}, Code: ${plan.code})`);
+    this.logger.log(`Billing Cycle: ${cycle}`);
+    this.logger.log(`Base Amount: ₹${basePrice}`);
+    this.logger.log(`Calculated GST (18%): ₹${taxAmount}`);
+    this.logger.log(`Total Amount: ₹${totalAmount}`);
+    this.logger.log(`Amount in Paise: ${amountInPaise}`);
+    this.logger.log(`Payment Environment: ${rzpConfig.environment}`);
+    this.logger.log(`Key ID: ${maskKeyId(rzpConfig.keyId)}`);
+    this.logger.log(`Payload (Secrets omitted): ${JSON.stringify(razorpayPayload)}`);
+    this.logger.log('==================================================');
+
     let razorpayOrderId: string;
 
     try {
-      const order = await razorpayInstance.orders.create({
-        amount: amountInPaise,
-        currency: dto.currency || 'INR',
-        receipt,
-        notes: {
-          customerId: String(customerId),
-          planId: String(plan.id),
-          planName: plan.name,
-          billingCycle: cycle,
-        },
-      });
+      const order = await razorpayInstance.orders.create(razorpayPayload);
       if (!order || !order.id) {
         throw new Error('Razorpay returned an empty order response.');
       }
       razorpayOrderId = order.id;
+
+      this.logger.log(
+        `[RAZORPAY_ORDER_SUCCESS] HTTP 200/201 | Order ID: ${order.id} | Status: ${order.status} | Amount: ${order.amount} ${order.currency}`,
+      );
     } catch (err: any) {
       const rzpErr = err?.error;
+      const statusCode = err?.statusCode || rzpErr?.statusCode || 400;
       const errDesc = rzpErr?.description || err?.message || 'Failed to create payment order.';
       const isAuthFailed =
         errDesc.toLowerCase().includes('auth') ||
+        statusCode === 401 ||
         (rzpErr?.code === 'BAD_REQUEST_ERROR' && errDesc.toLowerCase().includes('failed'));
 
-      this.logger.error(
-        `[RAZORPAY_ORDER_CREATE_FAILED] ${errDesc} (code=${rzpErr?.code || 'UNKNOWN'}, keyIdPrefix=${rzpConfig.keyId.substring(0, 8)}..., env=${rzpConfig.environment}, source=${rzpConfig.source})`,
-        rzpErr ? JSON.stringify(rzpErr) : '',
-      );
+      this.logger.error('==================================================');
+      this.logger.error(`[RAZORPAY_ORDER_CREATE_FAILED] Status: ${statusCode} | Code: ${rzpErr?.code || 'UNKNOWN'}`);
+      this.logger.error(`Description: ${errDesc}`);
+      this.logger.error(`Environment: ${rzpConfig.environment} | Key ID: ${maskKeyId(rzpConfig.keyId)} | Source: ${rzpConfig.source}`);
+      this.logger.error(`Raw Error: ${JSON.stringify(rzpErr || err?.message || err)}`);
+      if (process.env.NODE_ENV !== 'production' && err?.stack) {
+        this.logger.error(`Stack Trace: ${err.stack}`);
+      }
+      this.logger.error('==================================================');
 
       if (isAuthFailed) {
         throw new BadRequestException(
-          'Razorpay payment gateway authentication failed. Please verify Razorpay Key ID and Key Secret in Admin Panel Settings.',
+          `Razorpay authentication failed (${rzpConfig.environment} mode). Please configure valid Razorpay ${rzpConfig.environment} Key ID and Secret in Admin Panel Settings.`,
         );
       }
 
       throw new BadRequestException(
-        errDesc || 'Failed to create payment order. Please try again.',
+        `Razorpay order creation failed: ${errDesc}`,
       );
     }
 
-    this.logger.log(`[RAZORPAY_ORDER_RESPONSE] orderId=${razorpayOrderId}, status=created`);
     this.logger.log(
-      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=₹${totalAmount} (source=${rzpConfig.source})`,
+      `[RAZORPAY_ORDER_CREATED] orderId=${razorpayOrderId} customerId=${customerId} plan=${plan.name} amount=₹${totalAmount}`,
     );
 
     return {
