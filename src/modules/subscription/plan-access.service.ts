@@ -49,6 +49,7 @@ export interface EffectivePlan {
   remainingSchedules: number;
   features: any;
   services: EffectivePlanServiceQuota[];
+  quotas?: Record<string, any>;
   usage: EffectivePlanUsage;
 }
 
@@ -241,6 +242,35 @@ export class PlanAccessService {
                   { serviceName: 'Stories', totalQty: 3, usedQty: 0, scheduledQty: 0, remainingQty: 3 },
                 ]));
 
+    const payments = this.prisma.paymentHistory?.findMany
+      ? await this.prisma.paymentHistory.findMany({
+          where: { customerId: numCustomerId, status: 'SUCCESS' },
+        })
+      : [];
+    const totalPaid = Array.isArray(payments)
+      ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
+      : 0;
+    const fullTotalAmount = Math.round(effectivePrice * 1.18);
+    const firstInstallmentAmount = Math.round(fullTotalAmount * 0.5);
+    const secondInstallmentAmount = fullTotalAmount - firstInstallmentAmount;
+    const remainingBalance = Math.max(0, fullTotalAmount - totalPaid);
+    const isFullyPaid = totalPaid >= fullTotalAmount;
+    const isFirstInstallmentPaid = totalPaid > 0;
+
+    let paymentStatus = 'PENDING_FIRST_INSTALLMENT';
+    let scheduleUnlockStatus = 'LOCKED_ALL';
+    let unlockedDays = 0;
+
+    if (isFullyPaid) {
+      paymentStatus = 'FULLY_PAID';
+      scheduleUnlockStatus = 'UNLOCKED_FULL';
+      unlockedDays = 30;
+    } else if (isFirstInstallmentPaid) {
+      paymentStatus = 'FIRST_INSTALLMENT_PAID';
+      scheduleUnlockStatus = 'UNLOCKED_15_DAYS';
+      unlockedDays = 15;
+    }
+
     const result: EffectivePlan = {
       customerId: numCustomerId,
       subscriptionId: sub?.id,
@@ -265,6 +295,21 @@ export class PlanAccessService {
       remainingSchedules,
       features: effectiveFeatures,
       services,
+      quotas: {
+        scheduleLimit: totalScheduleLimit,
+        usedSchedules: totalUsedSchedules,
+        remainingSchedules,
+        totalAmount: fullTotalAmount,
+        totalPaid,
+        remainingBalance,
+        firstInstallmentAmount,
+        secondInstallmentAmount,
+        isFullyPaid,
+        isFirstInstallmentPaid,
+        paymentStatus,
+        scheduleUnlockStatus,
+        unlockedDays,
+      },
       usage: {
         currentUsers,
         currentLeads,

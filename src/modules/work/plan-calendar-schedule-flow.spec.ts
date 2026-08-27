@@ -206,8 +206,12 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
         id: 501,
         customerId,
         status: SubscriptionStatus.ACTIVE,
-        plan: { name: 'Custom Reels Plan' },
+        plan: { monthlyPrice: 10000, name: 'Custom Reels Plan' },
       });
+
+      prisma.paymentHistory.findMany.mockResolvedValue([
+        { id: 1, customerId, totalAmount: 11800, status: 'SUCCESS' },
+      ]);
 
       prisma.work.count.mockResolvedValue(12);
 
@@ -235,6 +239,105 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
       expect(calendar).toHaveLength(1);
       expect(calendar[0].title).toBe('Reel #1: Shoot');
       expect(calendar.some((c: any) => c.id.toString().includes('sub-start'))).toBe(false);
+    });
+
+    it('locks schedules after Day 15 when only 50% advance is paid, and unlocks Days 1–15', async () => {
+      const customerId = 101;
+      const subStart = new Date('2026-08-01T00:00:00.000Z');
+
+      prisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 501,
+        customerId,
+        status: SubscriptionStatus.ACTIVE,
+        startDate: subStart,
+        plan: { monthlyPrice: 10000, name: 'Reels Plan' },
+      });
+
+      // Total with 18% GST = 11,800. 50% paid = 5,900.
+      prisma.paymentHistory.findMany.mockResolvedValue([
+        { id: 1, customerId, totalAmount: 5900, status: 'SUCCESS' },
+      ]);
+
+      prisma.work.count.mockResolvedValue(2);
+
+      // Two work items: Day 5 (within 15 days) and Day 20 (after 15 days)
+      prisma.work.findMany.mockResolvedValue([
+        {
+          id: 1,
+          customerId,
+          subscriptionId: 501,
+          title: 'Reel #1: Shoot',
+          scheduledDate: new Date('2026-08-05T10:00:00.000Z'),
+          status: WorkStatus.SCHEDULED,
+        },
+        {
+          id: 2,
+          customerId,
+          subscriptionId: 501,
+          title: 'Reel #3: Shoot',
+          scheduledDate: new Date('2026-08-20T10:00:00.000Z'),
+          status: WorkStatus.SCHEDULED,
+        },
+      ]);
+
+      const calendar = await workService.getCalendar(customerId);
+
+      expect(calendar).toHaveLength(2);
+      // Day 5 item is UNLOCKED
+      expect(calendar[0].isLocked).toBe(false);
+      expect(calendar[0].title).toBe('Reel #1: Shoot');
+
+      // Day 20 item is LOCKED
+      expect(calendar[1].isLocked).toBe(true);
+      expect(calendar[1].title).toBe('Schedule Locked');
+      expect(calendar[1].lockMessage).toContain('Next 15 days schedule will be available');
+    });
+
+    it('unlocks all schedules when 100% full payment is completed', async () => {
+      const customerId = 101;
+      const subStart = new Date('2026-08-01T00:00:00.000Z');
+
+      prisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 501,
+        customerId,
+        status: SubscriptionStatus.ACTIVE,
+        startDate: subStart,
+        plan: { monthlyPrice: 10000, name: 'Reels Plan' },
+      });
+
+      // 100% full payment (11,800)
+      prisma.paymentHistory.findMany.mockResolvedValue([
+        { id: 1, customerId, totalAmount: 5900, status: 'SUCCESS' },
+        { id: 2, customerId, totalAmount: 5900, status: 'SUCCESS' },
+      ]);
+
+      prisma.work.count.mockResolvedValue(2);
+
+      prisma.work.findMany.mockResolvedValue([
+        {
+          id: 1,
+          customerId,
+          subscriptionId: 501,
+          title: 'Reel #1: Shoot',
+          scheduledDate: new Date('2026-08-05T10:00:00.000Z'),
+          status: WorkStatus.SCHEDULED,
+        },
+        {
+          id: 2,
+          customerId,
+          subscriptionId: 501,
+          title: 'Reel #3: Shoot',
+          scheduledDate: new Date('2026-08-20T10:00:00.000Z'),
+          status: WorkStatus.SCHEDULED,
+        },
+      ]);
+
+      const calendar = await workService.getCalendar(customerId);
+
+      expect(calendar).toHaveLength(2);
+      expect(calendar[0].isLocked).toBe(false);
+      expect(calendar[1].isLocked).toBe(false);
+      expect(calendar[1].title).toBe('Reel #3: Shoot');
     });
   });
 });

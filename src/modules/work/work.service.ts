@@ -889,6 +889,28 @@ export class WorkService {
         })
       : items;
 
+    let totalPaidForSub = 0;
+    let isFullyPaid = true;
+    let isFirstInstallmentPaid = true;
+    let unlockThresholdDate: Date | null = null;
+
+    if (numCustomerId && activeSubForCustomer) {
+      const payments = await this.prisma.paymentHistory.findMany({
+        where: { customerId: numCustomerId, status: 'SUCCESS' },
+      });
+      totalPaidForSub = Array.isArray(payments)
+        ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
+        : 0;
+      const planBasePrice = Number(activeSubForCustomer.plan?.monthlyPrice || 0);
+      const planTotalWithTax = Math.round(planBasePrice * 1.18);
+
+      isFullyPaid = totalPaidForSub >= planTotalWithTax;
+      isFirstInstallmentPaid = totalPaidForSub > 0;
+
+      const subStartDate = new Date(activeSubForCustomer.startDate);
+      unlockThresholdDate = new Date(subStartDate.getTime() + 15 * 24 * 60 * 60 * 1000);
+    }
+
     const result = filteredItems.map((w) => {
       const purchaseRef = w.subscriptionId
         ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
@@ -897,31 +919,50 @@ export class WorkService {
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
       const planName = w.subscription?.plan?.name || (activeSubForCustomer?.plan?.name ?? 'Active Plan');
+
+      const schedDate = w.scheduledDate ? new Date(w.scheduledDate) : new Date();
+      let isLocked = false;
+      let lockMessage: string | undefined;
+
+      if (numCustomerId && activeSubForCustomer) {
+        if (!isFirstInstallmentPaid) {
+          isLocked = true;
+          lockMessage = 'Your schedule will be available after the 50% advance payment is received.';
+        } else if (!isFullyPaid && unlockThresholdDate && schedDate > unlockThresholdDate) {
+          isLocked = true;
+          lockMessage = 'Next 15 days schedule will be available after the second installment is completed.';
+        }
+      }
+
       return {
         id: String(w.id),
         purchaseId: purchaseRef,
-        productName: prodName,
-        serviceName: prodName,
+        productName: isLocked ? 'Schedule Locked' : prodName,
+        serviceName: isLocked ? 'Schedule Locked' : prodName,
         planName: planName,
-        title: w.title,
+        title: isLocked ? 'Schedule Locked' : w.title,
         date: w.scheduledDate,
         scheduleDate: w.scheduledDate,
         time: startTime,
         startTime: startTime,
         endTime: endTime,
-        type: w.workType,
-        status: w.status,
+        type: isLocked ? 'LOCKED' : w.workType,
+        status: isLocked ? 'LOCKED' : w.status,
+        isLocked,
+        lockMessage,
         customerId: String(w.customerId),
         customerName: w.customer?.name || 'Customer',
         assignedToId: w.assignedToId,
-        assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead',
+        assignedEmployee: isLocked ? '—' : (w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead'),
         editorId: w.editorId,
-        editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor',
+        editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor'),
         team: w.team?.name || 'SSM Team A',
-        notes: w.description || w.notes || `${w.title} deliverable`,
-        outputUrl: w.outputUrl,
-        feedback: w.feedback,
-        revisionCount: w.revisionCount,
+        notes: isLocked
+          ? (lockMessage || 'Complete the remaining 50% payment to unlock the next 15 days of your schedule.')
+          : (w.description || w.notes || `${w.title} deliverable`),
+        outputUrl: isLocked ? null : w.outputUrl,
+        feedback: isLocked ? null : w.feedback,
+        revisionCount: isLocked ? 0 : w.revisionCount,
       };
     });
 

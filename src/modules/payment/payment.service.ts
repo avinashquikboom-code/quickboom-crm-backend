@@ -1109,7 +1109,7 @@ export class PaymentService {
     }
 
     const dueDateStr = sub.endDate ? new Date(sub.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Work Completion';
-    const defaultMsg = `Your remaining balance payment of ₹${balance.toLocaleString('en-IN')} for ${sub.plan.name} is due by ${dueDateStr}. Please complete payment before final work delivery.`;
+    const defaultMsg = `Your remaining 50% payment of ₹${balance.toLocaleString('en-IN')} is pending. Please complete the payment to unlock the next 15 days of your work schedule.`;
     const message = dto.customMessage || defaultMsg;
 
     const targetUser = customer.users?.[0] || adminUser;
