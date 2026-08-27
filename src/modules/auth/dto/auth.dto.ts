@@ -12,17 +12,17 @@ export class LoginDto {
   @MinLength(6)
   password: string;
 
-  @ApiPropertyOptional({ enum: ['ADMIN', 'EMPLOYEE_MOBILE', 'CUSTOMER'], example: 'EMPLOYEE_MOBILE' })
+  @ApiPropertyOptional({ enum: ['ADMIN', 'EMPLOYEE_MOBILE', 'CUSTOMER', 'COMPANY_ADMIN'], example: 'EMPLOYEE_MOBILE' })
   @IsOptional()
   @IsString()
-  appType?: 'ADMIN' | 'EMPLOYEE_MOBILE' | 'CUSTOMER';
+  appType?: string;
 }
 
 export class RegisterCustomerDto {
-  @ApiProperty({ example: 'Acme Corporation' })
+  @ApiPropertyOptional({ example: 'Acme Corporation' })
   @IsString()
-  @IsNotEmpty()
-  companyName: string;
+  @IsOptional()
+  companyName?: string;
 
   @ApiPropertyOptional({ example: 'John Doe' })
   @IsString()
@@ -40,8 +40,8 @@ export class RegisterCustomerDto {
   lastName?: string;
 
   @ApiProperty({ example: 'john@acme.com' })
-  @IsEmail()
-  @IsNotEmpty()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email address is required' })
   email: string;
 
   @ApiPropertyOptional({ example: '+919876543210' })
@@ -57,6 +57,7 @@ export class RegisterCustomerDto {
   @ApiPropertyOptional({ example: 'Password123!' })
   @IsString()
   @IsOptional()
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
 }
 

@@ -32,121 +32,186 @@ export class AuthService {
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const normalizedEmail = (dto.email || '').trim().toLowerCase();
+    const normalizedPhone = dto.phone?.trim() ? dto.phone.trim() : null;
+    const normalizedCity = dto.city?.trim() ? dto.city.trim() : null;
+
+    if (!normalizedEmail) {
+      throw new BadRequestException('Email address is required');
+    }
+
+    const companyOrCustomerName = (dto.companyName || dto.fullName || 'Customer').trim();
+    if (!companyOrCustomerName) {
+      throw new BadRequestException('Business name or full name is required');
+    }
+
+    this.logger.log(
+      `[REGISTRATION_REQUEST] Registering customer email=${normalizedEmail} company=${companyOrCustomerName} city=${normalizedCity || 'N/A'}`,
+    );
+
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+        ],
+      },
     });
     if (existingUser) {
-      throw new ConflictException('User with this email already exists');
+      if (existingUser.email === normalizedEmail) {
+        throw new ConflictException('Email is already registered');
+      }
+      if (normalizedPhone && existingUser.phone === normalizedPhone) {
+        throw new ConflictException('Phone number is already registered');
+      }
     }
 
     // Determine first and last name from fullName or explicit fields
-    let firstName = dto.firstName || '';
-    let lastName = dto.lastName || '';
+    let firstName = dto.firstName?.trim() || '';
+    let lastName = dto.lastName?.trim() || '';
     if (dto.fullName && (!firstName || !lastName)) {
       const parts = dto.fullName.trim().split(/\s+/);
       firstName = parts[0] || 'Customer';
-      lastName = parts.slice(1).join(' ') || (dto.companyName ? dto.companyName : 'Admin');
+      lastName = parts.slice(1).join(' ') || (dto.companyName ? dto.companyName.trim() : 'Admin');
     }
-    if (!firstName) firstName = 'Customer';
+    if (!firstName) firstName = companyOrCustomerName.split(/\s+/)[0] || 'Customer';
     if (!lastName) lastName = 'Admin';
 
     const rawPassword = dto.password || '123456';
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
-    return this.prisma.$transaction(async (tx) => {
-      // Create Customer
-      const companyOrCustomerName = (dto.companyName || dto.fullName || 'Customer').trim();
-      const customer = await tx.customer.create({
-        data: {
-          name: companyOrCustomerName,
-          companyName: companyOrCustomerName,
-          email: dto.email,
-          phone: dto.phone,
-          city: dto.city,
-          isActive: true,
-          source: 'APP_REGISTRATION',
-          customerType: 'ENTERPRISE',
-        },
-      });
-
-      // Find or Create Starter Plan
-      let starterPlan = await tx.plan.findUnique({ where: { code: 'STARTER' } });
-      if (!starterPlan) {
-        starterPlan = await tx.plan.create({
+    let createdResult: any;
+    try {
+      createdResult = await this.prisma.$transaction(async (tx) => {
+        // Create Customer
+        const customer = await tx.customer.create({
           data: {
-            name: 'Starter Plan',
-            code: 'STARTER',
-            monthlyPrice: 29.0,
-            yearlyPrice: 290.0,
-            userLimit: 5,
-            leadLimit: 500,
-            storageLimit: BigInt(5368709120), // 5GB
-            features: ['LEADS', 'CONTACTS', 'DEALS', 'TASKS'],
+            name: companyOrCustomerName,
+            companyName: companyOrCustomerName,
+            email: normalizedEmail,
+            phone: normalizedPhone,
+            city: normalizedCity,
+            isActive: true,
+            source: 'APP_REGISTRATION',
+            customerType: 'ENTERPRISE',
           },
         });
+
+        // Find or Create Starter Plan
+        let starterPlan = await tx.plan.findUnique({ where: { code: 'STARTER' } });
+        if (!starterPlan) {
+          starterPlan = await tx.plan.create({
+            data: {
+              name: 'Starter Plan',
+              code: 'STARTER',
+              monthlyPrice: 29.0,
+              yearlyPrice: 290.0,
+              userLimit: 5,
+              leadLimit: 500,
+              storageLimit: BigInt(5368709120), // 5GB
+              features: ['LEADS', 'CONTACTS', 'DEALS', 'TASKS'],
+            },
+          });
+        }
+
+        // Create Subscription
+        await tx.customerSubscription.create({
+          data: {
+            customerId: customer.id,
+            planId: starterPlan.id,
+            startDate: new Date(),
+            endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            status: 'TRIAL',
+          },
+        });
+
+        // Create Admin Role for Customer
+        const adminRole = await tx.role.create({
+          data: {
+            customerId: customer.id,
+            name: 'Customer Administrator',
+            type: RoleType.CUSTOMER_ADMIN,
+            description: 'Full administrative access to customer workspace',
+          },
+        });
+
+        // Create Admin User
+        const user = await tx.user.create({
+          data: {
+            customerId: customer.id,
+            email: normalizedEmail,
+            phone: normalizedPhone,
+            firstName: firstName,
+            lastName: lastName,
+            passwordHash: hashedPassword,
+            isVerified: true,
+          },
+        });
+
+        // Assign Admin Role
+        await tx.userRole.create({
+          data: {
+            userId: user.id,
+            roleId: adminRole.id,
+          },
+        });
+
+        return {
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            customerId: customer.id,
+            customerName: customer.name,
+            role: 'CUSTOMER',
+          },
+          customer: {
+            id: customer.id,
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            city: customer.city,
+          },
+        };
+      });
+    } catch (err: any) {
+      this.logger.error(`[REGISTRATION_FAILED] Error registering customer: ${err?.message}`, err?.stack);
+      if (err?.code === 'P2002') {
+        const target = err?.meta?.target;
+        if (Array.isArray(target) && target.includes('email')) {
+          throw new ConflictException('Email is already registered');
+        }
+        if (Array.isArray(target) && target.includes('phone')) {
+          throw new ConflictException('Phone number is already registered');
+        }
+        throw new ConflictException('An account with these details already exists');
       }
+      throw err;
+    }
 
-      // Create Subscription
-      await tx.customerSubscription.create({
-        data: {
-          customerId: customer.id,
-          planId: starterPlan.id,
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-          trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-          status: 'TRIAL',
-        },
-      });
+    // Generate tokens AFTER transaction has committed so user.id exists in database for RefreshToken table
+    const tokens = await this.generateTokens(
+      createdResult.user.id,
+      createdResult.user.customerId,
+      createdResult.user.email,
+    );
 
-      // Create Admin Role for Customer
-      const adminRole = await tx.role.create({
-        data: {
-          customerId: customer.id,
-          name: 'Customer Administrator',
-          type: RoleType.CUSTOMER_ADMIN,
-          description: 'Full administrative access to customer workspace',
-        },
-      });
+    this.logger.log(
+      `[REGISTRATION_SUCCESS] Customer created → customerId=${createdResult.customer.id} (${createdResult.customer.name}), email=${createdResult.user.email}, userId=${createdResult.user.id}`,
+    );
 
-      // Create Admin User
-      const user = await tx.user.create({
-        data: {
-          customerId: customer.id,
-          email: dto.email,
-          phone: dto.phone,
-          firstName: firstName,
-          lastName: lastName,
-          passwordHash: hashedPassword,
-          isVerified: true,
-        },
-      });
-
-      // Assign Admin Role
-      await tx.userRole.create({
-        data: {
-          userId: user.id,
-          roleId: adminRole.id,
-        },
-      });
-
-      const tokens = await this.generateTokens(user.id, customer.id, user.email);
-
-      this.logger.log(
-        `[CUSTOMER_REGISTERED] Customer created → customerId=${customer.id} (${customer.name}), email=${customer.email}, user=${user.email}`,
-      );
-
-      return {
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          customerId: customer.id,
-          customerName: customer.name,
-        },
-        tokens,
-      };
-    });
+    return {
+      success: true,
+      message: 'Account created successfully',
+      user: createdResult.user,
+      tokens,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      customerId: createdResult.user.customerId,
+      userId: createdResult.user.id,
+    };
   }
 
   async login(
