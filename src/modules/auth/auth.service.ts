@@ -209,8 +209,17 @@ export class AuthService {
     }
 
     const hasSuperAdminRole = user.userRoles.some((ur) => ur.role?.type === RoleType.SUPER_ADMIN);
-    const isEmployee = Boolean(user.employee);
-    const isCustomer = Boolean(user.customerId && !isEmployee && !hasSuperAdminRole);
+    const hasCustomerAdminRole = user.userRoles.some(
+      (ur) =>
+        ur.role?.type === RoleType.CUSTOMER_ADMIN ||
+        ur.role?.name?.toUpperCase().includes('CUSTOMER'),
+    );
+    const isEmployee = Boolean(
+      (user.employee || user.userRoles.some((ur) => ur.role?.name?.toUpperCase().includes('EMPLOYEE'))) &&
+      !hasSuperAdminRole &&
+      !hasCustomerAdminRole,
+    );
+    const isCustomer = Boolean(!hasSuperAdminRole && !isEmployee && (hasCustomerAdminRole || user.customerId));
 
     if (!hasSuperAdminRole && user.customer && !user.customer.isActive) {
       throw new UnauthorizedException('Your company account is suspended');
@@ -218,17 +227,16 @@ export class AuthService {
 
     const rawApp = (appType || '').trim().toLowerCase();
 
-    const primaryRole = hasSuperAdminRole
-      ? RoleType.SUPER_ADMIN
-      : isEmployee
-      ? RoleType.CUSTOM
-      : user.userRoles[0]?.role?.type || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.CUSTOM);
-
-    const userRole: string = hasSuperAdminRole
-      ? 'SUPER_ADMIN'
-      : isEmployee
-      ? 'EMPLOYEE'
-      : (user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || primaryRole);
+    let userRole: string;
+    if (hasSuperAdminRole) {
+      userRole = 'SUPER_ADMIN';
+    } else if (isCustomer) {
+      userRole = 'CUSTOMER';
+    } else if (isEmployee) {
+      userRole = 'EMPLOYEE';
+    } else {
+      userRole = user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || 'CUSTOMER';
+    }
 
     // Dedicated Endpoint Exact Role Validation
     const upperExpectedRole = (appType || '').trim().toUpperCase();
@@ -261,7 +269,7 @@ export class AuthService {
         if (hasSuperAdminRole) {
           throw new ForbiddenException('This user is SUPER_ADMIN, not COMPANY_ADMIN. Use /api/v1/admin/auth/login/super-admin');
         }
-        if (userRole !== 'COMPANY_ADMIN' && userRole !== 'CUSTOMER_ADMIN') {
+        if (userRole !== 'COMPANY_ADMIN' && userRole !== 'CUSTOMER_ADMIN' && userRole !== 'CUSTOMER') {
           throw new ForbiddenException(`This user is ${userRole}, not COMPANY_ADMIN. Use correct endpoint for ${userRole.toLowerCase()} login`);
         }
       }
@@ -307,34 +315,38 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.customerId, user.email);
 
-    // Auto-generate / auto-increment employee record if not yet created
-    const emp = await this.ensureEmployee(user);
+    // Auto-generate employee record ONLY if the authenticated user is an Employee
+    let emp: any = null;
+    let employeeData: any = null;
+    if (userRole === 'EMPLOYEE') {
+      emp = await this.ensureEmployee(user);
+      const targetNumericId = emp?.id || user.id;
+      const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      employeeData = {
+        id: emp.id,
+        employeeId: qbCode,
+        employeeCode: qbCode,
+        firstName: emp.firstName || user.firstName,
+        lastName: emp.lastName || user.lastName,
+        email: emp.email || user.email,
+        mobile: emp.phone || user.phone,
+        phone: emp.phone || user.phone,
+        branch: emp.branch || 'Head Office',
+        office: emp.branch || 'Head Office',
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        status: emp.status || 'ACTIVE',
+        mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+        joiningDate: emp.joiningDate || user.createdAt,
+      };
+    }
 
-    // Generate role-based QB code via QBIdGenerator (QB-ADMIN-001, QB-CADMIN-001, QB-EMP-001, QB-CUST-001)
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
       : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
     const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
-    const employeeData = {
-      id: emp.id,
-      employeeId: qbCode,
-      employeeCode: qbCode,
-      firstName: emp.firstName || user.firstName,
-      lastName: emp.lastName || user.lastName,
-      email: emp.email || user.email,
-      mobile: emp.phone || user.phone,
-      phone: emp.phone || user.phone,
-      branch: emp.branch || 'Head Office',
-      office: emp.branch || 'Head Office',
-      department: emp.department?.name || 'General',
-      designation: emp.designation?.name || 'Staff',
-      status: emp.status || 'ACTIVE',
-      mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
-      joiningDate: emp.joiningDate || user.createdAt,
-    };
-
-    const userData = {
+    const userData: any = {
       id: user.id,
       email: user.email,
       phone: user.phone || null,
@@ -343,13 +355,16 @@ export class AuthService {
       role: userRole,
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
-      employeeId: qbCode,
-      employeeCode: qbCode,
-      employee: employeeData,
       // Conditional: Only include customerId and customerName for non-super-admin
-      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId || emp.customerId }),
+      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId }),
       ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name || 'Enterprise Workspace' }),
     };
+
+    if (userRole === 'EMPLOYEE' && employeeData) {
+      userData.employeeId = qbCode;
+      userData.employeeCode = qbCode;
+      userData.employee = employeeData;
+    }
 
     return {
       success: true,
@@ -579,40 +594,61 @@ export class AuthService {
     }
 
     const roles = user.userRoles.map((ur) => ur.role.type);
+    const hasSuperAdminRole = roles.includes(RoleType.SUPER_ADMIN);
+    const hasCustomerAdminRole = user.userRoles.some(
+      (ur) =>
+        ur.role?.type === RoleType.CUSTOMER_ADMIN ||
+        ur.role?.name?.toUpperCase().includes('CUSTOMER'),
+    );
+    const isEmployee = Boolean(
+      (user.employee || user.userRoles.some((ur) => ur.role?.name?.toUpperCase().includes('EMPLOYEE'))) &&
+      !hasSuperAdminRole &&
+      !hasCustomerAdminRole,
+    );
+    const isCustomer = Boolean(!hasSuperAdminRole && !isEmployee && (hasCustomerAdminRole || user.customerId));
 
-    const emp = await this.ensureEmployee(user);
+    let userRole: string;
+    if (hasSuperAdminRole) {
+      userRole = 'SUPER_ADMIN';
+    } else if (isCustomer) {
+      userRole = 'CUSTOMER';
+    } else if (isEmployee) {
+      userRole = 'EMPLOYEE';
+    } else {
+      userRole = user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || 'CUSTOMER';
+    }
 
-    const isSuperAdmin = roles.includes(RoleType.SUPER_ADMIN);
-    const userRole: string = isSuperAdmin
-      ? 'SUPER_ADMIN'
-      : user.employee
-      ? 'EMPLOYEE'
-      : (user.userRoles[0]?.role?.name?.toUpperCase().replace(/\s+/g, '_') || (user.customerId ? 'CUSTOMER_ADMIN' : 'CUSTOMER'));
+    let emp: any = null;
+    let employeeData: any = null;
+    if (userRole === 'EMPLOYEE') {
+      emp = await this.ensureEmployee(user);
+      const targetNumericId = emp?.id || user.id;
+      const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      employeeData = {
+        id: emp.id,
+        employeeId: qbCode,
+        employeeCode: qbCode,
+        firstName: emp.firstName || user.firstName,
+        lastName: emp.lastName || user.lastName,
+        email: emp.email || user.email,
+        mobile: emp.phone || user.phone,
+        phone: emp.phone || user.phone,
+        branch: emp.branch || 'Head Office',
+        office: emp.branch || 'Head Office',
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        status: emp.status || 'ACTIVE',
+        mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+        joiningDate: emp.joiningDate || user.createdAt,
+      };
+    }
 
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
       : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
     const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
-    const employeeData = {
-      id: emp.id,
-      employeeId: qbCode,
-      employeeCode: qbCode,
-      firstName: emp.firstName || user.firstName,
-      lastName: emp.lastName || user.lastName,
-      email: emp.email || user.email,
-      mobile: emp.phone || user.phone,
-      phone: emp.phone || user.phone,
-      branch: emp.branch || 'Head Office',
-      office: emp.branch || 'Head Office',
-      department: emp.department?.name || 'General',
-      designation: emp.designation?.name || 'Staff',
-      status: emp.status || 'ACTIVE',
-      mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
-      joiningDate: emp.joiningDate || user.createdAt,
-    };
-
-    return {
+    const profileData: any = {
       id: user.id,
       email: user.email,
       phone: user.phone,
@@ -621,14 +657,19 @@ export class AuthService {
       role: userRole,
       roles,
       userId: qbCode,
-      employee: employeeData,
-      employeeId: qbCode,
-      employeeCode: qbCode,
       createdAt: user.createdAt,
       // Conditional: Only include customerId and customerName for non-super-admin
-      ...(!isSuperAdmin && { customerId: user.customerId || emp.customerId }),
-      ...(!isSuperAdmin && { customerName: user.customer?.name || 'Enterprise Workspace' }),
+      ...(!hasSuperAdminRole && { customerId: user.customerId }),
+      ...(!hasSuperAdminRole && { customerName: user.customer?.name || 'Enterprise Workspace' }),
     };
+
+    if (userRole === 'EMPLOYEE' && employeeData) {
+      profileData.employee = employeeData;
+      profileData.employeeId = qbCode;
+      profileData.employeeCode = qbCode;
+    }
+
+    return profileData;
   }
 
   async getRoles(customerId?: number) {
