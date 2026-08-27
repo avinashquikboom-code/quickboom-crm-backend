@@ -858,9 +858,19 @@ export class IntegrationSettingsService {
    * Returns single provider configuration with masked secrets.
    */
   async getMaskedProviderConfig(provider: string) {
-    const conf = await this.getIntegrationConfig(provider);
+    const norm = normalizeProvider(provider);
+    const conf = await this.getIntegrationConfig(norm);
     if (!conf) {
-      throw new NotFoundException(`Integration provider ${provider} not found`);
+      return {
+        provider: norm,
+        isEnabled: false,
+        environment: 'TEST',
+        credentials: {},
+        config: {},
+        source: 'NONE' as const,
+        configured: false,
+        updatedAt: null,
+      };
     }
 
     const maskedCreds: Record<string, any> = {};
@@ -883,6 +893,7 @@ export class IntegrationSettingsService {
       credentials: maskedCreds,
       config: conf.config || {},
       source: conf.source,
+      configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
       updatedAt: conf.updatedAt || null,
     };
   }

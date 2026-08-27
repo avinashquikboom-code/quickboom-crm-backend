@@ -380,6 +380,37 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       expect(liveConfig.keySecret).toBe('rzp_sec_db_source_live_secret');
     });
   });
+
+  describe('8. Masked Configurations & Unconfigured Fallback', () => {
+    it('returns masked configurations for all supported providers', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const res = await service.getAllIntegrationsMasked();
+      expect(res.success).toBe(true);
+      expect(res.data).toBeDefined();
+      expect(Array.isArray(res.data)).toBe(true);
+      expect(res.data.length).toBeGreaterThanOrEqual(5);
+
+      // Verify no plain secret keys exist in the output
+      for (const item of res.data) {
+        if (item.credentials?.keySecret) {
+          expect(item.credentials.keySecret).not.toBe('rzp_sec_db_source_test_secret');
+        }
+        if (item.credentials?.secretAccessKey) {
+          expect(item.credentials.secretAccessKey).not.toContain('plain_secret');
+        }
+      }
+    });
+
+    it('returns valid unconfigured configuration structure for unknown/unconfigured provider without throwing 500', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const unconf = await service.getMaskedProviderConfig('CUSTOM_UNCONFIGURED_GATEWAY');
+      expect(unconf).toBeDefined();
+      expect(unconf.configured).toBe(false);
+      expect(unconf.isEnabled).toBe(false);
+      expect(unconf.provider).toBe('CUSTOM_UNCONFIGURED_GATEWAY');
+    });
+  });
 });
+
 
 

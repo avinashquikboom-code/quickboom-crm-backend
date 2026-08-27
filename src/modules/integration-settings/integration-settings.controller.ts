@@ -6,7 +6,7 @@ import {
   Body,
   Param,
   UseGuards,
-  Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IntegrationSettingsService } from './integration-settings.service';
@@ -16,6 +16,7 @@ import {
 } from './dto/integration-settings.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Admin Integration & Gateway Settings')
 @Controller('admin/settings/integrations')
@@ -26,9 +27,35 @@ export class IntegrationSettingsController {
     private readonly integrationSettingsService: IntegrationSettingsService,
   ) {}
 
+  private checkAdminAccess(user: any) {
+    if (isUserSuperAdmin(user)) return;
+
+    const userRoles: string[] = Array.isArray(user?.roles)
+      ? user.roles.map((r: any) => String(r).toUpperCase().replace(/[\s_]+/g, ''))
+      : user?.role
+      ? [String(user.role).toUpperCase().replace(/[\s_]+/g, '')]
+      : [];
+
+    const isCompanyAdmin = userRoles.some(
+      (r) =>
+        r === 'SUPERADMIN' ||
+        r === 'COMPANYADMIN' ||
+        r === 'CUSTOMERADMIN' ||
+        r === 'TENANTADMIN' ||
+        r === 'ADMIN',
+    );
+
+    if (!isCompanyAdmin) {
+      throw new ForbiddenException(
+        'Access denied: Only Administrators can view or manage integration settings',
+      );
+    }
+  }
+
   @Get('payment')
   @ApiOperation({ summary: 'Get payment gateway and offline payment configuration for Admin Settings' })
-  async getPaymentSettings() {
+  async getPaymentSettings(@CurrentUser() user: any) {
+    this.checkAdminAccess(user);
     return this.integrationSettingsService.getPaymentSettings();
   }
 
@@ -38,6 +65,7 @@ export class IntegrationSettingsController {
     @Body() dto: any,
     @CurrentUser() user: any,
   ) {
+    this.checkAdminAccess(user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.updatePaymentSettings(dto, adminUserId);
   }
@@ -46,7 +74,8 @@ export class IntegrationSettingsController {
   @ApiOperation({
     summary: 'Get all integration settings with masked secret values for Admin UI',
   })
-  async getAllIntegrations() {
+  async getAllIntegrations(@CurrentUser() user: any) {
+    this.checkAdminAccess(user);
     return this.integrationSettingsService.getAllIntegrationsMasked();
   }
 
@@ -54,7 +83,11 @@ export class IntegrationSettingsController {
   @ApiOperation({
     summary: 'Get specific provider integration configuration with masked secrets',
   })
-  async getIntegration(@Param('provider') provider: string) {
+  async getIntegration(
+    @Param('provider') provider: string,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
     return this.integrationSettingsService.getMaskedProviderConfig(provider);
   }
 
@@ -68,6 +101,7 @@ export class IntegrationSettingsController {
     @Body() dto: UpdateIntegrationDto,
     @CurrentUser() user: any,
   ) {
+    this.checkAdminAccess(user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.updateIntegrationConfig(
       provider,
@@ -84,7 +118,9 @@ export class IntegrationSettingsController {
   async testIntegration(
     @Param('provider') provider: string,
     @Body() dto: TestIntegrationDto,
+    @CurrentUser() user: any,
   ) {
+    this.checkAdminAccess(user);
     return this.integrationSettingsService.testIntegration(provider, dto);
   }
 }
