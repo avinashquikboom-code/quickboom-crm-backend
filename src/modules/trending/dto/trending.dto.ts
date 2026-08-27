@@ -1,0 +1,216 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { TrendingCategory } from '@prisma/client';
+
+export class CreateTrendingContentDto {
+  @ApiProperty({ example: 'Summer Reel Campaign' })
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @ApiPropertyOptional({ example: 'Create a short-form product reel for summer promotion.' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiProperty({ enum: TrendingCategory, example: TrendingCategory.REEL })
+  @IsEnum(TrendingCategory)
+  category: TrendingCategory;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/thumbnails/summer.jpg' })
+  @IsString()
+  @IsOptional()
+  thumbnailUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/videos/summer.mp4' })
+  @IsString()
+  @IsOptional()
+  mediaUrl?: string;
+
+  @ApiPropertyOptional({ example: 'View Idea' })
+  @IsString()
+  @IsOptional()
+  ctaText?: string;
+
+  @ApiPropertyOptional({ example: 'https://instagram.com/reels/example' })
+  @IsString()
+  @IsOptional()
+  ctaUrl?: string;
+
+  @ApiPropertyOptional({ example: 'INSTAGRAM', default: 'INSTAGRAM' })
+  @IsString()
+  @IsOptional()
+  platform?: string;
+
+  @ApiPropertyOptional({ example: 'ENGAGEMENT', default: 'ENGAGEMENT' })
+  @IsString()
+  @IsOptional()
+  objective?: string;
+
+  @ApiPropertyOptional({ example: 10, default: 0 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  priority?: number;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsBoolean()
+  @IsOptional()
+  isPublished?: boolean;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ example: '2026-08-27T00:00:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  startAt?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-30T23:59:59.000Z' })
+  @IsDateString()
+  @IsOptional()
+  endAt?: string;
+
+  @ApiPropertyOptional({ description: 'Target customer ID if Super Admin overrides context' })
+  @IsOptional()
+  customerId?: number | string;
+
+  @ApiPropertyOptional({ description: 'Additional structured JSON metadata' })
+  @IsOptional()
+  metadata?: any;
+}
+
+export class UpdateTrendingContentDto {
+  @ApiPropertyOptional({ example: 'Summer Reel Campaign 2026' })
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @ApiPropertyOptional({ example: 'Updated short-form reel script' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ enum: TrendingCategory })
+  @IsEnum(TrendingCategory)
+  @IsOptional()
+  category?: TrendingCategory;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/thumbnails/summer2.jpg' })
+  @IsString()
+  @IsOptional()
+  thumbnailUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/videos/summer2.mp4' })
+  @IsString()
+  @IsOptional()
+  mediaUrl?: string;
+
+  @ApiPropertyOptional({ example: 'Learn More' })
+  @IsString()
+  @IsOptional()
+  ctaText?: string;
+
+  @ApiPropertyOptional({ example: 'https://instagram.com/p/updated' })
+  @IsString()
+  @IsOptional()
+  ctaUrl?: string;
+
+  @ApiPropertyOptional({ example: 'INSTAGRAM' })
+  @IsString()
+  @IsOptional()
+  platform?: string;
+
+  @ApiPropertyOptional({ example: 'SALES' })
+  @IsString()
+  @IsOptional()
+  objective?: string;
+
+  @ApiPropertyOptional({ example: 20 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  priority?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  isPublished?: boolean;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({ example: '2026-08-27T00:00:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  startAt?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-30T23:59:59.000Z' })
+  @IsDateString()
+  @IsOptional()
+  endAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  metadata?: any;
+}
+
+export class QueryTrendingDto {
+  @ApiPropertyOptional({ enum: TrendingCategory })
+  @IsEnum(TrendingCategory)
+  @IsOptional()
+  category?: TrendingCategory;
+
+  @ApiPropertyOptional({ example: 'summer' })
+  @IsString()
+  @IsOptional()
+  search?: string;
+
+  @ApiPropertyOptional({ example: 'true' })
+  @IsOptional()
+  isPublished?: string | boolean;
+
+  @ApiPropertyOptional({ example: 'true' })
+  @IsOptional()
+  isActive?: string | boolean;
+
+  @ApiPropertyOptional({ example: 1, default: 1 })
+  @IsOptional()
+  page?: number | string;
+
+  @ApiPropertyOptional({ example: 20, default: 20 })
+  @IsOptional()
+  limit?: number | string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  customerId?: number | string;
+}
+
+export class UpdatePublishStatusDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isPublished: boolean;
+}
+
+export class UpdateActiveStatusDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  isActive: boolean;
+}

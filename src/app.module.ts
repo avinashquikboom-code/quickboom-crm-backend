@@ -35,6 +35,7 @@ import { ClaimModule } from './modules/claim/claim.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
+import { TrendingModule } from './modules/trending/trending.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -78,6 +79,7 @@ import { AppController } from './app.controller';
     ShiftModule,
     LoanModule,
     ClaimModule,
+    TrendingModule,
   ],
   controllers: [AppController],
 })

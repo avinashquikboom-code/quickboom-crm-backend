@@ -79,6 +79,7 @@ model Customer {
   monthlySchedules         MonthlySchedule[]
   customPlanOrders         CustomPlanOrder[]
   installments             SubscriptionInstallment[]
+  trendingContents         TrendingContent[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -223,6 +224,7 @@ model User {
   ticketComments    TicketComment[]
   customer          Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userRoles         UserRole[]
+  createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
 
   @@index([customerId])
   @@index([email])
@@ -2187,6 +2189,45 @@ model PaymentSetting {
   updatedAt             DateTime @updatedAt
 
   @@map("payment_settings")
+}
+
+enum TrendingCategory {
+  REEL
+  STORY
+  OFFER
+  HIGH_ROI_AD
+}
+
+model TrendingContent {
+  id            Int              @id @default(autoincrement())
+  customerId    Int?
+  customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  category      TrendingCategory
+  thumbnailUrl  String?
+  mediaUrl      String?
+  ctaText       String?
+  ctaUrl        String?
+  platform      String?          @default("INSTAGRAM")
+  objective     String?          @default("ENGAGEMENT")
+  priority      Int              @default(0)
+  isPublished   Boolean          @default(true)
+  isActive      Boolean          @default(true)
+  startAt       DateTime?
+  endAt         DateTime?
+  createdBy     Int?
+  createdByUser User?            @relation("CreatedTrendingContents", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  deletedAt     DateTime?
+
+  @@index([customerId, isActive, isPublished])
+  @@index([category])
+  @@index([priority])
+  @@index([deletedAt])
+  @@map("trending_contents")
 }
 
 
