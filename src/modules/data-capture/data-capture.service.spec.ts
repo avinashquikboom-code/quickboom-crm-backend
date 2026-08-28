@@ -93,7 +93,7 @@ describe('DataCaptureService', () => {
         limit: 20,
         status: 'ALL',
         source: 'ALL',
-      });
+      }, { role: 'SUPER_ADMIN' });  // SUPER_ADMIN context — no customerId filter
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
@@ -174,7 +174,7 @@ describe('DataCaptureService', () => {
         limit: 20,
         status: 'VALIDATED',
         source: 'GOOGLE_PLACES',
-      });
+      }, { role: 'CUSTOMER', customerId: 1 });  // normal tenant user
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {

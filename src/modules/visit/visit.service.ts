@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class VisitService {
@@ -31,28 +32,27 @@ export class VisitService {
   }
 
   async getMetrics(customerId: number | string | undefined, user?: any) {
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
 
-    const numCustomerId = await this.resolveCustomerId(customerId || user?.customerId);
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
 
     const baseWhere: any = {};
-    if (!isSuperAdmin) {
-      if (numCustomerId !== undefined && numCustomerId > 0) {
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         baseWhere.customerId = numCustomerId;
-      } else {
-        baseWhere.customerId = 0;
       }
-    } else if (numCustomerId !== undefined && numCustomerId > 0) {
-      baseWhere.customerId = numCustomerId;
+      // else: SUPER_ADMIN — no customerId filter, full platform view
+    } else {
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
+      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      baseWhere.customerId = effectiveCustomerId;
     }
 
     const [todayVisits, upcoming, completed, cancelled] = await Promise.all([
@@ -101,25 +101,23 @@ export class VisitService {
     companyId?: string,
     user?: any,
   ) {
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
-
-    const numCustomerId = await this.resolveCustomerId(customerId || user?.customerId);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
     const skip = (page - 1) * limit;
     const where: any = {};
 
-    if (!isSuperAdmin) {
-      if (numCustomerId !== undefined && numCustomerId > 0) {
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         where.customerId = numCustomerId;
-      } else {
-        where.customerId = 0;
       }
-    } else if (numCustomerId !== undefined && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      // else: SUPER_ADMIN — no customerId filter, full platform view
+    } else {
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
+      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      where.customerId = effectiveCustomerId;
     }
 
     if (status && (status as any) !== 'ALL') where.status = status;

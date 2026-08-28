@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDealDto, UpdateDealDto, UpdateDealStageDto } from './dto/deal.dto';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class DealService {
@@ -70,23 +71,22 @@ export class DealService {
   }
 
   async getMetrics(customerId: number | string | undefined, user?: any) {
-    const numCustomerId = Number(customerId || user?.customerId);
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const numCustomerId = Number(customerId);
+    const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
     const baseWhere: any = { deletedAt: null };
-    if (!isSuperAdmin) {
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         baseWhere.customerId = numCustomerId;
-      } else {
-        baseWhere.customerId = 0;
       }
-    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      baseWhere.customerId = numCustomerId;
+      // else: SUPER_ADMIN — no customerId filter, full platform view
+    } else {
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
+      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      baseWhere.customerId = effectiveCustomerId;
     }
 
     const [total, open, won, lost, allDeals] = await Promise.all([
@@ -123,13 +123,9 @@ export class DealService {
     query: { pipelineId?: number | string; stageId?: number | string; search?: string; assignedToId?: string; status?: string; page?: number; limit?: number },
     user?: any,
   ) {
-    const numCustomerId = Number(customerId || user?.customerId);
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const numCustomerId = Number(customerId);
+    const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -137,14 +133,17 @@ export class DealService {
 
     const where: any = { deletedAt: null };
 
-    if (!isSuperAdmin) {
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         where.customerId = numCustomerId;
-      } else {
-        where.customerId = 0;
       }
-    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      // else: SUPER_ADMIN — no customerId filter, full platform view
+    } else {
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
+      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      where.customerId = effectiveCustomerId;
     }
 
     if (query.pipelineId && query.pipelineId !== 'ALL') where.pipelineId = Number(query.pipelineId);
