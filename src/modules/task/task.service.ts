@@ -85,8 +85,9 @@ export class TaskService {
     return employee;
   }
 
-  async getMetrics(customerId: number | string) {
+  async getMetrics(customerId?: number | string) {
     const numCustomerId = Number(customerId);
+    const customerFilter = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
     const now = new Date();
 
     const [
@@ -102,25 +103,25 @@ export class TaskService {
       low,
       allTasks,
     ] = await Promise.all([
-      this.prisma.task.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, status: TaskStatus.PENDING, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, status: TaskStatus.IN_PROGRESS, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, status: TaskStatus.PENDING, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, status: TaskStatus.IN_PROGRESS, deletedAt: null } }),
       this.prisma.task.count({
         where: {
-          customerId: numCustomerId,
+          ...customerFilter,
           status: { in: [TaskStatus.SUBMITTED, TaskStatus.UNDER_REVIEW] },
           deletedAt: null,
         },
       }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, status: TaskStatus.COMPLETED, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, status: TaskStatus.REJECTED, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, priority: TaskPriority.URGENT, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, priority: TaskPriority.HIGH, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, priority: TaskPriority.MEDIUM, deletedAt: null } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, priority: TaskPriority.LOW, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, status: TaskStatus.COMPLETED, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, status: TaskStatus.REJECTED, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, priority: TaskPriority.URGENT, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, priority: TaskPriority.HIGH, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, priority: TaskPriority.MEDIUM, deletedAt: null } }),
+      this.prisma.task.count({ where: { ...customerFilter, priority: TaskPriority.LOW, deletedAt: null } }),
       this.prisma.task.findMany({
         where: {
-          customerId: numCustomerId,
+          ...customerFilter,
           deletedAt: null,
           status: { notIn: [TaskStatus.COMPLETED, TaskStatus.CANCELLED] },
           dueAt: { not: null },
@@ -254,7 +255,7 @@ export class TaskService {
   }
 
   async findAll(
-    customerId: number | string,
+    customerId: number | string | undefined,
     query: {
       status?: string;
       employeeId?: string;
@@ -272,7 +273,10 @@ export class TaskService {
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId, deletedAt: null };
+    const where: any = { deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
 
     if (query.status && query.status !== 'ALL') {
       if (query.status === 'UNDER_REVIEW') {
@@ -388,11 +392,16 @@ export class TaskService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const task = await this.prisma.task.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         employee: {
           include: {

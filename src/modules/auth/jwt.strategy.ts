@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -7,6 +7,8 @@ import { RoleType } from '@prisma/client';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
+  private readonly logger = new Logger(JwtStrategy.name);
+
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
@@ -23,6 +25,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const userId = Number(rawUserId);
 
     if (!userId || isNaN(userId)) {
+      this.logger.warn('[JWT_STRATEGY] Token rejected: Missing or invalid subject ID');
       throw new UnauthorizedException('Invalid token payload: missing subject');
     }
 
@@ -46,29 +49,72 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user || !user.isActive || user.deletedAt) {
+      this.logger.warn(`[JWT_STRATEGY] User ${userId} is inactive, deleted, or missing`);
       throw new UnauthorizedException('User account inactive or missing');
     }
 
-    const roles: string[] = user.userRoles.map((ur) => ur.role.type);
+    const roles: string[] = (user.userRoles || [])
+      .map((ur) => ur.role?.type || ur.role?.name)
+      .filter(Boolean);
 
-    // Fallback: If no explicit userRoles but user is platform super-admin (no customerId assigned)
-    if (roles.length === 0 && user.customerId === null) {
+    // Platform super-admin resolution
+    const isSuperAdmin = user.userRoles?.some(
+      (ur) =>
+        ur.role?.type === RoleType.SUPER_ADMIN ||
+        ur.roleId === 2 ||
+        ur.role?.name?.toUpperCase() === 'SUPER ADMINISTRATOR' ||
+        ur.role?.name?.toUpperCase() === 'SUPER_ADMIN' ||
+        ur.role?.name?.toUpperCase() === 'SUPER ADMIN',
+    );
+
+    if (isSuperAdmin && !roles.includes(RoleType.SUPER_ADMIN) && !roles.includes('SUPER_ADMIN')) {
       roles.push(RoleType.SUPER_ADMIN);
     }
 
     const permissionsMap = new Map();
 
-    user.userRoles.forEach((ur) => {
-      ur.role.rolePermissions.forEach((rp) => {
-        const key = `${rp.permission.module}:${rp.permission.action}`;
-        permissionsMap.set(key, {
-          module: rp.permission.module,
-          action: rp.permission.action,
+    (user.userRoles || []).forEach((ur) => {
+      if (ur.role?.rolePermissions) {
+        ur.role.rolePermissions.forEach((rp) => {
+          if (rp.permission) {
+            const key = `${rp.permission.module}:${rp.permission.action}`;
+            permissionsMap.set(key, {
+              module: rp.permission.module,
+              action: rp.permission.action,
+            });
+          }
         });
-      });
+      }
     });
 
-    const primaryRole = roles[0] || (user.customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
+    let primaryRole: string;
+    if (isSuperAdmin) {
+      primaryRole = 'SUPER_ADMIN';
+    } else if (
+      user.userRoles?.some(
+        (ur) =>
+          ur.role?.type === RoleType.CUSTOMER_ADMIN ||
+          ur.roleId === 5 ||
+          ur.role?.type === RoleType.TENANT_ADMIN ||
+          ur.role?.name?.toUpperCase().includes('COMPANY_ADMIN') ||
+          ur.role?.name?.toUpperCase().includes('CUSTOMER ADMINISTRATOR') ||
+          ur.role?.name?.toUpperCase().includes('ADMIN'),
+      )
+    ) {
+      primaryRole = 'COMPANY_ADMIN';
+    } else if (
+      user.userRoles?.some(
+        (ur) =>
+          ur.roleId === 4 ||
+          ur.role?.name?.toUpperCase().includes('EMPLOYEE') ||
+          ur.role?.type === RoleType.SALES_EXECUTIVE ||
+          ur.role?.type === RoleType.SALES_MANAGER,
+      )
+    ) {
+      primaryRole = 'EMPLOYEE';
+    } else {
+      primaryRole = user.customerId ? 'CUSTOMER' : 'CUSTOMER';
+    }
 
     return {
       id: user.id,
@@ -82,3 +128,4 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 }
+

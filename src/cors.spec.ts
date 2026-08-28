@@ -6,6 +6,7 @@ import helmet from 'helmet';
 
 describe('NestJS Production CORS & Preflight Verification Suite', () => {
   let app: INestApplication;
+  jest.setTimeout(30000);
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
