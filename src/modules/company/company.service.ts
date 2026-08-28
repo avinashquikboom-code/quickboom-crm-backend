@@ -6,8 +6,13 @@ import { CreateCompanyDto, UpdateCompanyDto, CheckDuplicateCompanyDto } from './
 export class CompanyService {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: number | string, dto: CreateCompanyDto) {
-    const numCustomerId = Number(customerId);
+  async create(customerId: number | string | undefined, dto: CreateCompanyDto) {
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true, deletedAt: null } });
+      numCustomerId = defaultCustomer?.id || 1;
+    }
+
     return this.prisma.company.create({
       data: {
         customerId: numCustomerId,
@@ -39,23 +44,39 @@ export class CompanyService {
     });
   }
 
-  async getMetrics(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  async getMetrics(customerId: number | string | undefined, user?: any) {
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const baseWhere: any = { deletedAt: null };
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        baseWhere.customerId = numCustomerId;
+      } else {
+        baseWhere.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      baseWhere.customerId = numCustomerId;
+    }
+
     const [total, active, newCompanies, withDeals] = await Promise.all([
-      this.prisma.company.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.company.count({ where: { customerId: numCustomerId, status: 'ACTIVE', deletedAt: null } }),
+      this.prisma.company.count({ where: { ...baseWhere } }),
+      this.prisma.company.count({ where: { ...baseWhere, status: 'ACTIVE' } }),
       this.prisma.company.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-          deletedAt: null,
         },
       }),
       this.prisma.company.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           deals: { some: { isWon: false, isLost: false, deletedAt: null } },
-          deletedAt: null,
         },
       }),
     ]);
@@ -68,16 +89,21 @@ export class CompanyService {
     };
   }
 
-  async checkDuplicate(customerId: number | string, dto: CheckDuplicateCompanyDto) {
+  async checkDuplicate(customerId: number | string | undefined, dto: CheckDuplicateCompanyDto) {
     const numCustomerId = Number(customerId);
     const placeId = (dto.googlePlaceId || '').trim();
     const cleanName = (dto.name || '').toLowerCase().trim();
     const normPhone = (dto.phone || '').replace(/\D/g, '');
     const cleanEmail = (dto.email || '').toLowerCase().trim();
 
+    const where: any = { deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     if (placeId) {
       const match = await this.prisma.company.findFirst({
-        where: { customerId: numCustomerId, googlePlaceId: placeId, deletedAt: null },
+        where: { ...where, googlePlaceId: placeId },
       });
       if (match) {
         return { isDuplicate: true, matchReason: 'Google Place ID match', existingCompany: match };
@@ -85,7 +111,7 @@ export class CompanyService {
     }
 
     const companies = await this.prisma.company.findMany({
-      where: { customerId: numCustomerId, deletedAt: null },
+      where,
     });
 
     for (const comp of companies) {
@@ -110,25 +136,45 @@ export class CompanyService {
   }
 
   async findAll(
-    customerId: number | string,
+    customerId: number | string | undefined,
     query: { page?: number; limit?: number; search?: string; industry?: string; status?: string },
+    user?: any,
   ) {
-    const numCustomerId = Number(customerId);
-    const page = query.page || 1;
-    const limit = query.limit || 50;
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId, deletedAt: null };
-    if (query.industry && query.industry !== 'ALL') where.industry = query.industry;
-    if (query.status && query.status !== 'ALL') where.status = query.status;
+    const where: any = { deletedAt: null };
 
-    if (query.search) {
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      } else {
+        where.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
+    if (query.industry && query.industry.toUpperCase() !== 'ALL') where.industry = query.industry;
+    if (query.status && query.status.toUpperCase() !== 'ALL') where.status = query.status;
+
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
       where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { email: { contains: query.search, mode: 'insensitive' } },
-        { phone: { contains: query.search, mode: 'insensitive' } },
-        { city: { contains: query.search, mode: 'insensitive' } },
-        { industry: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+        { city: { contains: s, mode: 'insensitive' } },
+        { industry: { contains: s, mode: 'insensitive' } },
       ];
     }
 
@@ -149,15 +195,21 @@ export class CompanyService {
 
     return {
       data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const company = await this.prisma.company.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         contacts: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
         deals: {
@@ -179,7 +231,7 @@ export class CompanyService {
     return company;
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateCompanyDto) {
+  async update(customerId: number | string | undefined, id: number | string, dto: UpdateCompanyDto) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     await this.findOne(numCustomerId, numId);
@@ -188,7 +240,7 @@ export class CompanyService {
       where: { id: numId },
       data: {
         name: dto.name,
-        domain: dto.domain || (dto.website ? dto.website.replace(/^https?:\/\//, '') : undefined),
+        domain: dto.domain,
         website: dto.website,
         industry: dto.industry,
         category: dto.category,
@@ -215,7 +267,7 @@ export class CompanyService {
     });
   }
 
-  async delete(customerId: number | string, id: number | string) {
+  async delete(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     await this.findOne(numCustomerId, numId);

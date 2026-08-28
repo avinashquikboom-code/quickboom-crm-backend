@@ -15,6 +15,7 @@ import { CreateCompanyDto, UpdateCompanyDto, CheckDuplicateCompanyDto } from './
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Companies')
 @ApiBearerAuth()
@@ -37,8 +38,8 @@ export class CompanyController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics for company accounts' })
-  async getMetrics(@CurrentCustomer() customerId: string) {
-    return this.companyService.getMetrics(customerId);
+  async getMetrics(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.companyService.getMetrics(customerId, user);
   }
 
   @Get()
@@ -50,19 +51,24 @@ export class CompanyController {
   @ApiQuery({ name: 'status', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('industry') industry?: string,
     @Query('status') status?: string,
   ) {
-    return this.companyService.findAll(customerId, {
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 50,
-      search,
-      industry,
-      status,
-    });
+    return this.companyService.findAll(
+      customerId,
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 50,
+        search,
+        industry,
+        status,
+      },
+      user,
+    );
   }
 
   @Get(':id')

@@ -6,8 +6,13 @@ import { CreateContactDto, UpdateContactDto, CheckDuplicateContactDto } from './
 export class ContactService {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: number | string, dto: CreateContactDto) {
-    const numCustomerId = Number(customerId);
+  async create(customerId: number | string | undefined, dto: CreateContactDto) {
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true, deletedAt: null } });
+      numCustomerId = defaultCustomer?.id || 1;
+    }
+
     return this.prisma.contact.create({
       data: {
         customerId: numCustomerId,
@@ -34,23 +39,39 @@ export class ContactService {
     });
   }
 
-  async getMetrics(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  async getMetrics(customerId: number | string | undefined, user?: any) {
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const baseWhere: any = { deletedAt: null };
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        baseWhere.customerId = numCustomerId;
+      } else {
+        baseWhere.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      baseWhere.customerId = numCustomerId;
+    }
+
     const [total, active, newContacts, withVisits] = await Promise.all([
-      this.prisma.contact.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.contact.count({ where: { customerId: numCustomerId, status: 'ACTIVE', deletedAt: null } }),
+      this.prisma.contact.count({ where: { ...baseWhere } }),
+      this.prisma.contact.count({ where: { ...baseWhere, status: 'ACTIVE' } }),
       this.prisma.contact.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-          deletedAt: null,
         },
       }),
       this.prisma.contact.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           visits: { some: { status: 'SCHEDULED' } },
-          deletedAt: null,
         },
       }),
     ]);
@@ -63,13 +84,18 @@ export class ContactService {
     };
   }
 
-  async checkDuplicate(customerId: number | string, dto: CheckDuplicateContactDto) {
+  async checkDuplicate(customerId: number | string | undefined, dto: CheckDuplicateContactDto) {
     const numCustomerId = Number(customerId);
     const cleanEmail = (dto.email || '').toLowerCase().trim();
     const normPhone = (dto.phone || '').replace(/\D/g, '');
 
+    const where: any = { deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const candidates = await this.prisma.contact.findMany({
-      where: { customerId: numCustomerId, deletedAt: null },
+      where,
       include: { company: true },
     });
 
@@ -93,28 +119,52 @@ export class ContactService {
   }
 
   async findAll(
-    customerId: number | string,
+    customerId: number | string | undefined,
     query: { page?: number; limit?: number; search?: string; type?: string; companyId?: string; status?: string; assignedToId?: string },
+    user?: any,
   ) {
-    const numCustomerId = Number(customerId);
-    const page = query.page || 1;
-    const limit = query.limit || 50;
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId, deletedAt: null };
-    if (query.type && query.type !== 'ALL') where.type = query.type;
-    if (query.status && query.status !== 'ALL') where.status = query.status;
-    if (query.companyId && query.companyId !== 'ALL') where.companyId = Number(query.companyId);
-    if (query.assignedToId && query.assignedToId !== 'ALL') where.assignedToId = Number(query.assignedToId);
+    const where: any = { deletedAt: null };
 
-    if (query.search) {
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      } else {
+        where.customerId = 0; // Strict tenant isolation: prevent leakage
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
+    if (query.type && query.type.toUpperCase() !== 'ALL') where.type = query.type as any;
+    if (query.status && query.status.toUpperCase() !== 'ALL') where.status = query.status;
+    if (query.companyId && query.companyId.toUpperCase() !== 'ALL' && !isNaN(Number(query.companyId))) {
+      where.companyId = Number(query.companyId);
+    }
+    if (query.assignedToId && query.assignedToId.toUpperCase() !== 'ALL' && !isNaN(Number(query.assignedToId))) {
+      where.assignedToId = Number(query.assignedToId);
+    }
+
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
       where.OR = [
-        { firstName: { contains: query.search, mode: 'insensitive' } },
-        { lastName: { contains: query.search, mode: 'insensitive' } },
-        { email: { contains: query.search, mode: 'insensitive' } },
-        { phone: { contains: query.search, mode: 'insensitive' } },
-        { mobile: { contains: query.search, mode: 'insensitive' } },
-        { designation: { contains: query.search, mode: 'insensitive' } },
+        { firstName: { contains: s, mode: 'insensitive' } },
+        { lastName: { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+        { mobile: { contains: s, mode: 'insensitive' } },
+        { designation: { contains: s, mode: 'insensitive' } },
       ];
     }
 
@@ -136,15 +186,21 @@ export class ContactService {
 
     return {
       data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const contact = await this.prisma.contact.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         company: true,
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -167,7 +223,7 @@ export class ContactService {
     return contact;
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateContactDto) {
+  async update(customerId: number | string | undefined, id: number | string, dto: UpdateContactDto) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     await this.findOne(numCustomerId, numId);
@@ -195,7 +251,7 @@ export class ContactService {
     });
   }
 
-  async delete(customerId: number | string, id: number | string) {
+  async delete(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     await this.findOne(numCustomerId, numId);

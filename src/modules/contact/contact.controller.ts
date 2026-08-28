@@ -15,6 +15,7 @@ import { CreateContactDto, UpdateContactDto, CheckDuplicateContactDto } from './
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
@@ -37,8 +38,8 @@ export class ContactController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics for contacts' })
-  async getMetrics(@CurrentCustomer() customerId: string) {
-    return this.contactService.getMetrics(customerId);
+  async getMetrics(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.contactService.getMetrics(customerId, user);
   }
 
   @Get()
@@ -52,6 +53,7 @@ export class ContactController {
   @ApiQuery({ name: 'assignedToId', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
@@ -60,15 +62,19 @@ export class ContactController {
     @Query('status') status?: string,
     @Query('assignedToId') assignedToId?: string,
   ) {
-    return this.contactService.findAll(customerId, {
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 50,
-      search,
-      type,
-      companyId,
-      status,
-      assignedToId,
-    });
+    return this.contactService.findAll(
+      customerId,
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 50,
+        search,
+        type,
+        companyId,
+        status,
+        assignedToId,
+      },
+      user,
+    );
   }
 
   @Get(':id')
