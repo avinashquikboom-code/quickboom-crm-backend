@@ -38,7 +38,7 @@ export class SubscriptionController {
   @Get('customer/installments')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer installment schedule, buffer state, and outstanding balance' })
+  @ApiOperation({ summary: 'Get current customer installment schedule and outstanding balance' })
   async getMyInstallments(@CurrentUser() user: any) {
     const customerId = user?.customerId;
     if (!customerId) {
@@ -132,7 +132,7 @@ export class SubscriptionController {
   @Get('customer/subscriptions/renewal-status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get installment renewal and buffer period status' })
+  @ApiOperation({ summary: 'Get installment renewal status' })
   async getRenewalStatus(@CurrentUser() user: any) {
     const customerId = user?.customerId;
     if (!customerId) {
@@ -145,7 +145,7 @@ export class SubscriptionController {
   @Post('customer/subscriptions/:subscriptionId/renew')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Renew existing installment under active buffer period' })
+  @ApiOperation({ summary: 'Pay or renew existing installment' })
   async renewExistingInstallment(
     @CurrentUser() user: any,
     @Param('subscriptionId') subscriptionId: string,
@@ -232,7 +232,7 @@ export class SubscriptionController {
   @Post('admin/installments/evaluate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Evaluate buffer expiry across all active installments (Admin / Cron)' })
+  @ApiOperation({ summary: 'Evaluate installment expiry across all active installments (Admin / Cron)' })
   async evaluateInstallmentBuffers(@CurrentUser() user: any) {
     if (!isUserSuperAdmin(user)) {
       throw new ForbiddenException('Super Admin permissions required');

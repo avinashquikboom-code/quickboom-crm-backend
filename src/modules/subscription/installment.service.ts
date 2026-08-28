@@ -16,13 +16,13 @@ import {
   InvoiceStatus,
 } from '@prisma/client';
 
-export const DEFAULT_BUFFER_DAYS = 3;
+export const DEFAULT_BUFFER_DAYS = 0;
 
 export const TERMS_CONDITIONS_RENEWAL_FAILED =
   'Under our Terms & Conditions, after the renewal period expires, the previous installment plan cannot be continued and a new plan must be purchased at the applicable full plan price.';
 
 export const TERMS_CONDITIONS_BUFFER_ACTIVE =
-  'Please renew your plan within the buffer period to continue under your current installment plan. If you do not renew within the buffer period, your installment plan will expire and you will need to start a new plan at the applicable full plan price.';
+  'Please complete your installment payment by the due date to continue your plan.';
 
 export interface InstallmentBreakdownItem {
   id: number;
@@ -90,12 +90,10 @@ export class InstallmentService {
   ) {}
 
   /**
-   * Calculates the buffer end date by adding buffer days to the expiry date.
+   * Returns the expiry date without adding buffer days.
    */
-  public calculateBufferEndDate(expiryDate: Date, bufferDays: number = DEFAULT_BUFFER_DAYS): Date {
-    const end = new Date(expiryDate);
-    end.setDate(end.getDate() + bufferDays);
-    return end;
+  public calculateBufferEndDate(expiryDate: Date, bufferDays: number = 0): Date {
+    return new Date(expiryDate);
   }
 
   /**
@@ -109,7 +107,7 @@ export class InstallmentService {
     totalInstallments: number = 2,
     startDate: Date = new Date(),
     installmentDurationDays: number = 30,
-    bufferDays: number = DEFAULT_BUFFER_DAYS,
+    bufferDays: number = 0,
   ): Promise<InstallmentBreakdownItem[]> {
     const numCustId = Number(customerId);
     const numSubId = Number(subscriptionId);
@@ -154,7 +152,7 @@ export class InstallmentService {
       instExpiryDate.setDate(instExpiryDate.getDate() + installmentDurationDays);
 
       const instDueDate = new Date(instStartDate);
-      const instBufferEndDate = this.calculateBufferEndDate(instExpiryDate, bufferDays);
+      const instBufferEndDate = new Date(instExpiryDate);
 
       const isFirstDue = i === 1 && existingPaid.length === 0;
       const initialStatus = isFirstDue
@@ -178,13 +176,13 @@ export class InstallmentService {
           status: initialStatus,
           dueDate: instDueDate,
           expiryDate: instExpiryDate,
-          bufferDays,
+          bufferDays: 0,
           bufferEndDate: instBufferEndDate,
         },
       });
 
       this.logger.log(
-        `[INSTALLMENT_STATUS] customerId: ${numCustId}, subscriptionId: ${numSubId}, installmentNumber: ${i}, expiryDate: ${instExpiryDate.toISOString()}, bufferEndDate: ${instBufferEndDate.toISOString()}, status: ${initialStatus}`,
+        `[INSTALLMENT_STATUS] customerId: ${numCustId}, subscriptionId: ${numSubId}, installmentNumber: ${i}, expiryDate: ${instExpiryDate.toISOString()}, status: ${initialStatus}`,
       );
       createdList.push(inst);
     }
@@ -247,23 +245,11 @@ export class InstallmentService {
     const breakdownItems: InstallmentBreakdownItem[] = installments.map((inst) => {
       const isPaid = inst.status === InstallmentStatus.PAID;
       const isExpiryPassed = now > new Date(inst.expiryDate);
-      const isBufferPassed = now > new Date(inst.bufferEndDate);
-      const isInThisBuffer = isExpiryPassed && !isBufferPassed;
-
-      let remainingDaysInBuffer = 0;
-      if (isInThisBuffer) {
-        remainingDaysInBuffer = Math.max(
-          0,
-          Math.ceil((new Date(inst.bufferEndDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
-        );
-      }
 
       let displayStatus: string = inst.status;
       if (isPaid) {
         displayStatus = 'PAID';
-      } else if (isInThisBuffer) {
-        displayStatus = 'IN_BUFFER';
-      } else if (isBufferPassed) {
+      } else if (isExpiryPassed) {
         displayStatus = 'OVERDUE';
       } else if (inst.status === InstallmentStatus.DUE) {
         displayStatus = 'DUE';
@@ -282,10 +268,10 @@ export class InstallmentService {
         status: inst.status,
         dueDate: inst.dueDate,
         expiryDate: inst.expiryDate,
-        bufferDays: inst.bufferDays,
-        bufferEndDate: inst.bufferEndDate,
-        bufferRemainingDays: remainingDaysInBuffer,
-        isInBuffer: isInThisBuffer,
+        bufferDays: 0,
+        bufferEndDate: inst.expiryDate,
+        bufferRemainingDays: 0,
+        isInBuffer: false,
         isExpired: isExpiryPassed,
         paidAt: inst.paidAt,
         paymentHistoryId: inst.paymentHistoryId,
@@ -310,7 +296,7 @@ export class InstallmentService {
     let statusMessage = 'Your plan is active.';
     let failureMessage: string | null = null;
     let bufferMessage: string | null = null;
-    let termsMessage = TERMS_CONDITIONS_BUFFER_ACTIVE;
+    let termsMessage = 'Please pay the upcoming installment by the due date to maintain uninterrupted plan access.';
     let planStatus = 'ACTIVE';
     let amountRequiredToContinue: number | null = null;
     let amountRequiredToRestart = totalPlanAmount;
@@ -334,13 +320,9 @@ export class InstallmentService {
 
       if (lastPaid) {
         const isLastPaidExpired = now > new Date(lastPaid.expiryDate);
-        const isLastPaidBufferExpired = now > new Date(lastPaid.bufferEndDate);
-
-        bufferStartDate = new Date(lastPaid.expiryDate);
-        bufferEndDate = new Date(lastPaid.bufferEndDate);
 
         this.logger.log(
-          `[RENEWAL_CHECK] customerId: ${numCustomerId}, subscriptionId: ${sub.id}, installmentNumber: ${lastPaid.installmentNumber}, expiryDate: ${lastPaid.expiryDate.toISOString()}, bufferEndDate: ${lastPaid.bufferEndDate.toISOString()}, currentDate: ${now.toISOString()}, isExpired: ${isLastPaidExpired}, isBufferExpired: ${isLastPaidBufferExpired}`,
+          `[RENEWAL_CHECK] customerId: ${numCustomerId}, subscriptionId: ${sub.id}, installmentNumber: ${lastPaid.installmentNumber}, expiryDate: ${lastPaid.expiryDate.toISOString()}, currentDate: ${now.toISOString()}, isExpired: ${isLastPaidExpired}`,
         );
 
         if (!isLastPaidExpired) {
@@ -350,26 +332,8 @@ export class InstallmentService {
           canRenewCurrentPlan = true;
           statusMessage = `Installment ${lastPaid.installmentNumber} active. Installment ${dueInstallment.installmentNumber} due on ${new Date(dueInstallment.dueDate).toLocaleDateString('en-IN')}.`;
           termsMessage = 'Please pay the upcoming installment by the due date to maintain uninterrupted plan access.';
-        } else if (!isLastPaidBufferExpired) {
-          // BUFFER PERIOD ACTIVE
-          isAccessAllowed = true;
-          isCustomerInBuffer = true;
-          canRenewCurrentPlan = true;
-          planStatus = 'BUFFER_PERIOD';
-          bufferRemainingDays =
-            lastPaid.bufferRemainingDays ||
-            Math.max(0, Math.ceil((new Date(lastPaid.bufferEndDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-          const formattedBufferEnd = new Date(lastPaid.bufferEndDate).toLocaleDateString('en-IN', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          });
-
-          statusMessage = `Your plan renewal is pending. You have ${bufferRemainingDays} ${bufferRemainingDays === 1 ? 'day' : 'days'} to renew your plan. Renewal deadline: ${formattedBufferEnd}`;
-          bufferMessage = `Your plan renewal is due. You have a limited buffer period to renew your plan. If you do not renew within the buffer period, your installment plan will expire and you will need to start a new plan at the applicable full plan price. Renewal deadline: ${formattedBufferEnd}`;
-          termsMessage = TERMS_CONDITIONS_BUFFER_ACTIVE;
         } else {
-          // BUFFER PERIOD EXPIRED -> RENEWAL FAILED
+          // EXPIRED -> RENEWAL FAILED
           isAccessAllowed = false;
           isRenewalFailed = true;
           canRenewCurrentPlan = false;
@@ -379,13 +343,13 @@ export class InstallmentService {
 
           statusMessage = 'Plan Status: Renewal Failed. To continue using our services, you must start a new plan.';
           failureMessage =
-            'Your installment plan renewal period has expired. You failed to renew your plan within the allowed buffer period. To continue using our services, you must start a new plan.';
+            'Your installment plan period has expired. To continue using our services, you must start a new plan.';
           termsMessage = TERMS_CONDITIONS_RENEWAL_FAILED;
         }
       } else {
         // First installment not yet paid
-        const isFirstBufferExpired = now > new Date(dueInstallment.bufferEndDate);
-        if (isFirstBufferExpired) {
+        const isFirstExpired = now > new Date(dueInstallment.expiryDate);
+        if (isFirstExpired) {
           isAccessAllowed = false;
           isRenewalFailed = true;
           canRenewCurrentPlan = false;
@@ -806,7 +770,6 @@ export class InstallmentService {
       const inst1Expiry = new Date(now);
       inst1Expiry.setDate(inst1Expiry.getDate() + 30);
       const inst1BufferEnd = new Date(inst1Expiry);
-      inst1BufferEnd.setDate(inst1BufferEnd.getDate() + DEFAULT_BUFFER_DAYS);
 
       await tx.subscriptionInstallment.create({
         data: {
@@ -821,7 +784,7 @@ export class InstallmentService {
           status: InstallmentStatus.PAID,
           dueDate: now,
           expiryDate: inst1Expiry,
-          bufferDays: DEFAULT_BUFFER_DAYS,
+          bufferDays: 0,
           bufferEndDate: inst1BufferEnd,
           paidAt: now,
           paymentHistoryId: payment.id,
@@ -830,12 +793,11 @@ export class InstallmentService {
         },
       });
 
-      // Installment 2 (Second 50% Installment scheduled with 3-day buffer)
+      // Installment 2 (Second 50% Installment)
       const inst2Start = new Date(inst1Expiry);
       const inst2Expiry = new Date(inst2Start);
       inst2Expiry.setDate(inst2Expiry.getDate() + 30);
       const inst2BufferEnd = new Date(inst2Expiry);
-      inst2BufferEnd.setDate(inst2BufferEnd.getDate() + DEFAULT_BUFFER_DAYS);
 
       await tx.subscriptionInstallment.create({
         data: {
@@ -850,7 +812,7 @@ export class InstallmentService {
           status: InstallmentStatus.DUE,
           dueDate: inst2Start,
           expiryDate: inst2Expiry,
-          bufferDays: DEFAULT_BUFFER_DAYS,
+          bufferDays: 0,
           bufferEndDate: inst2BufferEnd,
         },
       });
@@ -1135,7 +1097,7 @@ export class InstallmentService {
   }
 
   /**
-   * Periodic scheduler to evaluate buffer expiry and send upcoming 3-day reminders.
+   * Periodic scheduler to evaluate installment expiry and send upcoming 3-day reminders.
    */
   async evaluateAllActiveInstallments(): Promise<{ evaluatedCount: number; overdueCount: number; remindersSent: number }> {
     const now = new Date();
@@ -1150,8 +1112,8 @@ export class InstallmentService {
     let overdueCount = 0;
 
     for (const inst of unpaidInstallments) {
-      const isBufferPassed = now > new Date(inst.bufferEndDate);
-      if (isBufferPassed && inst.status !== InstallmentStatus.OVERDUE) {
+      const isExpiryPassed = now > new Date(inst.expiryDate);
+      if (isExpiryPassed && inst.status !== InstallmentStatus.OVERDUE) {
         await this.prisma.subscriptionInstallment.update({
           where: { id: inst.id },
           data: { status: InstallmentStatus.OVERDUE },
@@ -1164,7 +1126,7 @@ export class InstallmentService {
 
         overdueCount++;
         this.logger.warn(
-          `[INSTALLMENT_BUFFER_EXPIRED] Customer #${inst.customerId} Subscription #${inst.subscriptionId} Installment #${inst.installmentNumber} marked OVERDUE / RENEWAL_FAILED.`,
+          `[INSTALLMENT_EXPIRED] Customer #${inst.customerId} Subscription #${inst.subscriptionId} Installment #${inst.installmentNumber} marked OVERDUE / RENEWAL_FAILED.`,
         );
       }
     }

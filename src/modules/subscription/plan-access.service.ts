@@ -127,20 +127,13 @@ export class PlanAccessService {
       return null as any;
     }
 
-    // 2. Check expiration & configurable buffer period (default 3 days)
-    const bufferDays = 3;
+    // 2. Check expiration
     const subEndDate = sub.endDate ? new Date(sub.endDate) : null;
-    const bufferEndDate = subEndDate ? new Date(subEndDate.getTime() + bufferDays * 24 * 60 * 60 * 1000) : null;
-
     const isDirectExpired = sub.status === SubscriptionStatus.EXPIRED || (subEndDate ? now > subEndDate : false);
-    const isBufferExpired = bufferEndDate ? now > bufferEndDate : isDirectExpired;
-    const isInBuffer = isDirectExpired && !isBufferExpired;
-
-    // During buffer period, existing plan access continues!
-    const isExpired = sub.status === SubscriptionStatus.EXPIRED || isBufferExpired;
+    const isExpired = isDirectExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
-    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE && !isInBuffer;
-    const isActive = (sub.status === SubscriptionStatus.ACTIVE || isInBuffer) && !isExpired && !isCanceled;
+    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE || isDirectExpired;
+    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined
@@ -291,14 +284,12 @@ export class PlanAccessService {
       scheduleUnlockStatus = 'UNLOCKED_FULL';
       unlockedDays = 30;
     } else if (isFirstInstallmentPaid) {
-      paymentStatus = isInBuffer ? 'IN_BUFFER_PERIOD' : 'FIRST_INSTALLMENT_PAID';
+      paymentStatus = 'FIRST_INSTALLMENT_PAID';
       scheduleUnlockStatus = 'UNLOCKED_15_DAYS';
       unlockedDays = 15;
     }
 
-    const bufferRemainingDays = isInBuffer && bufferEndDate
-      ? Math.max(0, Math.ceil((bufferEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-      : 0;
+    const bufferRemainingDays = 0;
 
     const result: EffectivePlan = {
       customerId: numCustomerId,
@@ -337,14 +328,14 @@ export class PlanAccessService {
         isFullyPaid,
         isFirstInstallmentPaid,
         paymentStatus,
-        isRenewalFailed: isDirectExpired && isBufferExpired && !isFullyPaid,
-        canRenewCurrentPlan: !isBufferExpired,
+        isRenewalFailed: isDirectExpired && !isFullyPaid,
+        canRenewCurrentPlan: !isDirectExpired,
         amountRequiredToRestart: fullTotalAmount,
-        termsMessage: isDirectExpired && isBufferExpired
-          ? 'Under our Terms & Conditions, after the renewal period expires, the previous installment plan cannot be continued and a new plan must be purchased at the applicable full plan price.'
-          : 'Please renew your plan within the buffer period to continue under your current installment plan.',
-        failureMessage: isDirectExpired && isBufferExpired
-          ? 'Your installment plan renewal period has expired. You failed to renew your plan within the allowed buffer period. To continue using our services, you must start a new plan.'
+        termsMessage: isDirectExpired
+          ? 'Under our Terms & Conditions, after the plan expires, a new plan must be purchased at the applicable full plan price.'
+          : 'Please complete your second installment before the due date.',
+        failureMessage: isDirectExpired
+          ? 'Your installment plan period has expired. To continue using our services, you must start a new plan.'
           : null,
       },
       usage: {
