@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
@@ -239,30 +240,35 @@ export class DataCaptureService {
     user?: any,
   ) {
     try {
-      const numCustomerId = Number(customerId || user?.customerId);
-      const isSuperAdmin =
-        user?.role === 'SUPER_ADMIN' ||
-        user?.roleType === 'SUPER_ADMIN' ||
-        user?.roles?.includes('SUPER_ADMIN') ||
-        user?.roles?.includes('Super Administrator') ||
-        customerId === undefined;
+      const isSuperAdmin = isUserSuperAdmin(user);
+      // SUPER_ADMIN may optionally pass an explicit target customerId via query param / header
+      // (CustomerGuard resolves that into request.customerId; stays undefined for platform-wide view)
+      const numCustomerId = Number(customerId);
+      const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       const skip = (page - 1) * limit;
 
+      // Build tenant-scoped where clause:
+      // - SUPER_ADMIN, no explicit customerId => see ALL records (no filter)
+      // - SUPER_ADMIN, explicit customerId   => scoped to that customer
+      // - Normal user                        => strictly scoped to their customerId
       const where: any = {
         deletedAt: null,
       };
 
-      if (!isSuperAdmin) {
-        if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      if (isSuperAdmin) {
+        if (hasExplicitCustomer) {
           where.customerId = numCustomerId;
-        } else {
-          where.customerId = 0;
         }
-      } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        // else: SUPER_ADMIN — no customerId filter, full platform view
+      } else {
+        const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
+        if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
+          throw new UnauthorizedException('User is not associated with any customer account');
+        }
+        where.customerId = effectiveCustomerId;
       }
 
       if (query.search && query.search.trim()) {

@@ -32,13 +32,14 @@ describe('ContactService', () => {
   });
 
   describe('findAll', () => {
-    it('omits customerId from where clause when customerId is undefined (Super Admin context)', async () => {
+    it('omits customerId from where clause when customerId is undefined (Super Admin global view)', async () => {
       mockPrisma.contact.count.mockResolvedValue(2);
       mockPrisma.contact.findMany.mockResolvedValue([
         { id: 1, firstName: 'John', lastName: 'Doe', customerId: 101 },
         { id: 2, firstName: 'Jane', lastName: 'Smith', customerId: 102 },
       ]);
 
+      // SUPER_ADMIN with no explicit customerId: decorator returns undefined
       const result = await service.findAll(undefined, { page: 1, limit: 50 }, { role: 'SUPER_ADMIN' });
 
       expect(mockPrisma.contact.count).toHaveBeenCalledWith({
@@ -55,6 +56,22 @@ describe('ContactService', () => {
 
       expect(result.data).toHaveLength(2);
       expect(result.meta.total).toBe(2);
+    });
+
+    it('scopes SUPER_ADMIN to explicit customerId when one is provided', async () => {
+      mockPrisma.contact.count.mockResolvedValue(1);
+      mockPrisma.contact.findMany.mockResolvedValue([
+        { id: 1, firstName: 'Admin', lastName: 'User', customerId: 3 },
+      ]);
+
+      // SUPER_ADMIN with explicit target customer
+      const result = await service.findAll('3', { page: 1, limit: 20 }, { role: 'SUPER_ADMIN' });
+
+      expect(mockPrisma.contact.count).toHaveBeenCalledWith({
+        where: { customerId: 3, deletedAt: null },
+      });
+
+      expect(result.data).toHaveLength(1);
     });
 
     it('scopes query strictly to customerId when customerId is provided (Tenant context)', async () => {
@@ -81,13 +98,19 @@ describe('ContactService', () => {
   });
 
   describe('getMetrics', () => {
-    it('allows Super Admin to view platform wide metrics without customerId crash', async () => {
+    it('allows Super Admin to view platform wide metrics without customerId filter', async () => {
       mockPrisma.contact.count.mockResolvedValue(10);
 
+      // SUPER_ADMIN with no explicit customer → global platform view
       const metrics = await service.getMetrics(undefined, { role: 'SUPER_ADMIN' });
 
       expect(metrics.total).toBe(10);
       expect(metrics.active).toBe(10);
+
+      // Verify no customerId was set in the where clause
+      expect(mockPrisma.contact.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { deletedAt: null } }),
+      );
     });
   });
 });

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContactDto, UpdateContactDto, CheckDuplicateContactDto } from './dto/contact.dto';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class ContactService {
@@ -40,22 +41,27 @@ export class ContactService {
   }
 
   async getMetrics(customerId: number | string | undefined, user?: any) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    // Explicit customerId override: SUPER_ADMIN may pass a target customer via query/header
     const numCustomerId = Number(customerId || user?.customerId);
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
+    // Build the base where clause:
+    // - SUPER_ADMIN with no explicit target => no customerId filter (platform-wide view)
+    // - SUPER_ADMIN with explicit target => scoped to that customer
+    // - Non-SUPER_ADMIN => strictly scoped to their own customerId
     const baseWhere: any = { deletedAt: null };
-    if (!isSuperAdmin) {
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         baseWhere.customerId = numCustomerId;
-      } else {
-        baseWhere.customerId = 0;
       }
-    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      // else: no filter — SUPER_ADMIN sees all
+    } else {
+      // Non-SUPER_ADMIN: customerId is mandatory
+      if (!hasExplicitCustomer) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
       baseWhere.customerId = numCustomerId;
     }
 
@@ -123,28 +129,34 @@ export class ContactService {
     query: { page?: number; limit?: number; search?: string; type?: string; companyId?: string; status?: string; assignedToId?: string },
     user?: any,
   ) {
-    const numCustomerId = Number(customerId || user?.customerId);
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    // SUPER_ADMIN may optionally scope to a specific customer via query param / header
+    // (CustomerGuard resolves that into request.customerId; falls back to undefined for global view)
+    const numCustomerId = Number(customerId);
+    const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
     const skip = (page - 1) * limit;
 
+    // Build tenant-scoped where clause:
+    // - SUPER_ADMIN, no explicit customerId => see ALL contacts (no filter)
+    // - SUPER_ADMIN, explicit customerId   => scoped to that customer
+    // - Normal user                        => strictly scoped to their customerId (never undefined)
     const where: any = { deletedAt: null };
 
-    if (!isSuperAdmin) {
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+    if (isSuperAdmin) {
+      if (hasExplicitCustomer) {
         where.customerId = numCustomerId;
-      } else {
-        where.customerId = 0; // Strict tenant isolation: prevent leakage
       }
-    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      // else: SUPER_ADMIN — no customerId filter, full platform view
+    } else {
+      // Non-SUPER_ADMIN: derive customerId from user claim if not in request
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
+      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      where.customerId = effectiveCustomerId;
     }
 
     if (query.type && query.type.toUpperCase() !== 'ALL') where.type = query.type as any;
