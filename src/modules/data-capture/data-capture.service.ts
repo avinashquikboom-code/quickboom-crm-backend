@@ -233,9 +233,20 @@ export class DataCaptureService {
   /**
    * List captured places with pagination, search, status, and source filters
    */
-  async listPlaces(customerId: string | number | undefined, query: DataCaptureQueryDto) {
+  async listPlaces(
+    customerId: string | number | undefined,
+    query: DataCaptureQueryDto,
+    user?: any,
+  ) {
     try {
-      const numCustomerId = Number(customerId);
+      const numCustomerId = Number(customerId || user?.customerId);
+      const isSuperAdmin =
+        user?.role === 'SUPER_ADMIN' ||
+        user?.roleType === 'SUPER_ADMIN' ||
+        user?.roles?.includes('SUPER_ADMIN') ||
+        user?.roles?.includes('Super Administrator') ||
+        customerId === undefined;
+
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       const skip = (page - 1) * limit;
@@ -244,7 +255,13 @@ export class DataCaptureService {
         deletedAt: null,
       };
 
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      if (!isSuperAdmin) {
+        if (!isNaN(numCustomerId) && numCustomerId > 0) {
+          where.customerId = numCustomerId;
+        } else {
+          where.customerId = 0;
+        }
+      } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
         where.customerId = numCustomerId;
       }
 

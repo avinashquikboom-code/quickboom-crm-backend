@@ -43,9 +43,10 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'List captured places with pagination and filtering' })
   async listPlaces(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query() query: DataCaptureQueryDto,
   ) {
-    return this.dataCaptureService.listPlaces(customerId, query);
+    return this.dataCaptureService.listPlaces(customerId, query, user);
   }
 
   /**
