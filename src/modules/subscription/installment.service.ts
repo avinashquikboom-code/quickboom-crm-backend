@@ -4,8 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   InstallmentStatus,
   SubscriptionStatus,
@@ -82,7 +84,10 @@ export interface CustomerInstallmentSummary {
 export class InstallmentService {
   private readonly logger = new Logger(InstallmentService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   /**
    * Calculates the buffer end date by adding buffer days to the expiry date.
@@ -95,12 +100,13 @@ export class InstallmentService {
 
   /**
    * Initializes or refreshes installment schedule for a subscription.
+   * Enforces the 50% Advance Payment + 50% Second Installment concept.
    */
   async createInstallmentsForSubscription(
     customerId: number,
     subscriptionId: number,
     totalPlanAmount: number,
-    totalInstallments: number = 3,
+    totalInstallments: number = 2,
     startDate: Date = new Date(),
     installmentDurationDays: number = 30,
     bufferDays: number = DEFAULT_BUFFER_DAYS,
@@ -122,20 +128,27 @@ export class InstallmentService {
     });
 
     const paidNumbers = new Set(existingPaid.map((p) => p.installmentNumber));
-    const rawPerInstallment = Math.round((totalPlanAmount / totalInstallments) * 100) / 100;
-    const basePerInstallment = Math.round((rawPerInstallment / 1.18) * 100) / 100;
-    const taxPerInstallment = Math.round((rawPerInstallment - basePerInstallment) * 100) / 100;
+    const effectiveTotalInstallments = 2; // Strict 50% + 50%
+
+    const halfTotal = Math.round(totalPlanAmount * 0.5 * 100) / 100;
+    const remainingTotal = Math.round((totalPlanAmount - halfTotal) * 100) / 100;
 
     const createdList: any[] = [];
 
-    for (let i = 1; i <= totalInstallments; i++) {
+    for (let i = 1; i <= effectiveTotalInstallments; i++) {
       if (paidNumbers.has(i)) {
         continue;
       }
 
+      const instTotal = i === 1 ? halfTotal : remainingTotal;
+      const instBase = Math.round((instTotal / 1.18) * 100) / 100;
+      const instTax = Math.round((instTotal - instBase) * 100) / 100;
+
       // Calculate dates for installment i
       const instStartDate = new Date(startDate);
-      instStartDate.setDate(instStartDate.getDate() + (i - 1) * installmentDurationDays);
+      if (i > 1) {
+        instStartDate.setDate(instStartDate.getDate() + (i - 1) * installmentDurationDays);
+      }
 
       const instExpiryDate = new Date(instStartDate);
       instExpiryDate.setDate(instExpiryDate.getDate() + installmentDurationDays);
@@ -143,19 +156,25 @@ export class InstallmentService {
       const instDueDate = new Date(instStartDate);
       const instBufferEndDate = this.calculateBufferEndDate(instExpiryDate, bufferDays);
 
-      const isFirstDue = i === existingPaid.length + 1;
-      const initialStatus = isFirstDue ? InstallmentStatus.DUE : InstallmentStatus.UPCOMING;
+      const isFirstDue = i === 1 && existingPaid.length === 0;
+      const initialStatus = isFirstDue
+        ? InstallmentStatus.DUE
+        : existingPaid.length >= 1 && i === 2
+        ? InstallmentStatus.DUE
+        : InstallmentStatus.UPCOMING;
+
+      const title = i === 1 ? 'Advance Payment (50%)' : 'Second Installment (50%)';
 
       const inst = await this.prisma.subscriptionInstallment.create({
         data: {
           customerId: numCustId,
           subscriptionId: numSubId,
           installmentNumber: i,
-          totalInstallments,
-          title: `Installment ${i} of ${totalInstallments}`,
-          amount: basePerInstallment,
-          taxAmount: taxPerInstallment,
-          totalAmount: rawPerInstallment,
+          totalInstallments: effectiveTotalInstallments,
+          title,
+          amount: instBase,
+          taxAmount: instTax,
+          totalAmount: instTotal,
           status: initialStatus,
           dueDate: instDueDate,
           expiryDate: instExpiryDate,
@@ -210,7 +229,7 @@ export class InstallmentService {
           ? Number(sub.plan?.yearlyPrice || 9599)
           : Number(sub.plan?.monthlyPrice || 999);
       const totalAmount = Math.round(planPrice * 1.18);
-      await this.createInstallmentsForSubscription(numCustomerId, sub.id, totalAmount, 3, sub.startDate);
+      await this.createInstallmentsForSubscription(numCustomerId, sub.id, totalAmount, 2, sub.startDate);
       const reloaded = await this.prisma.subscriptionInstallment.findMany({
         where: { subscriptionId: sub.id },
         orderBy: { installmentNumber: 'asc' },
@@ -693,10 +712,14 @@ export class InstallmentService {
         : Number(plan.monthlyPrice);
 
     const fullTotalAmount = Math.round(basePrice * 1.18);
-    const totalInstallments = dto.totalInstallments || 3;
-    const firstInstallmentTotal = Math.round((fullTotalAmount / totalInstallments) * 100) / 100;
+    const totalInstallments = 2; // Strict 50% Advance + 50% Second Installment
+    const firstInstallmentTotal = Math.round(fullTotalAmount * 0.5 * 100) / 100;
     const firstInstallmentBase = Math.round((firstInstallmentTotal / 1.18) * 100) / 100;
     const firstInstallmentTax = Math.round((firstInstallmentTotal - firstInstallmentBase) * 100) / 100;
+
+    const secondInstallmentTotal = Math.round((fullTotalAmount - firstInstallmentTotal) * 100) / 100;
+    const secondInstallmentBase = Math.round((secondInstallmentTotal / 1.18) * 100) / 100;
+    const secondInstallmentTax = Math.round((secondInstallmentTotal - secondInstallmentBase) * 100) / 100;
 
     const durationDays = cycle === SubscriptionBillingCycle.YEARLY ? 365 : 30;
     const newEndDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
@@ -719,7 +742,7 @@ export class InstallmentService {
         },
       });
 
-      // 2. Create Payment for First Installment
+      // 2. Create Payment for First Installment (50% Advance)
       const paymentMethod = (dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY;
       const orderNumber = dto.orderNumber || `#QB-NEW-${newSub.id}-INST-1`;
       const transactionId = dto.transactionId || `NEW-TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -770,7 +793,7 @@ export class InstallmentService {
           taxAmount: firstInstallmentTax,
           discount: 0,
           totalAmount: firstInstallmentTotal,
-          notes: `New Plan Purchase: Installment 1 of ${totalInstallments} for ${plan.name}. Order: ${orderNumber}`,
+          notes: `New Plan Purchase: Advance Payment (50%) for ${plan.name}. Order: ${orderNumber}`,
         },
       });
 
@@ -779,7 +802,7 @@ export class InstallmentService {
         data: { invoiceUrl: invoiceNo },
       });
 
-      // 4. Create Installments Schedule for the New Plan
+      // 4. Create Installments Schedule for the New Plan (50% + 50%)
       const inst1Expiry = new Date(now);
       inst1Expiry.setDate(inst1Expiry.getDate() + 30);
       const inst1BufferEnd = new Date(inst1Expiry);
@@ -791,7 +814,7 @@ export class InstallmentService {
           subscriptionId: newSub.id,
           installmentNumber: 1,
           totalInstallments,
-          title: `Installment 1 of ${totalInstallments} (Advance)`,
+          title: 'Advance Payment (50%)',
           amount: firstInstallmentBase,
           taxAmount: firstInstallmentTax,
           totalAmount: firstInstallmentTotal,
@@ -803,11 +826,11 @@ export class InstallmentService {
           paidAt: now,
           paymentHistoryId: payment.id,
           invoiceId: invoice.id,
-          notes: 'New plan initial installment payment',
+          notes: 'New plan 50% advance payment',
         },
       });
 
-      // Installment 2 (DUE)
+      // Installment 2 (Second 50% Installment scheduled with 3-day buffer)
       const inst2Start = new Date(inst1Expiry);
       const inst2Expiry = new Date(inst2Start);
       inst2Expiry.setDate(inst2Expiry.getDate() + 30);
@@ -820,10 +843,10 @@ export class InstallmentService {
           subscriptionId: newSub.id,
           installmentNumber: 2,
           totalInstallments,
-          title: `Installment 2 of ${totalInstallments}`,
-          amount: firstInstallmentBase,
-          taxAmount: firstInstallmentTax,
-          totalAmount: firstInstallmentTotal,
+          title: 'Second Installment (50%)',
+          amount: secondInstallmentBase,
+          taxAmount: secondInstallmentTax,
+          totalAmount: secondInstallmentTotal,
           status: InstallmentStatus.DUE,
           dueDate: inst2Start,
           expiryDate: inst2Expiry,
@@ -831,33 +854,6 @@ export class InstallmentService {
           bufferEndDate: inst2BufferEnd,
         },
       });
-
-      // Installment 3 (UPCOMING)
-      if (totalInstallments >= 3) {
-        const inst3Start = new Date(inst2Expiry);
-        const inst3Expiry = new Date(inst3Start);
-        inst3Expiry.setDate(inst3Expiry.getDate() + 30);
-        const inst3BufferEnd = new Date(inst3Expiry);
-        inst3BufferEnd.setDate(inst3BufferEnd.getDate() + DEFAULT_BUFFER_DAYS);
-
-        await tx.subscriptionInstallment.create({
-          data: {
-            customerId: numCustomerId,
-            subscriptionId: newSub.id,
-            installmentNumber: 3,
-            totalInstallments,
-            title: `Installment 3 of ${totalInstallments}`,
-            amount: firstInstallmentBase,
-            taxAmount: firstInstallmentTax,
-            totalAmount: firstInstallmentTotal,
-            status: InstallmentStatus.UPCOMING,
-            dueDate: inst3Start,
-            expiryDate: inst3Expiry,
-            bufferDays: DEFAULT_BUFFER_DAYS,
-            bufferEndDate: inst3BufferEnd,
-          },
-        });
-      }
 
       await tx.customer.update({
         where: { id: numCustomerId },
@@ -1043,9 +1039,105 @@ export class InstallmentService {
   }
 
   /**
-   * Periodic scheduler to evaluate buffer expiry across active subscriptions.
+   * Sends 3-day reminders for pending second installments (50%) before due date.
    */
-  async evaluateAllActiveInstallments(): Promise<{ evaluatedCount: number; overdueCount: number }> {
+  async sendUpcomingInstallmentReminders(): Promise<{ remindersSent: number }> {
+    const now = new Date();
+    const threeDaysLater = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+    // Find active second installments due within the next 3 days
+    const upcomingSecondInstallments = await this.prisma.subscriptionInstallment.findMany({
+      where: {
+        installmentNumber: 2,
+        status: { in: [InstallmentStatus.DUE, InstallmentStatus.PENDING, InstallmentStatus.UPCOMING] },
+        dueDate: {
+          gte: now,
+          lte: threeDaysLater,
+        },
+        deletedAt: null,
+      },
+      include: {
+        customer: {
+          include: { users: { select: { id: true, email: true }, take: 1 } },
+        },
+        subscription: {
+          include: { plan: true },
+        },
+      },
+    });
+
+    let remindersSent = 0;
+
+    for (const inst of upcomingSecondInstallments) {
+      // Check if a reminder for this installment has already been recorded
+      const existingNotif = await this.prisma.notification.findFirst({
+        where: {
+          customerId: inst.customerId,
+          type: 'PAYMENT_REMINDER',
+          title: { contains: 'Second Installment' },
+          createdAt: { gte: new Date(now.getTime() - 48 * 60 * 60 * 1000) }, // Don't send more than once in 48h
+        },
+      });
+
+      if (!existingNotif) {
+        const dueDateFormatted = inst.dueDate
+          ? new Date(inst.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+          : 'due date';
+        const amountStr = Number(inst.totalAmount).toLocaleString('en-IN');
+        const planName = inst.subscription?.plan?.name || 'Subscription Plan';
+        const title = 'Second Installment Reminder (50%)';
+        const body = `Your remaining 50% payment of ₹${amountStr} for ${planName} is due on ${dueDateFormatted} for the upcoming second installation.`;
+
+        const targetUserId = inst.customer?.users?.[0]?.id;
+
+        if (this.notificationService) {
+          await this.notificationService.sendPushNotification({
+            userId: targetUserId,
+            customerId: inst.customerId,
+            title,
+            body,
+            type: 'PAYMENT_REMINDER',
+            data: {
+              type: 'INSTALLMENT_REMINDER',
+              installmentId: String(inst.id),
+              subscriptionId: String(inst.subscriptionId),
+              customerId: String(inst.customerId),
+              amount: String(inst.totalAmount),
+              dueDate: inst.dueDate ? inst.dueDate.toISOString() : '',
+            },
+          });
+        } else if (targetUserId) {
+          await this.prisma.notification.create({
+            data: {
+              customerId: inst.customerId,
+              userId: targetUserId,
+              title,
+              message: body,
+              type: 'PAYMENT_REMINDER',
+              data: {
+                installmentId: inst.id,
+                subscriptionId: inst.subscriptionId,
+                amount: inst.totalAmount,
+                dueDate: inst.dueDate,
+              },
+            },
+          });
+        }
+
+        remindersSent++;
+        this.logger.log(
+          `[INSTALLMENT_3DAY_REMINDER_SENT] Customer #${inst.customerId} Installment #${inst.id} Amount: ₹${amountStr} Due: ${dueDateFormatted}`,
+        );
+      }
+    }
+
+    return { remindersSent };
+  }
+
+  /**
+   * Periodic scheduler to evaluate buffer expiry and send upcoming 3-day reminders.
+   */
+  async evaluateAllActiveInstallments(): Promise<{ evaluatedCount: number; overdueCount: number; remindersSent: number }> {
     const now = new Date();
     const unpaidInstallments = await this.prisma.subscriptionInstallment.findMany({
       where: {
@@ -1077,9 +1169,13 @@ export class InstallmentService {
       }
     }
 
+    // Trigger 3-day installment reminders
+    const { remindersSent } = await this.sendUpcomingInstallmentReminders();
+
     return {
       evaluatedCount: unpaidInstallments.length,
       overdueCount,
+      remindersSent,
     };
   }
 }

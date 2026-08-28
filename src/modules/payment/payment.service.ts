@@ -4,10 +4,12 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   CreateRazorpayOrderDto,
   VerifyRazorpayPaymentDto,
@@ -34,6 +36,7 @@ export class PaymentService {
     private readonly scheduleService: ScheduleService,
     private readonly workService: WorkService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   /**
@@ -1109,30 +1112,54 @@ export class PaymentService {
     }
 
     const dueDateStr = sub.endDate ? new Date(sub.endDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Work Completion';
-    const defaultMsg = `Your remaining 50% payment of ₹${balance.toLocaleString('en-IN')} is pending. Please complete the payment to unlock the next 15 days of your work schedule.`;
+    const defaultMsg = `Your remaining 50% payment of ₹${balance.toLocaleString('en-IN')} is pending. Please complete the payment for the upcoming second installation.`;
     const message = dto.customMessage || defaultMsg;
 
     const targetUser = customer.users?.[0] || adminUser;
 
-    const notif = await this.prisma.notification.create({
-      data: {
+    let notif: any;
+    if (this.notificationService) {
+      await this.notificationService.sendPushNotification({
+        userId: targetUser?.id,
         customerId: numCustomerId,
-        userId: targetUser.id,
-        title: 'Payment Reminder: Remaining Balance Due',
-        message,
+        title: 'Payment Reminder: Remaining Balance Due (50%)',
+        body: message,
         type: 'PAYMENT_REMINDER',
         data: {
-          subscriptionId: sub.id,
+          type: 'PAYMENT_REMINDER',
+          subscriptionId: String(sub.id),
           planName: sub.plan.name,
-          totalAmount: fullTotal,
-          totalPaid,
-          balanceAmount: balance,
-          dueDate: sub.endDate,
+          totalAmount: String(fullTotal),
+          totalPaid: String(totalPaid),
+          balanceAmount: String(balance),
+          dueDate: sub.endDate ? sub.endDate.toISOString() : '',
         },
-      },
-    });
+      });
+      notif = await this.prisma.notification.findFirst({
+        where: { customerId: numCustomerId, type: 'PAYMENT_REMINDER' },
+        orderBy: { createdAt: 'desc' },
+      });
+    } else {
+      notif = await this.prisma.notification.create({
+        data: {
+          customerId: numCustomerId,
+          userId: targetUser?.id,
+          title: 'Payment Reminder: Remaining Balance Due (50%)',
+          message,
+          type: 'PAYMENT_REMINDER',
+          data: {
+            subscriptionId: sub.id,
+            planName: sub.plan.name,
+            totalAmount: fullTotal,
+            totalPaid,
+            balanceAmount: balance,
+            dueDate: sub.endDate,
+          },
+        },
+      });
+    }
 
-    this.logger.log(`[PAYMENT_REMINDER_SENT] customerId: CUST-${numCustomerId} balance: ₹${balance} notificationId: ${notif.id}`);
+    this.logger.log(`[PAYMENT_REMINDER_SENT] customerId: CUST-${numCustomerId} balance: ₹${balance} notificationId: ${notif?.id || 'N/A'}`);
 
     return {
       success: true,

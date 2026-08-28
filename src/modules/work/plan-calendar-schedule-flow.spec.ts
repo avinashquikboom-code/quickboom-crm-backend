@@ -290,7 +290,7 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
       // Day 20 item is LOCKED
       expect(calendar[1].isLocked).toBe(true);
       expect(calendar[1].title).toBe('Schedule Locked');
-      expect(calendar[1].lockMessage).toContain('Next 15 days schedule will be available');
+      expect(calendar[1].lockMessage).toContain('second installation schedule will be available');
     });
 
     it('unlocks all schedules when 100% full payment is completed', async () => {

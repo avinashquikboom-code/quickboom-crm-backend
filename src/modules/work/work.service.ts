@@ -930,7 +930,7 @@ export class WorkService {
           lockMessage = 'Your schedule will be available after the 50% advance payment is received.';
         } else if (!isFullyPaid && unlockThresholdDate && schedDate > unlockThresholdDate) {
           isLocked = true;
-          lockMessage = 'Next 15 days schedule will be available after the second installment is completed.';
+          lockMessage = 'The second installation schedule will be available after the remaining 50% second installment is completed.';
         }
       }
 
@@ -958,7 +958,7 @@ export class WorkService {
         editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor'),
         team: w.team?.name || 'SSM Team A',
         notes: isLocked
-          ? (lockMessage || 'Complete the remaining 50% payment to unlock the next 15 days of your schedule.')
+          ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
           : (w.description || w.notes || `${w.title} deliverable`),
         outputUrl: isLocked ? null : w.outputUrl,
         feedback: isLocked ? null : w.feedback,

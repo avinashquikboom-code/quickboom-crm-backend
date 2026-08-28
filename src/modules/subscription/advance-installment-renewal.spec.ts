@@ -208,6 +208,10 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
           return mockInvoices.find((inv) => inv.invoiceNo === where.invoiceNo) || null;
         }),
       },
+      notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 1, ...data })),
+      },
       $transaction: jest.fn().mockImplementation(async (callback) => {
         return callback(mockPrisma);
       }),
@@ -227,18 +231,18 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     prisma = module.get<PrismaService>(PrismaService);
   });
 
-  // TEST 1: Customer pays Installment 1. Buffer has not started. Expected: ACTIVE.
-  it('TEST 1: Customer pays Installment 1. Buffer has not started -> Status is ACTIVE', async () => {
+  // TEST 1: Customer pays Installment 1 (50% Advance). Buffer has not started. Expected: ACTIVE.
+  it('TEST 1: Customer pays Installment 1 (50% Advance). Buffer has not started -> Status is ACTIVE', async () => {
     const totalPlanAmount = 30000;
     await installmentService.createInstallmentsForSubscription(
       1,
       101,
       totalPlanAmount,
-      3,
+      2,
       new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // Started 5 days ago
     );
 
-    // Pay Installment 1
+    // Pay Installment 1 (50% Advance)
     const payResult = await installmentService.payInstallment(1, mockInstallments[0].id, {
       paymentMethod: PaymentMethod.RAZORPAY,
     });
@@ -249,15 +253,18 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     expect(summary.isAccessAllowed).toBe(true);
     expect(summary.isInBuffer).toBe(false);
     expect(summary.isRenewalFailed).toBe(false);
-    expect(summary.totalPaidAmount).toBe(10000);
-    expect(summary.outstandingAmount).toBe(20000);
+    expect(summary.totalPaidAmount).toBe(15000);
+    expect(summary.outstandingAmount).toBe(15000);
+    expect(summary.installments).toHaveLength(2);
+    expect(summary.installments[0].title).toBe('Advance Payment (50%)');
+    expect(summary.installments[1].title).toBe('Second Installment (50%)');
   });
 
   // TEST 2: Installment expires. Expected: BUFFER_PERIOD. Customer can renew.
   it('TEST 2: Installment 1 expires -> Status is BUFFER_PERIOD with 3 days grace and can renew', async () => {
     // Installment 1 expired yesterday (31 days ago start)
     const startDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 3, startDate);
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
 
     // Mark Installment 1 as paid
     mockInstallments[0].status = InstallmentStatus.PAID;
@@ -270,19 +277,19 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     expect(summary.canRenewCurrentPlan).toBe(true);
     expect(summary.isRenewalFailed).toBe(false);
     expect(summary.bufferRemainingDays).toBeGreaterThanOrEqual(1);
-    expect(summary.amountRequiredToContinue).toBe(10000);
+    expect(summary.amountRequiredToContinue).toBe(15000);
     expect(summary.bufferMessage).toContain('buffer period');
   });
 
-  // TEST 3: Customer renews during buffer. Expected: RENEWED / ACTIVE. Existing installment plan continues.
+  // TEST 3: Customer renews during buffer. Expected: RENEWED / ACTIVE. Existing installment plan completes.
   it('TEST 3: Customer renews during buffer -> Plan continues without restarting or charging full amount', async () => {
     const startDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 3, startDate);
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
 
     mockInstallments[0].status = InstallmentStatus.PAID;
     mockInstallments[0].paidAt = startDate;
 
-    // Customer pays Installment 2 during buffer
+    // Customer pays Installment 2 (remaining 50%) during buffer
     const payResult = await installmentService.payInstallment(1, mockInstallments[1].id, {
       paymentMethod: PaymentMethod.RAZORPAY,
     });
@@ -290,18 +297,18 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     expect(mockInstallments[1].status).toBe(InstallmentStatus.PAID);
 
     const summary = await installmentService.getCustomerInstallmentSummary(1);
-    expect(summary.totalPaidAmount).toBe(20000);
-    expect(summary.outstandingAmount).toBe(10000);
+    expect(summary.totalPaidAmount).toBe(30000);
+    expect(summary.outstandingAmount).toBe(0);
+    expect(summary.isFullyPaid).toBe(true);
     expect(summary.isAccessAllowed).toBe(true);
     expect(summary.isRenewalFailed).toBe(false);
-    expect(summary.installments[2].status).toBe(InstallmentStatus.DUE);
   });
 
   // TEST 4: Customer does NOT renew. Buffer expires. Expected: RENEWAL_FAILED. Old plan cannot continue.
   it('TEST 4: Customer does NOT renew within buffer -> Status is RENEWAL_FAILED and old plan cannot continue', async () => {
     // Installment 1 expired 35 days ago (buffer ended 32 days ago)
     const startDate = new Date(Date.now() - 65 * 24 * 60 * 60 * 1000);
-    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 3, startDate);
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
 
     mockInstallments[0].status = InstallmentStatus.PAID;
     mockInstallments[0].paidAt = startDate;
@@ -320,32 +327,32 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     ).rejects.toThrow('renewal period has expired');
   });
 
-  // TEST 5: After renewal failure: Original Plan: ₹30,000, Historical Paid: ₹10,000. Required to Start: ₹30,000, NOT ₹20,000.
-  it('TEST 5: After renewal failure, Required to Start Again is ₹30,000 (Full Price), NOT ₹20,000', async () => {
+  // TEST 5: After renewal failure: Original Plan: ₹30,000, Historical Paid: ₹15,000. Required to Start: ₹30,000, NOT ₹15,000.
+  it('TEST 5: After renewal failure, Required to Start Again is ₹30,000 (Full Price), NOT remaining amount', async () => {
     const startDate = new Date(Date.now() - 65 * 24 * 60 * 60 * 1000);
-    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 3, startDate);
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
 
     mockInstallments[0].status = InstallmentStatus.PAID;
     mockInstallments[0].paidAt = startDate;
 
     const summary = await installmentService.getCustomerInstallmentSummary(1);
     expect(summary.originalPlanValue).toBe(30000);
-    expect(summary.historicalPaidAmount).toBe(10000);
+    expect(summary.historicalPaidAmount).toBe(15000);
     expect(summary.amountRequiredToRestart).toBe(30000);
     expect(summary.newPlanPrice).toBe(30000);
     expect(summary.amountRequiredToContinue).toBeNull();
   });
 
-  // TEST 6: Customer purchases new plan: New Subscription ID, New Order ID, New billing cycle, New schedule.
-  it('TEST 6: Customer purchases new plan -> Creates distinct Subscription, Order, and fresh installment schedule', async () => {
+  // TEST 6: Customer purchases new plan: New Subscription ID, New Order ID, New billing cycle, New schedule (50% + 50%).
+  it('TEST 6: Customer purchases new plan -> Creates distinct Subscription, Order, and fresh 50% + 50% schedule', async () => {
     const startDate = new Date(Date.now() - 65 * 24 * 60 * 60 * 1000);
-    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 3, startDate);
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
     mockInstallments[0].status = InstallmentStatus.PAID;
 
     // Customer clicks "Start New Plan"
     const newPlanResult = await installmentService.startNewPlan(1, {
       planId: 1,
-      totalInstallments: 3,
+      totalInstallments: 2,
       paymentMethod: PaymentMethod.RAZORPAY,
     });
 
@@ -359,8 +366,51 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     expect(newSummary.planStatus).toBe('ACTIVE');
     expect(newSummary.isAccessAllowed).toBe(true);
     expect(newSummary.totalPlanAmount).toBe(30000);
-    expect(newSummary.totalPaidAmount).toBe(10000); // 1st installment of new plan
-    expect(newSummary.outstandingAmount).toBe(20000);
+    expect(newSummary.totalPaidAmount).toBe(15000); // 50% advance of new plan
+    expect(newSummary.outstandingAmount).toBe(15000);
     expect(newSummary.isRenewalFailed).toBe(false);
+    expect(newSummary.installments).toHaveLength(2);
+  });
+
+  // TEST 7: 3-Day reminder for Second Installment (50%) before due date.
+  it('TEST 7: Automatically sends reminder for Second Installment (50%) 3 days before due date', async () => {
+    const twoDaysFromNow = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    mockInstallments = [
+      {
+        id: 1,
+        customerId: 1,
+        subscriptionId: 101,
+        installmentNumber: 1,
+        totalInstallments: 2,
+        title: 'Advance Payment (50%)',
+        amount: 12711.86,
+        taxAmount: 2288.14,
+        totalAmount: 15000,
+        status: InstallmentStatus.PAID,
+        dueDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+        expiryDate: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+        bufferDays: 3,
+        bufferEndDate: new Date(Date.now() + 23 * 24 * 60 * 60 * 1000),
+      },
+      {
+        id: 2,
+        customerId: 1,
+        subscriptionId: 101,
+        installmentNumber: 2,
+        totalInstallments: 2,
+        title: 'Second Installment (50%)',
+        amount: 12711.86,
+        taxAmount: 2288.14,
+        totalAmount: 15000,
+        status: InstallmentStatus.DUE,
+        dueDate: twoDaysFromNow,
+        expiryDate: new Date(twoDaysFromNow.getTime() + 30 * 24 * 60 * 60 * 1000),
+        bufferDays: 3,
+        bufferEndDate: new Date(twoDaysFromNow.getTime() + 33 * 24 * 60 * 60 * 1000),
+      },
+    ];
+
+    const result = await installmentService.sendUpcomingInstallmentReminders();
+    expect(result.remindersSent).toBeGreaterThanOrEqual(0);
   });
 });

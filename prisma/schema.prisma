@@ -1812,7 +1812,7 @@ model SubscriptionInstallment {
   customerId        Int
   subscriptionId    Int
   installmentNumber Int                  @default(1)
-  totalInstallments Int                  @default(3)
+  totalInstallments Int                  @default(2)
   title             String               @default("Installment")
   amount            Float
   taxAmount         Float                @default(0)
