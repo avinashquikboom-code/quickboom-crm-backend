@@ -966,6 +966,87 @@ export class WorkService {
       };
     });
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Merge SubscriptionInstallment payment schedules into calendar result.
+    // These are stored in a separate table and were previously omitted, causing
+    // the calendar to show ONLY Reel Shoot Work records.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (numCustomerId) {
+      const installmentWhere: any = {
+        customerId: numCustomerId,
+        deletedAt: null,
+      };
+
+      // Apply same date window used for Work records
+      if (where.scheduledDate) {
+        // Map the Work scheduledDate filter to installment dueDate field
+        installmentWhere.dueDate = where.scheduledDate;
+      }
+
+      const installments = await this.prisma.subscriptionInstallment.findMany({
+        where: installmentWhere,
+        orderBy: { dueDate: 'asc' },
+        include: {
+          customer: { select: { id: true, name: true } },
+          subscription: { select: { id: true, plan: { select: { name: true } } } },
+        },
+      });
+
+      // Apply same day-precision filter used for Work records
+      const filteredInstallments = (targetYear && targetMonth && targetDay)
+        ? installments.filter((inst) => {
+            if (!inst.dueDate) return false;
+            const d = new Date(inst.dueDate);
+            const isUtcMatch =
+              d.getUTCFullYear() === targetYear &&
+              d.getUTCMonth() + 1 === targetMonth &&
+              d.getUTCDate() === targetDay;
+            const isLocalMatch =
+              d.getFullYear() === targetYear &&
+              d.getMonth() + 1 === targetMonth &&
+              d.getDate() === targetDay;
+            return isUtcMatch || isLocalMatch;
+          })
+        : installments;
+
+      for (const inst of filteredInstallments) {
+        const installmentLabel = inst.installmentNumber === 1
+          ? `50% Advance Payment – Installment ${inst.installmentNumber}`
+          : `Remaining 50% Payment – Installment ${inst.installmentNumber}`;
+        const planName = inst.subscription?.plan?.name || (activeSubForCustomer?.plan?.name ?? 'Active Plan');
+        result.push({
+          id: `inst-${inst.id}`,
+          purchaseId: `PUR-${String(inst.subscriptionId).padStart(3, '0')}`,
+          productName: installmentLabel,
+          serviceName: 'Payment Schedule',
+          planName: planName,
+          title: inst.title || installmentLabel,
+          date: inst.dueDate,
+          scheduleDate: inst.dueDate,
+          time: '12:00 PM',
+          startTime: '12:00 PM',
+          endTime: '01:00 PM',
+          type: 'PAYMENT',
+          status: inst.status,
+          isLocked: false,
+          lockMessage: undefined,
+          customerId: String(inst.customerId),
+          customerName: inst.customer?.name || 'Customer',
+          assignedToId: null,
+          assignedEmployee: 'Finance Team',
+          editorId: null,
+          editorName: '—',
+          team: 'Finance',
+          notes: inst.notes || `Payment installment ${inst.installmentNumber} of ${inst.totalInstallments}. Amount due: ₹${inst.totalAmount?.toFixed(2) ?? '0.00'}`,
+          outputUrl: null,
+          feedback: null,
+          revisionCount: 0,
+        } as any);
+      }
+
+      this.logger.log(`[CALENDAR_RESULT] installment_events_added: ${filteredInstallments.length}`);
+    }
+
     const duration = Date.now() - startTime;
     this.logger.log(
       `[CALENDAR_RESULT] count: ${result.length}`,
