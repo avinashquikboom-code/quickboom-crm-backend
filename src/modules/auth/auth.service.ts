@@ -279,42 +279,42 @@ export class AuthService {
       throw new UnauthorizedException('Your account has been deactivated');
     }
 
-    // 1. Role identification based on database Role/UserRole and relationships
-    const isSuperAdminRole = user.userRoles.some(
-      (ur) =>
-        ur.role?.type === RoleType.SUPER_ADMIN ||
-        ur.roleId === 2 ||
-        ur.role?.name?.toUpperCase() === 'SUPER ADMINISTRATOR' ||
-        ur.role?.name?.toUpperCase() === 'SUPER_ADMIN' ||
-        ur.role?.name?.toUpperCase() === 'SUPER ADMIN',
-    );
+    // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
+    const isSuperAdminRole = user.userRoles.some((ur) => {
+      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
+    });
 
     const isCompanyAdminRole =
       !isSuperAdminRole &&
-      user.userRoles.some(
-        (ur) =>
-          ur.role?.type === RoleType.CUSTOMER_ADMIN ||
-          ur.roleId === 5 ||
-          ur.role?.type === RoleType.TENANT_ADMIN ||
-          ur.role?.name?.toUpperCase() === 'COMPANY_ADMIN' ||
-          ur.role?.name?.toUpperCase() === 'COMPANY ADMIN' ||
-          ur.role?.name?.toUpperCase() === 'CUSTOMER ADMINISTRATOR',
-      );
+      user.userRoles.some((ur) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.CUSTOMER_ADMIN ||
+          type === RoleType.TENANT_ADMIN ||
+          name.includes('COMPANYADMIN') ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('TENANTADMIN')
+        );
+      });
 
     const isEmployeeRole =
       !isSuperAdminRole &&
       !isCompanyAdminRole &&
       Boolean(
         user.employee ||
-        user.userRoles.some(
-          (ur) =>
-            ur.roleId === 4 ||
-            ur.role?.name?.toUpperCase() === 'EMPLOYEE' ||
-            ur.role?.type === RoleType.SALES_EXECUTIVE ||
-            ur.role?.type === RoleType.SALES_MANAGER ||
-            ur.role?.name?.toUpperCase().includes('EMPLOYEE') ||
-            ur.role?.name?.toUpperCase().includes('STAFF'),
-        ),
+        user.userRoles.some((ur) => {
+          const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+          const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+          return (
+            type === RoleType.SALES_EXECUTIVE ||
+            type === RoleType.SALES_MANAGER ||
+            name.includes('EMPLOYEE') ||
+            name.includes('STAFF')
+          );
+        }),
       );
 
     const isCustomerRole =
@@ -322,29 +322,41 @@ export class AuthService {
       !isCompanyAdminRole &&
       !isEmployeeRole &&
       Boolean(
-        user.userRoles.some((ur) => ur.roleId === 3 || ur.role?.name?.toUpperCase() === 'CUSTOMER') ||
-        user.customerId,
+        user.customerId ||
+        user.userRoles.some((ur) => {
+          const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+          return name.includes('CUSTOMER') || name.includes('CLIENT');
+        }),
       );
 
     let userRole: 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
+    let userRoleType: string;
     if (isSuperAdminRole) {
       userRole = 'SUPER_ADMIN';
+      userRoleType = RoleType.SUPER_ADMIN;
     } else if (isCompanyAdminRole) {
       userRole = 'COMPANY_ADMIN';
+      userRoleType = RoleType.CUSTOMER_ADMIN;
     } else if (isEmployeeRole) {
       userRole = 'EMPLOYEE';
+      userRoleType = RoleType.CUSTOM;
     } else if (isCustomerRole) {
       userRole = 'CUSTOMER';
+      userRoleType = RoleType.CUSTOM;
     } else {
       const firstRoleName = user.userRoles[0]?.role?.name?.toUpperCase() || '';
       if (firstRoleName.includes('SUPER')) {
         userRole = 'SUPER_ADMIN';
+        userRoleType = RoleType.SUPER_ADMIN;
       } else if (firstRoleName.includes('ADMIN')) {
         userRole = 'COMPANY_ADMIN';
+        userRoleType = RoleType.CUSTOMER_ADMIN;
       } else if (firstRoleName.includes('EMPLOYEE') || firstRoleName.includes('STAFF')) {
         userRole = 'EMPLOYEE';
+        userRoleType = RoleType.CUSTOM;
       } else {
         userRole = 'CUSTOMER';
+        userRoleType = RoleType.CUSTOM;
       }
     }
 
@@ -417,7 +429,7 @@ export class AuthService {
 
     const roles = Array.from(new Set([userRole, ...rawRoles]));
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole);
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole, userRoleType);
 
     // Auto-generate employee record ONLY if the authenticated user is an Employee
     let emp: any = null;
@@ -581,6 +593,14 @@ export class AuthService {
       existingToken?.user ||
       (await this.prisma.user.findUnique({
         where: { id: userId },
+        include: {
+          userRoles: {
+            include: {
+              role: true,
+            },
+          },
+          employee: true,
+        },
       }));
 
     if (!user || !user.isActive || user.deletedAt) {
@@ -594,7 +614,64 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
+    const isSuperAdminRole = (user as any).userRoles?.some((ur: any) => {
+      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
+    });
+
+    const isCompanyAdminRole =
+      !isSuperAdminRole &&
+      (user as any).userRoles?.some((ur: any) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.CUSTOMER_ADMIN ||
+          type === RoleType.TENANT_ADMIN ||
+          name.includes('COMPANYADMIN') ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('TENANTADMIN')
+        );
+      });
+
+    const isEmployeeRole =
+      !isSuperAdminRole &&
+      !isCompanyAdminRole &&
+      (Boolean((user as any).employee) ||
+        (user as any).userRoles?.some((ur: any) => {
+          const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+          const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+          return (
+            type === RoleType.SALES_EXECUTIVE ||
+            type === RoleType.SALES_MANAGER ||
+            name.includes('EMPLOYEE') ||
+            name.includes('STAFF')
+          );
+        }));
+
+    let resolvedRole: string;
+    let resolvedRoleType: string;
+    if (isSuperAdminRole) {
+      resolvedRole = 'SUPER_ADMIN';
+      resolvedRoleType = RoleType.SUPER_ADMIN;
+    } else if (isCompanyAdminRole) {
+      resolvedRole = 'COMPANY_ADMIN';
+      resolvedRoleType = RoleType.CUSTOMER_ADMIN;
+    } else if (isEmployeeRole) {
+      resolvedRole = 'EMPLOYEE';
+      resolvedRoleType = RoleType.CUSTOM;
+    } else {
+      resolvedRole = 'CUSTOMER';
+      resolvedRoleType = RoleType.CUSTOM;
+    }
+
+    const tokens = await this.generateTokens(
+      user.id,
+      user.customerId,
+      user.email,
+      resolvedRole,
+      resolvedRoleType,
+    );
 
     return {
       accessToken: tokens.accessToken,
@@ -604,6 +681,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         customerId: user.customerId,
+        role: resolvedRole,
+        roleType: resolvedRoleType,
       },
     };
   }
@@ -1033,11 +1112,23 @@ export class AuthService {
     }));
   }
 
-  private async generateTokens(userId: number, customerId: number | null, email: string, role?: string) {
-    const payload: any = { sub: userId, customerId, email };
-    if (role) {
-      payload.role = role;
-    }
+  private async generateTokens(
+    userId: number,
+    customerId: number | null,
+    email: string,
+    role?: string,
+    roleType?: string,
+  ) {
+    const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
+    const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
+
+    const payload: any = {
+      sub: userId,
+      customerId,
+      email,
+      role: resolvedRole,
+      roleType: resolvedRoleType,
+    };
 
     const accessExpiresIn =
       this.configService.get('JWT_ACCESS_EXPIRES_IN') ||

@@ -58,14 +58,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       .filter(Boolean);
 
     // Platform super-admin resolution
-    const isSuperAdmin = user.userRoles?.some(
-      (ur) =>
-        ur.role?.type === RoleType.SUPER_ADMIN ||
-        ur.roleId === 2 ||
-        ur.role?.name?.toUpperCase() === 'SUPER ADMINISTRATOR' ||
-        ur.role?.name?.toUpperCase() === 'SUPER_ADMIN' ||
-        ur.role?.name?.toUpperCase() === 'SUPER ADMIN',
-    );
+    const isSuperAdmin = user.userRoles?.some((ur) => {
+      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
+    });
 
     if (isSuperAdmin && !roles.includes(RoleType.SUPER_ADMIN) && !roles.includes('SUPER_ADMIN')) {
       roles.push(RoleType.SUPER_ADMIN);
@@ -87,33 +84,48 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     });
 
+    const isCompanyAdmin =
+      !isSuperAdmin &&
+      user.userRoles?.some((ur) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.CUSTOMER_ADMIN ||
+          type === RoleType.TENANT_ADMIN ||
+          name.includes('COMPANYADMIN') ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('TENANTADMIN')
+        );
+      });
+
+    const isEmployee =
+      !isSuperAdmin &&
+      !isCompanyAdmin &&
+      user.userRoles?.some((ur) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.SALES_EXECUTIVE ||
+          type === RoleType.SALES_MANAGER ||
+          name.includes('EMPLOYEE') ||
+          name.includes('STAFF')
+        );
+      });
+
     let primaryRole: string;
+    let primaryRoleType: string;
     if (isSuperAdmin) {
       primaryRole = 'SUPER_ADMIN';
-    } else if (
-      user.userRoles?.some(
-        (ur) =>
-          ur.role?.type === RoleType.CUSTOMER_ADMIN ||
-          ur.roleId === 5 ||
-          ur.role?.type === RoleType.TENANT_ADMIN ||
-          ur.role?.name?.toUpperCase().includes('COMPANY_ADMIN') ||
-          ur.role?.name?.toUpperCase().includes('CUSTOMER ADMINISTRATOR') ||
-          ur.role?.name?.toUpperCase().includes('ADMIN'),
-      )
-    ) {
+      primaryRoleType = RoleType.SUPER_ADMIN;
+    } else if (isCompanyAdmin) {
       primaryRole = 'COMPANY_ADMIN';
-    } else if (
-      user.userRoles?.some(
-        (ur) =>
-          ur.roleId === 4 ||
-          ur.role?.name?.toUpperCase().includes('EMPLOYEE') ||
-          ur.role?.type === RoleType.SALES_EXECUTIVE ||
-          ur.role?.type === RoleType.SALES_MANAGER,
-      )
-    ) {
+      primaryRoleType = RoleType.CUSTOMER_ADMIN;
+    } else if (isEmployee) {
       primaryRole = 'EMPLOYEE';
+      primaryRoleType = RoleType.CUSTOM;
     } else {
-      primaryRole = user.customerId ? 'CUSTOMER' : 'CUSTOMER';
+      primaryRole = 'CUSTOMER';
+      primaryRoleType = RoleType.CUSTOM;
     }
 
     return {
@@ -123,6 +135,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       firstName: user.firstName,
       lastName: user.lastName,
       role: primaryRole,
+      roleType: primaryRoleType,
       roles: roles.length > 0 ? roles : [primaryRole],
       permissions: Array.from(permissionsMap.values()),
     };

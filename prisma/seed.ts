@@ -4,31 +4,81 @@ import * as bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function main() {
-  const email = 'admin@quikboom.com';
+  const email = 'admin@quickboom.com';
+  const legacyEmail = 'admin@quikboom.com';
   const password = '123456';
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  // 1. Ensure SUPER_ADMIN role exists
+  // 1. Ensure standard roles exist (SUPER_ADMIN, CUSTOMER, EMPLOYEE, COMPANY_ADMIN)
   let superAdminRole = await prisma.role.findFirst({
-    where: { type: RoleType.SUPER_ADMIN },
+    where: {
+      OR: [
+        { id: 2 },
+        { type: RoleType.SUPER_ADMIN },
+        { name: 'SUPER_ADMIN' },
+        { name: 'Super Administrator' },
+      ],
+    },
   });
 
   if (!superAdminRole) {
     superAdminRole = await prisma.role.create({
       data: {
-        name: 'Super Administrator',
+        name: 'SUPER_ADMIN',
         type: RoleType.SUPER_ADMIN,
         description: 'Full administrative platform access',
       },
     });
+  } else {
+    superAdminRole = await prisma.role.update({
+      where: { id: superAdminRole.id },
+      data: {
+        name: 'SUPER_ADMIN',
+        type: RoleType.SUPER_ADMIN,
+      },
+    });
   }
 
-  // 2. Find or Create User
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
+  // Ensure Customer, Employee, Company Admin roles exist
+  let customerRole = await prisma.role.findFirst({
+    where: { OR: [{ id: 3 }, { name: 'CUSTOMER' }] },
+  });
+  if (!customerRole) {
+    await prisma.role.create({
+      data: { name: 'CUSTOMER', type: RoleType.CUSTOM, description: 'Customer role' },
+    });
+  }
+
+  let employeeRole = await prisma.role.findFirst({
+    where: { OR: [{ id: 4 }, { name: 'EMPLOYEE' }] },
+  });
+  if (!employeeRole) {
+    await prisma.role.create({
+      data: { name: 'EMPLOYEE', type: RoleType.CUSTOM, description: 'Employee role' },
+    });
+  }
+
+  let companyAdminRole = await prisma.role.findFirst({
+    where: { OR: [{ id: 5 }, { type: RoleType.CUSTOMER_ADMIN }, { name: 'COMPANY_ADMIN' }] },
+  });
+  if (!companyAdminRole) {
+    await prisma.role.create({
+      data: { name: 'COMPANY_ADMIN', type: RoleType.CUSTOMER_ADMIN, description: 'Company Admin role' },
+    });
+  }
+
+  // 2. Find or Create User ID = 1 (Do not create another Super Admin if ID 1 exists)
+  let user = await prisma.user.findUnique({
+    where: { id: 1 },
   });
 
-  let user = existingUser;
+  if (!user) {
+    user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email }, { email: legacyEmail }],
+      },
+    });
+  }
 
   if (!user) {
     user = await prisma.user.create({
@@ -38,23 +88,28 @@ async function main() {
         firstName: 'Super',
         lastName: 'Admin',
         passwordHash: hashedPassword,
+        isActive: true,
         isVerified: true,
       },
     });
-    console.log(`✅ Created Super Admin user (${email} / ${password})`);
+    console.log(`✅ Created Super Admin user (${user.email} / ${password}) with ID: ${user.id}`);
   } else {
-    await prisma.user.update({
+    user = await prisma.user.update({
       where: { id: user.id },
       data: {
+        email,
         firstName: 'Super',
         lastName: 'Admin',
         passwordHash: hashedPassword,
+        isActive: true,
+        isVerified: true,
+        deletedAt: null,
       },
     });
-    console.log(`✅ Updated name to Super Admin and refreshed credentials for (${email})`);
+    console.log(`✅ Updated Super Admin user ID: ${user.id} (${user.email})`);
   }
 
-  // 3. Assign SUPER_ADMIN role to user
+  // 3. Ensure UserRole: userId = user.id, roleId = superAdminRole.id
   await prisma.userRole.deleteMany({
     where: { userId: user.id },
   });
