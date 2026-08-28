@@ -50,6 +50,39 @@ export class CustomerController {
     return this.customerService.getMetrics();
   }
 
+  @Get('resource-consumption')
+  @Get('usage')
+  @ApiOperation({ summary: 'Get Customer Resource Consumption analytics, breakdown, and KPI metrics' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'sortBy', required: false })
+  @ApiQuery({ name: 'sortOrder', required: false })
+  async getResourceConsumption(
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+  ) {
+    return this.customerService.getResourceConsumption({
+      search,
+      status,
+      dateFrom,
+      dateTo,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      sortBy,
+      sortOrder,
+    });
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get all customers with advanced filtering, search, sorting and pagination' })
   @ApiQuery({ name: 'search', required: false })

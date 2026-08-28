@@ -45,6 +45,203 @@ export class CustomerService {
   }
 
   /**
+   * Get Customer Resource Consumption analytics, breakdown, and KPI metrics
+   */
+  async getResourceConsumption(query: {
+    search?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      deletedAt: null,
+    };
+
+    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
+      if (query.status.toUpperCase() === 'ACTIVE') {
+        where.isActive = true;
+      } else if (query.status.toUpperCase() === 'INACTIVE') {
+        where.isActive = false;
+      }
+    }
+
+    if (query.search && query.search.trim() !== '') {
+      const searchTerm = query.search.trim();
+      where.OR = [
+        { name: { contains: searchTerm, mode: 'insensitive' } },
+        { companyName: { contains: searchTerm, mode: 'insensitive' } },
+        { domain: { contains: searchTerm, mode: 'insensitive' } },
+        { email: { contains: searchTerm, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {};
+      if (query.dateFrom) {
+        where.createdAt.gte = new Date(query.dateFrom);
+      }
+      if (query.dateTo) {
+        const to = new Date(query.dateTo);
+        to.setHours(23, 59, 59, 999);
+        where.createdAt.lte = to;
+      }
+    }
+
+    let orderBy: any = { createdAt: 'desc' };
+    if (query.sortBy) {
+      const direction = query.sortOrder === 'asc' ? 'asc' : 'desc';
+      if (['name', 'createdAt', 'storageUsed'].includes(query.sortBy)) {
+        orderBy = { [query.sortBy]: direction };
+      }
+    }
+
+    const [total, customers, allCustomersStats] = await Promise.all([
+      this.prisma.customer.count({ where }),
+      this.prisma.customer.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy,
+        include: {
+          subscriptions: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            include: { plan: true },
+          },
+          _count: {
+            select: {
+              users: { where: { deletedAt: null } },
+              leads: { where: { deletedAt: null } },
+              works: true,
+              dataCapturePlaces: { where: { deletedAt: null } },
+            },
+          },
+        },
+      }),
+      this.prisma.customer.findMany({
+        where: { deletedAt: null },
+        include: {
+          subscriptions: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            include: { plan: true },
+          },
+          _count: {
+            select: {
+              users: { where: { deletedAt: null } },
+              leads: { where: { deletedAt: null } },
+              works: true,
+              dataCapturePlaces: { where: { deletedAt: null } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    // Format Storage Helper
+    const formatStorage = (bytes: number | bigint): string => {
+      const numBytes = Number(bytes || 0);
+      if (numBytes >= 1024 * 1024 * 1024) {
+        return (numBytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+      }
+      return (numBytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+
+    // Calculate Global Aggregated KPIs
+    let totalAllocatedSeats = 0;
+    let totalMaxSeats = 0;
+    let totalLeads = 0;
+    let totalStorageBytes = 0;
+    let activeCustomersCount = 0;
+
+    for (const c of allCustomersStats as any[]) {
+      if (c.isActive) activeCustomersCount++;
+      const userCount = c._count?.users || 0;
+      const leadCount = c._count?.leads || 0;
+      const sub = c.subscriptions?.[0];
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 5;
+      const storageBytes = Number(c.storageUsed || 0);
+
+      totalAllocatedSeats += userCount;
+      totalMaxSeats += maxUsers;
+      totalLeads += leadCount;
+      totalStorageBytes += storageBytes;
+    }
+
+    const overallSeatUtilizationPct =
+      totalMaxSeats > 0 ? ((totalAllocatedSeats / totalMaxSeats) * 100).toFixed(1) + '%' : '0.0%';
+
+    // Map Items for current page
+    const items = (customers as any[]).map((c) => {
+      const sub = c.subscriptions?.[0];
+      const users = c._count?.users || 0;
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 50;
+      const leads = c._count?.leads || 0;
+      const maxLeads = sub?.customLeadLimit ?? sub?.plan?.leadLimit ?? c.leadLimit ?? 500;
+      const storageBytes = Number(c.storageUsed || 0);
+      const maxStorageBytes = Number(sub?.customStorageLimit ?? sub?.plan?.storageLimit ?? c.storageLimit ?? 5368709120);
+      const seatPct = maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : 0;
+      const leadPct = maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : 0;
+
+      return {
+        id: c.id,
+        name: c.name || c.companyName || `Customer #${c.id}`,
+        companyName: c.companyName || c.name || '',
+        domain: c.domain || (c.email ? c.email.split('@')[1] : '') || 'N/A',
+        email: c.email || '',
+        phone: c.phone || '',
+        isActive: c.isActive,
+        status: c.isActive ? 'ACTIVE' : 'INACTIVE',
+        planName: sub ? (sub.customFeatures ? 'Custom Plan' : sub.plan?.name || 'Standard Plan') : 'No Active Plan',
+        users,
+        maxUsers,
+        seatUtilization: seatPct,
+        leads,
+        maxLeads,
+        leadUtilization: leadPct,
+        storageBytes,
+        maxStorageBytes,
+        storage: formatStorage(storageBytes),
+        maxStorage: formatStorage(maxStorageBytes),
+        worksCount: c._count?.works || 0,
+        dataCapturePlacesCount: c._count?.dataCapturePlaces || 0,
+        createdAt: c.createdAt,
+      };
+    });
+
+    return {
+      success: true,
+      summary: {
+        totalAllocatedSeats,
+        totalMaxSeats,
+        overallSeatUtilization: overallSeatUtilizationPct,
+        totalLeads,
+        totalStorageBytes,
+        totalStorage: formatStorage(totalStorageBytes),
+        totalCustomers: allCustomersStats.length,
+        activeCustomers: activeCustomersCount,
+      },
+      items,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  /**
    * Get KPI Summary metrics for Customer screen
    */
   async getMetrics() {
