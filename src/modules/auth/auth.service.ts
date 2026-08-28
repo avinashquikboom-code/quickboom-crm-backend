@@ -201,6 +201,7 @@ export class AuthService {
       createdResult.user.id,
       createdResult.user.customerId,
       createdResult.user.email,
+      'CUSTOMER',
     );
 
     this.logger.log(
@@ -278,35 +279,67 @@ export class AuthService {
       throw new UnauthorizedException('Your account has been deactivated');
     }
 
-    const hasSuperAdminRole = user.userRoles.some((ur) => ur.role?.type === RoleType.SUPER_ADMIN);
-    const hasCustomerAdminRole = user.userRoles.some(
+    // 1. Role identification based on database Role/UserRole and relationships
+    const isSuperAdminRole = user.userRoles.some(
       (ur) =>
-        ur.role?.type === RoleType.CUSTOMER_ADMIN ||
-        ur.role?.name?.toUpperCase().includes('CUSTOMER'),
+        ur.role?.type === RoleType.SUPER_ADMIN ||
+        ur.roleId === 2 ||
+        ur.role?.name?.toUpperCase() === 'SUPER ADMINISTRATOR' ||
+        ur.role?.name?.toUpperCase() === 'SUPER_ADMIN' ||
+        ur.role?.name?.toUpperCase() === 'SUPER ADMIN',
     );
-    const isEmployee = Boolean(
-      (user.employee || user.userRoles.some((ur) => ur.role?.name?.toUpperCase().includes('EMPLOYEE'))) &&
-      !hasSuperAdminRole &&
-      !hasCustomerAdminRole,
-    );
-    const isCustomer = Boolean(!hasSuperAdminRole && !isEmployee && (hasCustomerAdminRole || user.customerId));
 
-    if (!hasSuperAdminRole && user.customer && !user.customer.isActive) {
-      throw new UnauthorizedException('Your company account is suspended');
-    }
+    const isCompanyAdminRole =
+      !isSuperAdminRole &&
+      user.userRoles.some(
+        (ur) =>
+          ur.role?.type === RoleType.CUSTOMER_ADMIN ||
+          ur.roleId === 5 ||
+          ur.role?.type === RoleType.TENANT_ADMIN ||
+          ur.role?.name?.toUpperCase() === 'COMPANY_ADMIN' ||
+          ur.role?.name?.toUpperCase() === 'COMPANY ADMIN' ||
+          ur.role?.name?.toUpperCase() === 'CUSTOMER ADMINISTRATOR',
+      );
 
-    const rawApp = (appType || '').trim().toLowerCase();
+    const isEmployeeRole =
+      !isSuperAdminRole &&
+      !isCompanyAdminRole &&
+      Boolean(
+        user.employee ||
+        user.userRoles.some(
+          (ur) =>
+            ur.roleId === 4 ||
+            ur.role?.name?.toUpperCase() === 'EMPLOYEE' ||
+            ur.role?.type === RoleType.SALES_EXECUTIVE ||
+            ur.role?.type === RoleType.SALES_MANAGER ||
+            ur.role?.name?.toUpperCase().includes('EMPLOYEE') ||
+            ur.role?.name?.toUpperCase().includes('STAFF'),
+        ),
+      );
 
-    let userRole: string;
-    if (hasSuperAdminRole) {
+    const isCustomerRole =
+      !isSuperAdminRole &&
+      !isCompanyAdminRole &&
+      !isEmployeeRole &&
+      Boolean(
+        user.userRoles.some((ur) => ur.roleId === 3 || ur.role?.name?.toUpperCase() === 'CUSTOMER') ||
+        user.customerId,
+      );
+
+    let userRole: 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
+    if (isSuperAdminRole) {
+      userRole = 'SUPER_ADMIN';
+    } else if (isCompanyAdminRole) {
       userRole = 'COMPANY_ADMIN';
-    } else if (isEmployee) {
+    } else if (isEmployeeRole) {
       userRole = 'EMPLOYEE';
-    } else if (isCustomer) {
+    } else if (isCustomerRole) {
       userRole = 'CUSTOMER';
     } else {
       const firstRoleName = user.userRoles[0]?.role?.name?.toUpperCase() || '';
-      if (firstRoleName.includes('ADMIN')) {
+      if (firstRoleName.includes('SUPER')) {
+        userRole = 'SUPER_ADMIN';
+      } else if (firstRoleName.includes('ADMIN')) {
         userRole = 'COMPANY_ADMIN';
       } else if (firstRoleName.includes('EMPLOYEE') || firstRoleName.includes('STAFF')) {
         userRole = 'EMPLOYEE';
@@ -315,9 +348,49 @@ export class AuthService {
       }
     }
 
-    // Strict Role-Based Login Validation
+    // 2. Company suspension and account status verification
+    if (userRole === 'SUPER_ADMIN') {
+      // Platform Super Admin is never blocked by tenant/customer suspension status
+    } else if (userRole === 'COMPANY_ADMIN') {
+      if (!user.isActive) {
+        throw new UnauthorizedException('Company admin account is inactive.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (userRole === 'EMPLOYEE') {
+      if (user.employee && user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is inactive.');
+      }
+      if (user.employee && user.employee.mobileLoginEnabled === false) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (userRole === 'CUSTOMER') {
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    }
+
+    const rawApp = (appType || '').trim().toLowerCase();
+
+    // 3. Strict Target App / Expected Role Login Validation
     const upperExpectedRole = (appType || '').trim().toUpperCase();
-    if (['CUSTOMER', 'CUSTOMER_MOBILE'].includes(upperExpectedRole)) {
+    if (upperExpectedRole === 'SUPER_ADMIN') {
+      if (userRole !== 'SUPER_ADMIN') {
+        throw new ForbiddenException('These credentials are not registered as a Super Admin account.');
+      }
+    } else if (upperExpectedRole === 'COMPANY_ADMIN') {
+      if (userRole !== 'COMPANY_ADMIN') {
+        throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
+      }
+    } else if (upperExpectedRole === 'ADMIN') {
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN') {
+        throw new ForbiddenException('These credentials are not registered as an Admin account.');
+      }
+    } else if (['CUSTOMER', 'CUSTOMER_MOBILE'].includes(upperExpectedRole)) {
       if (userRole !== 'CUSTOMER') {
         throw new ForbiddenException('These credentials are not registered as a Customer account.');
       }
@@ -331,66 +404,20 @@ export class AuthService {
       if (userRole !== 'EMPLOYEE') {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
-      if (user.employee && user.employee.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Employee account is inactive.');
-      }
-      if (user.employee && user.employee.mobileLoginEnabled === false) {
-        throw new UnauthorizedException('Mobile login is disabled for this employee.');
-      }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
-      }
-    } else if (['COMPANY_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(upperExpectedRole)) {
-      if (userRole !== 'COMPANY_ADMIN') {
-        throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
-      }
-      if (!user.isActive) {
-        throw new UnauthorizedException('Company admin account is inactive.');
-      }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
-      }
     } else if (rawApp === 'mobile') {
-      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN'];
+      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
       if (!allowedRoles.includes(userRole)) {
         throw new ForbiddenException('This account cannot access the mobile application.');
       }
-      if (userRole === 'EMPLOYEE') {
-        if (user.employee && user.employee.status !== 'ACTIVE') {
-          throw new UnauthorizedException('Employee account is inactive.');
-        }
-        if (user.employee && user.employee.mobileLoginEnabled === false) {
-          throw new UnauthorizedException('Mobile login is disabled for this employee.');
-        }
-      }
-    } else {
-      // General login validations
-      if (userRole === 'CUSTOMER') {
-        if (user.customer && !user.customer.isActive) {
-          throw new UnauthorizedException('Your company/customer account is suspended.');
-        }
-      } else if (userRole === 'EMPLOYEE') {
-        if (user.employee && user.employee.status !== 'ACTIVE') {
-          throw new UnauthorizedException('Employee account is inactive.');
-        }
-        if (user.employee && user.employee.mobileLoginEnabled === false) {
-          throw new UnauthorizedException('Mobile login is disabled for this employee.');
-        }
-        if (user.customer && !user.customer.isActive) {
-          throw new UnauthorizedException('Your company account is suspended.');
-        }
-      } else if (userRole === 'COMPANY_ADMIN') {
-        if (!user.isActive) {
-          throw new UnauthorizedException('Company admin account is inactive.');
-        }
-      }
     }
 
-    const roles = isEmployee && !hasSuperAdminRole
+    const rawRoles = isEmployeeRole
       ? ['EMPLOYEE', RoleType.CUSTOM]
-      : user.userRoles.map((ur) => ur.role.type);
+      : user.userRoles.map((ur) => ur.role?.type || ur.role?.name).filter(Boolean);
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
+    const roles = Array.from(new Set([userRole, ...rawRoles]));
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole);
 
     // Auto-generate employee record ONLY if the authenticated user is an Employee
     let emp: any = null;
@@ -432,9 +459,7 @@ export class AuthService {
       role: userRole,
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
-      // Conditional: Only include customerId and customerName for non-super-admin
-      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId }),
-      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name ?? null }),
+      ...(userRole !== 'SUPER_ADMIN' && user.customerId && { customerId: user.customerId, customerName: user.customer?.name ?? null }),
     };
 
     if (userRole === 'EMPLOYEE' && employeeData) {
@@ -1008,8 +1033,11 @@ export class AuthService {
     }));
   }
 
-  private async generateTokens(userId: number, customerId: number | null, email: string) {
-    const payload = { sub: userId, customerId, email };
+  private async generateTokens(userId: number, customerId: number | null, email: string, role?: string) {
+    const payload: any = { sub: userId, customerId, email };
+    if (role) {
+      payload.role = role;
+    }
 
     const accessExpiresIn =
       this.configService.get('JWT_ACCESS_EXPIRES_IN') ||

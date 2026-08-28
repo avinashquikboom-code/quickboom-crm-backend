@@ -3,16 +3,16 @@ import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-vali
 
 export class LoginDto {
   @ApiProperty({ example: 'admin@quikboom.com' })
-  @IsEmail()
-  @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty({ message: 'Email or phone identifier is required' })
   email: string;
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @MinLength(6)
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
   password: string;
 
-  @ApiPropertyOptional({ enum: ['ADMIN', 'EMPLOYEE_MOBILE', 'CUSTOMER', 'COMPANY_ADMIN'], example: 'EMPLOYEE_MOBILE' })
+  @ApiPropertyOptional({ enum: ['ADMIN', 'EMPLOYEE_MOBILE', 'CUSTOMER', 'COMPANY_ADMIN', 'EMPLOYEE', 'SUPER_ADMIN'], example: 'ADMIN' })
   @IsOptional()
   @IsString()
   appType?: string;
