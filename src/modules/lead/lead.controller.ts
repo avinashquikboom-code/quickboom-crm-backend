@@ -58,8 +58,8 @@ export class LeadController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics count for leads' })
-  async getMetrics(@CurrentCustomer() customerId: string) {
-    return this.leadService.getSummaryMetrics(customerId);
+  async getMetrics(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.leadService.getSummaryMetrics(customerId, user);
   }
 
   @Get()
@@ -70,17 +70,22 @@ export class LeadController {
   @ApiQuery({ name: 'status', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('status') status?: string,
   ) {
-    return this.leadService.getLeads(customerId, {
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 50,
-      search,
-      status,
-    });
+    return this.leadService.getLeads(
+      customerId,
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 50,
+        search,
+        status,
+      },
+      user,
+    );
   }
 
   @Post(':id/convert')

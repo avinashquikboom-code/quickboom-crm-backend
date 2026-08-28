@@ -151,21 +151,38 @@ export class LeadRepository {
     };
   }
 
-  async getSummaryMetrics(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const baseWhere: any = { deletedAt: null };
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        baseWhere.customerId = numCustomerId;
+      } else {
+        baseWhere.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      baseWhere.customerId = numCustomerId;
+    }
+
     const [total, newCount, contacted, qualified, converted, lost] = await Promise.all([
-      this.prisma.lead.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'NEW', deletedAt: null } }),
-      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'CONTACTED', deletedAt: null } }),
-      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'QUALIFIED', deletedAt: null } }),
+      this.prisma.lead.count({ where: { ...baseWhere } }),
+      this.prisma.lead.count({ where: { ...baseWhere, status: 'NEW' } }),
+      this.prisma.lead.count({ where: { ...baseWhere, status: 'CONTACTED' } }),
+      this.prisma.lead.count({ where: { ...baseWhere, status: 'QUALIFIED' } }),
       this.prisma.lead.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           status: { in: [LeadStatus.CONVERTED, LeadStatus.WON] },
-          deletedAt: null,
         },
       }),
-      this.prisma.lead.count({ where: { customerId: numCustomerId, status: 'LOST', deletedAt: null } }),
+      this.prisma.lead.count({ where: { ...baseWhere, status: 'LOST' } }),
     ]);
 
     return {
@@ -339,30 +356,55 @@ export class LeadRepository {
     };
   }
 
-  async findAll(customerId: number | string, options: { page?: number; limit?: number; search?: string; status?: string; assignedToId?: string | number }) {
-    const numCustomerId = Number(customerId);
-    const page = options.page || 1;
-    const limit = options.limit || 50;
+  async findAll(
+    customerId: number | string | undefined,
+    options: { page?: number; limit?: number; search?: string; status?: string; assignedToId?: string | number },
+    user?: any,
+  ) {
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const page = Math.max(Number(options.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
     const skip = (page - 1) * limit;
 
     const where: any = {
-      customerId: numCustomerId,
       deletedAt: null,
     };
 
-    if (options.status) {
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      } else {
+        where.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
+    if (options.status && options.status.toUpperCase() !== 'ALL') {
       where.status = options.status as LeadStatus;
     }
 
-    if (options.search) {
+    if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {
+      where.assignedToId = Number(options.assignedToId);
+    }
+
+    if (options.search && options.search.trim()) {
+      const s = options.search.trim();
       where.OR = [
-        { title: { contains: options.search, mode: 'insensitive' } },
-        { firstName: { contains: options.search, mode: 'insensitive' } },
-        { lastName: { contains: options.search, mode: 'insensitive' } },
-        { email: { contains: options.search, mode: 'insensitive' } },
-        { phone: { contains: options.search, mode: 'insensitive' } },
-        { companyName: { contains: options.search, mode: 'insensitive' } },
-        { city: { contains: options.search, mode: 'insensitive' } },
+        { title: { contains: s, mode: 'insensitive' } },
+        { firstName: { contains: s, mode: 'insensitive' } },
+        { lastName: { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+        { companyName: { contains: s, mode: 'insensitive' } },
+        { city: { contains: s, mode: 'insensitive' } },
       ];
     }
 
@@ -386,16 +428,22 @@ export class LeadRepository {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit) || 1,
       },
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     return this.prisma.lead.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },

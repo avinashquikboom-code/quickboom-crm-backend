@@ -69,15 +69,33 @@ export class DealService {
     });
   }
 
-  async getMetrics(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  async getMetrics(customerId: number | string | undefined, user?: any) {
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const baseWhere: any = { deletedAt: null };
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        baseWhere.customerId = numCustomerId;
+      } else {
+        baseWhere.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      baseWhere.customerId = numCustomerId;
+    }
+
     const [total, open, won, lost, allDeals] = await Promise.all([
-      this.prisma.deal.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.deal.count({ where: { customerId: numCustomerId, isWon: false, isLost: false, deletedAt: null } }),
-      this.prisma.deal.count({ where: { customerId: numCustomerId, isWon: true, deletedAt: null } }),
-      this.prisma.deal.count({ where: { customerId: numCustomerId, isLost: true, deletedAt: null } }),
+      this.prisma.deal.count({ where: { ...baseWhere } }),
+      this.prisma.deal.count({ where: { ...baseWhere, isWon: false, isLost: false } }),
+      this.prisma.deal.count({ where: { ...baseWhere, isWon: true } }),
+      this.prisma.deal.count({ where: { ...baseWhere, isLost: true } }),
       this.prisma.deal.findMany({
-        where: { customerId: numCustomerId, deletedAt: null },
+        where: { ...baseWhere },
         select: { amount: true, isWon: true, isLost: true },
       }),
     ]);
@@ -101,15 +119,33 @@ export class DealService {
   }
 
   async findAll(
-    customerId: number | string,
+    customerId: number | string | undefined,
     query: { pipelineId?: number | string; stageId?: number | string; search?: string; assignedToId?: string; status?: string; page?: number; limit?: number },
+    user?: any,
   ) {
-    const numCustomerId = Number(customerId);
+    const numCustomerId = Number(customerId || user?.customerId);
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId, deletedAt: null };
+    const where: any = { deletedAt: null };
+
+    if (!isSuperAdmin) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      } else {
+        where.customerId = 0;
+      }
+    } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
 
     if (query.pipelineId && query.pipelineId !== 'ALL') where.pipelineId = Number(query.pipelineId);
     if (query.stageId && query.stageId !== 'ALL') where.stageId = Number(query.stageId);
@@ -122,12 +158,13 @@ export class DealService {
       where.isLost = false;
     }
 
-    if (query.search) {
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
       where.OR = [
-        { title: { contains: query.search, mode: 'insensitive' } },
-        { company: { name: { contains: query.search, mode: 'insensitive' } } },
-        { contact: { firstName: { contains: query.search, mode: 'insensitive' } } },
-        { contact: { lastName: { contains: query.search, mode: 'insensitive' } } },
+        { title: { contains: s, mode: 'insensitive' } },
+        { company: { name: { contains: s, mode: 'insensitive' } } },
+        { contact: { firstName: { contains: s, mode: 'insensitive' } } },
+        { contact: { lastName: { contains: s, mode: 'insensitive' } } },
       ];
     }
 
@@ -167,11 +204,17 @@ export class DealService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const deal = await this.prisma.deal.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         pipeline: { include: { stages: { orderBy: { order: 'asc' } } } },
         stage: true,

@@ -23,8 +23,8 @@ export class LeadService {
     private readonly planAccessService?: PlanAccessService,
   ) {}
 
-  async getSummaryMetrics(customerId: number | string) {
-    return this.leadRepository.getSummaryMetrics(customerId);
+  async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
+    return this.leadRepository.getSummaryMetrics(customerId, user);
   }
 
   async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto) {
@@ -49,8 +49,8 @@ export class LeadService {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
-  async getLeads(customerId: number | string, query: { page?: number; limit?: number; search?: string; status?: string }) {
-    return this.leadRepository.findAll(customerId, query);
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string }, user?: any) {
+    return this.leadRepository.findAll(customerId, query, user);
   }
 
   async getLeadById(customerId: number | string, id: number | string) {

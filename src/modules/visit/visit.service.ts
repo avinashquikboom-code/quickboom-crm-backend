@@ -30,36 +30,54 @@ export class VisitService {
     return undefined;
   }
 
-  async getMetrics(customerId: number | string | undefined) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
+  async getMetrics(customerId: number | string | undefined, user?: any) {
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
+
+    const numCustomerId = await this.resolveCustomerId(customerId || user?.customerId);
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
 
+    const baseWhere: any = {};
+    if (!isSuperAdmin) {
+      if (numCustomerId !== undefined && numCustomerId > 0) {
+        baseWhere.customerId = numCustomerId;
+      } else {
+        baseWhere.customerId = 0;
+      }
+    } else if (numCustomerId !== undefined && numCustomerId > 0) {
+      baseWhere.customerId = numCustomerId;
+    }
+
     const [todayVisits, upcoming, completed, cancelled] = await Promise.all([
       this.prisma.visit.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           date: { gte: startOfToday, lte: endOfToday },
         },
       }),
       this.prisma.visit.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           status: 'SCHEDULED',
           date: { gte: endOfToday },
         },
       }),
       this.prisma.visit.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           status: 'COMPLETED',
         },
       }),
       this.prisma.visit.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           status: 'CANCELLED',
         },
       }),
@@ -81,20 +99,39 @@ export class VisitService {
     search?: string,
     employeeId?: string,
     companyId?: string,
+    user?: any,
   ) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const skip = (page - 1) * limit;
-    const where: any = { customerId: numCustomerId };
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.roleType === 'SUPER_ADMIN' ||
+      user?.roles?.includes('SUPER_ADMIN') ||
+      user?.roles?.includes('Super Administrator') ||
+      customerId === undefined;
 
-    if (status) where.status = status;
+    const numCustomerId = await this.resolveCustomerId(customerId || user?.customerId);
+    const skip = (page - 1) * limit;
+    const where: any = {};
+
+    if (!isSuperAdmin) {
+      if (numCustomerId !== undefined && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      } else {
+        where.customerId = 0;
+      }
+    } else if (numCustomerId !== undefined && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
+    if (status && (status as any) !== 'ALL') where.status = status;
     if (employeeId && employeeId !== 'ALL') where.employeeId = Number(employeeId);
     if (companyId && companyId !== 'ALL') where.companyId = Number(companyId);
 
-    if (search) {
+    if (search && search.trim()) {
+      const s = search.trim();
       where.OR = [
-        { customerName: { contains: search, mode: 'insensitive' } },
-        { purpose: { contains: search, mode: 'insensitive' } },
-        { location: { contains: search, mode: 'insensitive' } },
+        { customerName: { contains: s, mode: 'insensitive' } },
+        { purpose: { contains: s, mode: 'insensitive' } },
+        { location: { contains: s, mode: 'insensitive' } },
       ];
     }
 
@@ -138,8 +175,13 @@ export class VisitService {
   async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
+    const where: any = { id: numId };
+    if (numCustomerId !== undefined && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const visit = await this.prisma.visit.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where,
       include: {
         employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true } },
         company: true,

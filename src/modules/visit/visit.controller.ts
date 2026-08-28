@@ -16,6 +16,7 @@ import { VisitStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Client Visits')
 @ApiBearerAuth()
@@ -26,8 +27,11 @@ export class VisitController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics for client visits' })
-  async getMetrics(@CurrentCustomer() customerId: number | string | undefined) {
-    return this.visitService.getMetrics(customerId);
+  async getMetrics(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser() user: any,
+  ) {
+    return this.visitService.getMetrics(customerId, user);
   }
 
   @Get()
@@ -40,6 +44,7 @@ export class VisitController {
   @ApiQuery({ name: 'companyId', required: false })
   async findAll(
     @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser() user: any,
     @Query('status') status?: VisitStatus,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -55,6 +60,7 @@ export class VisitController {
       search,
       employeeId,
       companyId,
+      user,
     );
   }
 

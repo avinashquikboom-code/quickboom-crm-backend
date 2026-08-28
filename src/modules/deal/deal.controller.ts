@@ -15,6 +15,7 @@ import { CreateDealDto, UpdateDealDto, UpdateDealStageDto } from './dto/deal.dto
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Deals')
 @ApiBearerAuth()
@@ -31,8 +32,8 @@ export class DealController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics for deals & pipeline value' })
-  async getMetrics(@CurrentCustomer() customerId: string) {
-    return this.dealService.getMetrics(customerId);
+  async getMetrics(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.dealService.getMetrics(customerId, user);
   }
 
   @Get()
@@ -46,6 +47,7 @@ export class DealController {
   @ApiQuery({ name: 'search', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('pipelineId') pipelineId?: string,
@@ -54,15 +56,19 @@ export class DealController {
     @Query('status') status?: string,
     @Query('search') search?: string,
   ) {
-    return this.dealService.findAll(customerId, {
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 20,
-      pipelineId,
-      stageId,
-      assignedToId,
-      status,
-      search,
-    });
+    return this.dealService.findAll(
+      customerId,
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+        pipelineId,
+        stageId,
+        assignedToId,
+        status,
+        search,
+      },
+      user,
+    );
   }
 
   @Get(':id')
