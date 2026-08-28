@@ -582,7 +582,19 @@ export class AuthService {
 
     const existingToken = await this.prisma.refreshToken.findUnique({
       where: { token: rawToken },
-      include: { user: true },
+      include: {
+        user: {
+          include: {
+            userRoles: {
+              include: {
+                role: true,
+              },
+            },
+            employee: true,
+            customer: true,
+          },
+        },
+      },
     });
 
     if (existingToken && (existingToken.isRevoked || existingToken.expiresAt < new Date())) {
@@ -600,6 +612,7 @@ export class AuthService {
             },
           },
           employee: true,
+          customer: true,
         },
       }));
 

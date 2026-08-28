@@ -233,109 +233,128 @@ export class DataCaptureService {
   /**
    * List captured places with pagination, search, status, and source filters
    */
-  async listPlaces(customerId: string | number, query: DataCaptureQueryDto) {
-    const numCustomerId = Number(customerId);
-    const page = Math.max(Number(query.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
-    const skip = (page - 1) * limit;
+  async listPlaces(customerId: string | number | undefined, query: DataCaptureQueryDto) {
+    try {
+      const numCustomerId = Number(customerId);
+      const page = Math.max(Number(query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+      const skip = (page - 1) * limit;
 
-    const where: any = {
-      customerId: numCustomerId,
-      deletedAt: null,
-    };
+      const where: any = {
+        deletedAt: null,
+      };
 
-    if (query.search && query.search.trim()) {
-      const search = query.search.trim();
-      where.OR = [
-        { businessName: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
-        { category: { contains: search, mode: 'insensitive' } },
-        { googlePlaceId: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
 
-    if (query.status && query.status !== 'ALL') {
-      where.status = query.status.toUpperCase();
-    }
+      if (query.search && query.search.trim()) {
+        const search = query.search.trim();
+        where.OR = [
+          { businessName: { contains: search, mode: 'insensitive' } },
+          { phone: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { address: { contains: search, mode: 'insensitive' } },
+          { category: { contains: search, mode: 'insensitive' } },
+          { googlePlaceId: { contains: search, mode: 'insensitive' } },
+        ];
+      }
 
-    if (query.source && query.source !== 'ALL') {
-      where.source = query.source.toUpperCase();
-    }
+      const status = query.status?.trim();
+      if (status && status.toUpperCase() !== 'ALL') {
+        where.status = status.toUpperCase();
+      }
 
-    if (query.category && query.category !== 'ALL') {
-      where.category = { contains: query.category, mode: 'insensitive' };
-    }
+      const source = query.source?.trim();
+      if (source && source.toUpperCase() !== 'ALL') {
+        where.source = source.toUpperCase();
+      }
 
-    if (query.jobId) {
-      where.jobId = query.jobId;
-    }
+      const category = query.category?.trim();
+      if (category && category.toUpperCase() !== 'ALL') {
+        where.category = { contains: category, mode: 'insensitive' };
+      }
 
-    const sortField = query.sortBy || 'createdAt';
-    const sortOrder = (query.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+      if (query.jobId && query.jobId.trim() && query.jobId.toUpperCase() !== 'ALL') {
+        where.jobId = query.jobId.trim();
+      }
 
-    const [total, records] = await Promise.all([
-      this.prisma.dataCapturePlace.count({ where }),
-      this.prisma.dataCapturePlace.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { [sortField]: sortOrder },
-        include: {
-          job: {
-            select: {
-              jobId: true,
-              keyword: true,
-              location: true,
-              createdAt: true,
+      const sortField = query.sortBy || 'createdAt';
+      const sortOrder = (query.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+      const [total, records] = await Promise.all([
+        this.prisma.dataCapturePlace.count({ where }),
+        this.prisma.dataCapturePlace.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { [sortField]: sortOrder },
+          include: {
+            job: {
+              select: {
+                jobId: true,
+                keyword: true,
+                location: true,
+                createdAt: true,
+              },
             },
           },
+        }),
+      ]);
+
+      const data: CapturedPlace[] = records.map((p) => ({
+        id: p.id,
+        provider: p.source || 'GOOGLE_PLACES',
+        googlePlaceId: p.googlePlaceId || undefined,
+        businessName: p.businessName,
+        category: p.category || undefined,
+        address: p.address || undefined,
+        phone: p.phone || undefined,
+        email: p.email || undefined,
+        website: p.website || undefined,
+        rating: p.rating || undefined,
+        reviewCount: p.reviewCount || undefined,
+        latitude: p.latitude || undefined,
+        longitude: p.longitude || undefined,
+        googleMapsUrl: p.googleMapsUrl || undefined,
+        businessStatus: p.businessStatus || 'OPERATIONAL',
+        source: p.source || 'GOOGLE_PLACES',
+        status: p.status || 'CAPTURED',
+        notes: p.notes || undefined,
+        rawData: p.rawData || undefined,
+        isImported: p.isImported,
+        importedLeadId: p.importedLeadId || undefined,
+        capturedAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        customerId: String(p.customerId),
+        extractionJobId: p.jobId || undefined,
+      }));
+
+      const totalPages = Math.ceil(total / limit) || 1;
+
+      return {
+        statusCode: 200,
+        success: true,
+        data,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
         },
-      }),
-    ]);
-
-    const data: CapturedPlace[] = records.map((p) => ({
-      id: p.id,
-      provider: p.source || 'GOOGLE_PLACES',
-      googlePlaceId: p.googlePlaceId || undefined,
-      businessName: p.businessName,
-      category: p.category || undefined,
-      address: p.address || undefined,
-      phone: p.phone || undefined,
-      email: p.email || undefined,
-      website: p.website || undefined,
-      rating: p.rating || undefined,
-      reviewCount: p.reviewCount || undefined,
-      latitude: p.latitude || undefined,
-      longitude: p.longitude || undefined,
-      googleMapsUrl: p.googleMapsUrl || undefined,
-      businessStatus: p.businessStatus || 'OPERATIONAL',
-      source: p.source || 'GOOGLE_PLACES',
-      status: p.status || 'CAPTURED',
-      notes: p.notes || undefined,
-      rawData: p.rawData || undefined,
-      isImported: p.isImported,
-      importedLeadId: p.importedLeadId || undefined,
-      capturedAt: p.createdAt,
-      updatedAt: p.updatedAt,
-      customerId: String(p.customerId),
-      extractionJobId: p.jobId || undefined,
-    }));
-
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `[DATA_CAPTURE_ERROR] listPlaces failed: params=${JSON.stringify(query)} customerId=${customerId} code=${error.code || 'UNKNOWN'} error=${error.message}`,
+      );
+      throw error;
+    }
   }
 
   /**
    * Get single captured place details with duplicate detection
    */
-  async getPlaceById(customerId: string | number, id: number | string): Promise<CapturedPlace> {
+  async getPlaceById(customerId: string | number | undefined, id: number | string): Promise<CapturedPlace> {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
@@ -343,12 +362,16 @@ export class DataCaptureService {
       throw new BadRequestException('Invalid Data Capture ID format.');
     }
 
+    const where: any = {
+      id: numId,
+      deletedAt: null,
+    };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const place = await this.prisma.dataCapturePlace.findFirst({
-      where: {
-        id: numId,
-        customerId: numCustomerId,
-        deletedAt: null,
-      },
+      where,
       include: {
         job: true,
       },
@@ -359,7 +382,7 @@ export class DataCaptureService {
     }
 
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId, place);
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
 
     return {
       id: place.id,
@@ -395,11 +418,15 @@ export class DataCaptureService {
    * Create a manual Data Capture prospect record
    */
   async createPlace(
-    customerId: string | number,
+    customerId: string | number | undefined,
     userId: string | number,
     dto: CreateDataCaptureDto,
   ): Promise<CapturedPlace> {
-    const numCustomerId = Number(customerId);
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true } });
+      numCustomerId = defaultCustomer?.id || 1;
+    }
 
     const place = await this.prisma.dataCapturePlace.create({
       data: {
@@ -459,15 +486,20 @@ export class DataCaptureService {
    * Update a Data Capture record
    */
   async updatePlace(
-    customerId: string | number,
+    customerId: string | number | undefined,
     id: number | string,
     dto: UpdateDataCaptureDto,
   ): Promise<CapturedPlace> {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const existing = await this.prisma.dataCapturePlace.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
     });
 
     if (!existing) {
@@ -498,7 +530,7 @@ export class DataCaptureService {
       },
     });
 
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId, updated);
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || updated.customerId, updated);
 
     return {
       id: updated.id,
@@ -533,12 +565,17 @@ export class DataCaptureService {
   /**
    * Delete / Soft Delete a Data Capture record
    */
-  async deletePlace(customerId: string | number, id: number | string): Promise<{ success: boolean; message: string }> {
+  async deletePlace(customerId: string | number | undefined, id: number | string): Promise<{ success: boolean; message: string }> {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const existing = await this.prisma.dataCapturePlace.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
     });
 
     if (!existing) {
@@ -559,7 +596,7 @@ export class DataCaptureService {
   /**
    * Validate a Data Capture record
    */
-  async validatePlace(customerId: string | number, id: number | string): Promise<CapturedPlace> {
+  async validatePlace(customerId: string | number | undefined, id: number | string): Promise<CapturedPlace> {
     return this.updatePlace(customerId, id, { status: 'VALIDATED' });
   }
 
@@ -567,15 +604,20 @@ export class DataCaptureService {
    * Reject a Data Capture record
    */
   async rejectPlace(
-    customerId: string | number,
+    customerId: string | number | undefined,
     id: number | string,
     dto?: RejectDataCaptureDto,
   ): Promise<CapturedPlace> {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const existing = await this.prisma.dataCapturePlace.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
     });
 
     if (!existing) {
@@ -594,19 +636,24 @@ export class DataCaptureService {
   /**
    * Check for duplicate matches for a specific place or prospect parameters
    */
-  async checkDuplicates(customerId: string | number, id: number | string): Promise<{ duplicateMatches: DuplicateMatch[] }> {
+  async checkDuplicates(customerId: string | number | undefined, id: number | string): Promise<{ duplicateMatches: DuplicateMatch[] }> {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    const where: any = { id: numId, deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const place = await this.prisma.dataCapturePlace.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
     });
 
     if (!place) {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId, place);
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
     return { duplicateMatches };
   }
 
@@ -960,10 +1007,15 @@ export class DataCaptureService {
   /**
    * Get extraction history for customer from PostgreSQL
    */
-  async getCustomerJobs(customerId: string | number): Promise<ExtractionJob[]> {
+  async getCustomerJobs(customerId?: string | number): Promise<ExtractionJob[]> {
     const numCustomerId = Number(customerId);
+    const where: any = {};
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const jobs = await this.prisma.dataCaptureJob.findMany({
-      where: { customerId: numCustomerId },
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         places: {
@@ -1014,13 +1066,15 @@ export class DataCaptureService {
   /**
    * Get single extraction job details
    */
-  async getJobById(customerId: string | number, jobId: string): Promise<ExtractionJob> {
+  async getJobById(customerId: string | number | undefined, jobId: string): Promise<ExtractionJob> {
     const numCustomerId = Number(customerId);
+    const where: any = { jobId: jobId.trim() };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
     const job = await this.prisma.dataCaptureJob.findFirst({
-      where: {
-        jobId: jobId.trim(),
-        customerId: numCustomerId,
-      },
+      where,
       include: {
         places: {
           where: { deletedAt: null },
@@ -1074,21 +1128,25 @@ export class DataCaptureService {
   /**
    * Get customer extraction usage summary from PostgreSQL
    */
-  async getUsageSummary(customerId: string | number): Promise<ExtractionUsageSummary> {
+  async getUsageSummary(customerId?: string | number): Promise<ExtractionUsageSummary> {
     const numCustomerId = Number(customerId);
+    const customerWhere: any = {};
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      customerWhere.customerId = numCustomerId;
+    }
 
     const [totalExtractions, aggregatePlaces, aggregateRequests, validatedCount, convertedCount] = await Promise.all([
-      this.prisma.dataCaptureJob.count({ where: { customerId: numCustomerId } }),
-      this.prisma.dataCapturePlace.count({ where: { customerId: numCustomerId, deletedAt: null } }),
+      this.prisma.dataCaptureJob.count({ where: customerWhere }),
+      this.prisma.dataCapturePlace.count({ where: { ...customerWhere, deletedAt: null } }),
       this.prisma.dataCaptureJob.aggregate({
-        where: { customerId: numCustomerId },
+        where: customerWhere,
         _sum: { googleApiRequests: true },
       }),
       this.prisma.dataCapturePlace.count({
-        where: { customerId: numCustomerId, status: 'VALIDATED', deletedAt: null },
+        where: { ...customerWhere, status: 'VALIDATED', deletedAt: null },
       }),
       this.prisma.dataCapturePlace.count({
-        where: { customerId: numCustomerId, isImported: true, deletedAt: null },
+        where: { ...customerWhere, isImported: true, deletedAt: null },
       }),
     ]);
 
@@ -1097,7 +1155,7 @@ export class DataCaptureService {
     const quotaLimit = 1000;
 
     return {
-      customerId: String(customerId),
+      customerId: customerId ? String(customerId) : 'ALL',
       totalExtractions,
       totalLeadsCaptured,
       totalGoogleApiCalls,
@@ -1112,7 +1170,7 @@ export class DataCaptureService {
    * Internal helper to scan database for duplicates
    */
   private async findDuplicateMatches(
-    customerId: number,
+    customerId: number | undefined,
     place: {
       id?: number;
       googlePlaceId?: string | null;
@@ -1123,6 +1181,9 @@ export class DataCaptureService {
     },
   ): Promise<DuplicateMatch[]> {
     const matches: DuplicateMatch[] = [];
+    if (!customerId || isNaN(customerId)) {
+      return matches;
+    }
 
     // Check Leads
     const leadConditions: any[] = [];
