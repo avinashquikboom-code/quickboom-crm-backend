@@ -23,8 +23,8 @@ export class CustomerGuard implements CanActivate {
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAdminOrStaff = isUserAdminOrStaff(user);
 
-    // ── 1. SUPER_ADMIN & COMPANY_ADMIN / STAFF ACCESS ─────────────────────────
-    if (isSuperAdmin || isAdminOrStaff) {
+    // ── 1. SUPER_ADMIN & GLOBAL ADMIN / STAFF ACCESS ─────────────────────────
+    if (isSuperAdmin || (isAdminOrStaff && (user.customerId == null || user.customerId === 0))) {
       request.isSuperAdmin = isSuperAdmin;
       request.isAdminOrStaff = isAdminOrStaff;
 
