@@ -780,7 +780,6 @@ export class WorkService {
       });
 
       if (activeSubForCustomer) {
-        where.subscriptionId = activeSubForCustomer.id;
         const subWorkCount = await this.prisma.work.count({
           where: {
             customerId: numCustomerId,
@@ -974,6 +973,7 @@ export class WorkService {
         planName: planName,
         title: isLocked ? 'Schedule Locked' : w.title,
         scheduledDate: schedDateVal,
+        scheduledAt: w.scheduledDate,
         scheduledTime: startTime,
         date: w.scheduledDate,
         scheduleDate: w.scheduledDate,
