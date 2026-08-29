@@ -258,6 +258,18 @@ export function extractReelCount(features: any): number {
   return 0;
 }
 
+export interface PlanActivityDefinition {
+  serviceName: string;
+  itemNumber: number;
+  activityType: string;
+  workType: WorkType;
+  title: string;
+  description: string;
+  scheduledDate: Date;
+  scheduledTime: string;
+  stepOrder: number;
+}
+
 /**
  * Generate weekly Reel workflow activities dynamically according to the core business rule:
  * ONE REEL = ONE WEEK.
@@ -277,11 +289,9 @@ export function generateReelWorkflowActivities(
 
   const activities: ReelActivityDefinition[] = [];
   const start = new Date(startDate);
-  // Normalize start to date-only at 10:00 AM UTC/local
   const startYear = start.getUTCFullYear();
   const startMonth = start.getUTCMonth();
   const startDay = start.getUTCDate();
-
   const endLimit = new Date(endDate);
 
   for (let reelIndex = 0; reelIndex < reelCount; reelIndex++) {
@@ -334,6 +344,197 @@ export function generateReelWorkflowActivities(
         scheduledTime: '10:00 AM',
         stepOrder: 3,
       });
+    }
+  }
+
+  return activities;
+}
+
+/**
+ * Generate comprehensive, evenly distributed calendar activities for ALL deliverable services
+ * in a customer's purchased plan (Reels, Creative Posts, Stories, Influencer Promotions, etc.).
+ */
+export function generateAllPlanWorkflowActivities(
+  startDate: Date,
+  endDate: Date,
+  quotas: DeliverableQuota[],
+): PlanActivityDefinition[] {
+  const activities: PlanActivityDefinition[] = [];
+  if (!quotas || quotas.length === 0) return activities;
+
+  const start = new Date(startDate);
+  const startYear = start.getUTCFullYear();
+  const startMonth = start.getUTCMonth();
+  const startDay = start.getUTCDate();
+  const endLimit = new Date(endDate);
+
+  const durationDays = Math.max(
+    1,
+    Math.round((endLimit.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)),
+  );
+
+  for (const quota of quotas) {
+    const sName = quota.serviceName;
+    const qty = quota.totalQty;
+    if (qty <= 0) continue;
+
+    const lower = sName.toLowerCase();
+
+    if (lower.includes('reel')) {
+      // 1. REEL WORKFLOW: Reel Shoot -> (2 Days Gap) -> Reel Edit -> (2 Days Gap) -> Reel Post
+      for (let r = 0; r < qty; r++) {
+        const reelNumber = r + 1;
+        const intervalDays = Math.max(1, Math.floor(durationDays / qty));
+        const baseDayOffset = Math.min(Math.max(0, durationDays - 5), r * intervalDays);
+
+        const shootDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset, 10, 0, 0, 0));
+        const editingDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 2, 10, 0, 0, 0));
+        const postDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 4, 10, 0, 0, 0));
+
+        if (shootDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: reelNumber,
+            activityType: 'REEL_SHOOT',
+            workType: WorkType.SHOOT,
+            title: `Reel #${reelNumber}: Shoot`,
+            description: `Reel #${reelNumber} Video & Asset Shoot on location`,
+            scheduledDate: shootDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 1,
+          });
+        }
+        if (editingDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: reelNumber,
+            activityType: 'REEL_EDIT',
+            workType: WorkType.EDITING,
+            title: `Reel #${reelNumber}: Edit`,
+            description: `Reel #${reelNumber} Video Editing, Color Grading & Audio Sync`,
+            scheduledDate: editingDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 2,
+          });
+        }
+        if (postDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: reelNumber,
+            activityType: 'REEL_POST',
+            workType: WorkType.POST_DESIGN,
+            title: `Reel #${reelNumber}: Post`,
+            description: `Reel #${reelNumber} Final Review & Publishing`,
+            scheduledDate: postDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 3,
+          });
+        }
+      }
+    } else if (lower.includes('story') || lower.includes('stories')) {
+      // 2. STORY WORKFLOW: Story Design -> (1 Day Gap) -> Story Post
+      for (let s = 0; s < qty; s++) {
+        const storyNumber = s + 1;
+        const intervalDays = Math.max(1, Math.floor(durationDays / qty));
+        const baseDayOffset = Math.min(Math.max(0, durationDays - 2), s * intervalDays + (1 % intervalDays));
+
+        const designDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset, 10, 0, 0, 0));
+        const postDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 1, 10, 0, 0, 0));
+
+        if (designDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: storyNumber,
+            activityType: 'STORY_DESIGN',
+            workType: WorkType.STORY_DESIGN,
+            title: `Story #${storyNumber}: Design`,
+            description: `Story #${storyNumber} Graphic & Layout Design`,
+            scheduledDate: designDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 1,
+          });
+        }
+        if (postDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: storyNumber,
+            activityType: 'STORY_POST',
+            workType: WorkType.UPLOADING,
+            title: `Story #${storyNumber}: Post`,
+            description: `Story #${storyNumber} Publishing & Engagement`,
+            scheduledDate: postDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 2,
+          });
+        }
+      }
+    } else if (lower.includes('post') || lower.includes('creative')) {
+      // 3. CREATIVE POST WORKFLOW: Post Design -> (2 Days Gap) -> Post Publish
+      for (let p = 0; p < qty; p++) {
+        const postNumber = p + 1;
+        const intervalDays = Math.max(1, Math.floor(durationDays / qty));
+        const baseDayOffset = Math.min(Math.max(0, durationDays - 3), p * intervalDays + (2 % intervalDays));
+
+        const designDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset, 10, 0, 0, 0));
+        const publishDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 2, 10, 0, 0, 0));
+
+        if (designDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: postNumber,
+            activityType: 'POST_DESIGN',
+            workType: WorkType.POST_DESIGN,
+            title: `Creative Post #${postNumber}: Design`,
+            description: `Creative Post #${postNumber} Visual Design & Copywriting`,
+            scheduledDate: designDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 1,
+          });
+        }
+        if (publishDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber: postNumber,
+            activityType: 'POST_PUBLISH',
+            workType: WorkType.UPLOADING,
+            title: `Creative Post #${postNumber}: Publish`,
+            description: `Creative Post #${postNumber} Final Review & Publishing`,
+            scheduledDate: publishDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 2,
+          });
+        }
+      }
+    } else {
+      // 4. OTHER DELIVERABLES (Influencer Promotions, Ads, Reports, Custom)
+      const intervalDays = Math.max(1, Math.floor(durationDays / qty));
+      let staggerOffset = 3;
+      if (lower.includes('influencer')) staggerOffset = 5;
+      else if (lower.includes('ads')) staggerOffset = 1;
+      else if (lower.includes('report')) staggerOffset = Math.max(1, durationDays - 3);
+
+      for (let i = 0; i < qty; i++) {
+        const itemNumber = i + 1;
+        const dayOffset = Math.min(
+          durationDays - 1,
+          Math.max(0, i * intervalDays + (staggerOffset % intervalDays)),
+        );
+        const schedDate = new Date(Date.UTC(startYear, startMonth, startDay + dayOffset, 10, 0, 0, 0));
+
+        if (schedDate <= endLimit) {
+          activities.push({
+            serviceName: sName,
+            itemNumber,
+            activityType: 'DELIVERABLE',
+            workType: quota.workType,
+            title: `${sName} #${itemNumber}`,
+            description: `${sName} #${itemNumber} content execution & deliverable`,
+            scheduledDate: schedDate,
+            scheduledTime: '10:00 AM',
+            stepOrder: 1,
+          });
+        }
+      }
     }
   }
 

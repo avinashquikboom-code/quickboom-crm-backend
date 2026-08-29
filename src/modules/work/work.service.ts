@@ -12,6 +12,7 @@ import {
   extractDeliverableQuotas,
   extractReelCount,
   generateReelWorkflowActivities,
+  generateAllPlanWorkflowActivities,
 } from '../../common/utils/plan-deliverable.util';
 
 @Injectable()
@@ -1078,23 +1079,26 @@ export class WorkService {
       };
     }
 
-    // 2. Extract Reel Count dynamically from purchased plan / custom features
+    // 2. Extract All Deliverable Quotas dynamically from purchased plan / custom features
     const effectiveFeatures = targetSub.customFeatures || targetSub.plan.features || [];
-    let reelCount = extractReelCount(effectiveFeatures);
+    let deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
 
-    // Fallback: If no reels found, check generic deliverable quotas
-    if (reelCount <= 0) {
-      const deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
-      const reelQuota = deliverableQuotas.find((q) => q.serviceName.toLowerCase().includes('reel'));
-      if (reelQuota) {
-        reelCount = reelQuota.totalQty;
+    // Fallback: If no quotas found, check generic reel count
+    if (deliverableQuotas.length === 0) {
+      const reelCount = extractReelCount(effectiveFeatures);
+      if (reelCount > 0) {
+        deliverableQuotas.push({
+          serviceName: 'Reels',
+          totalQty: reelCount,
+          workType: WorkType.REEL,
+        });
       }
     }
 
-    if (reelCount <= 0) {
+    if (deliverableQuotas.length === 0) {
       return {
         success: true,
-        message: 'No Reel deliverable quotas configured in purchased plan.',
+        message: 'No deliverable quotas configured in purchased plan.',
         createdCount: 0,
         schedules: [],
       };
@@ -1107,54 +1111,46 @@ export class WorkService {
     const endDateStr = endDate.toISOString().split('T')[0];
 
     this.logger.log(
-      `[PLAN_SCHEDULE_GENERATION] customerId: CUST-${numCustomerId} subscriptionId: SUB-${targetSub.id} planId: PLAN-${targetSub.planId} reelCount: ${reelCount} startDate: ${startDateStr} endDate: ${endDateStr}`,
+      `[PLAN_SCHEDULE_GENERATION] customerId: CUST-${numCustomerId} subscriptionId: SUB-${targetSub.id} planId: PLAN-${targetSub.planId} quotas: ${JSON.stringify(deliverableQuotas)} startDate: ${startDateStr} endDate: ${endDateStr}`,
     );
 
-    // Generate dynamic Reel workflow activities (Shoot, Editing, Post)
-    const reelActivities = generateReelWorkflowActivities(startDate, endDate, reelCount);
-
-    // Log individual reel workflow dates
-    for (let r = 1; r <= reelCount; r++) {
-      const shootAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'SHOOT');
-      const editAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'EDITING');
-      const postAct = reelActivities.find((a) => a.reelNumber === r && a.activityType === 'POST');
-      if (shootAct && editAct && postAct) {
-        const shootStr = shootAct.scheduledDate.toISOString().split('T')[0];
-        const editStr = editAct.scheduledDate.toISOString().split('T')[0];
-        const postStr = postAct.scheduledDate.toISOString().split('T')[0];
-        this.logger.log(`[REEL_${r}] shoot: ${shootStr} editing: ${editStr} post: ${postStr}`);
-      }
-    }
+    // Generate dynamic workflow activities for ALL deliverable services
+    const planActivities = generateAllPlanWorkflowActivities(startDate, endDate, deliverableQuotas);
 
     let totalCreated = 0;
 
     const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
-      // 1. Sync or provision PlanEntitlement for Reels
-      let entitlement = await tx.planEntitlement.findFirst({
-        where: { customerId: numCustomerId, serviceName: 'Reels' },
-      });
+      // 1. Sync or provision PlanEntitlements for all quotas
+      const entitlementMap = new Map<string, number>();
 
-      if (entitlement) {
-        entitlement = await tx.planEntitlement.update({
-          where: { id: entitlement.id },
-          data: {
-            planId: targetSub.planId,
-            totalQty: reelCount,
-            validUntil: endDate,
-          },
+      for (const q of deliverableQuotas) {
+        let entitlement = await tx.planEntitlement.findFirst({
+          where: { customerId: numCustomerId, serviceName: q.serviceName },
         });
-      } else {
-        entitlement = await tx.planEntitlement.create({
-          data: {
-            customerId: numCustomerId,
-            planId: targetSub.planId,
-            serviceName: 'Reels',
-            totalQty: reelCount,
-            usedQty: 0,
-            scheduledQty: 0,
-            validUntil: endDate,
-          },
-        });
+
+        if (entitlement) {
+          entitlement = await tx.planEntitlement.update({
+            where: { id: entitlement.id },
+            data: {
+              planId: targetSub.planId,
+              totalQty: q.totalQty,
+              validUntil: endDate,
+            },
+          });
+        } else {
+          entitlement = await tx.planEntitlement.create({
+            data: {
+              customerId: numCustomerId,
+              planId: targetSub.planId,
+              serviceName: q.serviceName,
+              totalQty: q.totalQty,
+              usedQty: 0,
+              scheduledQty: 0,
+              validUntil: endDate,
+            },
+          });
+        }
+        entitlementMap.set(q.serviceName.toLowerCase(), entitlement.id);
       }
 
       // 2. Query existing non-cancelled works for this subscription to ensure strict IDEMPOTENCY
@@ -1168,25 +1164,27 @@ export class WorkService {
       });
 
       // If full set of activities already generated for this subscription, do NOT duplicate
-      if (existingWorks.length >= reelActivities.length) {
+      if (existingWorks.length >= planActivities.length) {
         return existingWorks;
       }
 
       const existingTitles = new Set(existingWorks.map((w) => w.title.toLowerCase().trim()));
       const createdItems: any[] = [];
 
-      for (const act of reelActivities) {
+      for (const act of planActivities) {
         // Idempotency: Skip if activity with this title already exists for this subscription
         if (existingTitles.has(act.title.toLowerCase().trim())) {
           continue;
         }
+
+        const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
 
         const createdWork = await tx.work.create({
           data: {
             customerId: numCustomerId,
             subscriptionId: targetSub.id,
             planId: targetSub.planId,
-            entitlementId: entitlement.id,
+            entitlementId: entId,
             workType: act.workType,
             title: act.title,
             description: act.description,
@@ -1210,26 +1208,32 @@ export class WorkService {
         totalCreated++;
       }
 
-      // Update entitlement scheduled count
-      const activeCount = await tx.work.count({
-        where: {
-          customerId: numCustomerId,
-          subscriptionId: targetSub.id,
-          status: { not: WorkStatus.CANCELLED },
-        },
-      });
+      // Update entitlement scheduled counts
+      for (const q of deliverableQuotas) {
+        const entId = entitlementMap.get(q.serviceName.toLowerCase());
+        if (entId) {
+          const activeCount = await tx.work.count({
+            where: {
+              customerId: numCustomerId,
+              subscriptionId: targetSub.id,
+              entitlementId: entId,
+              status: { not: WorkStatus.CANCELLED },
+            },
+          });
 
-      await tx.planEntitlement.update({
-        where: { id: entitlement.id },
-        data: { scheduledQty: Math.min(activeCount, reelCount) },
-      });
+          await tx.planEntitlement.update({
+            where: { id: entId },
+            data: { scheduledQty: Math.min(activeCount, q.totalQty) },
+          });
+        }
+      }
 
       return [...existingWorks, ...createdItems];
     });
 
     return {
       success: true,
-      message: `Successfully generated ${totalCreated} Reel workflow activities for customer CUST-${numCustomerId}.`,
+      message: `Successfully generated ${totalCreated} plan workflow activities for customer CUST-${numCustomerId}.`,
       createdCount: totalCreated,
       schedules: allGeneratedWorks,
     };
