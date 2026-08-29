@@ -854,6 +854,7 @@ export class WorkService {
       `[CALENDAR_QUERY] authenticatedCustomerId: CUST-${numCustomerId || scopedCustomerId} date: ${query.date || 'ALL'}`,
     );
 
+    const queryStartTime = Date.now();
     const items = await this.prisma.work.findMany({
       where,
       orderBy: { scheduledDate: 'asc' },
@@ -871,6 +872,11 @@ export class WorkService {
         },
       },
     });
+    const queryEndTime = Date.now();
+
+    this.logger.log(
+      `[WORKS_CALENDAR_DB_DEBUG]\ncustomerId: ${numCustomerId || scopedCustomerId || 'ALL'}\ndate: ${query.date || 'ALL'}\nqueryStart: ${new Date(queryStartTime).toISOString()}\nqueryEnd: ${new Date(queryEndTime).toISOString()}\ndurationMs: ${queryEndTime - queryStartTime}\nrecordCount: ${items.length}`,
+    );
 
     // Date-only precision filtering to strictly match target day without timezone shifts
     const filteredItems = (targetYear && targetMonth && targetDay)

@@ -85,8 +85,13 @@ export class WorkController {
   ) {
     const logger = new Logger('WorksController:getCalendar');
     const headerCustId = req?.headers ? req.headers['x-customer-id'] : undefined;
+    const clientType = req?.headers ? req.headers['x-client-type'] : 'unknown';
     const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
     const authCustId = req?.user?.customerId;
+
+    logger.log(
+      `[WORKS_CALENDAR_START]\ncustomerId: ${customerId || headerCustId || authCustId || 'ALL'}\ndate: ${date || startDate || 'ALL'}\nuserId: ${authUserId}\nclientType: ${clientType}`,
+    );
 
     logger.log(`[CALENDAR_API] REQUEST_START`);
     logger.log(`[CALENDAR_API] authenticatedUserId: ${authUserId}`);
@@ -96,6 +101,7 @@ export class WorkController {
     logger.log(`[CALENDAR_API] resolvedCustomerId: ${customerId}`);
 
     try {
+      logger.log(`[WORKS_CALENDAR_QUERY]`);
       logger.log(`[CALENDAR_API] DB_QUERY_START`);
       const result = await this.workService.getCalendar(customerId, {
         date,
@@ -107,7 +113,9 @@ export class WorkController {
         status,
       });
       logger.log(`[CALENDAR_API] DB_QUERY_END`);
+      logger.log(`[WORKS_CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}`);
       logger.log(`[CALENDAR_API] RESULT_COUNT: ${Array.isArray(result) ? result.length : 0}`);
+      logger.log(`[WORKS_CALENDAR_END]`);
       logger.log(`[CALENDAR_API] RESPONSE_SENT`);
       return result;
     } catch (err: any) {
