@@ -102,8 +102,9 @@ export class WorkController {
 
     try {
       logger.log(`[WORKS_CALENDAR_QUERY]`);
-      logger.log(`[CALENDAR_API] DB_QUERY_START`);
-      const result = await this.workService.getCalendar(customerId, {
+      const effectiveCustomerId = customerId || authCustId || headerCustId;
+      logger.log(`[CALENDAR_API] effectiveCustomerId: ${effectiveCustomerId}`);
+      const result = await this.workService.getCalendar(effectiveCustomerId, {
         date,
         dateFrom: dateFrom || startDate,
         dateTo: dateTo || endDate,

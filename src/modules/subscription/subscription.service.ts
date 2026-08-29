@@ -714,7 +714,7 @@ export class SubscriptionService {
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${Date.now().toString().substring(3)}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Create or update customer subscription
       const existingSub = await tx.customerSubscription.findFirst({
         where: { customerId: numCustomerId },
@@ -1002,6 +1002,20 @@ export class SubscriptionService {
         },
       };
     });
+
+    // 4. Trigger Automatic Dynamic Schedule Generation for admin activated subscription
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+      }
+      if (this.workService) {
+        await this.workService.generatePlanSchedules(numCustomerId, result.subscription.id);
+      }
+    } catch (schedErr: any) {
+      this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
+    }
+
+    return result;
   }
 
   async renewSubscription(customerId: number | string, dto: RenewSubscriptionDto) {
