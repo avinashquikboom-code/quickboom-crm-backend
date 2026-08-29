@@ -486,10 +486,14 @@ export class BannerService {
         }
       }
 
-      if (currentImageUrl && !currentImageUrl.startsWith('data:')) {
+      if (currentImageUrl) {
         const item = {
           ...b,
           imageUrl: currentImageUrl,
+          image: currentImageUrl,
+          bannerImage: currentImageUrl,
+          bannerUrl: currentImageUrl,
+          mediaUrl: currentImageUrl,
           imagePublicId: currentImageKey,
           imageKey: currentImageKey,
         };
