@@ -265,5 +265,62 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       expect(result).toBe(true);
       expect(req.customerId).toBe(1);
     });
+
+    it('allows QB-CUST-011 for authenticated customer 11 and sets request.customerId to 11', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }) // auth customer check
+        .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }); // query lookup for QB-CUST-011
+      const req: any = {
+        user: { customerId: 11 },
+        query: { customerId: 'QB-CUST-011', date: '2026-08-29' },
+        headers: { 'x-customer-id': 'QB-CUST-011' },
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      const result = await guard.canActivate(mockContext);
+      expect(result).toBe(true);
+      expect(req.customerId).toBe(11);
+    });
+
+    it('rejects QB-CUST-012 for authenticated customer 11 with ForbiddenException (403)', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }) // auth customer
+        .mockResolvedValueOnce({ id: 12, name: 'Other Customer' }); // query lookup for QB-CUST-012
+      const req: any = {
+        user: { customerId: 11 },
+        query: { customerId: 'QB-CUST-012', date: '2026-08-29' },
+        headers: {},
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      await expect(guard.canActivate(mockContext)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('automatically uses authenticated customer ID when no customerId is passed in request', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' });
+      const req: any = {
+        user: { customerId: 11 },
+        query: { date: '2026-08-29' },
+        headers: {},
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      const result = await guard.canActivate(mockContext);
+      expect(result).toBe(true);
+      expect(req.customerId).toBe(11);
+    });
   });
 });

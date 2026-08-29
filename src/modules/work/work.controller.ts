@@ -88,22 +88,18 @@ export class WorkController {
     const clientType = req?.headers ? req.headers['x-client-type'] : 'unknown';
     const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
     const authCustId = req?.user?.customerId;
+    const requestedCustomerIdentifier = req?.query?.customerId || headerCustId || 'NONE';
 
     logger.log(
-      `[WORKS_CALENDAR_START]\ncustomerId: ${customerId || headerCustId || authCustId || 'ALL'}\ndate: ${date || startDate || 'ALL'}\nuserId: ${authUserId}\nclientType: ${clientType}`,
+      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerIdentifier}\nresolvedCustomerId: ${customerId}`,
     );
 
-    logger.log(`[CALENDAR_API] REQUEST_START`);
-    logger.log(`[CALENDAR_API] authenticatedUserId: ${authUserId}`);
-    logger.log(`[CALENDAR_API] authenticatedCustomerId: ${authCustId}`);
-    logger.log(`[CALENDAR_API] headerCustomerId: ${headerCustId}`);
-    logger.log(`[CALENDAR_API] queryDate: ${date || startDate}`);
-    logger.log(`[CALENDAR_API] resolvedCustomerId: ${customerId}`);
+    const effectiveCustomerId = customerId || authCustId || headerCustId;
+    logger.log(
+      `[CALENDAR_QUERY]\ncustomerId: ${effectiveCustomerId}\ndate: ${date || startDate || 'ALL'}`,
+    );
 
     try {
-      logger.log(`[WORKS_CALENDAR_QUERY]`);
-      const effectiveCustomerId = customerId || authCustId || headerCustId;
-      logger.log(`[CALENDAR_API] effectiveCustomerId: ${effectiveCustomerId}`);
       const result = await this.workService.getCalendar(effectiveCustomerId, {
         date,
         dateFrom: dateFrom || startDate,
@@ -113,11 +109,11 @@ export class WorkController {
         employeeId,
         status,
       });
-      logger.log(`[CALENDAR_API] DB_QUERY_END`);
-      logger.log(`[WORKS_CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}`);
-      logger.log(`[CALENDAR_API] RESULT_COUNT: ${Array.isArray(result) ? result.length : 0}`);
-      logger.log(`[WORKS_CALENDAR_END]`);
-      logger.log(`[CALENDAR_API] RESPONSE_SENT`);
+
+      logger.log(
+        `[CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}\ndata: ${JSON.stringify(result)}`,
+      );
+
       return result;
     } catch (err: any) {
       logger.error(`[CALENDAR_API] ERROR: ${err?.message}`, err?.stack);

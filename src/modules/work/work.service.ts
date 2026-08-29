@@ -129,6 +129,16 @@ export class WorkService {
     if (!isNaN(directNum) && String(directNum) === str && directNum > 0) {
       return directNum;
     }
+
+    const qbMatch = str.match(/^(?:QB-)?(?:CUST|CADMIN|USER|EMP|ADMIN|CUSTOMER|CLIENT|TENANT)?[_-]?0*([0-9]+)$/i) ||
+                    str.match(/^T0*([0-9]+)$/i);
+    if (qbMatch && qbMatch[1]) {
+      const extractedNum = parseInt(qbMatch[1], 10);
+      if (!isNaN(extractedNum) && extractedNum > 0) {
+        return extractedNum;
+      }
+    }
+
     return undefined;
   }
 
