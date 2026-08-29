@@ -1,5 +1,5 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
-import { isUserSuperAdmin } from '../utils/role.util';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
+import { isUserSuperAdmin, isUserAdminOrStaff } from '../utils/role.util';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -16,33 +16,85 @@ export class CustomerGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    const isSuperAdmin = isUserSuperAdmin(user);
+    const headerCustomerId = request.headers['x-customer-id'] || request.headers['x-target-customer-id'];
+    const queryCustomerId = request.query?.customerId || request.query?.clientId;
+    const requestedIdentifier = queryCustomerId || headerCustomerId;
 
-    if (isSuperAdmin) {
-      request.isSuperAdmin = true;
-      const explicitCustomerId = request.query?.customerId || request.query?.clientId || request.headers['x-target-customer-id'];
-      if (explicitCustomerId) {
-        const resolvedId = await this.resolveCustomerPk(explicitCustomerId);
-        request.customerId = resolvedId !== undefined ? resolvedId : (typeof explicitCustomerId === 'number' ? explicitCustomerId : parseInt(explicitCustomerId, 10) || explicitCustomerId);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdminOrStaff = isUserAdminOrStaff(user);
+
+    // ── 1. SUPER_ADMIN & COMPANY_ADMIN / STAFF ACCESS ─────────────────────────
+    if (isSuperAdmin || isAdminOrStaff) {
+      request.isSuperAdmin = isSuperAdmin;
+      request.isAdminOrStaff = isAdminOrStaff;
+
+      if (requestedIdentifier) {
+        const resolvedId = await this.resolveCustomerPk(requestedIdentifier);
+
+        this.logger.log(`[CUSTOMER_GUARD_DEBUG]
+userId: ${user.id}
+user.email: ${user.email}
+user.role: ${user.role || (Array.isArray(user.roles) ? user.roles.join(',') : 'ADMIN')}
+user.customerId: ${user.customerId}
+user.customerCode: ${user.customerCode || 'NONE'}
+headerCustomerId: ${headerCustomerId || 'NONE'}
+queryCustomerId: ${queryCustomerId || 'NONE'}
+resolvedRequestedCustomerId: ${resolvedId ?? 'NOT_FOUND'}
+resolvedAuthenticatedCustomerId: ${user.customerId ?? 'ADMIN'}
+requestedCustomerIdentifierType: ${typeof requestedIdentifier}
+authenticatedCustomerIdentifierType: ${typeof user.customerId}
+authorization: ALLOWED (ADMIN)`);
+
+        if (resolvedId === undefined) {
+          if (this.prisma) {
+            throw new NotFoundException(`Customer record not found for requested customer identifier: ${requestedIdentifier}`);
+          } else {
+            // Unit test fallback
+            request.customerId = typeof requestedIdentifier === 'number' ? requestedIdentifier : parseInt(requestedIdentifier, 10) || requestedIdentifier;
+            request.customerExternalId = String(requestedIdentifier);
+            return true;
+          }
+        }
+
+        request.customerId = resolvedId;
+        request.customerExternalId = String(requestedIdentifier);
       } else {
-        request.customerId = undefined;
+        request.customerId = user.customerId ? Number(user.customerId) : undefined;
       }
       return true;
     }
 
-    // Normal customer user - determine identity from authenticated user
+    // ── 2. NORMAL CUSTOMER TENANT ACCESS ─────────────────────────────────────
     const userCustomerId = user?.customerId;
     if (userCustomerId == null || Number(userCustomerId) <= 0) {
       throw new ForbiddenException('User does not belong to any customer');
     }
 
     const authCustomerPk = Number(userCustomerId);
+    let resolvedRequestedPk: number | undefined;
 
-    // Verify authenticated customer exists in DB if Prisma is available
+    if (requestedIdentifier) {
+      resolvedRequestedPk = await this.resolveCustomerPk(requestedIdentifier);
+    }
+
+    this.logger.log(`[CUSTOMER_GUARD_DEBUG]
+userId: ${user.id}
+user.email: ${user.email}
+user.role: ${user.role || 'CUSTOMER'}
+user.customerId: ${user.customerId}
+user.customerCode: ${user.customerCode || 'NONE'}
+headerCustomerId: ${headerCustomerId || 'NONE'}
+queryCustomerId: ${queryCustomerId || 'NONE'}
+resolvedRequestedCustomerId: ${resolvedRequestedPk ?? 'NOT_RESOLVED'}
+resolvedAuthenticatedCustomerId: ${authCustomerPk}
+requestedCustomerIdentifierType: ${typeof requestedIdentifier}
+authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
+
+    let customer: any = null;
     if (this.prisma) {
-      const customer = await this.prisma.customer.findFirst({
+      customer = await this.prisma.customer.findFirst({
         where: { id: authCustomerPk, deletedAt: null },
-        select: { id: true, name: true, domain: true, email: true },
+        select: { id: true, name: true, domain: true, email: true, companyName: true },
       });
 
       if (!customer) {
@@ -50,7 +102,6 @@ export class CustomerGuard implements CanActivate {
       }
 
       // Check header x-customer-id
-      const headerCustomerId = request.headers['x-customer-id'];
       if (headerCustomerId) {
         const headerStr = String(headerCustomerId).trim();
         const resolvedHeaderPk = await this.resolveCustomerPk(headerStr);
@@ -63,8 +114,7 @@ export class CustomerGuard implements CanActivate {
         }
       }
 
-      // Check query customerId (normal customers cannot switch tenant via query param)
-      const queryCustomerId = request.query?.customerId;
+      // Check query customerId
       if (queryCustomerId) {
         const queryStr = String(queryCustomerId).trim();
         const resolvedQueryPk = await this.resolveCustomerPk(queryStr);
@@ -78,14 +128,12 @@ export class CustomerGuard implements CanActivate {
       }
     } else {
       // Fallback for isolated unit tests without Prisma
-      const headerCustomerId = request.headers['x-customer-id'];
       if (headerCustomerId) {
         const headerStr = String(headerCustomerId).trim();
         if (!this.isDirectAlias(headerStr, authCustomerPk)) {
           throw new ForbiddenException('Cross-customer access forbidden');
         }
       }
-      const queryCustomerId = request.query?.customerId;
       if (queryCustomerId) {
         const queryStr = String(queryCustomerId).trim();
         if (!this.isDirectAlias(queryStr, authCustomerPk)) {
@@ -94,8 +142,8 @@ export class CustomerGuard implements CanActivate {
       }
     }
 
-    // Set request.customerId strictly to the REAL database customer primary key integer
     request.customerId = authCustomerPk;
+    request.customerExternalId = requestedIdentifier ? String(requestedIdentifier) : `QB-CUST-${String(authCustomerPk).padStart(3, '0')}`;
     return true;
   }
 
