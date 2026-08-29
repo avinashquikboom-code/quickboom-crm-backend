@@ -266,13 +266,32 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       expect(req.customerId).toBe(1);
     });
 
-    it('allows QB-CUST-011 for authenticated customer 11 and sets request.customerId to 11', async () => {
+    it('TEST 1 — ADMIN: allows authorized company admin to select QB-CUST-011 and resolves to customer DB ID 11', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }); // lookup for QB-CUST-011
+      const req: any = {
+        user: { id: 2, email: 'admin@company.com', role: 'COMPANY_ADMIN' },
+        query: { customerId: 'QB-CUST-011', date: '2026-08-29' },
+        headers: {},
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      const result = await guard.canActivate(mockContext);
+      expect(result).toBe(true);
+      expect(req.customerId).toBe(11);
+    });
+
+    it('TEST 2 — NORMAL CUSTOMER: allows matching QB-CUST-011 for authenticated customer 11', async () => {
       const guard = new CustomerGuard(prisma);
       prisma.customer.findFirst
         .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }) // auth customer check
         .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }); // query lookup for QB-CUST-011
       const req: any = {
-        user: { customerId: 11 },
+        user: { customerId: 11, role: 'CUSTOMER' },
         query: { customerId: 'QB-CUST-011', date: '2026-08-29' },
         headers: { 'x-customer-id': 'QB-CUST-011' },
       };
@@ -286,13 +305,13 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       expect(req.customerId).toBe(11);
     });
 
-    it('rejects QB-CUST-012 for authenticated customer 11 with ForbiddenException (403)', async () => {
+    it('TEST 3 — CROSS CUSTOMER: rejects QB-CUST-012 for authenticated customer 11 with 403 ForbiddenException', async () => {
       const guard = new CustomerGuard(prisma);
       prisma.customer.findFirst
         .mockResolvedValueOnce({ id: 11, name: 'Care Fitness Gym' }) // auth customer
         .mockResolvedValueOnce({ id: 12, name: 'Other Customer' }); // query lookup for QB-CUST-012
       const req: any = {
-        user: { customerId: 11 },
+        user: { customerId: 11, role: 'CUSTOMER' },
         query: { customerId: 'QB-CUST-012', date: '2026-08-29' },
         headers: {},
       };
@@ -302,6 +321,23 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
         }),
       };
       await expect(guard.canActivate(mockContext)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('TEST 4 — INVALID CUSTOMER: throws NotFoundException when QB-CUST-999999 does not exist in DB', async () => {
+      const guard = new CustomerGuard(prisma);
+      prisma.customer.findFirst
+        .mockResolvedValueOnce(null); // lookup for QB-CUST-999999 returns null
+      const req: any = {
+        user: { id: 2, email: 'admin@company.com', role: 'COMPANY_ADMIN' },
+        query: { customerId: 'QB-CUST-999999', date: '2026-08-29' },
+        headers: {},
+      };
+      const mockContext: any = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+        }),
+      };
+      await expect(guard.canActivate(mockContext)).rejects.toThrow(NotFoundException);
     });
 
     it('automatically uses authenticated customer ID when no customerId is passed in request', async () => {
