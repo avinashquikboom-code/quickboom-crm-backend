@@ -127,7 +127,7 @@ describe('Customer Mobile Login Role Validation', () => {
     expect(response.user.id).toBe(10);
     expect(response.user.customerId).toBe(11);
     expect(response.user.roleId).toBe(7);
-    expect(response.user.role).toBe('COMPANY_ADMIN');
+    expect(response.user.role).toBe('CUSTOMER_ADMIN');
     expect(response.user.roleType).toBe(RoleType.CUSTOMER_ADMIN);
     expect(response.tokens).toBeDefined();
 
@@ -138,7 +138,7 @@ describe('Customer Mobile Login Role Validation', () => {
         userId: 10,
         customerId: 11,
         roleId: 7,
-        role: 'COMPANY_ADMIN',
+        role: 'CUSTOMER_ADMIN',
         roleType: RoleType.CUSTOMER_ADMIN,
       }),
       expect.any(Object),

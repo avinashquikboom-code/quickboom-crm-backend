@@ -286,22 +286,35 @@ export class AuthService {
       return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
     });
 
-    const isCompanyAdminRole =
+    const isCustomerAdminRole =
       !isSuperAdminRole &&
       user.userRoles.some((ur) => {
         const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
         const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
         return (
           type === RoleType.CUSTOMER_ADMIN ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('CUSTOMERADMINISTRATOR')
+        );
+      });
+
+    const isCompanyAdminRole =
+      !isSuperAdminRole &&
+      !isCustomerAdminRole &&
+      user.userRoles.some((ur) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
           type === RoleType.TENANT_ADMIN ||
           name.includes('COMPANYADMIN') ||
-          name.includes('CUSTOMERADMIN') ||
-          name.includes('TENANTADMIN')
+          name.includes('TENANTADMIN') ||
+          name.includes('COMPANYADMINISTRATOR')
         );
       });
 
     const isEmployeeRole =
       !isSuperAdminRole &&
+      !isCustomerAdminRole &&
       !isCompanyAdminRole &&
       Boolean(
         user.employee ||
@@ -311,6 +324,7 @@ export class AuthService {
           return (
             type === RoleType.SALES_EXECUTIVE ||
             type === RoleType.SALES_MANAGER ||
+            type === RoleType.SUPPORT_AGENT ||
             name.includes('EMPLOYEE') ||
             name.includes('STAFF')
           );
@@ -322,6 +336,7 @@ export class AuthService {
       !isCompanyAdminRole &&
       !isEmployeeRole &&
       Boolean(
+        isCustomerAdminRole ||
         user.customerId ||
         user.userRoles.some((ur) => {
           const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
@@ -329,14 +344,17 @@ export class AuthService {
         }),
       );
 
-    let userRole: 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
+    let userRole: 'SUPER_ADMIN' | 'CUSTOMER_ADMIN' | 'COMPANY_ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
     let userRoleType: string;
     if (isSuperAdminRole) {
       userRole = 'SUPER_ADMIN';
       userRoleType = RoleType.SUPER_ADMIN;
+    } else if (isCustomerAdminRole) {
+      userRole = 'CUSTOMER_ADMIN';
+      userRoleType = RoleType.CUSTOMER_ADMIN;
     } else if (isCompanyAdminRole) {
       userRole = 'COMPANY_ADMIN';
-      userRoleType = RoleType.CUSTOMER_ADMIN;
+      userRoleType = RoleType.TENANT_ADMIN;
     } else if (isEmployeeRole) {
       userRole = 'EMPLOYEE';
       userRoleType = RoleType.CUSTOM;
@@ -348,9 +366,12 @@ export class AuthService {
       if (firstRoleName.includes('SUPER')) {
         userRole = 'SUPER_ADMIN';
         userRoleType = RoleType.SUPER_ADMIN;
-      } else if (firstRoleName.includes('ADMIN')) {
-        userRole = 'COMPANY_ADMIN';
+      } else if (firstRoleName.includes('CUSTOMER')) {
+        userRole = 'CUSTOMER_ADMIN';
         userRoleType = RoleType.CUSTOMER_ADMIN;
+      } else if (firstRoleName.includes('COMPANY') || firstRoleName.includes('TENANT') || firstRoleName.includes('ADMIN')) {
+        userRole = 'COMPANY_ADMIN';
+        userRoleType = RoleType.TENANT_ADMIN;
       } else if (firstRoleName.includes('EMPLOYEE') || firstRoleName.includes('STAFF')) {
         userRole = 'EMPLOYEE';
         userRoleType = RoleType.CUSTOM;
@@ -368,7 +389,7 @@ export class AuthService {
         throw new UnauthorizedException('Company admin account is inactive.');
       }
       if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
+        throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (userRole === 'EMPLOYEE') {
       if (user.employee && user.employee.status !== 'ACTIVE') {
@@ -380,7 +401,10 @@ export class AuthService {
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your company account is suspended.');
       }
-    } else if (userRole === 'CUSTOMER') {
+    } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
+      if (!user.isActive) {
+        throw new UnauthorizedException('Your customer account has been deactivated.');
+      }
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
@@ -395,21 +419,27 @@ export class AuthService {
         throw new ForbiddenException('These credentials are not registered as a Super Admin account.');
       }
     } else if (['COMPANY_ADMIN', 'COMPANY_ADMIN_MOBILE'].includes(upperExpectedRole)) {
-      if (userRole !== 'COMPANY_ADMIN' && !isCompanyAdminRole) {
+      if (userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
       }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
     } else if (upperExpectedRole === 'ADMIN') {
-      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN' && !isCompanyAdminRole) {
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as an Admin account.');
       }
     } else if (['CUSTOMER', 'CUSTOMER_MOBILE', 'CUSTOMER_ADMIN'].includes(upperExpectedRole)) {
-      if (isEmployeeRole || userRole === 'EMPLOYEE') {
+      if (userRole === 'EMPLOYEE' || isEmployeeRole) {
         throw new ForbiddenException('Employee accounts cannot log in through the customer mobile portal. Please use the employee login.');
       }
-      if (isSuperAdminRole || userRole === 'SUPER_ADMIN') {
+      if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
       }
-      if (!isCompanyAdminRole && !isCustomerRole && userRole !== 'CUSTOMER' && userRole !== 'COMPANY_ADMIN') {
+      if (userRole === 'COMPANY_ADMIN') {
+        throw new ForbiddenException('Company Admin accounts cannot log in through the customer mobile portal.');
+      }
+      if (userRole !== 'CUSTOMER_ADMIN' && userRole !== 'CUSTOMER') {
         throw new ForbiddenException('These credentials are not registered as a Customer account.');
       }
       if (!user.customerId) {
@@ -419,11 +449,14 @@ export class AuthService {
         throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes(upperExpectedRole)) {
-      if (isSuperAdminRole || userRole === 'SUPER_ADMIN') {
+      if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
       }
-      if (isCompanyAdminRole || isCustomerRole || userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER') {
-        throw new ForbiddenException('Customer and Company Admin accounts cannot log in through the employee mobile portal. Please use the customer login.');
+      if (userRole === 'CUSTOMER_ADMIN' || userRole === 'CUSTOMER') {
+        throw new ForbiddenException('Customer accounts cannot log in through the employee mobile portal. Please use the customer login.');
+      }
+      if (userRole === 'COMPANY_ADMIN') {
+        throw new ForbiddenException('Company Admin accounts cannot log in through the employee mobile portal.');
       }
       if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
@@ -432,7 +465,7 @@ export class AuthService {
         throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (rawApp === 'mobile') {
-      const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
+      const allowedRoles = ['CUSTOMER', 'CUSTOMER_ADMIN', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
       if (!allowedRoles.includes(userRole)) {
         throw new ForbiddenException('This account cannot access the mobile application.');
       }
@@ -660,22 +693,35 @@ export class AuthService {
       return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
     });
 
-    const isCompanyAdminRole =
+    const isCustomerAdminRole =
       !isSuperAdminRole &&
       (user as any).userRoles?.some((ur: any) => {
         const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
         const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
         return (
           type === RoleType.CUSTOMER_ADMIN ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('CUSTOMERADMINISTRATOR')
+        );
+      });
+
+    const isCompanyAdminRole =
+      !isSuperAdminRole &&
+      !isCustomerAdminRole &&
+      (user as any).userRoles?.some((ur: any) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
           type === RoleType.TENANT_ADMIN ||
           name.includes('COMPANYADMIN') ||
-          name.includes('CUSTOMERADMIN') ||
-          name.includes('TENANTADMIN')
+          name.includes('TENANTADMIN') ||
+          name.includes('COMPANYADMINISTRATOR')
         );
       });
 
     const isEmployeeRole =
       !isSuperAdminRole &&
+      !isCustomerAdminRole &&
       !isCompanyAdminRole &&
       (Boolean((user as any).employee) ||
         (user as any).userRoles?.some((ur: any) => {
@@ -684,6 +730,7 @@ export class AuthService {
           return (
             type === RoleType.SALES_EXECUTIVE ||
             type === RoleType.SALES_MANAGER ||
+            type === RoleType.SUPPORT_AGENT ||
             name.includes('EMPLOYEE') ||
             name.includes('STAFF')
           );
@@ -694,9 +741,12 @@ export class AuthService {
     if (isSuperAdminRole) {
       resolvedRole = 'SUPER_ADMIN';
       resolvedRoleType = RoleType.SUPER_ADMIN;
+    } else if (isCustomerAdminRole) {
+      resolvedRole = 'CUSTOMER_ADMIN';
+      resolvedRoleType = RoleType.CUSTOMER_ADMIN;
     } else if (isCompanyAdminRole) {
       resolvedRole = 'COMPANY_ADMIN';
-      resolvedRoleType = RoleType.CUSTOMER_ADMIN;
+      resolvedRoleType = RoleType.TENANT_ADMIN;
     } else if (isEmployeeRole) {
       resolvedRole = 'EMPLOYEE';
       resolvedRoleType = RoleType.CUSTOM;
