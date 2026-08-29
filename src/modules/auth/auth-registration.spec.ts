@@ -269,7 +269,7 @@ describe('Auth Service - Customer Registration & Role Isolation Tests', () => {
         customer: { id: 101, isActive: true, name: 'Active Company' },
         employee: null,
         userRoles: [
-          { roleId: 5, role: { id: 5, type: RoleType.CUSTOMER_ADMIN, name: 'Company Admin' } },
+          { roleId: 5, role: { id: 5, type: RoleType.TENANT_ADMIN, name: 'Company Admin' } },
         ],
       };
 
@@ -295,7 +295,7 @@ describe('Auth Service - Customer Registration & Role Isolation Tests', () => {
         customer: { id: 101, isActive: false, name: 'Suspended Company' },
         employee: null,
         userRoles: [
-          { roleId: 5, role: { id: 5, type: RoleType.CUSTOMER_ADMIN, name: 'Company Admin' } },
+          { roleId: 5, role: { id: 5, type: RoleType.TENANT_ADMIN, name: 'Company Admin' } },
         ],
       };
 

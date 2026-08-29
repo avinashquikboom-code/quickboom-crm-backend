@@ -103,7 +103,7 @@ describe('Tasks API End-to-End Authentication & Multi-Role Isolation (20A - 20H)
         lastName: 'Admin',
         isActive: true,
         userRoles: [
-          { role: { type: RoleType.CUSTOMER_ADMIN, name: 'Company Admin', rolePermissions: [] } },
+          { role: { type: RoleType.TENANT_ADMIN, name: 'Company Admin', rolePermissions: [] } },
         ],
       };
 
