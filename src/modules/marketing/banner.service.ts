@@ -36,10 +36,14 @@ export class BannerService {
       const uploadResult = await this.uploadService.uploadBannerImage(file);
       imageUrl = uploadResult.imageUrl;
       imagePublicId = uploadResult.imagePublicId || null;
+    } else if (imageUrl && imageUrl.startsWith('data:')) {
+      const uploadResult = await this.uploadService.uploadBase64(imageUrl);
+      imageUrl = uploadResult.imageUrl;
+      imagePublicId = uploadResult.imagePublicId || null;
     }
 
-    if (!imageUrl) {
-      throw new BadRequestException('Banner image file is required');
+    if (!imageUrl || imageUrl.startsWith('data:')) {
+      throw new BadRequestException('Valid banner image file or S3 image URL is required');
     }
 
     const startAt = dto.startAt ? new Date(dto.startAt) : null;
@@ -73,8 +77,7 @@ export class BannerService {
         },
       });
     } catch (dbErr: any) {
-      // Rollback: delete the S3 object to prevent orphaned uploads
-      if (file && imagePublicId) {
+      if (imagePublicId) {
         this.logger.warn(
           `[BANNER_CREATE_ROLLBACK] DB create failed after S3 upload. Deleting orphan S3 object: ${imagePublicId}`,
         );
@@ -210,6 +213,10 @@ export class BannerService {
 
     if (file) {
       const uploadResult = await this.uploadService.uploadBannerImage(file);
+      imageUrl = uploadResult.imageUrl;
+      imagePublicId = uploadResult.imagePublicId || null;
+    } else if (imageUrl && imageUrl.startsWith('data:')) {
+      const uploadResult = await this.uploadService.uploadBase64(imageUrl);
       imageUrl = uploadResult.imageUrl;
       imagePublicId = uploadResult.imagePublicId || null;
     }
@@ -380,7 +387,8 @@ export class BannerService {
       orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
     });
 
-    this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${banners.length}`);
-    return banners;
+    const validBanners = banners.filter((b) => b.imageUrl && !b.imageUrl.startsWith('data:'));
+    this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${validBanners.length}`);
+    return validBanners;
   }
 }

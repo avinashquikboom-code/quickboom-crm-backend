@@ -110,6 +110,62 @@ export class S3Service {
     }
   }
 
+  async uploadBuffer(
+    buffer: Buffer,
+    mimetype: string,
+    filename = 'image.png',
+    folder = 'marketing/banners',
+  ): Promise<S3UploadResult> {
+    if (!buffer || buffer.length === 0) {
+      throw new BadRequestException('Buffer is required for upload');
+    }
+
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const cleanMime = mimetype.toLowerCase();
+    if (!allowedMimes.includes(cleanMime)) {
+      throw new BadRequestException(
+        `Invalid image format "${mimetype}". Supported formats: JPG, JPEG, PNG, WEBP`,
+      );
+    }
+
+    const maxSizeBytes = 10 * 1024 * 1024;
+    if (buffer.length > maxSizeBytes) {
+      throw new BadRequestException(
+        `Image size exceeds maximum limit of 10MB (file size: ${(buffer.length / (1024 * 1024)).toFixed(2)}MB)`,
+      );
+    }
+
+    const uniqueId = crypto.randomBytes(8).toString('hex');
+    const sanitizedName = filename.replace(/[^a-zA-Z0-9.-]/g, '_').toLowerCase();
+    const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
+
+    const { client, bucket, region, customDomain } = await this.resolveS3Client();
+
+    try {
+      const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: imageKey,
+        Body: buffer,
+        ContentType: cleanMime,
+      });
+
+      await client.send(command);
+
+      const imageUrl = customDomain
+        ? `https://${customDomain}/${imageKey}`
+        : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+
+      this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${imageUrl}, key: ${imageKey}`);
+
+      return { imageUrl, imageKey };
+    } catch (err: any) {
+      this.logger.error(`[S3_UPLOAD_ERROR] ${err?.message || err}`);
+      throw new BadRequestException(
+        `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
+      );
+    }
+  }
+
   /**
    * Deletes an object from Amazon S3 by key.
    * Silently warns on failure (non-critical — DB is source of truth).

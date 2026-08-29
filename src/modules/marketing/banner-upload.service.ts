@@ -20,43 +20,39 @@ export class BannerUploadService {
       throw new BadRequestException('Image file is required');
     }
 
-    const allowedMimes = [
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/webp',
-    ];
-    if (!allowedMimes.includes(file.mimetype.toLowerCase())) {
-      throw new BadRequestException(
-        `Invalid image format "${file.mimetype}". Supported formats: JPG, JPEG, PNG, WEBP`,
-      );
+    const s3Result = await this.s3Service.uploadFile(file, folder);
+    this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${s3Result.imageUrl}, key: ${s3Result.imageKey}`);
+    return {
+      imageUrl: s3Result.imageUrl,
+      imagePublicId: s3Result.imageKey,
+    };
+  }
+
+  async uploadBase64(
+    dataUri: string,
+    folder = 'marketing/banners',
+  ): Promise<UploadResult> {
+    if (!dataUri || !dataUri.startsWith('data:')) {
+      throw new BadRequestException('Invalid base64 data URI format');
     }
 
-    const maxSizeBytes = 10 * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-      throw new BadRequestException(
-        `Image size exceeds maximum limit of 10MB (file size: ${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
-      );
+    const matches = dataUri.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      throw new BadRequestException('Invalid base64 image data');
     }
 
-    try {
-      const s3Result = await this.s3Service.uploadFile(file, folder);
-      this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${s3Result.imageUrl}, key: ${s3Result.imageKey}`);
-      return {
-        imageUrl: s3Result.imageUrl,
-        imagePublicId: s3Result.imageKey,
-      };
-    } catch (s3Err: any) {
-      this.logger.warn(
-        `[S3_UPLOAD_FALLBACK] S3 upload skipped or unavailable (${s3Err?.message}). Generating Data URI fallback for local/test environment.`,
-      );
-      const base64Data = file.buffer.toString('base64');
-      const dataUri = `data:${file.mimetype};base64,${base64Data}`;
-      return {
-        imageUrl: dataUri,
-        imagePublicId: null,
-      };
-    }
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+    const ext = mimeType.split('/')[1] || 'png';
+    const filename = `banner.${ext}`;
+
+    const s3Result = await this.s3Service.uploadBuffer(buffer, mimeType, filename, folder);
+    this.logger.log(`[S3_BASE64_UPLOAD_SUCCESS] url: ${s3Result.imageUrl}, key: ${s3Result.imageKey}`);
+    return {
+      imageUrl: s3Result.imageUrl,
+      imagePublicId: s3Result.imageKey,
+    };
   }
 
   async deleteBannerImage(imageKey?: string | null): Promise<void> {
