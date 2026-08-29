@@ -883,15 +883,22 @@ export class WorkService {
     const filteredItems = (targetYear && targetMonth && targetDay)
       ? items.filter((w) => {
           if (!w.scheduledDate) return false;
-          const d = new Date(w.scheduledDate);
+          const raw = w.scheduledDate;
+          const str = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString() : String(raw));
+          const datePart = str.includes('T') ? str.split('T')[0] : str.split(' ')[0];
+          const [y, m, d] = datePart.split('-').map(Number);
+          if (y === targetYear && m === targetMonth && d === targetDay) return true;
+
+          const dateObj = new Date(w.scheduledDate);
+          if (isNaN(dateObj.getTime())) return false;
           const isUtcMatch =
-            d.getUTCFullYear() === targetYear &&
-            d.getUTCMonth() + 1 === targetMonth &&
-            d.getUTCDate() === targetDay;
+            dateObj.getUTCFullYear() === targetYear &&
+            dateObj.getUTCMonth() + 1 === targetMonth &&
+            dateObj.getUTCDate() === targetDay;
           const isLocalMatch =
-            d.getFullYear() === targetYear &&
-            d.getMonth() + 1 === targetMonth &&
-            d.getDate() === targetDay;
+            dateObj.getFullYear() === targetYear &&
+            dateObj.getMonth() + 1 === targetMonth &&
+            dateObj.getDate() === targetDay;
           return isUtcMatch || isLocalMatch;
         })
       : items;
