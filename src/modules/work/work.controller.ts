@@ -203,6 +203,34 @@ export class WorkController {
     return this.workService.assignTeam(customerIdQuery, id, dto);
   }
 
+  @Patch(':id/reschedule')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer reschedule work with automatic dependency recalculation' })
+  async rescheduleWork(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
+    @Req() req: any,
+  ) {
+    const authCustId = req.user?.customerId || customerId;
+    return this.workService.rescheduleWork(authCustId, id, dto);
+  }
+
+  @Post(':id/rework')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer request rework for completed work item' })
+  async requestRework(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { reason?: string },
+    @Req() req: any,
+  ) {
+    const authCustId = req.user?.customerId || customerId;
+    return this.workService.requestRework(authCustId, id, dto);
+  }
+
   @Post(':id/cancel')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()

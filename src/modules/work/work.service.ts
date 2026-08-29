@@ -940,6 +940,17 @@ export class WorkService {
           lockMessage = 'The second installation schedule will be available after the remaining 50% second installment is completed.';
         }
       }
+      const isSubExpired = activeSubForCustomer?.endDate ? new Date() > new Date(activeSubForCustomer.endDate) : false;
+      const statusStr = (w.status || '').toString().toUpperCase();
+      const canReschedule = !isLocked && (statusStr === 'SCHEDULED' || statusStr === 'PENDING') && !isSubExpired;
+      const canRequestRework = !isLocked && (statusStr === 'COMPLETED' || statusStr === 'APPROVED' || statusStr === 'DONE');
+      let reworkActionLabel = 'Request Rework';
+      const titleLower = (w.title || '').toLowerCase();
+      if (titleLower.includes('shoot')) reworkActionLabel = 'Request Re-shoot';
+      else if (titleLower.includes('edit')) reworkActionLabel = 'Request Re-edit';
+      else if (titleLower.includes('design')) reworkActionLabel = 'Request Re-design';
+      else if (titleLower.includes('post') || titleLower.includes('publish')) reworkActionLabel = 'Request Re-post';
+
       return {
         id: String(w.id),
         purchaseId: purchaseRef,
@@ -954,6 +965,9 @@ export class WorkService {
         endTime: endTime,
         type: isLocked ? 'LOCKED' : w.workType,
         status: isLocked ? 'LOCKED' : w.status,
+        canReschedule,
+        canRequestRework,
+        reworkActionLabel,
         isLocked,
         lockMessage,
         customerId: String(w.customerId),
@@ -1240,7 +1254,7 @@ export class WorkService {
   }
 
   /**
-   * Customer Reschedule existing schedule in-place.
+   * Customer Reschedule existing schedule with workflow dependency recalculation.
    * Updates the SAME work record without creating duplicates or consuming extra quota.
    */
   async rescheduleWork(
@@ -1259,8 +1273,11 @@ export class WorkService {
       throw new ForbiddenException('You do not have permission to reschedule this item.');
     }
 
-    if (existing.status === WorkStatus.COMPLETED || existing.status === WorkStatus.CANCELLED) {
-      throw new BadRequestException(`Cannot reschedule a work item with status ${existing.status}.`);
+    const statusStr = (existing.status || '').toString().toUpperCase();
+    if (statusStr === 'COMPLETED' || statusStr === 'CANCELLED' || statusStr === 'DONE' || statusStr === 'APPROVED') {
+      throw new BadRequestException(
+        `Cannot reschedule a work item with status ${existing.status}. For completed activities, use the Rework option.`,
+      );
     }
 
     const newDate = new Date(dto.scheduledDate);
@@ -1270,9 +1287,21 @@ export class WorkService {
 
     // Verify Active Plan Validity
     const activePlan = await this.getActivePlanDirect(numCustomerId);
-    if (activePlan && activePlan.endDate && newDate > new Date(activePlan.endDate)) {
-      throw new BadRequestException('Cannot reschedule past your plan expiration date.');
+    if (activePlan) {
+      if (activePlan.startDate && newDate < new Date(new Date(activePlan.startDate).setHours(0, 0, 0, 0))) {
+        throw new BadRequestException('Cannot reschedule prior to your plan start date.');
+      }
+      if (activePlan.endDate && newDate > new Date(activePlan.endDate)) {
+        throw new BadRequestException('Cannot reschedule past your plan expiration date.');
+      }
     }
+
+    const oldDateStr = existing.scheduledDate ? new Date(existing.scheduledDate).toISOString().split('T')[0] : 'N/A';
+    const newDateStr = newDate.toISOString().split('T')[0];
+
+    this.logger.log(
+      `[RESCHEDULE_REQUEST] customerId: ${numCustomerId} activityId: ${numId} title: "${existing.title}" oldDate: ${oldDateStr} newDate: ${newDateStr}`,
+    );
 
     // Validate Sunday / working day rule
     if (newDate.getDay() === 0) {
@@ -1284,33 +1313,172 @@ export class WorkService {
       }
     }
 
-    const updated = await this.prisma.work.update({
-      where: { id: numId },
-      data: {
-        scheduledDate: newDate,
-        scheduledTime: dto.scheduledTime || existing.scheduledTime || '11:00 AM',
-        notes: dto.notes ? `${existing.notes || ''}\n[Rescheduled]: ${dto.notes}`.trim() : existing.notes,
-      },
-      include: {
-        customer: true,
-        assignedTo: true,
-        editor: true,
-        entitlement: true,
-        tasks: true,
-      },
+    const titleLower = (existing.title || '').toLowerCase();
+    const subId = existing.subscriptionId;
+
+    // Execute reschedule & dependent recalculations in an atomic transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Update the target activity
+      const updated = await tx.work.update({
+        where: { id: numId },
+        data: {
+          scheduledDate: newDate,
+          scheduledTime: dto.scheduledTime || existing.scheduledTime || '10:00 AM',
+          notes: dto.notes ? `${existing.notes || ''}\n[Rescheduled]: ${dto.notes}`.trim() : existing.notes,
+        },
+        include: {
+          customer: true,
+          assignedTo: true,
+          editor: true,
+          entitlement: true,
+          tasks: true,
+        },
+      });
+
+      // 2. Cascading Workflow Dependency Recalculations
+      if (subId) {
+        const reelMatch = titleLower.match(/reel\s*#?(\d+)/i);
+        const storyMatch = titleLower.match(/story\s*#?(\d+)/i);
+        const postMatch = titleLower.match(/creative\s*post\s*#?(\d+)/i) || titleLower.match(/post\s*#?(\d+)/i);
+
+        if (reelMatch) {
+          const rNum = reelMatch[1];
+          // If Shoot was moved:
+          if (titleLower.includes('shoot')) {
+            const editWork = await tx.work.findFirst({
+              where: {
+                subscriptionId: subId,
+                title: { contains: `Reel #${rNum}: Edit`, mode: 'insensitive' },
+                status: { not: WorkStatus.CANCELLED },
+              },
+            });
+            if (editWork) {
+              const minEditDate = new Date(newDate.getTime() + 2 * 86400000);
+              if (new Date(editWork.scheduledDate) < minEditDate) {
+                await tx.work.update({
+                  where: { id: editWork.id },
+                  data: { scheduledDate: minEditDate },
+                });
+                this.logger.log(
+                  `[DEPENDENCY_UPDATE] parentActivity: "${existing.title}" childActivity: "${editWork.title}" oldDate: ${editWork.scheduledDate} newDate: ${minEditDate.toISOString()}`,
+                );
+
+                // Check and shift Post as well
+                const postWork = await tx.work.findFirst({
+                  where: {
+                    subscriptionId: subId,
+                    title: { contains: `Reel #${rNum}: Post`, mode: 'insensitive' },
+                    status: { not: WorkStatus.CANCELLED },
+                  },
+                });
+                if (postWork) {
+                  const minPostDate = new Date(minEditDate.getTime() + 2 * 86400000);
+                  if (new Date(postWork.scheduledDate) < minPostDate) {
+                    await tx.work.update({
+                      where: { id: postWork.id },
+                      data: { scheduledDate: minPostDate },
+                    });
+                    this.logger.log(
+                      `[DEPENDENCY_UPDATE] parentActivity: "${editWork.title}" childActivity: "${postWork.title}" oldDate: ${postWork.scheduledDate} newDate: ${minPostDate.toISOString()}`,
+                    );
+                  }
+                }
+              }
+            }
+          } else if (titleLower.includes('edit')) {
+            // If Edit was moved, ensure Shoot is before it, and shift Post if necessary
+            const shootWork = await tx.work.findFirst({
+              where: {
+                subscriptionId: subId,
+                title: { contains: `Reel #${rNum}: Shoot`, mode: 'insensitive' },
+                status: { not: WorkStatus.CANCELLED },
+              },
+            });
+            if (shootWork && newDate < new Date(new Date(shootWork.scheduledDate).getTime() + 2 * 86400000)) {
+              throw new BadRequestException(
+                `Reel Edit must be scheduled at least 2 days after Reel Shoot (${new Date(shootWork.scheduledDate).toISOString().split('T')[0]}).`,
+              );
+            }
+
+            const postWork = await tx.work.findFirst({
+              where: {
+                subscriptionId: subId,
+                title: { contains: `Reel #${rNum}: Post`, mode: 'insensitive' },
+                status: { not: WorkStatus.CANCELLED },
+              },
+            });
+            if (postWork) {
+              const minPostDate = new Date(newDate.getTime() + 2 * 86400000);
+              if (new Date(postWork.scheduledDate) < minPostDate) {
+                await tx.work.update({
+                  where: { id: postWork.id },
+                  data: { scheduledDate: minPostDate },
+                });
+                this.logger.log(
+                  `[DEPENDENCY_UPDATE] parentActivity: "${existing.title}" childActivity: "${postWork.title}" oldDate: ${postWork.scheduledDate} newDate: ${minPostDate.toISOString()}`,
+                );
+              }
+            }
+          }
+        } else if (storyMatch && titleLower.includes('design')) {
+          const sNum = storyMatch[1];
+          const postWork = await tx.work.findFirst({
+            where: {
+              subscriptionId: subId,
+              title: { contains: `Story #${sNum}: Post`, mode: 'insensitive' },
+              status: { not: WorkStatus.CANCELLED },
+            },
+          });
+          if (postWork) {
+            const minPostDate = new Date(newDate.getTime() + 1 * 86400000);
+            if (new Date(postWork.scheduledDate) < minPostDate) {
+              await tx.work.update({
+                where: { id: postWork.id },
+                data: { scheduledDate: minPostDate },
+              });
+              this.logger.log(
+                `[DEPENDENCY_UPDATE] parentActivity: "${existing.title}" childActivity: "${postWork.title}" oldDate: ${postWork.scheduledDate} newDate: ${minPostDate.toISOString()}`,
+              );
+            }
+          }
+        } else if (postMatch && titleLower.includes('design')) {
+          const pNum = postMatch[1];
+          const pubWork = await tx.work.findFirst({
+            where: {
+              subscriptionId: subId,
+              title: { contains: `Post #${pNum}: Publish`, mode: 'insensitive' },
+              status: { not: WorkStatus.CANCELLED },
+            },
+          });
+          if (pubWork) {
+            const minPubDate = new Date(newDate.getTime() + 2 * 86400000);
+            if (new Date(pubWork.scheduledDate) < minPubDate) {
+              await tx.work.update({
+                where: { id: pubWork.id },
+                data: { scheduledDate: minPubDate },
+              });
+              this.logger.log(
+                `[DEPENDENCY_UPDATE] parentActivity: "${existing.title}" childActivity: "${pubWork.title}" oldDate: ${pubWork.scheduledDate} newDate: ${minPubDate.toISOString()}`,
+              );
+            }
+          }
+        }
+      }
+
+      return updated;
     });
 
     // Notify assigned staff if present
-    const staffUserIds = [updated.assignedTo?.userId, updated.editor?.userId].filter(Boolean) as number[];
+    const staffUserIds = [result.assignedTo?.userId, result.editor?.userId].filter(Boolean) as number[];
     for (const uid of staffUserIds) {
       await this.prisma.notification.create({
         data: {
-          customerId: updated.customerId,
+          customerId: result.customerId,
           userId: uid,
           title: 'Schedule Updated by Customer',
-          message: `Customer rescheduled "${updated.title}" to ${newDate.toLocaleDateString()} at ${updated.scheduledTime}.`,
+          message: `Customer rescheduled "${result.title}" to ${newDate.toLocaleDateString()} at ${result.scheduledTime}.`,
           type: 'SCHEDULE_RESCHEDULED',
-          data: { workId: updated.id, newDate: updated.scheduledDate },
+          data: { workId: result.id, newDate: result.scheduledDate },
         },
       });
     }
@@ -1318,7 +1486,113 @@ export class WorkService {
     return {
       success: true,
       message: 'Schedule updated successfully.',
-      work: updated,
+      work: result,
+    };
+  }
+
+  /**
+   * Customer Request Rework for completed activity.
+   * Preserves historical completed record and provisions a new rework deliverable.
+   */
+  async requestRework(
+    scopedCustomerId: number | string,
+    id: number | string,
+    dto: { reason?: string },
+  ) {
+    const numCustomerId = Number(scopedCustomerId);
+    const numId = Number(id);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new ForbiddenException('Authenticated customer context required');
+    }
+
+    const existing = await this.findOne(numCustomerId, numId);
+    if (existing.customerId !== numCustomerId) {
+      throw new ForbiddenException('You do not have permission to request rework for this item.');
+    }
+
+    const statusStr = (existing.status || '').toString().toUpperCase();
+    if (statusStr !== 'COMPLETED' && statusStr !== 'APPROVED' && statusStr !== 'DONE') {
+      throw new BadRequestException(
+        `Cannot request rework for an item with status ${existing.status}. Rework is only available for completed activities.`,
+      );
+    }
+
+    const reason = (dto.reason || '').trim();
+    const revisionNumber = (existing.revisionCount || 0) + 1;
+
+    this.logger.log(
+      `[REWORK_REQUEST] customerId: ${numCustomerId} activityId: ${numId} title: "${existing.title}" type: ${existing.workType} revision: ${revisionNumber} reason: "${reason}"`,
+    );
+
+    const reworkItem = await this.prisma.$transaction(async (tx) => {
+      // 1. Update original item with feedback/notes
+      await tx.work.update({
+        where: { id: numId },
+        data: {
+          feedback: reason || 'Rework requested by client',
+          revisionCount: revisionNumber,
+        },
+      });
+
+      // 2. Create new linked rework activity
+      const newWork = await tx.work.create({
+        data: {
+          customerId: numCustomerId,
+          subscriptionId: existing.subscriptionId,
+          planId: existing.planId,
+          entitlementId: existing.entitlementId,
+          assignedToId: existing.assignedToId,
+          editorId: existing.editorId,
+          teamId: existing.teamId,
+          workType: existing.workType,
+          title: `${existing.title} (Rework #${revisionNumber})`,
+          description: reason ? `Rework requested: ${reason}` : `Rework for ${existing.title}`,
+          scheduledDate: new Date(),
+          scheduledTime: existing.scheduledTime || '10:00 AM',
+          priority: 'HIGH',
+          status: WorkStatus.SCHEDULED,
+          notes: `Rework for completed Work #${existing.id}. Reason: ${reason || 'N/A'}`,
+          revisionCount: revisionNumber,
+        },
+        include: {
+          customer: true,
+          assignedTo: true,
+          editor: true,
+          entitlement: true,
+        },
+      });
+
+      // 3. Attach workflow tasks to the rework activity
+      await tx.workTask.createMany({
+        data: [
+          { workId: newWork.id, title: `1. Review Client Feedback & Scope`, stepOrder: 1, status: TaskStatus.PENDING },
+          { workId: newWork.id, title: `2. Execute Rework / Re-edit / Redesign`, stepOrder: 2, status: TaskStatus.PENDING },
+          { workId: newWork.id, title: `3. Client Final Review & Approval`, stepOrder: 3, status: TaskStatus.PENDING },
+        ],
+      });
+
+      return newWork;
+    });
+
+    // Notify assigned staff
+    const staffUserIds = [reworkItem.assignedToId, reworkItem.editorId].filter(Boolean) as number[];
+    for (const uid of staffUserIds) {
+      await this.prisma.notification.create({
+        data: {
+          customerId: numCustomerId,
+          userId: uid,
+          title: 'Rework Requested by Customer',
+          message: `Customer requested rework for "${existing.title}": ${reason || 'See details in task.'}`,
+          type: 'REWORK_REQUESTED',
+          data: { workId: reworkItem.id, originalWorkId: existing.id, reason },
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Rework request submitted successfully.',
+      rework: reworkItem,
     };
   }
 
