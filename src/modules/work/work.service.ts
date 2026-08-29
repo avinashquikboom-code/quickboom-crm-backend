@@ -965,9 +965,9 @@ export class WorkService {
         : null;
 
       return {
-        id: w.id,
-        activityId: w.id,
-        customerId: w.customerId,
+        id: String(w.id),
+        activityId: String(w.id),
+        customerId: String(w.customerId),
         purchaseId: purchaseRef,
         productName: isLocked ? 'Schedule Locked' : prodName,
         serviceName: isLocked ? 'Schedule Locked' : prodName,
