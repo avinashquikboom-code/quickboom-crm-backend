@@ -58,26 +58,30 @@ export class WorkController {
   }
 
   @Post('subscription/purchase')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Purchase a plan and auto-create activity schedules' })
   async purchaseSubscription(
+    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
+    @Req() req: any,
     @Body() body: { planId: number },
   ) {
-    const custId = user?.customerId || user?.id;
+    const custId = customerId || req?.customerId || user?.customerId;
     return this.workService.purchaseSubscription(custId, body.planId);
   }
 
   @Post('activity/complete')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mark activity as completed' })
   async completeActivity(
+    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
+    @Req() req: any,
     @Body() body: { activityScheduleId: number },
   ) {
-    const custId = user?.customerId || user?.id;
+    const custId = customerId || req?.customerId || user?.customerId;
     return this.workService.completeActivity(body.activityScheduleId, custId);
   }
 

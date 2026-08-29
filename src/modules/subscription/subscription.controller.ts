@@ -17,7 +17,9 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { SubscriptionService } from './subscription.service';
 import { PlanAccessService } from './plan-access.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { RoleType } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
@@ -38,20 +40,21 @@ export class SubscriptionController {
 
   @Get('subscriptions/installments')
   @Get('customer/installments')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer installment schedule and outstanding balance' })
   async getMyInstallments(
+    @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
   ) {
     const rawCustId =
-      user?.customerId ??
+      customerIdStr ??
       req?.customerId ??
+      user?.customerId ??
       headerCustomerId ??
-      req?.headers?.['x-customer-id'] ??
-      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+      req?.headers?.['x-customer-id'];
 
     const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
     if (!customerId || isNaN(customerId)) {
@@ -130,20 +133,21 @@ export class SubscriptionController {
 
   @Get('subscriptions/current')
   @Get('customer/subscriptions/current')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription and installment status' })
   async getCurrentSubscription(
+    @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
   ) {
     const rawCustId =
-      user?.customerId ??
+      customerIdStr ??
       req?.customerId ??
+      user?.customerId ??
       headerCustomerId ??
-      req?.headers?.['x-customer-id'] ??
-      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+      req?.headers?.['x-customer-id'];
 
     const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
     if (!customerId || isNaN(customerId)) {
@@ -154,20 +158,21 @@ export class SubscriptionController {
 
   @Get('subscriptions/renewal-status')
   @Get('customer/subscriptions/renewal-status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get installment renewal status' })
   async getRenewalStatus(
+    @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
   ) {
     const rawCustId =
-      user?.customerId ??
+      customerIdStr ??
       req?.customerId ??
+      user?.customerId ??
       headerCustomerId ??
-      req?.headers?.['x-customer-id'] ??
-      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+      req?.headers?.['x-customer-id'];
 
     const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
     if (!customerId || isNaN(customerId)) {
@@ -296,11 +301,15 @@ export class SubscriptionController {
   @Get('subscriptions/effective-plan')
   @Get('customer/subscription')
   @Get('customer/usage')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active effective plan and usage for authenticated customer' })
-  async getEffectivePlan(@CurrentUser() user: any) {
-    const customerId = user?.customerId;
+  async getEffectivePlan(
+    @CurrentCustomer() customerIdStr: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const customerId = customerIdStr || req?.customerId || user?.customerId;
     if (!customerId) {
       return {
         success: true,
@@ -364,11 +373,15 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get purchase and order history for authenticated customer' })
-  async getCustomerOrders(@CurrentUser() user: any) {
-    const customerId = user?.customerId;
+  async getCustomerOrders(
+    @CurrentCustomer() customerIdStr: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const customerId = customerIdStr || req?.customerId || user?.customerId;
     if (!customerId) {
       return { success: true, data: [] };
     }
