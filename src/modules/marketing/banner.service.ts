@@ -89,6 +89,10 @@ export class BannerService {
     }
 
     this.logger.log(
+      `[ADMIN_BANNER_CREATE_DEBUG]\ntitle: ${dto.title}\nimage: ${file ? file.originalname : (dto.imageUrl ? dto.imageUrl.substring(0, 40) + '...' : 'none')}\nimageType: ${file ? file.mimetype : (dto.imageUrl?.startsWith('data:') ? 'BASE64' : 'URL')}\nimageSize: ${file ? file.size : 'N/A'}\nimageUrl: ${imageUrl}\nbannerUrl: ${imageUrl}\npayload: ${JSON.stringify(dto)}`,
+    );
+
+    this.logger.log(
       `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${banner.imageUrl}\nimage: ${banner.imageUrl}\nbannerUrl: ${banner.imageUrl}\nmediaUrl: ${banner.imageUrl}`,
     );
 
@@ -396,7 +400,7 @@ export class BannerService {
     }
 
     this.logger.log(
-      `[CUSTOMER_BANNER_QUERY_DEBUG]\nauthenticatedUser: ${user?.id || 'ANONYMOUS'}\ncustomerId: ${user?.customerId ?? 'NONE'}\nresolvedCustomerId: ${resolvedCustomerId ?? 'NONE'}\ncurrentPlan: ${currentPlanName}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null`,
+      `[CUSTOMER_BANNER_QUERY_DEBUG]\nauthenticatedUser: ${user?.id || 'ANONYMOUS'}\ncustomerId: ${resolvedCustomerId ?? 'NONE'}\nplacement: HOME\nactive: true\ncurrentDate: ${now.toISOString()}\ncurrentPlan: ${currentPlanName}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null`,
     );
 
     const allBanners = await this.prisma.marketingBanner.findMany({
@@ -447,6 +451,10 @@ export class BannerService {
     const dateFiltered = customerFiltered.filter((b) => isDateValid(b) && isPlanValid(b));
 
     this.logger.log(
+      `[CUSTOMER_BANNER_QUERY_DEBUG]\ncustomerId: ${resolvedCustomerId ?? 'NONE'}\nplacement: HOME\nactive: true\ncurrentDate: ${now.toISOString()}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null\nmatchedCount: ${dateFiltered.length}`,
+    );
+
+    this.logger.log(
       `database records before filtering: ${allBanners.length}\nrecords after customer filtering: ${customerFiltered.length}\nrecords after status filtering: ${statusFiltered.length}\nrecords after date filtering: ${dateFiltered.length}\nrecords returned: ${dateFiltered.length}`,
     );
 
@@ -488,6 +496,9 @@ export class BannerService {
         resultBanners.push(item);
         this.logger.log(
           `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
+        );
+        this.logger.log(
+          `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${item.customerId ?? 'GLOBAL'}`,
         );
       }
     }
