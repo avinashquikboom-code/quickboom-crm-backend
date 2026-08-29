@@ -2099,6 +2099,11 @@ export class SubscriptionService {
    */
   async activateCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
     const numSubId = Number(subscriptionId);
+
+    this.logger.log(
+      `[SUBSCRIPTION_ACTIVATE_REQUEST]\nmethod: PATCH/POST\nsubscriptionId: ${subscriptionId}`,
+    );
+
     const sub = await this.prisma.customerSubscription.findUnique({
       where: { id: numSubId },
       include: { plan: true },
@@ -2113,15 +2118,18 @@ export class SubscriptionService {
     let startDate = sub.startDate;
     let endDate = sub.endDate;
 
-    // If previously expired or in the past, reset the start and end dates forward
     if (now > new Date(sub.endDate)) {
       startDate = now;
       endDate = calculatePlanExpiry(now, durationMonths);
     }
 
-    // Atomic transaction to deactivate other active subscriptions and set this one to ACTIVE
+    const oldStatus = sub.status;
+
+    this.logger.log(
+      `[SUBSCRIPTION_ACTIVATE_DEBUG]\nsubscriptionId: ${sub.id}\ncustomerId: ${sub.customerId}\noldStatus: ${oldStatus}\nnewStatus: ${SubscriptionStatus.ACTIVE}\nplanId: ${sub.planId}\nplanName: ${sub.plan?.name}\nstartDate: ${startDate.toISOString()}\nexpiryDate: ${endDate.toISOString()}`,
+    );
+
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Deactivate any other currently ACTIVE subscriptions for this customer
       await tx.customerSubscription.updateMany({
         where: {
           customerId: sub.customerId,
@@ -2133,7 +2141,6 @@ export class SubscriptionService {
         },
       });
 
-      // Update any pending payment records for this subscription to SUCCESS (PAID)
       await tx.paymentHistory.updateMany({
         where: {
           subscriptionId: sub.id,
@@ -2163,7 +2170,6 @@ export class SubscriptionService {
       });
     });
 
-    // Generate monthly schedules
     try {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
@@ -2175,7 +2181,6 @@ export class SubscriptionService {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on activation: ${err?.message}`);
     }
 
-    // Write audit log
     try {
       await this.prisma.auditLog.create({
         data: {
@@ -2194,6 +2199,10 @@ export class SubscriptionService {
         },
       });
     } catch (_) {}
+
+    this.logger.log(
+      `[SUBSCRIPTION_ACTIVATE_RESPONSE]\nsuccess: true\nsubscriptionId: ${updated.id}\nstatus: ${updated.status}`,
+    );
 
     return this.getAdminCustomerSubscriptions(sub.customerId);
   }

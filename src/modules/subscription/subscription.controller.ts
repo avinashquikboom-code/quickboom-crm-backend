@@ -683,13 +683,18 @@ export class SubscriptionController {
   @Patch('admin/subscriptions/:subscriptionId/activate')
   @Post('subscriptions/:subscriptionId/activate')
   @Patch('subscriptions/:subscriptionId/activate')
+  @Post('admin/subscriptions/:id/activate')
+  @Patch('admin/subscriptions/:id/activate')
+  @Post('subscriptions/:id/activate')
+  @Patch('subscriptions/:id/activate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Activate a customer subscription (Admin)' })
   async activateSubscription(
-    @Param('subscriptionId') subscriptionId: string,
+    @Param() params: any,
     @CurrentUser() user: any,
   ) {
+    const subscriptionId = params.subscriptionId || params.id;
     return this.subscriptionService.activateCustomerSubscription(subscriptionId, user?.id);
   }
 
@@ -697,13 +702,18 @@ export class SubscriptionController {
   @Patch('admin/subscriptions/:subscriptionId/deactivate')
   @Post('subscriptions/:subscriptionId/deactivate')
   @Patch('subscriptions/:subscriptionId/deactivate')
+  @Post('admin/subscriptions/:id/deactivate')
+  @Patch('admin/subscriptions/:id/deactivate')
+  @Post('subscriptions/:id/deactivate')
+  @Patch('subscriptions/:id/deactivate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate a customer subscription (Admin)' })
   async deactivateSubscription(
-    @Param('subscriptionId') subscriptionId: string,
+    @Param() params: any,
     @CurrentUser() user: any,
   ) {
+    const subscriptionId = params.subscriptionId || params.id;
     return this.subscriptionService.deactivateCustomerSubscription(subscriptionId, user?.id);
   }
 
