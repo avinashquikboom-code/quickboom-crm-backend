@@ -57,6 +57,56 @@ export class WorkController {
     });
   }
 
+  @Post('subscription/purchase')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Purchase a plan and auto-create activity schedules' })
+  async purchaseSubscription(
+    @CurrentUser() user: any,
+    @Body() body: { planId: number },
+  ) {
+    const custId = user?.customerId || user?.id;
+    return this.workService.purchaseSubscription(custId, body.planId);
+  }
+
+  @Post('activity/complete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark activity as completed' })
+  async completeActivity(
+    @CurrentUser() user: any,
+    @Body() body: { activityScheduleId: number },
+  ) {
+    const custId = user?.customerId || user?.id;
+    return this.workService.completeActivity(body.activityScheduleId, custId);
+  }
+
+  @Post('activity/skip')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Skip an activity' })
+  async skipActivity(@Body() body: { activityScheduleId: number }) {
+    return this.workService.skipActivity(body.activityScheduleId);
+  }
+
+  @Get('calendar/month')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get month calendar view' })
+  @ApiQuery({ name: 'year', required: true })
+  @ApiQuery({ name: 'month', required: true })
+  async getMonthCalendar(
+    @CurrentCustomer() customerId: string,
+    @Query('year') year: string,
+    @Query('month') month: string,
+  ) {
+    return this.workService.getMonthCalendar(
+      customerId,
+      parseInt(year, 10),
+      parseInt(month, 10),
+    );
+  }
+
   @Get('calendar')
   @Get('customer/calendar')
   @Get('admin/calendar')

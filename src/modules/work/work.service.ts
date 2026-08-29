@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
-import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus } from '@prisma/client';
+import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus, SubscriptionBillingCycle } from '@prisma/client';
 import {
   extractDeliverableQuotas,
   extractReelCount,
@@ -1620,6 +1620,155 @@ export class WorkService {
       success: true,
       message: 'Rework request submitted successfully.',
       rework: reworkItem,
+    };
+  }
+
+  /**
+   * Auto-create activity schedules when customer buys a plan
+   */
+  async purchaseSubscription(
+    customerId: number | string,
+    planId: number | string,
+  ) {
+    const numCustomerId = Number(customerId);
+    const numPlanId = Number(planId);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new BadRequestException('Valid customer context required');
+    }
+    if (!numPlanId || isNaN(numPlanId)) {
+      throw new BadRequestException('Valid planId required');
+    }
+
+    const plan = await this.prisma.plan.findUnique({
+      where: { id: numPlanId },
+    });
+    if (!plan) {
+      throw new NotFoundException(`Plan with ID ${numPlanId} not found`);
+    }
+
+    const startDate = new Date();
+    const endDate = new Date(startDate.getTime() + 30 * 86400000);
+
+    const subscription = await this.prisma.customerSubscription.create({
+      data: {
+        customerId: numCustomerId,
+        planId: numPlanId,
+        startDate,
+        endDate,
+        status: SubscriptionStatus.ACTIVE,
+        billingCycle: SubscriptionBillingCycle.MONTHLY,
+      },
+      include: { plan: true },
+    });
+
+    const scheduleGenResult = await this.generatePlanSchedules(numCustomerId, subscription.id);
+
+    return {
+      success: true,
+      subscriptionId: subscription.id,
+      schedulesCreated: scheduleGenResult.createdCount,
+      message: `Subscription created with ${scheduleGenResult.createdCount} activities scheduled`,
+      schedules: scheduleGenResult.schedules,
+    };
+  }
+
+  /**
+   * Mark activity schedule as completed
+   */
+  async completeActivity(
+    activityScheduleId: number | string,
+    customerId?: number | string,
+  ) {
+    const numWorkId = Number(activityScheduleId);
+    if (!numWorkId || isNaN(numWorkId)) {
+      throw new BadRequestException('Valid activityScheduleId required');
+    }
+
+    const whereClause: any = { id: numWorkId };
+    if (customerId && !isNaN(Number(customerId))) {
+      whereClause.customerId = Number(customerId);
+    }
+
+    const existing = await this.prisma.work.findFirst({
+      where: whereClause,
+    });
+    if (!existing) {
+      throw new NotFoundException(`Activity with ID ${numWorkId} not found or unauthorized`);
+    }
+
+    const updated = await this.prisma.work.update({
+      where: { id: numWorkId },
+      data: {
+        status: WorkStatus.COMPLETED,
+        completedAt: new Date(),
+      },
+    });
+
+    return {
+      success: true,
+      activity: {
+        id: updated.id,
+        status: 'completed',
+        completedAt: updated.completedAt,
+      },
+    };
+  }
+
+  /**
+   * Skip an activity schedule
+   */
+  async skipActivity(activityScheduleId: number | string) {
+    const numWorkId = Number(activityScheduleId);
+    if (!numWorkId || isNaN(numWorkId)) {
+      throw new BadRequestException('Valid activityScheduleId required');
+    }
+
+    const updated = await this.prisma.work.update({
+      where: { id: numWorkId },
+      data: {
+        status: WorkStatus.CANCELLED,
+      },
+    });
+
+    return {
+      success: true,
+      activity: updated,
+    };
+  }
+
+  /**
+   * Get month calendar view grouped by date
+   */
+  async getMonthCalendar(
+    customerId: number | string | undefined,
+    year: number,
+    month: number,
+  ) {
+    const calendarItems = await this.getCalendar(customerId, {
+      year,
+      month,
+    });
+
+    const calendarMap: Record<string, any[]> = {};
+    for (const item of calendarItems) {
+      const dateStr = item.scheduledDate || (item.date ? new Date(item.date).toISOString().split('T')[0] : '');
+      if (dateStr) {
+        if (!calendarMap[dateStr]) {
+          calendarMap[dateStr] = [];
+        }
+        calendarMap[dateStr].push({
+          id: item.id,
+          activity: item.title || item.notes || item.type,
+          status: (item.status || 'pending').toLowerCase(),
+          time: item.time || item.scheduledTime || '10:00 AM',
+        });
+      }
+    }
+
+    return {
+      year,
+      month,
+      calendar: calendarMap,
     };
   }
 
