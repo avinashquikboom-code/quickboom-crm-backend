@@ -9,6 +9,8 @@ import {
   Body,
   UseGuards,
   Query,
+  Req,
+  Headers,
   ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -39,9 +41,20 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer installment schedule and outstanding balance' })
-  async getMyInstallments(@CurrentUser() user: any) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async getMyInstallments(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const rawCustId =
+      user?.customerId ??
+      req?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'] ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
       return {
         success: false,
         message: 'No customer organization associated with current user',
@@ -120,9 +133,20 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription and installment status' })
-  async getCurrentSubscription(@CurrentUser() user: any) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async getCurrentSubscription(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const rawCustId =
+      user?.customerId ??
+      req?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'] ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('No customer organization associated with current user');
     }
     return this.installmentService.getCurrentSubscription(customerId);
@@ -133,9 +157,20 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get installment renewal status' })
-  async getRenewalStatus(@CurrentUser() user: any) {
-    const customerId = user?.customerId;
-    if (!customerId) {
+  async getRenewalStatus(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const rawCustId =
+      user?.customerId ??
+      req?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'] ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('No customer organization associated with current user');
     }
     return this.installmentService.getRenewalStatus(customerId);

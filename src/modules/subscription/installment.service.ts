@@ -212,6 +212,10 @@ export class InstallmentService {
       },
     });
 
+    this.logger.log(
+      `[RENEWAL_STATUS_BACKEND_DEBUG] customerId: ${customerId}, resolvedCustomerId: ${numCustomerId}, subscription lookup result: ${sub ? 'FOUND' : 'NOT_FOUND'}, subscriptionId: ${sub?.id ?? 'NONE'}, subscription status: ${sub?.status ?? 'NONE'}`,
+    );
+
     if (!sub) {
       throw new NotFoundException(`No subscription found for customer ${numCustomerId}`);
     }

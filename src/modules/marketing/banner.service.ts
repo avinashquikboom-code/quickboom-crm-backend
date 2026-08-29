@@ -89,7 +89,7 @@ export class BannerService {
     }
 
     this.logger.log(
-      `[BANNER_DB_DEBUG]\nsavedImageUrl: ${banner.imageUrl}`,
+      `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${banner.imageUrl}\nimage: ${banner.imageUrl}\nbannerUrl: ${banner.imageUrl}\nmediaUrl: ${banner.imageUrl}`,
     );
 
     this.logger.log(
@@ -198,6 +198,10 @@ export class BannerService {
       throw new NotFoundException(`Marketing banner with ID ${id} not found`);
     }
 
+    this.logger.log(
+      `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${banner.imageUrl}\nimage: ${banner.imageUrl}\nbannerUrl: ${banner.imageUrl}\nmediaUrl: ${banner.imageUrl}`,
+    );
+
     return banner;
   }
 
@@ -287,7 +291,9 @@ export class BannerService {
       this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
     }
 
-    this.logger.log(`[BANNER_DB_DEBUG]\nsavedImageUrl: ${updated.imageUrl}`);
+    this.logger.log(
+      `[BANNER_DB_DEBUG]\nid: ${updated.id}\ntitle: ${updated.title}\nimageUrl: ${updated.imageUrl}\nimage: ${updated.imageUrl}\nbannerUrl: ${updated.imageUrl}\nmediaUrl: ${updated.imageUrl}`,
+    );
     this.logger.log(`[MARKETING_BANNER_UPDATE]\nbannerId: ${id}`);
     return updated;
   }
@@ -392,11 +398,49 @@ export class BannerService {
       orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
     });
 
-    const validBanners = banners.filter((b) => b.imageUrl && !b.imageUrl.startsWith('data:'));
-    for (const b of validBanners) {
-      this.logger.log(`[BANNER_API_DEBUG]\nreturnedImageUrl: ${b.imageUrl}`);
+    const resultBanners: any[] = [];
+    for (const b of banners) {
+      let currentImageUrl = b.imageUrl;
+      let currentImageKey = b.imageKey || b.imagePublicId;
+
+      if (currentImageUrl && currentImageUrl.startsWith('data:')) {
+        try {
+          this.logger.log(`[BANNER_MIGRATION_S3] Migrating base64 banner ${b.id} to S3`);
+          const uploadResult = await this.uploadService.uploadBase64(currentImageUrl);
+          currentImageUrl = uploadResult.imageUrl;
+          currentImageKey = uploadResult.imagePublicId || null;
+
+          await this.prisma.marketingBanner.update({
+            where: { id: b.id },
+            data: {
+              imageUrl: currentImageUrl,
+              imagePublicId: currentImageKey,
+              imageKey: currentImageKey,
+            },
+          });
+          this.logger.log(
+            `[BANNER_MIGRATION_S3_SUCCESS] Banner ${b.id} migrated to S3: ${currentImageUrl}`,
+          );
+        } catch (migErr: any) {
+          this.logger.error(`[BANNER_MIGRATION_S3_FAILED] Banner ${b.id}: ${migErr?.message}`);
+        }
+      }
+
+      if (currentImageUrl && !currentImageUrl.startsWith('data:')) {
+        const item = {
+          ...b,
+          imageUrl: currentImageUrl,
+          imagePublicId: currentImageKey,
+          imageKey: currentImageKey,
+        };
+        resultBanners.push(item);
+        this.logger.log(
+          `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
+        );
+      }
     }
-    this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${validBanners.length}`);
-    return validBanners;
+
+    this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${resultBanners.length}`);
+    return resultBanners;
   }
 }
