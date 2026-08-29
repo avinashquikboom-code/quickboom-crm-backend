@@ -64,8 +64,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
     });
 
+    const isCompanyAdmin =
+      !isSuperAdmin &&
+      user.userRoles?.some((ur) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.CUSTOMER_ADMIN ||
+          type === RoleType.TENANT_ADMIN ||
+          name.includes('COMPANYADMIN') ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('TENANTADMIN')
+        );
+      });
+
     if (isSuperAdmin && !roles.includes(RoleType.SUPER_ADMIN) && !roles.includes('SUPER_ADMIN')) {
       roles.push(RoleType.SUPER_ADMIN);
+      roles.push('SUPER_ADMIN');
+    }
+
+    if (isCompanyAdmin && !roles.includes(RoleType.CUSTOMER_ADMIN) && !roles.includes('CUSTOMER_ADMIN')) {
+      roles.push(RoleType.CUSTOMER_ADMIN);
+      roles.push('CUSTOMER_ADMIN');
+      roles.push('COMPANY_ADMIN');
     }
 
     const permissionsMap = new Map();
@@ -83,20 +104,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         });
       }
     });
-
-    const isCompanyAdmin =
-      !isSuperAdmin &&
-      user.userRoles?.some((ur) => {
-        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
-        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
-        return (
-          type === RoleType.CUSTOMER_ADMIN ||
-          type === RoleType.TENANT_ADMIN ||
-          name.includes('COMPANYADMIN') ||
-          name.includes('CUSTOMERADMIN') ||
-          name.includes('TENANTADMIN')
-        );
-      });
 
     const isEmployee =
       !isSuperAdmin &&
@@ -128,6 +135,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       primaryRoleType = RoleType.CUSTOM;
     }
 
+    const primaryRoleRecord = user.userRoles?.[0]?.role;
+    const roleId = payload.roleId || primaryRoleRecord?.id || (user.userRoles?.[0]?.roleId ?? null);
+
     return {
       id: user.id,
       email: user.email,
@@ -135,8 +145,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       firstName: user.firstName,
       lastName: user.lastName,
       role: primaryRole,
+      roleId: roleId,
       roleType: primaryRoleType,
-      roles: roles.length > 0 ? roles : [primaryRole],
+      roles: Array.from(new Set([primaryRole, primaryRoleType, ...roles])),
       permissions: Array.from(permissionsMap.values()),
     };
   }

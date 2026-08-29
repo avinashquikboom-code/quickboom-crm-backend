@@ -43,6 +43,10 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       notification: {
         create: jest.fn(),
       },
+      subscriptionInstallment: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       $transaction: jest.fn(async (callback) => {
         if (typeof callback === 'function') {
           return callback(prisma);

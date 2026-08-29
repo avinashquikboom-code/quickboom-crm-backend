@@ -368,7 +368,7 @@ export class AuthService {
         throw new UnauthorizedException('Company admin account is inactive.');
       }
       if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
+        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     } else if (userRole === 'EMPLOYEE') {
       if (user.employee && user.employee.status !== 'ACTIVE') {
@@ -382,7 +382,7 @@ export class AuthService {
       }
     } else if (userRole === 'CUSTOMER') {
       if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
+        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     }
 
@@ -394,26 +394,32 @@ export class AuthService {
       if (userRole !== 'SUPER_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Super Admin account.');
       }
-    } else if (upperExpectedRole === 'COMPANY_ADMIN') {
-      if (userRole !== 'COMPANY_ADMIN') {
+    } else if (['COMPANY_ADMIN', 'COMPANY_ADMIN_MOBILE'].includes(upperExpectedRole)) {
+      if (userRole !== 'COMPANY_ADMIN' && !isCompanyAdminRole) {
         throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
       }
     } else if (upperExpectedRole === 'ADMIN') {
-      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN') {
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN' && !isCompanyAdminRole) {
         throw new ForbiddenException('These credentials are not registered as an Admin account.');
       }
-    } else if (['CUSTOMER', 'CUSTOMER_MOBILE'].includes(upperExpectedRole)) {
-      if (userRole !== 'CUSTOMER') {
+    } else if (['CUSTOMER', 'CUSTOMER_MOBILE', 'CUSTOMER_ADMIN'].includes(upperExpectedRole)) {
+      if (isEmployeeRole || userRole === 'EMPLOYEE') {
+        throw new ForbiddenException('Employee accounts cannot log in through the customer mobile portal. Please use the employee login.');
+      }
+      if (isSuperAdminRole || userRole === 'SUPER_ADMIN') {
+        throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
+      }
+      if (!isCompanyAdminRole && !isCustomerRole && userRole !== 'CUSTOMER' && userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Customer account.');
       }
       if (!user.customerId) {
         throw new UnauthorizedException('Customer workspace is missing for this account.');
       }
       if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Customer account is inactive or suspended.');
+        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes(upperExpectedRole)) {
-      if (userRole !== 'EMPLOYEE') {
+      if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
     } else if (rawApp === 'mobile') {
@@ -427,9 +433,19 @@ export class AuthService {
       ? ['EMPLOYEE', RoleType.CUSTOM]
       : user.userRoles.map((ur) => ur.role?.type || ur.role?.name).filter(Boolean);
 
-    const roles = Array.from(new Set([userRole, ...rawRoles]));
+    const roles = Array.from(new Set([userRole, userRoleType, ...rawRoles]));
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole, userRoleType);
+    const primaryRole = user.userRoles?.[0]?.role;
+    const roleId = primaryRole?.id || (user.userRoles?.[0]?.roleId ?? null);
+
+    const tokens = await this.generateTokens(
+      user.id,
+      user.customerId,
+      user.email,
+      userRole,
+      userRoleType,
+      roleId,
+    );
 
     // Auto-generate employee record ONLY if the authenticated user is an Employee
     let emp: any = null;
@@ -469,6 +485,8 @@ export class AuthService {
       firstName: user.firstName,
       lastName: user.lastName,
       role: userRole,
+      roleId: roleId,
+      roleType: userRoleType,
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
       ...(userRole !== 'SUPER_ADMIN' && user.customerId && { customerId: user.customerId, customerName: user.customer?.name ?? null }),
@@ -678,12 +696,16 @@ export class AuthService {
       resolvedRoleType = RoleType.CUSTOM;
     }
 
+    const primaryRole = (user as any).userRoles?.[0]?.role;
+    const roleId = primaryRole?.id || ((user as any).userRoles?.[0]?.roleId ?? null);
+
     const tokens = await this.generateTokens(
       user.id,
       user.customerId,
       user.email,
       resolvedRole,
       resolvedRoleType,
+      roleId,
     );
 
     return {
@@ -1131,16 +1153,19 @@ export class AuthService {
     email: string,
     role?: string,
     roleType?: string,
+    roleId?: number | null,
   ) {
     const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
     const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
 
     const payload: any = {
       sub: userId,
+      userId,
       customerId,
       email,
       role: resolvedRole,
       roleType: resolvedRoleType,
+      roleId: roleId ?? null,
     };
 
     const accessExpiresIn =

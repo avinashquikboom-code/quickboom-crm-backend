@@ -71,6 +71,10 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
       notification: {
         create: jest.fn(),
       },
+      subscriptionInstallment: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       $transaction: jest.fn(async (cb) => {
         if (typeof cb === 'function') {
           return cb(prisma);
