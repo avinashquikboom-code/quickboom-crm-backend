@@ -81,6 +81,7 @@ model Customer {
   installments             SubscriptionInstallment[]
   trendingContents         TrendingContent[]
   marketingBanners         MarketingBanner[]
+  socialMediaHandlers      SocialMediaHandler[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -2281,4 +2282,31 @@ model MarketingBanner {
   @@index([startAt, endAt])
   @@index([deletedAt])
   @@map("marketing_banners")
+}
+
+model SocialMediaHandler {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  platform     String
+  accountName  String
+  accountUrl   String?
+  handlerName  String?
+  handlerPhone String?
+  handlerEmail String?
+  workType     String?
+  status       String    @default("ACTIVE")
+  notes        String?
+  startDate    DateTime?
+  endDate      DateTime?
+  durationDays Int?      @default(30)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([customerId])
+  @@index([platform])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("social_media_handlers")
 }
