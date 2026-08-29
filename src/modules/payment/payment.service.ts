@@ -22,7 +22,7 @@ import {
   RazorpayDynamicConfig,
   maskKeyId,
 } from '../integration-settings/integration-settings.service';
-import { PaymentMethod, SubscriptionStatus, InvoiceStatus } from '@prisma/client';
+import { PaymentMethod, SubscriptionStatus, InvoiceStatus, InstallmentStatus } from '@prisma/client';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
@@ -457,6 +457,11 @@ export class PaymentService {
             duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
             durationUnit: 'MONTH',
             autoRenew: true,
+            customPrice: null,
+            customFeatures: null,
+            customUserLimit: null,
+            customLeadLimit: null,
+            customStorageLimit: null,
           },
           include: { plan: true },
         });
@@ -472,10 +477,27 @@ export class PaymentService {
             duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
             durationUnit: 'MONTH',
             autoRenew: true,
+            customPrice: null,
+            customFeatures: null,
+            customUserLimit: null,
+            customLeadLimit: null,
+            customStorageLimit: null,
           },
           include: { plan: true },
         });
       }
+
+      // Ensure any older/other active subscriptions for this customer are marked EXPIRED
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId,
+          id: { not: sub.id },
+          status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] },
+        },
+        data: {
+          status: SubscriptionStatus.EXPIRED,
+        },
+      });
 
       // 3. Generate Receipt for this payment
       const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
@@ -501,6 +523,80 @@ export class PaymentService {
       this.logger.log(
         `[PAYMENT_SUCCESS] paymentId: ${payment.id} amount: ${chargedTotal} totalPaid: ${totalPaid} balance: ${balanceAmount} status: ${paymentStatus}`,
       );
+
+      // Manage subscription installments in tx
+      await tx.subscriptionInstallment.deleteMany({
+        where: { subscriptionId: sub.id },
+      });
+
+      if (isFullyPaid) {
+        await tx.subscriptionInstallment.create({
+          data: {
+            customerId,
+            subscriptionId: sub.id,
+            installmentNumber: 1,
+            totalInstallments: 1,
+            title: 'Full Plan Payment (100%)',
+            amount: chargedBase,
+            taxAmount: chargedTax,
+            totalAmount: chargedTotal,
+            status: InstallmentStatus.PAID,
+            dueDate: startDate,
+            expiryDate: expiryDate,
+            bufferDays: 0,
+            bufferEndDate: expiryDate,
+            paidAt: startDate,
+            paymentHistoryId: payment.id,
+            notes: 'Complete 100% plan payment',
+          },
+        });
+      } else {
+        const halfTotal = Math.round(fullTotalAmount * 0.5 * 100) / 100;
+        const halfBase = Math.round((halfTotal / 1.18) * 100) / 100;
+        const halfTax = Math.round((halfTotal - halfBase) * 100) / 100;
+        const secondDueDate = new Date(startDate);
+        secondDueDate.setDate(secondDueDate.getDate() + 30);
+
+        await tx.subscriptionInstallment.create({
+          data: {
+            customerId,
+            subscriptionId: sub.id,
+            installmentNumber: 1,
+            totalInstallments: 2,
+            title: 'Advance Payment (50%)',
+            amount: halfBase,
+            taxAmount: halfTax,
+            totalAmount: halfTotal,
+            status: InstallmentStatus.PAID,
+            dueDate: startDate,
+            expiryDate: secondDueDate,
+            bufferDays: 0,
+            bufferEndDate: secondDueDate,
+            paidAt: startDate,
+            paymentHistoryId: payment.id,
+            notes: '50% advance payment',
+          },
+        });
+
+        await tx.subscriptionInstallment.create({
+          data: {
+            customerId,
+            subscriptionId: sub.id,
+            installmentNumber: 2,
+            totalInstallments: 2,
+            title: 'Second Installment (50%)',
+            amount: halfBase,
+            taxAmount: halfTax,
+            totalAmount: halfTotal,
+            status: InstallmentStatus.DUE,
+            dueDate: secondDueDate,
+            expiryDate: expiryDate,
+            bufferDays: 0,
+            bufferEndDate: expiryDate,
+            notes: 'Remaining 50% installment',
+          },
+        });
+      }
 
       let finalInvoiceNo: string | null = null;
 
@@ -617,6 +713,9 @@ export class PaymentService {
       `[PAYMENT_VERIFIED_SUCCESS] customerId=${customerId} plan=${plan.name} paymentId=${dto.razorpay_payment_id}`,
     );
 
+    const remainingDays = Math.max(0, Math.ceil((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+    const totalDays = cycle === SubscriptionBillingCycle.YEARLY ? 365 : 30;
+
     return {
       success: true,
       message: 'Payment verified and plan subscription activated successfully!',
@@ -662,6 +761,38 @@ export class PaymentService {
           leadLimit: plan.leadLimit,
           features: plan.features,
           isExpired: false,
+        },
+        effectivePlan: {
+          id: plan.id,
+          subscriptionId: result.subscription.id,
+          name: plan.name,
+          code: plan.code,
+          billingCycle: cycle,
+          price: fullBasePrice,
+          startDate,
+          endDate: expiryDate,
+          expiryDate,
+          isActive: true,
+          isExpired: false,
+          remainingDays,
+          usedDays: 0,
+          totalDays,
+          features: Array.isArray(plan.features) ? plan.features : [],
+          quotas: {
+            userLimit: plan.userLimit,
+            leadLimit: plan.leadLimit,
+            storageLimitBytes: Number(plan.storageLimit),
+            scheduleLimit: 10,
+            usedSchedules: 0,
+            remainingSchedules: 10,
+          },
+          services: [],
+          usage: {
+            currentUsers: 0,
+            currentLeads: 0,
+            currentStorageBytes: 0,
+            scheduledWorks: 0,
+          },
         },
       },
     };

@@ -731,6 +731,11 @@ export class SubscriptionService {
             billingCycle: cycle,
             startDate,
             endDate: expiryDate,
+            customPrice: null,
+            customFeatures: null,
+            customUserLimit: null,
+            customLeadLimit: null,
+            customStorageLimit: null,
           },
           include: { plan: true },
         });
@@ -743,10 +748,27 @@ export class SubscriptionService {
             billingCycle: cycle,
             startDate,
             endDate: expiryDate,
+            customPrice: null,
+            customFeatures: null,
+            customUserLimit: null,
+            customLeadLimit: null,
+            customStorageLimit: null,
           },
           include: { plan: true },
         });
       }
+
+      // Mark other subscriptions for this customer as EXPIRED
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId: numCustomerId,
+          id: { not: updatedSub.id },
+          status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] },
+        },
+        data: {
+          status: SubscriptionStatus.EXPIRED,
+        },
+      });
 
       // 2. Create Payment / Order Record
       const payment = await tx.paymentHistory.create({
