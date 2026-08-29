@@ -61,12 +61,29 @@ export class BannerController {
     }
   }
 
-  private resolveCustomerContext(customerId: string, user: any) {
+  private resolveCustomerContext(customerId: any, user: any) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const parsedCustomerId =
-      customerId && customerId !== 'ALL' && customerId !== 'undefined'
-        ? parseInt(customerId, 10)
-        : user?.customerId ?? null;
+    let parsedCustomerId: number | null = null;
+
+    if (typeof customerId === 'number' && !isNaN(customerId)) {
+      parsedCustomerId = customerId;
+    } else if (customerId && customerId !== 'ALL' && customerId !== 'undefined') {
+      const num = parseInt(String(customerId), 10);
+      if (!isNaN(num)) {
+        parsedCustomerId = num;
+      }
+    }
+
+    if (parsedCustomerId === null && user?.customerId) {
+      if (typeof user.customerId === 'number' && !isNaN(user.customerId)) {
+        parsedCustomerId = user.customerId;
+      } else {
+        const num = parseInt(String(user.customerId), 10);
+        if (!isNaN(num)) {
+          parsedCustomerId = num;
+        }
+      }
+    }
 
     return {
       id: user?.id ?? 0,

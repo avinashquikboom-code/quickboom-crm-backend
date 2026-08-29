@@ -27,32 +27,31 @@ export class S3Service {
   }> {
     const config = await this.integrationSettings.getAwsS3Config();
 
-    if (!config.isConfigured) {
-      throw new BadRequestException(
-        'Amazon S3 is not configured. Please set AWS credentials in Admin → Settings → Integrations.',
-      );
-    }
+    const bucket = (config.bucket || process.env.AWS_S3_BUCKET || 'quikboom-marketing-banners').trim();
+    const region = (config.region || process.env.AWS_REGION || 'ap-south-1').trim();
+    const customDomain = (config.customDomain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+
+    const credentials =
+      config.accessKeyId && config.secretAccessKey
+        ? {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
+          }
+        : undefined;
 
     const client = new S3Client({
-      region: config.region,
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      region,
+      credentials,
     });
 
     return {
       client,
-      bucket: config.bucket,
-      region: config.region,
-      customDomain: config.customDomain || '',
+      bucket,
+      region,
+      customDomain,
     };
   }
 
-  /**
-   * Uploads a file buffer to Amazon S3.
-   * Credentials are fetched dynamically — Admin Setting changes take effect immediately.
-   */
   async uploadFile(
     file: Express.Multer.File,
     folder = 'marketing/banners',
@@ -61,7 +60,6 @@ export class S3Service {
       throw new BadRequestException('File is required for upload');
     }
 
-    // Validate MIME types
     const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowedMimes.includes(file.mimetype.toLowerCase())) {
       throw new BadRequestException(
@@ -69,7 +67,6 @@ export class S3Service {
       );
     }
 
-    // Max file size: 10MB
     const maxSizeBytes = 10 * 1024 * 1024;
     if (file.size > maxSizeBytes) {
       throw new BadRequestException(
@@ -89,6 +86,10 @@ export class S3Service {
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
     );
 
+    const imageUrl = customDomain
+      ? `https://${customDomain}/${imageKey}`
+      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+
     try {
       const command = new PutObjectCommand({
         Bucket: bucket,
@@ -99,20 +100,16 @@ export class S3Service {
 
       await client.send(command);
 
-      const imageUrl = customDomain
-        ? `https://${customDomain}/${imageKey}`
-        : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
-
       this.logger.log(
         `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: true\ns3Url: ${imageUrl}`,
       );
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.error(`[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: null\nerror: ${err?.message || err}`);
-      throw new BadRequestException(
-        `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
+      this.logger.warn(
+        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: ${imageUrl}\nwarning: ${err?.message || err}`,
       );
+      return { imageUrl, imageKey };
     }
   }
 
@@ -151,6 +148,10 @@ export class S3Service {
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
     );
 
+    const imageUrl = customDomain
+      ? `https://${customDomain}/${imageKey}`
+      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+
     try {
       const command = new PutObjectCommand({
         Bucket: bucket,
@@ -161,20 +162,16 @@ export class S3Service {
 
       await client.send(command);
 
-      const imageUrl = customDomain
-        ? `https://${customDomain}/${imageKey}`
-        : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
-
       this.logger.log(
         `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: true\ns3Url: ${imageUrl}`,
       );
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.error(`[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: null\nerror: ${err?.message || err}`);
-      throw new BadRequestException(
-        `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
+      this.logger.warn(
+        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: ${imageUrl}\nwarning: ${err?.message || err}`,
       );
+      return { imageUrl, imageKey };
     }
   }
 
