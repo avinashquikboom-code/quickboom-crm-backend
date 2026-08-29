@@ -106,10 +106,10 @@ export class S3Service {
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.warn(
-        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: ${imageUrl}\nwarning: ${err?.message || err}`,
+      this.logger.error(
+        `[S3_UPLOAD_FAILED]\nbucket: ${bucket}\nkey: ${imageKey}\nerror: ${err?.message || err}`,
       );
-      return { imageUrl, imageKey };
+      throw new Error(`S3 upload failed: ${err?.message || err}`);
     }
   }
 
@@ -168,10 +168,10 @@ export class S3Service {
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.warn(
-        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: ${imageUrl}\nwarning: ${err?.message || err}`,
+      this.logger.error(
+        `[S3_UPLOAD_FAILED]\nbucket: ${bucket}\nkey: ${imageKey}\nerror: ${err?.message || err}`,
       );
-      return { imageUrl, imageKey };
+      throw new Error(`S3 upload failed: ${err?.message || err}`);
     }
   }
 
