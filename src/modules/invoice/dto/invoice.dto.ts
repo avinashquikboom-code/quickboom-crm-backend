@@ -8,10 +8,9 @@ export class CreateInvoiceDto {
   @IsNotEmpty()
   invoiceNo: string;
 
-  @ApiProperty({ example: 'contact-uuid' })
-  @IsString()
+  @ApiProperty({ example: 1 })
   @IsNotEmpty()
-  contactId: string;
+  contactId: number | string;
 
   @ApiProperty({ example: '2026-08-21T00:00:00.000Z' })
   @IsDateString()

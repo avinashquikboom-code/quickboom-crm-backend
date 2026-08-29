@@ -12,22 +12,20 @@ export class CreateTeamDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'employee-leader-uuid' })
-  @IsString()
+  @ApiPropertyOptional({ example: 1 })
   @IsOptional()
-  leaderId?: string;
+  leaderId?: number | string;
 
-  @ApiPropertyOptional({ example: ['employee-uuid-1', 'employee-uuid-2'] })
+  @ApiPropertyOptional({ example: [1, 2] })
   @IsArray()
   @IsOptional()
-  memberIds?: string[];
+  memberIds?: (number | string)[];
 }
 
 export class AddTeamMemberDto {
-  @ApiProperty({ example: 'employee-uuid' })
-  @IsString()
+  @ApiProperty({ example: 1 })
   @IsNotEmpty()
-  employeeId: string;
+  employeeId: number | string;
 
   @ApiPropertyOptional({ example: 'PHOTOGRAPHER' })
   @IsString()

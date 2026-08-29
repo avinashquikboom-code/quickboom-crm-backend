@@ -88,10 +88,9 @@ export class CreateLeadDto {
   @IsOptional()
   value?: number;
 
-  @ApiPropertyOptional({ example: 'uuid-user-id' })
-  @IsString()
+  @ApiPropertyOptional({ example: 1 })
   @IsOptional()
-  assignedToId?: string;
+  assignedToId?: number | string;
 
   @ApiPropertyOptional({ example: '2026-08-20T10:00:00.000Z' })
   @IsOptional()
