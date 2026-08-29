@@ -366,40 +366,92 @@ export class BannerService {
    * Fetch active, published, scheduled banners for Customer Home Screen
    */
   async findAllCustomer(user: {
-    id: number;
+    id?: number;
     customerId?: number | null;
     role?: string;
   }) {
     const now = new Date();
+    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
+
+    let currentPlanName = 'NONE';
+    let currentPlanId: number | null = null;
+    if (resolvedCustomerId && (this.prisma as any).customerSubscription) {
+      try {
+        const activeSub = await (this.prisma as any).customerSubscription.findFirst({
+          where: {
+            customerId: resolvedCustomerId,
+            status: 'ACTIVE',
+            deletedAt: null,
+          },
+          include: { plan: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (activeSub) {
+          currentPlanId = activeSub.planId;
+          currentPlanName = activeSub.plan?.name || `Plan #${activeSub.planId}`;
+        }
+      } catch (subErr) {
+        // Safe fallback if mock prisma or table lookup fails
+      }
+    }
 
     this.logger.log(
-      `[CUSTOMER_BANNERS_REQUEST]\nuserId: ${user.id}\ncustomerId: ${user.customerId ?? 'NONE'}\ncompanyId: ${user.customerId ?? 'GLOBAL'}`,
+      `[CUSTOMER_BANNER_QUERY_DEBUG]\nauthenticatedUser: ${user?.id || 'ANONYMOUS'}\ncustomerId: ${user?.customerId ?? 'NONE'}\nresolvedCustomerId: ${resolvedCustomerId ?? 'NONE'}\ncurrentPlan: ${currentPlanName}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null`,
     );
 
-    const customerScope: any = user.customerId
-      ? { OR: [{ customerId: user.customerId }, { customerId: null }] }
-      : { customerId: null };
-
-    const banners = await this.prisma.marketingBanner.findMany({
-      where: {
-        ...customerScope,
-        isActive: true,
-        isPublished: true,
-        deletedAt: null,
-        AND: [
-          {
-            OR: [{ startAt: null }, { startAt: { lte: now } }],
-          },
-          {
-            OR: [{ endAt: null }, { endAt: { gte: now } }],
-          },
-        ],
-      },
+    const allBanners = await this.prisma.marketingBanner.findMany({
+      where: { deletedAt: null },
       orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
     });
 
+    const statusFiltered = allBanners.filter((b) => b.isActive && b.isPublished);
+
+    const customerFiltered = statusFiltered.filter((b) => {
+      if (b.customerId === null) return true;
+      if (resolvedCustomerId && b.customerId === resolvedCustomerId) return true;
+      const meta = b.metadata as any;
+      if (meta && Array.isArray(meta.customerIds) && resolvedCustomerId) {
+        return meta.customerIds.map(Number).includes(resolvedCustomerId);
+      }
+      return false;
+    });
+
+    const isDateValid = (banner: any) => {
+      if (banner.startAt) {
+        const start = new Date(banner.startAt);
+        if (start > now) return false;
+      }
+      if (banner.endAt) {
+        const end = new Date(banner.endAt);
+        if (end.getHours() === 0 && end.getMinutes() === 0 && end.getSeconds() === 0) {
+          end.setHours(23, 59, 59, 999);
+        }
+        if (end < now) return false;
+      }
+      return true;
+    };
+
+    const isPlanValid = (banner: any) => {
+      const meta = banner.metadata as any;
+      if (!meta) return true;
+      const targetPlanIds: number[] = [];
+      if (meta.planId) targetPlanIds.push(Number(meta.planId));
+      if (Array.isArray(meta.planIds)) {
+        meta.planIds.forEach((p: any) => targetPlanIds.push(Number(p)));
+      }
+      if (targetPlanIds.length === 0) return true;
+      if (!currentPlanId) return false;
+      return targetPlanIds.includes(currentPlanId);
+    };
+
+    const dateFiltered = customerFiltered.filter((b) => isDateValid(b) && isPlanValid(b));
+
+    this.logger.log(
+      `database records before filtering: ${allBanners.length}\nrecords after customer filtering: ${customerFiltered.length}\nrecords after status filtering: ${statusFiltered.length}\nrecords after date filtering: ${dateFiltered.length}\nrecords returned: ${dateFiltered.length}`,
+    );
+
     const resultBanners: any[] = [];
-    for (const b of banners) {
+    for (const b of dateFiltered) {
       let currentImageUrl = b.imageUrl;
       let currentImageKey = b.imageKey || b.imagePublicId;
 

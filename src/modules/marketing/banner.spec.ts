@@ -379,6 +379,31 @@ describe('Marketing Module - Banner Service & Controller', () => {
       expect(bannersForB[0].title).toBe('Company B Exclusive Banner');
     });
 
+    it('returns global banners (customerId: null) and customer-specific banners to Customer 11', async () => {
+      const superAdmin = { id: 1, customerId: null, role: 'SUPER_ADMIN' };
+      await service.create(
+        {
+          title: 'Global Promotional Banner',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/global.jpg',
+          priority: 20,
+          isActive: true,
+          isPublished: true,
+        },
+        superAdmin,
+      );
+
+      const bannersFor11 = await service.findAllCustomer({ id: 11, customerId: 11, role: 'CUSTOMER' });
+      expect(bannersFor11.some((b) => b.title === 'Global Promotional Banner')).toBe(true);
+
+      const controllerResult = await controller.getCustomerBanners(
+        { id: 11, role: 'CUSTOMER' },
+        { headers: { 'x-customer-id': '11' } },
+        '11',
+        '11',
+      );
+      expect(controllerResult.some((b) => b.title === 'Global Promotional Banner')).toBe(true);
+    });
+
     it('throws NotFoundException when Company A tries to access or update Company B banner', async () => {
       const companyAdminB = { id: 2, customerId: 202, role: 'COMPANY_ADMIN' };
       const bannerB = await service.create(

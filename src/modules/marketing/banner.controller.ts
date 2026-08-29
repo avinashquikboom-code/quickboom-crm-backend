@@ -4,11 +4,13 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Headers,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -30,8 +32,6 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Marketing Banners')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller()
 export class BannerController {
   constructor(private readonly bannerService: BannerService) {}
@@ -61,33 +61,35 @@ export class BannerController {
     }
   }
 
-  private resolveCustomerContext(customerId: any, user: any) {
+  private resolveCustomerContext(
+    customerId: any,
+    user: any,
+    headerCustomerId?: string,
+    req?: any,
+  ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     let parsedCustomerId: number | null = null;
 
-    if (typeof customerId === 'number' && !isNaN(customerId)) {
-      parsedCustomerId = customerId;
-    } else if (customerId && customerId !== 'ALL' && customerId !== 'undefined') {
-      const num = parseInt(String(customerId), 10);
+    const rawCustId =
+      customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'] ??
+      req?.customerId ??
+      user?.customerId ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+
+    if (typeof rawCustId === 'number' && !isNaN(rawCustId)) {
+      parsedCustomerId = rawCustId;
+    } else if (rawCustId && rawCustId !== 'ALL' && rawCustId !== 'undefined') {
+      const num = parseInt(String(rawCustId).replace(/[^0-9]/g, ''), 10);
       if (!isNaN(num)) {
         parsedCustomerId = num;
       }
     }
 
-    if (parsedCustomerId === null && user?.customerId) {
-      if (typeof user.customerId === 'number' && !isNaN(user.customerId)) {
-        parsedCustomerId = user.customerId;
-      } else {
-        const num = parseInt(String(user.customerId), 10);
-        if (!isNaN(num)) {
-          parsedCustomerId = num;
-        }
-      }
-    }
-
     return {
       id: user?.id ?? 0,
-      customerId: isSuperAdmin && !customerId ? null : parsedCustomerId,
+      customerId: isSuperAdmin && !customerId && !headerCustomerId ? null : parsedCustomerId,
       role: user?.role,
     };
   }
@@ -95,6 +97,8 @@ export class BannerController {
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
   @Post('admin/marketing/banners')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Create a new marketing banner with file upload (Company Admin only)' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(FileInterceptor('image'))
@@ -110,6 +114,8 @@ export class BannerController {
   }
 
   @Get('admin/marketing/banners')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'List all banners with filter & pagination (Company Admin)' })
   async findAllAdmin(
     @CurrentCustomer() customerId: string,
@@ -122,6 +128,8 @@ export class BannerController {
   }
 
   @Get('admin/marketing/banners/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Get banner by ID' })
   async findOne(
     @CurrentCustomer() customerId: string,
@@ -134,6 +142,8 @@ export class BannerController {
   }
 
   @Patch('admin/marketing/banners/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Update marketing banner with optional image replace (Company Admin only)' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(FileInterceptor('image'))
@@ -150,6 +160,8 @@ export class BannerController {
   }
 
   @Delete('admin/marketing/banners/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Soft delete marketing banner (Company Admin only)' })
   async remove(
     @CurrentCustomer() customerId: string,
@@ -162,6 +174,8 @@ export class BannerController {
   }
 
   @Patch('admin/marketing/banners/:id/publish')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Toggle/set banner publish status (Company Admin only)' })
   async setPublished(
     @CurrentCustomer() customerId: string,
@@ -175,6 +189,8 @@ export class BannerController {
   }
 
   @Patch('admin/marketing/banners/:id/status')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Toggle/set banner active status (Company Admin only)' })
   async setStatus(
     @CurrentCustomer() customerId: string,
@@ -189,13 +205,15 @@ export class BannerController {
 
   // ── Customer Endpoints ──────────────────────────────────────────────────────
 
-  @Get('customer/marketing/banners')
+  @Get(['customer/marketing/banners', 'marketing/banners', 'customer/banners'])
   @ApiOperation({ summary: 'Get active, published home banners for Customer Home Screen' })
   async getCustomerBanners(
-    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
+    @Req() req: any,
+    @CurrentCustomer() customerId?: string,
+    @Headers('x-customer-id') headerCustomerId?: string,
   ) {
-    const context = this.resolveCustomerContext(customerId, user);
+    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
     return this.bannerService.findAllCustomer(context);
   }
 }
