@@ -958,26 +958,36 @@ export class WorkService {
       else if (titleLower.includes('design')) reworkActionLabel = 'Request Re-design';
       else if (titleLower.includes('post') || titleLower.includes('publish')) reworkActionLabel = 'Request Re-post';
 
+      const schedDateVal = w.scheduledDate
+        ? (w.scheduledDate instanceof Date
+            ? w.scheduledDate.toISOString().split('T')[0]
+            : String(w.scheduledDate).split('T')[0])
+        : null;
+
       return {
-        id: String(w.id),
+        id: w.id,
+        activityId: w.id,
+        customerId: w.customerId,
         purchaseId: purchaseRef,
         productName: isLocked ? 'Schedule Locked' : prodName,
         serviceName: isLocked ? 'Schedule Locked' : prodName,
         planName: planName,
         title: isLocked ? 'Schedule Locked' : w.title,
+        scheduledDate: schedDateVal,
+        scheduledTime: startTime,
         date: w.scheduledDate,
         scheduleDate: w.scheduledDate,
         time: startTime,
         startTime: startTime,
         endTime: endTime,
         type: isLocked ? 'LOCKED' : w.workType,
+        activityType: isLocked ? 'LOCKED' : w.workType,
         status: isLocked ? 'LOCKED' : w.status,
         canReschedule,
         canRequestRework,
         reworkActionLabel,
         isLocked,
         lockMessage,
-        customerId: String(w.customerId),
         customerName: w.customer?.name || 'Customer',
         assignedToId: w.assignedToId,
         assignedEmployee: isLocked ? '—' : (w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead'),

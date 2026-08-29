@@ -18,13 +18,44 @@ import {
 } from './dto/customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { WorkService } from '../work/work.service';
 
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('customers')
+@Controller(['customers', 'customer'])
 export class CustomerController {
-  constructor(private readonly customerService: CustomerService) {}
+  constructor(
+    private readonly customerService: CustomerService,
+    private readonly workService: WorkService,
+  ) {}
+
+  @Get('calendar')
+  @ApiOperation({ summary: 'Get customer scheduled activities from Work table' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  async getCalendar(
+    @CurrentUser() user: any,
+    @Query('customerId') customerId?: string,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const targetCustId = customerId || user?.customerId || user?.id;
+    return this.workService.getCalendar(targetCustId, {
+      date: date || startDate,
+      dateFrom: startDate,
+      dateTo: endDate,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    });
+  }
 
   @Get('me')
   @ApiOperation({ summary: 'Get profile of current authenticated customer' })
