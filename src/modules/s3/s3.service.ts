@@ -85,6 +85,10 @@ export class S3Service {
 
     const { client, bucket, region, customDomain } = await this.resolveS3Client();
 
+    this.logger.log(
+      `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
+    );
+
     try {
       const command = new PutObjectCommand({
         Bucket: bucket,
@@ -99,11 +103,13 @@ export class S3Service {
         ? `https://${customDomain}/${imageKey}`
         : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
 
-      this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${imageUrl}, key: ${imageKey}`);
+      this.logger.log(
+        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: true\ns3Url: ${imageUrl}`,
+      );
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.error(`[S3_UPLOAD_ERROR] ${err?.message || err}`);
+      this.logger.error(`[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: null\nerror: ${err?.message || err}`);
       throw new BadRequestException(
         `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
       );
@@ -141,6 +147,10 @@ export class S3Service {
 
     const { client, bucket, region, customDomain } = await this.resolveS3Client();
 
+    this.logger.log(
+      `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
+    );
+
     try {
       const command = new PutObjectCommand({
         Bucket: bucket,
@@ -155,11 +165,13 @@ export class S3Service {
         ? `https://${customDomain}/${imageKey}`
         : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
 
-      this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${imageUrl}, key: ${imageKey}`);
+      this.logger.log(
+        `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: true\ns3Url: ${imageUrl}`,
+      );
 
       return { imageUrl, imageKey };
     } catch (err: any) {
-      this.logger.error(`[S3_UPLOAD_ERROR] ${err?.message || err}`);
+      this.logger.error(`[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true\nuploadSuccess: false\ns3Url: null\nerror: ${err?.message || err}`);
       throw new BadRequestException(
         `Failed to upload image to Amazon S3: ${err?.message || 'S3 Upload Error'}`,
       );

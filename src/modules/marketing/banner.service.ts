@@ -89,6 +89,10 @@ export class BannerService {
     }
 
     this.logger.log(
+      `[BANNER_DB_DEBUG]\nsavedImageUrl: ${banner.imageUrl}`,
+    );
+
+    this.logger.log(
       `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}\nimageUrl: ${imageUrl}`,
     );
 
@@ -283,6 +287,7 @@ export class BannerService {
       this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
     }
 
+    this.logger.log(`[BANNER_DB_DEBUG]\nsavedImageUrl: ${updated.imageUrl}`);
     this.logger.log(`[MARKETING_BANNER_UPDATE]\nbannerId: ${id}`);
     return updated;
   }
@@ -388,6 +393,9 @@ export class BannerService {
     });
 
     const validBanners = banners.filter((b) => b.imageUrl && !b.imageUrl.startsWith('data:'));
+    for (const b of validBanners) {
+      this.logger.log(`[BANNER_API_DEBUG]\nreturnedImageUrl: ${b.imageUrl}`);
+    }
     this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${validBanners.length}`);
     return validBanners;
   }

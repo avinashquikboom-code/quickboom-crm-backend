@@ -20,6 +20,10 @@ export class BannerUploadService {
       throw new BadRequestException('Image file is required');
     }
 
+    this.logger.log(
+      `[BANNER_UPLOAD_DEBUG]\noriginalImageValue: ${file.originalname}\nimageValueType: FILE\nisBase64: false\nisUrl: false\nisFile: true\nfileName: ${file.originalname}`,
+    );
+
     const s3Result = await this.s3Service.uploadFile(file, folder);
     this.logger.log(`[S3_UPLOAD_SUCCESS] url: ${s3Result.imageUrl}, key: ${s3Result.imageKey}`);
     return {
@@ -46,6 +50,10 @@ export class BannerUploadService {
     const buffer = Buffer.from(base64Data, 'base64');
     const ext = mimeType.split('/')[1] || 'png';
     const filename = `banner.${ext}`;
+
+    this.logger.log(
+      `[BANNER_UPLOAD_DEBUG]\noriginalImageValue: ${dataUri.substring(0, 40)}...\nimageValueType: BASE64\nisBase64: true\nisUrl: false\nisFile: false\nfileName: ${filename}`,
+    );
 
     const s3Result = await this.s3Service.uploadBuffer(buffer, mimeType, filename, folder);
     this.logger.log(`[S3_BASE64_UPLOAD_SUCCESS] url: ${s3Result.imageUrl}, key: ${s3Result.imageKey}`);
