@@ -300,4 +300,162 @@ describe('Customer Mobile Login Role Validation', () => {
       }),
     ).rejects.toThrow(UnauthorizedException);
   });
+
+  it('6. Rejects CUSTOMER_ADMIN (test@gmail.com) from Employee mobile endpoint with HTTP 403 Forbidden', async () => {
+    const mockCustomerAdmin = {
+      id: 10,
+      customerId: 11,
+      email: 'test@gmail.com',
+      firstName: 'Customer',
+      lastName: 'Administrator',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      customer: {
+        id: 11,
+        name: 'Test Customer Workspace',
+        isActive: true,
+      },
+      userRoles: [
+        {
+          roleId: 7,
+          role: {
+            id: 7,
+            customerId: 11,
+            name: 'Customer Administrator',
+            type: RoleType.CUSTOMER_ADMIN,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockCustomerAdmin);
+
+    await expect(
+      mobileAuthController.loginEmployee({
+        email: 'test@gmail.com',
+        password: 'validPassword123',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('7. Rejects normal CUSTOMER from Employee mobile endpoint with HTTP 403 Forbidden', async () => {
+    const mockCustomer = {
+      id: 20,
+      customerId: 11,
+      email: 'member@test.com',
+      firstName: 'Member',
+      lastName: 'User',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      customer: {
+        id: 11,
+        name: 'Test Customer Workspace',
+        isActive: true,
+      },
+      userRoles: [
+        {
+          roleId: 15,
+          role: {
+            id: 15,
+            customerId: 11,
+            name: 'Customer User',
+            type: RoleType.CUSTOM,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockCustomer);
+
+    await expect(
+      mobileAuthController.loginEmployee({
+        email: 'member@test.com',
+        password: 'validPassword123',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('8. Allows valid EMPLOYEE to login via Employee mobile endpoint with HTTP 200 OK', async () => {
+    const mockEmployee = {
+      id: 30,
+      customerId: 11,
+      email: 'employee@test.com',
+      firstName: 'Emp',
+      lastName: 'Loyee',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      employee: {
+        id: 5,
+        employeeCode: 'EMP-005',
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+      },
+      customer: {
+        id: 11,
+        name: 'Test Customer Workspace',
+        isActive: true,
+      },
+      userRoles: [
+        {
+          roleId: 3,
+          role: {
+            id: 3,
+            name: 'Sales Executive',
+            type: RoleType.SALES_EXECUTIVE,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockEmployee);
+
+    const response = await mobileAuthController.loginEmployee({
+      email: 'employee@test.com',
+      password: 'validPassword123',
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.user.id).toBe(30);
+    expect(response.user.role).toBe('EMPLOYEE');
+    expect(response.user.employee).toBeDefined();
+  });
+
+  it('9. Rejects SUPER_ADMIN from Employee mobile endpoint with HTTP 403 Forbidden', async () => {
+    const mockSuperAdmin = {
+      id: 1,
+      customerId: null,
+      email: 'superadmin@quikboom.com',
+      firstName: 'Super',
+      lastName: 'Admin',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      userRoles: [
+        {
+          roleId: 1,
+          role: {
+            id: 1,
+            name: 'Super Administrator',
+            type: RoleType.SUPER_ADMIN,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockSuperAdmin);
+
+    await expect(
+      mobileAuthController.loginEmployee({
+        email: 'superadmin@quikboom.com',
+        password: 'validPassword123',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
 });

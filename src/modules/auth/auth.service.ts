@@ -419,8 +419,17 @@ export class AuthService {
         throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes(upperExpectedRole)) {
+      if (isSuperAdminRole || userRole === 'SUPER_ADMIN') {
+        throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
+      }
+      if (isCompanyAdminRole || isCustomerRole || userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER') {
+        throw new ForbiddenException('Customer and Company Admin accounts cannot log in through the employee mobile portal. Please use the customer login.');
+      }
       if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (rawApp === 'mobile') {
       const allowedRoles = ['CUSTOMER', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
