@@ -85,18 +85,22 @@ export class WorkController {
   ) {
     const logger = new Logger('WorksController:getCalendar');
     const headerCustId = req?.headers ? req.headers['x-customer-id'] : undefined;
-    const clientType = req?.headers ? req.headers['x-client-type'] : 'unknown';
     const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
     const authCustId = req?.user?.customerId;
-    const requestedCustomerIdentifier = req?.query?.customerId || headerCustId || 'NONE';
-
-    logger.log(
-      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerIdentifier}\nresolvedCustomerId: ${customerId}`,
-    );
-
+    const userRole = req?.user?.role || (Array.isArray(req?.user?.roles) ? req?.user?.roles.join(',') : 'UNKNOWN');
+    const requestedCustomerCode = req?.query?.customerId || headerCustId || req?.customerExternalId || 'NONE';
     const effectiveCustomerId = customerId || authCustId || headerCustId;
+
+    logger.log(`[CALENDAR_AUTH_DEBUG]
+authenticatedUser: ${authUserId}
+role: ${userRole}
+authenticatedCustomerId: ${authCustId || 'NONE'}
+requestedCustomerCode: ${requestedCustomerCode}
+resolvedRequestedCustomerId: ${effectiveCustomerId || 'NONE'}
+authorization: ALLOWED`);
+
     logger.log(
-      `[CALENDAR_QUERY]\ncustomerId: ${effectiveCustomerId}\ndate: ${date || startDate || 'ALL'}`,
+      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerCode}\nresolvedCustomerId: ${customerId}`,
     );
 
     try {
@@ -109,6 +113,11 @@ export class WorkController {
         employeeId,
         status,
       });
+
+      logger.log(`[CALENDAR_QUERY_DEBUG]
+customerId: ${effectiveCustomerId || 'ALL'}
+date: ${date || startDate || 'ALL'}
+resultCount: ${Array.isArray(result) ? result.length : 0}`);
 
       logger.log(
         `[CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}\ndata: ${JSON.stringify(result)}`,
