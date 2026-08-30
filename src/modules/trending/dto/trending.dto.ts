@@ -236,6 +236,10 @@ export class QueryTrendingDto {
   @IsOptional()
   category?: TrendingCategory;
 
+  @ApiPropertyOptional({ enum: ['IMAGE', 'VIDEO', 'ALL'] })
+  @IsOptional()
+  mediaType?: 'IMAGE' | 'VIDEO' | 'ALL';
+
   @ApiPropertyOptional({ example: 'summer' })
   @IsString()
   @IsOptional()
