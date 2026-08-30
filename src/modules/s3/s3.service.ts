@@ -22,9 +22,26 @@ export class S3Service {
   constructor(private readonly integrationSettings: IntegrationSettingsService) {}
 
   /**
+   * Constructs an SSL-compliant S3 URL.
+   * For bucket names containing dots (e.g. "qbapp.online"), AWS wildcard certificates
+   * (*.s3.region.amazonaws.com) fail hostname verification on virtual-hosted URLs.
+   * Path-style ("https://s3.region.amazonaws.com/bucket/key") resolves against the
+   * valid AWS certificate SAN without hostname mismatch.
+   */
+  formatS3Url(bucket: string, region: string, key: string, customDomain?: string): string {
+    if (customDomain) {
+      return `https://${customDomain}/${key}`;
+    }
+    if (bucket.includes('.')) {
+      return `https://s3.${region}.amazonaws.com/${bucket}/${key}`;
+    }
+    return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  }
+
+  /**
    * Resolves AWS S3 credentials dynamically from IntegrationSettingsService.
    * Priority: Admin Settings (DB with 5-min cache) → ENV fallback.
-   * This ensures that Admin Panel changes take effect immediately.
+   * Uses forcePathStyle: true to ensure standard TLS certificate validation for all buckets.
    */
   private async resolveS3Client(): Promise<{
     client: S3Client;
@@ -48,6 +65,7 @@ export class S3Service {
 
     const client = new S3Client({
       region,
+      forcePathStyle: true,
       credentials,
     });
 
@@ -93,9 +111,7 @@ export class S3Service {
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
     );
 
-    const imageUrl = customDomain
-      ? `https://${customDomain}/${imageKey}`
-      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+    const imageUrl = this.formatS3Url(bucket, region, imageKey, customDomain);
 
     try {
       const command = new PutObjectCommand({
@@ -193,9 +209,7 @@ export class S3Service {
       `[MEDIA_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
     );
 
-    const imageUrl = customDomain
-      ? `https://${customDomain}/${imageKey}`
-      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+    const imageUrl = this.formatS3Url(bucket, region, imageKey, customDomain);
 
     try {
       const command = new PutObjectCommand({
@@ -255,9 +269,7 @@ export class S3Service {
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
     );
 
-    const imageUrl = customDomain
-      ? `https://${customDomain}/${imageKey}`
-      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+    const imageUrl = this.formatS3Url(bucket, region, imageKey, customDomain);
 
     try {
       const command = new PutObjectCommand({
@@ -359,7 +371,7 @@ export class S3Service {
     if (!key) return trimmed;
 
     try {
-      const { client, bucket } = await this.resolveS3Client();
+      const { client, bucket, region, customDomain } = await this.resolveS3Client();
       const command = new GetObjectCommand({
         Bucket: bucket,
         Key: key,
@@ -369,7 +381,12 @@ export class S3Service {
       return presigned;
     } catch (err: any) {
       this.logger.warn(`[S3_PRESIGNED_URL_WARN] Could not generate presigned URL for ${key}: ${err?.message}`);
-      return trimmed;
+      try {
+        const { bucket, region, customDomain } = await this.resolveS3Client();
+        return this.formatS3Url(bucket, region, key, customDomain);
+      } catch {
+        return trimmed;
+      }
     }
   }
 
@@ -378,9 +395,10 @@ export class S3Service {
    */
   async getFileUrl(imageKey: string): Promise<string> {
     const config = await this.integrationSettings.getAwsS3Config();
-    return config.customDomain
-      ? `https://${config.customDomain}/${imageKey}`
-      : `https://${config.bucket}.s3.${config.region}.amazonaws.com/${imageKey}`;
+    const bucket = (config.bucket || process.env.AWS_S3_BUCKET || 'quikboom-marketing-banners').trim();
+    const region = (config.region || process.env.AWS_REGION || 'ap-south-1').trim();
+    const customDomain = (config.customDomain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+    return this.formatS3Url(bucket, region, imageKey, customDomain);
   }
 
   /**
