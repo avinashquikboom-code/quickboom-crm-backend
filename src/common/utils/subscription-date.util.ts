@@ -1,10 +1,34 @@
 /**
  * Subscription Date & Expiry Utilities
  * Enforces business rules:
- * - Expiry is strictly calculated from the customer's actual plan purchase/activation date (startDate).
- * - Safe month-end clamping (e.g. 31 Jan + 1m -> 28/29 Feb).
+ * - When a plan is purchased, startDate is strictly 2 calendar days after purchaseDate (purchaseDate + 2 calendar days).
+ * - Expiry / endDate is strictly calculated from startDate (startDate + plan duration).
+ * - Safe month-end clamping (e.g. 31 Jan + 1m -> 28/29 Feb, 30 Jan purchase -> 1 Feb start -> 1 Mar end).
  * - Multi-stage lifecycle statuses: ACTIVE, EXPIRING_SOON (<= 10d), EXPIRING_IN_5_DAYS (<= 5d), EXPIRING_TODAY (0d), EXPIRED (< 0d), CANCELLED.
  */
+
+/**
+ * Calculates the subscription start date from the purchase date.
+ * Rule: Start date is exactly 2 calendar days after purchase date.
+ *
+ * Examples:
+ *   Purchase: 1 Sep -> Start: 3 Sep
+ *   Purchase: 15 Sep -> Start: 17 Sep
+ *   Purchase: 25 Sep -> Start: 27 Sep
+ *   Purchase: 30 Jan -> Start: 1 Feb
+ *   Purchase: 31 Jan -> Start: 2 Feb
+ *   Purchase: 28 Feb (non-leap) -> Start: 2 Mar
+ *   Purchase: 28 Feb (leap) -> Start: 1 Mar
+ *   Purchase: 29 Feb (leap) -> Start: 2 Mar
+ *   Purchase: 30 Dec 2026 -> Start: 1 Jan 2027
+ *   Purchase: 31 Dec 2026 -> Start: 2 Jan 2027
+ */
+export function calculateSubscriptionStartDate(purchaseDate: Date | string = new Date()): Date {
+  const purchase = new Date(purchaseDate);
+  const start = new Date(purchase);
+  start.setDate(start.getDate() + 2);
+  return start;
+}
 
 export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1): Date {
   const start = new Date(startDate);
@@ -16,7 +40,7 @@ export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1
   const targetYear = startYear + Math.floor(targetMonthIndex / 12);
   const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
 
-  // Clamping for month-end overflows
+  // Clamping for month-end overflows (e.g., Jan 31 -> Feb 28/29)
   const maxDaysInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
   const targetDay = Math.min(startDay, maxDaysInTargetMonth);
 
@@ -29,6 +53,27 @@ export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1
     start.getSeconds(),
     start.getMilliseconds(),
   );
+}
+
+/**
+ * Calculates start and end dates from a purchase date.
+ * Formula:
+ *   startDate = purchaseDate + 2 calendar days
+ *   endDate = startDate + plan duration (calculated from startDate, NOT purchaseDate)
+ */
+export function calculateSubscriptionDates(
+  purchaseDate: Date | string = new Date(),
+  durationMonths = 1,
+): { purchaseDate: Date; startDate: Date; endDate: Date; expiryDate: Date } {
+  const purchase = new Date(purchaseDate);
+  const start = calculateSubscriptionStartDate(purchase);
+  const expiry = calculatePlanExpiry(start, durationMonths);
+  return {
+    purchaseDate: purchase,
+    startDate: start,
+    endDate: expiry,
+    expiryDate: expiry,
+  };
 }
 
 /**

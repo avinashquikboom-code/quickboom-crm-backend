@@ -11,7 +11,7 @@ import {
   FeatureSelectionItemDto,
 } from './dto/custom-plan.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
-import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
+import { calculatePlanExpiry, calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PaymentMethod } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -517,8 +517,7 @@ export class CustomPlanService {
       throw new NotFoundException('Base system plan not configured');
     }
 
-    const startDate = new Date();
-    const expiryDate = calculatePlanExpiry(startDate, order.duration);
+    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), order.duration);
 
     // Format custom features string array for UI display
     const items = (order.selectedFeatures as any[]) || [];

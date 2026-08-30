@@ -24,6 +24,7 @@ import {
 } from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus, InvoiceStatus, InstallmentStatus } from '@prisma/client';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
+import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
 
@@ -398,13 +399,8 @@ export class PaymentService {
       chargedBase = chargedTotal - chargedTax;
     }
 
-    const startDate = new Date();
-    const expiryDate = new Date(startDate);
-    if (cycle === SubscriptionBillingCycle.YEARLY) {
-      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-    } else {
-      expiryDate.setMonth(expiryDate.getMonth() + 1);
-    }
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
 
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${dto.razorpay_payment_id}`;
@@ -880,13 +876,8 @@ export class PaymentService {
     const tax = Math.round(basePrice * 0.18);
     const total = basePrice + tax;
 
-    const startDate = new Date();
-    const expiryDate = new Date(startDate);
-    if (cycle === SubscriptionBillingCycle.YEARLY) {
-      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-    } else {
-      expiryDate.setMonth(expiryDate.getMonth() + 1);
-    }
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
 
     const orderNumber = `#QB-WH-${Date.now().toString(36).toUpperCase()}`;
     const transactionId = `TXN-${paymentId}`;
@@ -1121,13 +1112,8 @@ export class PaymentService {
       basePrice = totalAmount - taxAmount;
     }
 
-    const startDate = new Date();
-    const expiryDate = new Date(startDate);
-    if (cycle === SubscriptionBillingCycle.YEARLY) {
-      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-    } else {
-      expiryDate.setMonth(expiryDate.getMonth() + 1);
-    }
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
 
     const orderNumber = `#QB-OFFLINE-${Date.now().toString(36).toUpperCase()}`;
 

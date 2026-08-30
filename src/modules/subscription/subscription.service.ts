@@ -12,6 +12,8 @@ import { WorkService } from '../work/work.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
+  calculateSubscriptionStartDate,
+  calculateSubscriptionDates,
   calculateDaysRemaining,
   deriveSubscriptionStatus,
   getExpiryNotificationPayload,
@@ -1744,8 +1746,8 @@ export class SubscriptionService {
         ? SubscriptionBillingCycle.YEARLY
         : SubscriptionBillingCycle.MONTHLY;
 
-    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const startDate = dto.startDate ? new Date(dto.startDate) : calculateSubscriptionStartDate(new Date());
     const endDate = dto.endDate
       ? new Date(dto.endDate)
       : calculatePlanExpiry(startDate, durationMonths);
@@ -1898,8 +1900,8 @@ export class SubscriptionService {
         ? SubscriptionBillingCycle.MONTHLY
         : oldSub.billingCycle || SubscriptionBillingCycle.MONTHLY;
 
-    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const startDate = dto.startDate ? new Date(dto.startDate) : calculateSubscriptionStartDate(new Date());
     const endDate = calculatePlanExpiry(startDate, durationMonths);
 
     const basePrice =
