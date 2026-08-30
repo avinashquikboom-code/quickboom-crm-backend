@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   UnauthorizedException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -485,10 +486,21 @@ export class CustomerService {
   }
 
   /**
+   * Helper to validate and convert raw customer ID to positive integer
+   */
+  private parseCustomerId(id: number | string): number {
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      throw new BadRequestException('Invalid customer ID');
+    }
+    return numericId;
+  }
+
+  /**
    * Get single customer with complete overview and related CRM entity counts
    */
   async findOne(id: number | string) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     this.logger.log(
       `[ADMIN_GET_CUSTOMER_DETAILS] Fetching details for customerId=${numericId}`,
     );
@@ -592,7 +604,7 @@ export class CustomerService {
    * Get Activities & Audit Logs for Customer
    */
   async getCustomerActivities(customerId: number | string) {
-    const numericId = Number(customerId);
+    const numericId = this.parseCustomerId(customerId);
     const logs = await this.prisma.auditLog.findMany({
       where: { customerId: numericId },
       orderBy: { createdAt: 'desc' },
@@ -606,7 +618,7 @@ export class CustomerService {
    * Get Tasks for Customer
    */
   async getCustomerTasks(customerId: number | string) {
-    const numericId = Number(customerId);
+    const numericId = this.parseCustomerId(customerId);
     const tasks = await this.prisma.task.findMany({
       where: { customerId: numericId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -622,7 +634,7 @@ export class CustomerService {
    * Get Visits for Customer
    */
   async getCustomerVisits(customerId: number | string) {
-    const numericId = Number(customerId);
+    const numericId = this.parseCustomerId(customerId);
     const visits = await this.prisma.visit.findMany({
       where: { customerId: numericId },
       orderBy: { createdAt: 'desc' },
@@ -638,7 +650,7 @@ export class CustomerService {
    * Get Deals for Customer
    */
   async getCustomerDeals(customerId: number | string) {
-    const numericId = Number(customerId);
+    const numericId = this.parseCustomerId(customerId);
     const deals = await this.prisma.deal.findMany({
       where: { customerId: numericId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -705,7 +717,7 @@ export class CustomerService {
    * Update Customer
    */
   async update(id: number | string, dto: UpdateCustomerDto) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     await this.findOne(numericId);
 
     const updated = await this.prisma.customer.update({
@@ -740,7 +752,7 @@ export class CustomerService {
    * Soft-delete / deactivate customer
    */
   async remove(id: number | string) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     await this.findOne(numericId);
 
     const archived = await this.prisma.customer.update({
@@ -758,7 +770,7 @@ export class CustomerService {
    * Get plan details for customer
    */
   async getCustomerPlan(id: number | string) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
       include: {
@@ -831,7 +843,7 @@ export class CustomerService {
   }
 
   async getCustomerPlanHistory(id: number | string) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     const subscriptions = await this.prisma.customerSubscription.findMany({
       where: { customerId: numericId },
       include: { plan: true },
@@ -856,7 +868,7 @@ export class CustomerService {
   }
 
   async customizeCustomerPlan(id: number | string, dto: any) {
-    const numericId = Number(id);
+    const numericId = this.parseCustomerId(id);
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
     });

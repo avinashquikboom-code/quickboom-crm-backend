@@ -206,6 +206,8 @@ export class BannerController {
   // ── Customer Endpoints ──────────────────────────────────────────────────────
 
   @Get(['customer/marketing/banners', 'marketing/banners', 'customer/banners'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Get active, published home banners for Customer Home Screen' })
   async getCustomerBanners(
     @CurrentUser() user: any,

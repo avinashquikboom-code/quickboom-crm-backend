@@ -23,14 +23,14 @@ import { WorkService } from '../work/work.service';
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller(['customers', 'customer'])
+@Controller('customers')
 export class CustomerController {
   constructor(
     private readonly customerService: CustomerService,
     private readonly workService: WorkService,
   ) {}
 
-  @Get('calendar')
+  @Get(['calendar', '/customer/calendar'])
   @ApiOperation({ summary: 'Get customer scheduled activities from Work table' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'date', required: false })
@@ -57,19 +57,19 @@ export class CustomerController {
     });
   }
 
-  @Get('me')
+  @Get(['me', '/customer/me'])
   @ApiOperation({ summary: 'Get profile of current authenticated customer' })
   async getMe(@CurrentUser() user: any) {
     return this.customerService.getMe(user);
   }
 
-  @Patch('me')
+  @Patch(['me', '/customer/me'])
   @ApiOperation({ summary: 'Update profile of current authenticated customer' })
   async updateMe(@CurrentUser() user: any, @Body() dto: UpdateCustomerProfileDto) {
     return this.customerService.updateMe(user, dto);
   }
 
-  @Get('profile')
+  @Get(['profile', '/customer/profile'])
   @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
   async getProfile(@CurrentUser() user: any) {
     return this.customerService.getMe(user);

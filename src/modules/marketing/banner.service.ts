@@ -377,6 +377,11 @@ export class BannerService {
     const now = new Date();
     const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
 
+    console.log('[BANNER_API_REQUEST]', {
+      customerId: resolvedCustomerId,
+      userId: user?.id ?? null,
+    });
+
     let currentPlanName = 'NONE';
     let currentPlanId: number | null = null;
     if (resolvedCustomerId && (this.prisma as any).customerSubscription) {
@@ -506,6 +511,13 @@ export class BannerService {
         );
       }
     }
+
+    console.log('[BANNER_API_RESPONSE]', {
+      status: 200,
+      count: resultBanners.length,
+      bannerId: resultBanners[0]?.id ?? null,
+      imageUrl: resultBanners[0]?.imageUrl ?? null,
+    });
 
     this.logger.log(`[CUSTOMER_BANNERS_RESPONSE]\ncount: ${resultBanners.length}`);
     return resultBanners;

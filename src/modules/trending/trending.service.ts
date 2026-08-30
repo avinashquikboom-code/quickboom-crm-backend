@@ -341,10 +341,10 @@ export class TrendingService {
     const targetCustomerId = this.parseCustomerId(authCustomerId);
     const now = new Date();
 
-    console.log('[TRENDING_CUSTOMER_REQUEST]', {
+    console.log('[CUSTOMER_TRENDING_REQUEST]', {
       userId: user?.id || null,
       customerId: targetCustomerId || null,
-      category: category || 'ALL',
+      email: user?.email || null,
     });
 
     const where: any = {
@@ -379,6 +379,11 @@ export class TrendingService {
     if (category) {
       where.category = category;
     }
+
+    console.log('[CUSTOMER_TRENDING_PRISMA]', {
+      customerId: targetCustomerId,
+      customerIdType: typeof targetCustomerId,
+    });
 
     const items = await this.prisma.trendingContent.findMany({
       where,
