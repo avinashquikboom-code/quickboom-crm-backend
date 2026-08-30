@@ -68,8 +68,8 @@ export class TrendingService {
     isSuperAdmin = false,
     file?: Express.Multer.File,
   ) {
-    const targetCustomerId = isSuperAdmin && dto.customerId
-      ? this.parseCustomerId(dto.customerId)
+    const targetCustomerId = isSuperAdmin
+      ? (dto.customerId ? this.parseCustomerId(dto.customerId) : null)
       : this.parseCustomerId(authCustomerId);
 
     const startAt = dto.startAt ? new Date(dto.startAt) : null;
@@ -173,8 +173,8 @@ export class TrendingService {
     query: QueryTrendingDto,
     isSuperAdmin = false,
   ) {
-    const targetCustomerId = isSuperAdmin && query.customerId
-      ? this.parseCustomerId(query.customerId)
+    const targetCustomerId = isSuperAdmin
+      ? (query.customerId ? this.parseCustomerId(query.customerId) : undefined)
       : this.parseCustomerId(authCustomerId);
 
     const page = Math.max(1, parseInt(String(query.page || 1), 10) || 1);
