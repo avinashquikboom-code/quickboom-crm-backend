@@ -855,15 +855,15 @@ export class InstallmentService {
    */
   async getCurrentSubscription(customerId: number | string) {
     const numCustomerId = Number(customerId);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${numCustomerId} not found`);
+    }
+
     const summary = await this.getCustomerInstallmentSummary(numCustomerId);
-
-    this.logger.log(
-      `[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, subscriptionId: ${summary.subscriptionId}, planId: ${summary.planId}, status: ${summary.planStatus}`,
-    );
-
-    const paidInsts = summary.installments.filter((i) => i.status === InstallmentStatus.PAID);
-    const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
-    const currentInst = lastPaidInst || (summary.installments.length > 0 ? summary.installments[0] : null);
 
     const now = new Date();
     const upcomingSub = await this.prisma.customerSubscription.findFirst({
@@ -896,6 +896,24 @@ export class InstallmentService {
               : Number(upcomingSub.plan.monthlyPrice),
         }
       : null;
+
+    if (!summary) {
+      this.logger.log(`[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, no active subscription found`);
+      return {
+        success: true,
+        data: null,
+        currentPlan: null,
+        upcomingPlan,
+      };
+    }
+
+    this.logger.log(
+      `[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, subscriptionId: ${summary.subscriptionId}, planId: ${summary.planId}, status: ${summary.planStatus}`,
+    );
+
+    const paidInsts = (summary.installments || []).filter((i) => i.status === InstallmentStatus.PAID);
+    const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
+    const currentInst = lastPaidInst || (summary.installments && summary.installments.length > 0 ? summary.installments[0] : null);
 
     const currentData = {
       subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
@@ -943,28 +961,67 @@ export class InstallmentService {
    */
   async getRenewalStatus(customerId: number | string) {
     const numCustomerId = Number(customerId);
-    const summary = await this.getCustomerInstallmentSummary(numCustomerId);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${numCustomerId} not found`);
+    }
 
     const sub = await this.prisma.customerSubscription.findFirst({
       where: { customerId: numCustomerId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
+      include: {
+        plan: true,
+        installments: {
+          orderBy: { installmentNumber: 'asc' },
+        },
+      },
     });
+
+    const summary = await this.getCustomerInstallmentSummary(numCustomerId);
 
     const now = new Date();
     let daysRemaining = 0;
     if (sub?.endDate && now < new Date(sub.endDate)) {
       const diffMs = new Date(sub.endDate).getTime() - now.getTime();
       daysRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-    } else if (summary.isInBuffer && summary.bufferRemainingDays > 0) {
+    } else if (summary && summary.isInBuffer && summary.bufferRemainingDays > 0) {
       daysRemaining = summary.bufferRemainingDays;
     }
 
-    this.logger.log(
-      `[RENEWAL_DEBUG] currentDate: ${now.toISOString()}, subscriptionEndDate: ${sub?.endDate ? new Date(sub.endDate).toISOString() : 'NONE'}, daysRemaining: ${daysRemaining}, isInBuffer: ${summary.isInBuffer}, bufferStart: ${summary.bufferStartDate?.toISOString() || 'NONE'}, bufferEnd: ${summary.bufferEndDate?.toISOString() || 'NONE'}, canRenew: ${summary.canRenewCurrentPlan}, renewalStatus: ${summary.planStatus}`,
-    );
+    this.logger.log(`[RENEWAL_STATUS_DEBUG]
+customerId: ${numCustomerId}`);
+    this.logger.log(`[RENEWAL_STATUS_DEBUG]
+activeSubscriptionId: ${sub?.id ?? 'NONE'}`);
+    this.logger.log(`[RENEWAL_STATUS_DEBUG]
+renewalRecord: ${summary ? JSON.stringify({ subscriptionId: summary.subscriptionId, planStatus: summary.planStatus, isInBuffer: summary.isInBuffer }) : 'NONE'}`);
+    this.logger.log(`[RENEWAL_STATUS_DEBUG]
+isInBuffer: ${summary ? summary.isInBuffer : false}`);
+    this.logger.log(`[RENEWAL_STATUS_DEBUG]
+renewalStatus: ${summary ? summary.planStatus : (sub ? sub.status : 'NO_SUBSCRIPTION')}`);
 
-    const nextInst = summary.installments.find(
-      (i) => i.status === InstallmentStatus.DUE || i.status === InstallmentStatus.PENDING,
+    if (!sub || !summary) {
+      return {
+        success: true,
+        data: {
+          subscriptionId: null,
+          status: 'NO_SUBSCRIPTION',
+          canRenew: false,
+          bufferPeriodActive: false,
+          bufferStartDate: null,
+          bufferEndDate: null,
+          daysRemaining: 0,
+          originalPlanValue: 0,
+          nextInstallment: null,
+          newPlanRequired: true,
+        },
+      };
+    }
+
+    const nextInst = (summary.installments || []).find(
+      (i) => i.status !== InstallmentStatus.PAID,
     );
 
     return {

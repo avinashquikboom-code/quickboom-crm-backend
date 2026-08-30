@@ -391,4 +391,73 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     const result = await installmentService.sendUpcomingInstallmentReminders();
     expect(result.remindersSent).toBeGreaterThanOrEqual(0);
   });
+
+  describe('GET /subscriptions/renewal-status edge cases and safety', () => {
+    // Case A: Customer with active subscription + renewal record
+    it('Case A: Customer with active subscription + renewal record returns correct renewal status', async () => {
+      const startDate = new Date();
+      await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, startDate);
+      mockInstallments[0].status = InstallmentStatus.PAID;
+      mockInstallments[0].paidAt = startDate;
+
+      const res = await installmentService.getRenewalStatus(1);
+      expect(res.success).toBe(true);
+      expect(res.data.subscriptionId).toBe('101');
+      expect(res.data.status).toBe('ACTIVE');
+      expect(res.data.canRenew).toBe(true);
+      expect(res.data.bufferPeriodActive).toBe(false);
+      expect(res.data.nextInstallment).toBeDefined();
+      expect(res.data.nextInstallment?.number).toBe(2);
+    });
+
+    // Case B: Customer with active subscription + no renewal record (initial state)
+    it('Case B: Customer with active subscription + no pre-existing installment record safely calculates default status', async () => {
+      // Customer 1 has subscription 101, but mockInstallments is empty
+      mockInstallments = [];
+      const res = await installmentService.getRenewalStatus(1);
+      expect(res.success).toBe(true);
+      expect(res.data.subscriptionId).toBe('101');
+      expect(res.data.nextInstallment).toBeDefined();
+      expect(res.data.nextInstallment?.number).toBe(1);
+    });
+
+    // Case C: Customer with no active subscription
+    it('Case C: Customer with no active subscription returns valid response without 500 or null pointer exception', async () => {
+      // Customer 2 has no subscriptions
+      const res = await installmentService.getRenewalStatus(2);
+      expect(res.success).toBe(true);
+      expect(res.data.subscriptionId).toBeNull();
+      expect(res.data.status).toBe('NO_SUBSCRIPTION');
+      expect(res.data.canRenew).toBe(false);
+      expect(res.data.bufferPeriodActive).toBe(false);
+      expect(res.data.daysRemaining).toBe(0);
+      expect(res.data.nextInstallment).toBeNull();
+      expect(res.data.newPlanRequired).toBe(true);
+    });
+
+    // Case D: Customer with expired subscription
+    it('Case D: Customer with expired subscription returns valid RENEWAL_FAILED status without 500', async () => {
+      const pastDate = new Date(Date.now() - 65 * 24 * 60 * 60 * 1000);
+      mockSubscriptions[0].startDate = pastDate;
+      mockSubscriptions[0].endDate = new Date(pastDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, pastDate);
+      mockInstallments[0].status = InstallmentStatus.PAID;
+      mockInstallments[0].paidAt = pastDate;
+
+      const res = await installmentService.getRenewalStatus(1);
+      expect(res.success).toBe(true);
+      expect(res.data.subscriptionId).toBe('101');
+      expect(res.data.status).toBe('RENEWAL_FAILED');
+      expect(res.data.canRenew).toBe(false);
+      expect(res.data.newPlanRequired).toBe(true);
+    });
+
+    // Case E: Invalid / non-existent customer
+    it('Case E: Invalid/non-existent customer throws NotFoundException (404) properly', async () => {
+      await expect(installmentService.getRenewalStatus(99999)).rejects.toThrow(
+        'Customer #99999 not found',
+      );
+    });
+  });
 });
