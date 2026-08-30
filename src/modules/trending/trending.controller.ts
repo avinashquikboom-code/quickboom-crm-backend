@@ -11,8 +11,9 @@ import {
   ForbiddenException,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { TrendingService } from './trending.service';
 import {
@@ -62,18 +63,18 @@ export class TrendingController {
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
   @Post(['admin/trending', 'admin/marketing/trending'])
-  @ApiOperation({ summary: 'Create new trending content item with optional file upload (Company Admin only)' })
+  @ApiOperation({ summary: 'Create new trending content item(s) with optional file upload (Company Admin only)' })
   @ApiConsumes('multipart/form-data', 'application/json')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(AnyFilesInterceptor())
   async create(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: CreateTrendingContentDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles() files?: Express.Multer.File[],
   ) {
     this.checkCompanyAdminAccess(user);
     const isSuperAdmin = isUserSuperAdmin(user);
-    return this.trendingService.create(customerId, user?.id, dto, isSuperAdmin, file);
+    return this.trendingService.create(customerId, user?.id, dto, isSuperAdmin, files);
   }
 
   @Get(['admin/trending', 'admin/marketing/trending'])

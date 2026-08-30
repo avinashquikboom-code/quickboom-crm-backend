@@ -66,7 +66,7 @@ export class TrendingService {
     userId: number,
     dto: CreateTrendingContentDto,
     isSuperAdmin = false,
-    file?: Express.Multer.File,
+    fileOrFiles?: Express.Multer.File | Express.Multer.File[],
   ) {
     const targetCustomerId = isSuperAdmin
       ? (dto.customerId ? this.parseCustomerId(dto.customerId) : null)
@@ -79,33 +79,87 @@ export class TrendingService {
       throw new BadRequestException('startAt cannot be later than endAt');
     }
 
-    // Determine Media Type: IMAGE | VIDEO
+    const filesList: Express.Multer.File[] = Array.isArray(fileOrFiles)
+      ? fileOrFiles
+      : fileOrFiles
+      ? [fileOrFiles]
+      : [];
+
+    let parsedMetadata = dto.metadata;
+    if (typeof parsedMetadata === 'string') {
+      try {
+        parsedMetadata = JSON.parse(parsedMetadata);
+      } catch (_) {
+        parsedMetadata = {};
+      }
+    }
+
+    // ── Multi-file upload batch handling ──
+    if (filesList.length > 0) {
+      const createdItems: any[] = [];
+
+      for (let i = 0; i < filesList.length; i++) {
+        const file = filesList[i];
+        const isVideoFile = Boolean(file.mimetype?.startsWith('video/'));
+        const fileMediaType: 'IMAGE' | 'VIDEO' = isVideoFile ? 'VIDEO' : 'IMAGE';
+        const fileCategory: TrendingCategory = dto.category || (isVideoFile ? TrendingCategory.REEL : TrendingCategory.STORY);
+
+        const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', fileMediaType);
+        const resolvedMediaUrl = uploadResult.imageUrl;
+        const resolvedThumbnailUrl = fileMediaType === 'IMAGE' ? uploadResult.imageUrl : (dto.thumbnailUrl?.trim() || null);
+
+        const metadata = {
+          ...(typeof parsedMetadata === 'object' && parsedMetadata !== null ? parsedMetadata : {}),
+          mediaType: fileMediaType,
+          mediaSource: 'UPLOAD',
+        };
+
+        const itemTitle = dto.title?.trim()
+          ? (filesList.length > 1 ? `${dto.title.trim()} (${i + 1})` : dto.title.trim())
+          : (fileMediaType === 'VIDEO' ? 'Trending Reel' : 'Trending Creative');
+
+        const content = await this.prisma.trendingContent.create({
+          data: {
+            customerId: targetCustomerId,
+            title: itemTitle,
+            description: dto.description?.trim() || null,
+            category: fileCategory,
+            thumbnailUrl: resolvedThumbnailUrl || null,
+            mediaUrl: resolvedMediaUrl || null,
+            ctaText: dto.ctaText?.trim() || null,
+            ctaUrl: dto.ctaUrl?.trim() || null,
+            platform: dto.platform?.trim() || 'INSTAGRAM',
+            objective: dto.objective?.trim() || 'ENGAGEMENT',
+            priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+            isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
+            isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+            startAt,
+            endAt,
+            createdBy: userId || null,
+            metadata,
+          },
+        });
+
+        this.logger.log(`[TRENDING_ADMIN_CREATE_BATCH] item ${i + 1}/${filesList.length}, id: ${content.id}, type: ${fileMediaType}`);
+        createdItems.push(await this.resolveTrendingMedia(content));
+      }
+
+      return {
+        success: true,
+        message: `${createdItems.length} trending ${createdItems.length === 1 ? 'item' : 'items'} created successfully`,
+        data: createdItems.length === 1 ? createdItems[0] : createdItems,
+      };
+    }
+
+    // ── URL / Payload without file ──
     let mediaType: 'IMAGE' | 'VIDEO' = dto.mediaType || (
-      file
-        ? (file.mimetype?.startsWith('video/') ? 'VIDEO' : 'IMAGE')
-        : (dto.category === 'REEL' || dto.videoUrl ? 'VIDEO' : 'IMAGE')
+      dto.category === 'REEL' || dto.videoUrl ? 'VIDEO' : 'IMAGE'
     );
-
-    // Determine Media Source: UPLOAD | URL
-    let mediaSource: 'UPLOAD' | 'URL' = dto.mediaSource || (file ? 'UPLOAD' : 'URL');
-
+    let mediaSource: 'UPLOAD' | 'URL' = dto.mediaSource || 'URL';
     let resolvedMediaUrl = (dto.mediaUrl || (mediaType === 'IMAGE' ? dto.imageUrl : dto.videoUrl) || '').trim();
     let resolvedThumbnailUrl = (dto.thumbnailUrl || (mediaType === 'IMAGE' ? dto.imageUrl : '') || '').trim();
 
-    // 1. Handle File Upload
-    if (file) {
-      mediaSource = 'UPLOAD';
-      const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', mediaType);
-      resolvedMediaUrl = uploadResult.imageUrl;
-      if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
-        resolvedThumbnailUrl = uploadResult.imageUrl;
-      }
-    } else if (mediaSource === 'UPLOAD' && !resolvedMediaUrl) {
-      throw new BadRequestException(`A ${mediaType.toLowerCase()} file is required when upload source is selected.`);
-    }
-
-    // 2. Validate URL if source is URL or URL was provided
-    if (mediaSource === 'URL') {
+    if (mediaSource === 'URL' || resolvedMediaUrl) {
       if (!resolvedMediaUrl) {
         throw new BadRequestException(`Please enter a valid ${mediaType.toLowerCase()} URL.`);
       }
@@ -115,15 +169,8 @@ export class TrendingService {
       if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
         resolvedThumbnailUrl = resolvedMediaUrl;
       }
-    }
-
-    let parsedMetadata = dto.metadata;
-    if (typeof parsedMetadata === 'string') {
-      try {
-        parsedMetadata = JSON.parse(parsedMetadata);
-      } catch (_) {
-        parsedMetadata = {};
-      }
+    } else {
+      throw new BadRequestException('Please upload an image or video file or provide a media URL.');
     }
 
     const metadata = {
@@ -154,10 +201,7 @@ export class TrendingService {
       },
     });
 
-    this.logger.log(`[TRENDING_ADMIN_CREATE] id: ${content.id}, customer: ${targetCustomerId}, type: ${mediaType}, source: ${mediaSource}, url: ${resolvedMediaUrl}`);
-
     const resolved = await this.resolveTrendingMedia(content);
-
     return {
       success: true,
       message: 'Trending content created successfully',
