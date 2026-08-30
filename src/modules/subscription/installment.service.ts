@@ -908,8 +908,22 @@ export class InstallmentService {
     const numCustomerId = Number(customerId);
     const summary = await this.getCustomerInstallmentSummary(numCustomerId);
 
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId: numCustomerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const now = new Date();
+    let daysRemaining = 0;
+    if (sub?.endDate && now < new Date(sub.endDate)) {
+      const diffMs = new Date(sub.endDate).getTime() - now.getTime();
+      daysRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+    } else if (summary.isInBuffer && summary.bufferRemainingDays > 0) {
+      daysRemaining = summary.bufferRemainingDays;
+    }
+
     this.logger.log(
-      `[RENEWAL_DEBUG] currentDate: ${new Date().toISOString()}, installmentExpiry: ${summary.nextDueDate?.toISOString() || 'NONE'}, bufferStart: ${summary.bufferStartDate?.toISOString() || 'NONE'}, bufferEnd: ${summary.bufferEndDate?.toISOString() || 'NONE'}, canRenew: ${summary.canRenewCurrentPlan}, renewalStatus: ${summary.planStatus}`,
+      `[RENEWAL_DEBUG] currentDate: ${now.toISOString()}, subscriptionEndDate: ${sub?.endDate ? new Date(sub.endDate).toISOString() : 'NONE'}, daysRemaining: ${daysRemaining}, isInBuffer: ${summary.isInBuffer}, bufferStart: ${summary.bufferStartDate?.toISOString() || 'NONE'}, bufferEnd: ${summary.bufferEndDate?.toISOString() || 'NONE'}, canRenew: ${summary.canRenewCurrentPlan}, renewalStatus: ${summary.planStatus}`,
     );
 
     const nextInst = summary.installments.find(
@@ -923,13 +937,13 @@ export class InstallmentService {
         status: summary.planStatus,
         canRenew: summary.canRenewCurrentPlan,
         bufferPeriodActive: summary.isInBuffer,
-        bufferStartDate: summary.bufferStartDate
+        bufferStartDate: summary.isInBuffer && summary.bufferStartDate
           ? new Date(summary.bufferStartDate).toISOString().split('T')[0]
           : null,
-        bufferEndDate: summary.bufferEndDate
+        bufferEndDate: summary.isInBuffer && summary.bufferEndDate
           ? new Date(summary.bufferEndDate).toISOString().split('T')[0]
           : null,
-        daysRemaining: summary.bufferRemainingDays,
+        daysRemaining,
         originalPlanValue: summary.originalPlanValue,
         nextInstallment: nextInst
           ? {

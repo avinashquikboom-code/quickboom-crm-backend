@@ -1,5 +1,12 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as crypto from 'crypto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 
@@ -300,6 +307,69 @@ export class S3Service {
       this.logger.log(`[S3_DELETE_SUCCESS] key: ${imageKey}`);
     } catch (err: any) {
       this.logger.warn(`[S3_DELETE_WARN] Could not delete S3 object ${imageKey}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Extracts clean S3 object key from a full S3 URL or returns the key if already relative.
+   */
+  extractKey(keyOrUrl?: string | null): string | null {
+    if (!keyOrUrl || typeof keyOrUrl !== 'string') return null;
+    const trimmed = keyOrUrl.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const url = new URL(trimmed);
+        const pathname = url.pathname.replace(/^\/+/, '');
+        const match = pathname.match(/(marketing\/(?:banners|trending|social-media)\/[^\/\?]+)/i);
+        if (match) {
+          return match[1];
+        }
+        return pathname;
+      } catch (_) {
+        return trimmed;
+      }
+    }
+
+    return trimmed;
+  }
+
+  /**
+   * Generates a temporary presigned GET URL for an S3 object key or full S3 URL.
+   * Presigned URLs grant secure read access to objects in private S3 buckets without making the bucket public.
+   */
+  async getPresignedUrl(keyOrUrl?: string | null, expiresIn = 3600): Promise<string | null> {
+    if (!keyOrUrl) return null;
+    const trimmed = keyOrUrl.trim();
+    if (!trimmed) return null;
+
+    // If external non-S3 URL or base64 or local disk upload, return directly
+    if (
+      trimmed.startsWith('data:') ||
+      trimmed.startsWith('/uploads/') ||
+      trimmed.startsWith('http://localhost') ||
+      trimmed.startsWith('https://images.unsplash.com') ||
+      trimmed.startsWith('https://placehold.co')
+    ) {
+      return trimmed;
+    }
+
+    const key = this.extractKey(trimmed);
+    if (!key) return trimmed;
+
+    try {
+      const { client, bucket } = await this.resolveS3Client();
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      });
+
+      const presigned = await getSignedUrl(client, command, { expiresIn });
+      return presigned;
+    } catch (err: any) {
+      this.logger.warn(`[S3_PRESIGNED_URL_WARN] Could not generate presigned URL for ${key}: ${err?.message}`);
+      return trimmed;
     }
   }
 

@@ -33,6 +33,29 @@ export class TrendingService {
     return isNaN(num) || num <= 0 ? undefined : num;
   }
 
+  /**
+   * Helper to resolve S3 key into presigned URL for private S3 storage.
+   */
+  private async resolveTrendingMedia(item: any): Promise<any> {
+    if (!item) return item;
+    let resolvedMediaUrl = item.mediaUrl;
+    let resolvedThumbnailUrl = item.thumbnailUrl;
+
+    if (resolvedMediaUrl && !resolvedMediaUrl.includes('youtube.com') && !resolvedMediaUrl.includes('youtu.be')) {
+      resolvedMediaUrl = (await this.s3Service.getPresignedUrl(resolvedMediaUrl)) || resolvedMediaUrl;
+    }
+
+    if (resolvedThumbnailUrl && !resolvedThumbnailUrl.includes('img.youtube.com')) {
+      resolvedThumbnailUrl = (await this.s3Service.getPresignedUrl(resolvedThumbnailUrl)) || resolvedThumbnailUrl;
+    }
+
+    return {
+      ...item,
+      mediaUrl: resolvedMediaUrl,
+      thumbnailUrl: resolvedThumbnailUrl,
+    };
+  }
+
   // ── Company Admin Operations ────────────────────────────────────────────────
 
   /**
@@ -202,9 +225,11 @@ export class TrendingService {
       this.prisma.trendingContent.count({ where }),
     ]);
 
+    const resolvedItems = await Promise.all(items.map((item) => this.resolveTrendingMedia(item)));
+
     return {
       success: true,
-      data: items,
+      data: resolvedItems,
       meta: {
         total,
         page,
@@ -252,9 +277,11 @@ export class TrendingService {
       throw new NotFoundException(`Trending content #${id} not found`);
     }
 
+    const resolved = await this.resolveTrendingMedia(item);
+
     return {
       success: true,
-      data: item,
+      data: resolved,
     };
   }
 
@@ -341,10 +368,12 @@ export class TrendingService {
 
     this.logger.log(`[TRENDING_ADMIN_UPDATE] id: ${numId}, type: ${mediaType}, source: ${mediaSource}, url: ${resolvedMediaUrl || updated.mediaUrl}`);
 
+    const resolved = await this.resolveTrendingMedia(updated);
+
     return {
       success: true,
       message: 'Trending content updated successfully',
-      data: updated,
+      data: resolved,
     };
   }
 
@@ -386,7 +415,7 @@ export class TrendingService {
     return {
       success: true,
       message: `Trending content ${isPublished ? 'published' : 'unpublished'} successfully`,
-      data: updated,
+      data: await this.resolveTrendingMedia(updated),
     };
   }
 
@@ -410,7 +439,7 @@ export class TrendingService {
     return {
       success: true,
       message: `Trending content status set to ${isActive ? 'active' : 'inactive'}`,
-      data: updated,
+      data: await this.resolveTrendingMedia(updated),
     };
   }
 
@@ -472,7 +501,7 @@ export class TrendingService {
       customerIdType: typeof targetCustomerId,
     });
 
-    const items = await this.prisma.trendingContent.findMany({
+    const rawItems = await this.prisma.trendingContent.findMany({
       where,
       orderBy: [
         { priority: 'desc' },
@@ -496,6 +525,8 @@ export class TrendingService {
         metadata: true,
       },
     });
+
+    const items = await Promise.all(rawItems.map((item) => this.resolveTrendingMedia(item)));
 
     console.log('[TRENDING_RESPONSE]', {
       count: items.length,

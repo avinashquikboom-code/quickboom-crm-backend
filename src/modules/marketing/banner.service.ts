@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BannerUploadService } from './banner-upload.service';
+import { S3Service } from '../s3/s3.service';
 import {
   CreateMarketingBannerDto,
   QueryMarketingBannerDto,
@@ -19,7 +20,30 @@ export class BannerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly uploadService: BannerUploadService,
+    private readonly s3Service: S3Service,
   ) {}
+
+  /**
+   * Helper to resolve S3 key into a temporary presigned URL for private S3 access.
+   * Ensures image, bannerImage, bannerUrl, and mediaUrl all use the same resolved URL.
+   */
+  private async resolveBannerMedia(banner: any): Promise<any> {
+    if (!banner) return banner;
+
+    const rawKey = banner.imageKey || banner.imagePublicId || this.s3Service.extractKey(banner.imageUrl);
+    const resolvedUrl = (await this.s3Service.getPresignedUrl(banner.imageUrl || rawKey)) || banner.imageUrl;
+
+    return {
+      ...banner,
+      imageKey: rawKey,
+      imagePublicId: rawKey,
+      imageUrl: resolvedUrl,
+      image: resolvedUrl,
+      bannerImage: resolvedUrl,
+      bannerUrl: resolvedUrl,
+      mediaUrl: resolvedUrl,
+    };
+  }
 
   /**
    * Create a new marketing banner (Company Admin / Super Admin)
@@ -54,6 +78,7 @@ export class BannerService {
     }
 
     const customerId = user.customerId ?? null;
+    const cleanKey = imagePublicId || this.s3Service.extractKey(imageUrl);
 
     let banner: any;
     try {
@@ -64,8 +89,8 @@ export class BannerService {
           subtitle: dto.subtitle?.trim() || null,
           description: dto.description?.trim() || null,
           imageUrl,
-          imagePublicId,
-          imageKey: imagePublicId,
+          imagePublicId: cleanKey,
+          imageKey: cleanKey,
           ctaText: dto.ctaText?.trim() || null,
           ctaUrl: dto.ctaUrl?.trim() || null,
           priority: dto.priority !== undefined ? Number(dto.priority) : 0,
@@ -88,19 +113,21 @@ export class BannerService {
       throw dbErr;
     }
 
+    const resolved = await this.resolveBannerMedia(banner);
+
     this.logger.log(
-      `[ADMIN_BANNER_CREATE_DEBUG]\ntitle: ${dto.title}\nimage: ${file ? file.originalname : (dto.imageUrl ? dto.imageUrl.substring(0, 40) + '...' : 'none')}\nimageType: ${file ? file.mimetype : (dto.imageUrl?.startsWith('data:') ? 'BASE64' : 'URL')}\nimageSize: ${file ? file.size : 'N/A'}\nimageUrl: ${imageUrl}\nbannerUrl: ${imageUrl}\npayload: ${JSON.stringify(dto)}`,
+      `[ADMIN_BANNER_CREATE_DEBUG]\ntitle: ${dto.title}\nimage: ${file ? file.originalname : (dto.imageUrl ? dto.imageUrl.substring(0, 40) + '...' : 'none')}\nimageType: ${file ? file.mimetype : (dto.imageUrl?.startsWith('data:') ? 'BASE64' : 'URL')}\nimageSize: ${file ? file.size : 'N/A'}\nimageUrl: ${resolved.imageUrl}\nbannerUrl: ${resolved.imageUrl}\npayload: ${JSON.stringify(dto)}`,
     );
 
     this.logger.log(
-      `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${banner.imageUrl}\nimage: ${banner.imageUrl}\nbannerUrl: ${banner.imageUrl}\nmediaUrl: ${banner.imageUrl}`,
+      `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${resolved.imageUrl}\nimage: ${resolved.imageUrl}\nbannerUrl: ${resolved.imageUrl}\nmediaUrl: ${resolved.imageUrl}`,
     );
 
     this.logger.log(
-      `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}\nimageUrl: ${imageUrl}`,
+      `[MARKETING_BANNER_CREATE]\nadminId: ${user.id}\ncompanyId: ${customerId ?? 'GLOBAL'}\nbannerId: ${banner.id}\nimageUrl: ${resolved.imageUrl}`,
     );
 
-    return banner;
+    return resolved;
   }
 
   /**
@@ -145,7 +172,7 @@ export class BannerService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       this.prisma.marketingBanner.findMany({
         where,
         skip,
@@ -159,6 +186,8 @@ export class BannerService {
       }),
       this.prisma.marketingBanner.count({ where }),
     ]);
+
+    const items = await Promise.all(rawItems.map((item) => this.resolveBannerMedia(item)));
 
     return {
       items,
@@ -202,11 +231,13 @@ export class BannerService {
       throw new NotFoundException(`Marketing banner with ID ${id} not found`);
     }
 
+    const resolved = await this.resolveBannerMedia(banner);
+
     this.logger.log(
-      `[BANNER_DB_DEBUG]\nid: ${banner.id}\ntitle: ${banner.title}\nimageUrl: ${banner.imageUrl}\nimage: ${banner.imageUrl}\nbannerUrl: ${banner.imageUrl}\nmediaUrl: ${banner.imageUrl}`,
+      `[BANNER_DB_DEBUG]\nid: ${resolved.id}\ntitle: ${resolved.title}\nimageUrl: ${resolved.imageUrl}\nimage: ${resolved.imageUrl}\nbannerUrl: ${resolved.imageUrl}\nmediaUrl: ${resolved.imageUrl}`,
     );
 
-    return banner;
+    return resolved;
   }
 
   /**
@@ -250,6 +281,8 @@ export class BannerService {
       throw new BadRequestException('endAt cannot be earlier than startAt');
     }
 
+    const cleanKey = imagePublicId || (imageUrl ? this.s3Service.extractKey(imageUrl) : undefined);
+
     const updated = await this.prisma.marketingBanner.update({
       where: { id },
       data: {
@@ -267,8 +300,8 @@ export class BannerService {
               : null
             : undefined,
         imageUrl: imageUrl !== undefined ? imageUrl : undefined,
-        imagePublicId: imagePublicId !== undefined ? imagePublicId : undefined,
-        imageKey: imagePublicId !== undefined ? imagePublicId : undefined,
+        imagePublicId: cleanKey !== undefined ? cleanKey : undefined,
+        imageKey: cleanKey !== undefined ? cleanKey : undefined,
         ctaText:
           dto.ctaText !== undefined
             ? dto.ctaText
@@ -295,11 +328,13 @@ export class BannerService {
       this.uploadService.deleteBannerImage(existing.imagePublicId).catch(() => {});
     }
 
+    const resolved = await this.resolveBannerMedia(updated);
+
     this.logger.log(
-      `[BANNER_DB_DEBUG]\nid: ${updated.id}\ntitle: ${updated.title}\nimageUrl: ${updated.imageUrl}\nimage: ${updated.imageUrl}\nbannerUrl: ${updated.imageUrl}\nmediaUrl: ${updated.imageUrl}`,
+      `[BANNER_DB_DEBUG]\nid: ${resolved.id}\ntitle: ${resolved.title}\nimageUrl: ${resolved.imageUrl}\nimage: ${resolved.imageUrl}\nbannerUrl: ${resolved.imageUrl}\nmediaUrl: ${resolved.imageUrl}`,
     );
     this.logger.log(`[MARKETING_BANNER_UPDATE]\nbannerId: ${id}`);
-    return updated;
+    return resolved;
   }
 
   /**
@@ -342,7 +377,7 @@ export class BannerService {
     this.logger.log(
       `[MARKETING_BANNER_PUBLISH]\nbannerId: ${id}\nisPublished: ${isPublished}`,
     );
-    return updated;
+    return this.resolveBannerMedia(updated);
   }
 
   /**
@@ -363,7 +398,7 @@ export class BannerService {
     this.logger.log(
       `[MARKETING_BANNER_STATUS]\nbannerId: ${id}\nisActive: ${isActive}`,
     );
-    return updated;
+    return this.resolveBannerMedia(updated);
   }
 
   /**
@@ -492,16 +527,13 @@ export class BannerService {
       }
 
       if (currentImageUrl) {
-        const item = {
+        const item = await this.resolveBannerMedia({
           ...b,
           imageUrl: currentImageUrl,
-          image: currentImageUrl,
-          bannerImage: currentImageUrl,
-          bannerUrl: currentImageUrl,
-          mediaUrl: currentImageUrl,
           imagePublicId: currentImageKey,
           imageKey: currentImageKey,
-        };
+        });
+
         resultBanners.push(item);
         this.logger.log(
           `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
