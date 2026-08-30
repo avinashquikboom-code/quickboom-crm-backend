@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { Reflector } from '@nestjs/core';
+import { S3Service } from '../s3/s3.service';
 
 describe('Admin Marketing Banners - End-to-End Authentication & Authorization Suite', () => {
   let controller: BannerController;
@@ -133,6 +134,14 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
     deleteBannerImage: jest.fn(),
   };
 
+  const mockS3Service = {
+    extractKey: jest.fn().mockImplementation((url: string) => (url ? url.split('.amazonaws.com/')[1] || url : '')),
+    getPresignedUrl: jest.fn().mockImplementation((key: string) => Promise.resolve(`https://qbapp.online.s3.ap-south-1.amazonaws.com/${key}`)),
+    uploadMedia: jest.fn().mockResolvedValue({ imageUrl: 'https://s3.amazonaws.com/uploaded.jpg' }),
+    deleteMedia: jest.fn().mockResolvedValue({ success: true }),
+    getSignedMediaUrl: jest.fn().mockImplementation((url) => Promise.resolve(url)),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BannerController],
@@ -140,6 +149,7 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
         BannerService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: BannerUploadService, useValue: mockUploadService },
+        { provide: S3Service, useValue: mockS3Service },
         Reflector,
       ],
     }).compile();
