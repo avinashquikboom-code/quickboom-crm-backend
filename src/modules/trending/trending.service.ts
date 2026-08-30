@@ -117,8 +117,17 @@ export class TrendingService {
       }
     }
 
+    let parsedMetadata = dto.metadata;
+    if (typeof parsedMetadata === 'string') {
+      try {
+        parsedMetadata = JSON.parse(parsedMetadata);
+      } catch (_) {
+        parsedMetadata = {};
+      }
+    }
+
     const metadata = {
-      ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      ...(typeof parsedMetadata === 'object' && parsedMetadata !== null ? parsedMetadata : {}),
       mediaType,
       mediaSource,
     };
@@ -147,10 +156,12 @@ export class TrendingService {
 
     this.logger.log(`[TRENDING_ADMIN_CREATE] id: ${content.id}, customer: ${targetCustomerId}, type: ${mediaType}, source: ${mediaSource}, url: ${resolvedMediaUrl}`);
 
+    const resolved = await this.resolveTrendingMedia(content);
+
     return {
       success: true,
       message: 'Trending content created successfully',
-      data: content,
+      data: resolved,
     };
   }
 
@@ -208,7 +219,17 @@ export class TrendingService {
       where.isActive = query.isActive === true || query.isActive === 'true';
     }
 
-    const [items, total] = await Promise.all([
+    const baseStatsWhere: any = {
+      deletedAt: null,
+    };
+    if (targetCustomerId !== undefined) {
+      baseStatsWhere.OR = [
+        { customerId: targetCustomerId },
+        { customerId: null },
+      ];
+    }
+
+    const [items, total, statsGroup, totalAll] = await Promise.all([
       this.prisma.trendingContent.findMany({
         where,
         skip,
@@ -223,13 +244,36 @@ export class TrendingService {
         },
       }),
       this.prisma.trendingContent.count({ where }),
+      this.prisma.trendingContent.groupBy({
+        by: ['category'],
+        where: baseStatsWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.trendingContent.count({ where: baseStatsWhere }),
     ]);
+
+    const stats = {
+      total: totalAll,
+      reels: 0,
+      stories: 0,
+      offers: 0,
+      highRoi: 0,
+    };
+
+    for (const group of statsGroup) {
+      const count = (group as any)._count?._all ?? 0;
+      if (group.category === TrendingCategory.REEL) stats.reels = count;
+      else if (group.category === TrendingCategory.STORY) stats.stories = count;
+      else if (group.category === TrendingCategory.OFFER) stats.offers = count;
+      else if (group.category === TrendingCategory.HIGH_ROI_AD) stats.highRoi = count;
+    }
 
     const resolvedItems = await Promise.all(items.map((item) => this.resolveTrendingMedia(item)));
 
     return {
       success: true,
       data: resolvedItems,
+      stats,
       meta: {
         total,
         page,
@@ -338,9 +382,18 @@ export class TrendingService {
       }
     }
 
+    let parsedUpdateMetadata = dto.metadata;
+    if (typeof parsedUpdateMetadata === 'string') {
+      try {
+        parsedUpdateMetadata = JSON.parse(parsedUpdateMetadata);
+      } catch (_) {
+        parsedUpdateMetadata = {};
+      }
+    }
+
     const metadata = {
       ...existingMetadata,
-      ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      ...(typeof parsedUpdateMetadata === 'object' && parsedUpdateMetadata !== null ? parsedUpdateMetadata : {}),
       mediaType,
       mediaSource,
     };

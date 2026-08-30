@@ -9,8 +9,25 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { TrendingCategory } from '@prisma/client';
+
+const transformBoolean = ({ value }: { value: any }) => {
+  if (value === 'true' || value === true || value === 1 || value === '1') return true;
+  if (value === 'false' || value === false || value === 0 || value === '0') return false;
+  return value;
+};
+
+const transformJson = ({ value }: { value: any }) => {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return value;
+    }
+  }
+  return value;
+};
 
 export class CreateTrendingContentDto {
   @ApiProperty({ example: 'Summer Reel Campaign' })
@@ -83,11 +100,13 @@ export class CreateTrendingContentDto {
   priority?: number;
 
   @ApiPropertyOptional({ example: true, default: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   @IsOptional()
   isPublished?: boolean;
 
   @ApiPropertyOptional({ example: true, default: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
@@ -107,6 +126,7 @@ export class CreateTrendingContentDto {
   customerId?: number | string;
 
   @ApiPropertyOptional({ description: 'Additional structured JSON metadata' })
+  @Transform(transformJson)
   @IsOptional()
   metadata?: any;
 }
@@ -183,11 +203,13 @@ export class UpdateTrendingContentDto {
   priority?: number;
 
   @ApiPropertyOptional({ example: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   @IsOptional()
   isPublished?: boolean;
 
   @ApiPropertyOptional({ example: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
@@ -203,6 +225,7 @@ export class UpdateTrendingContentDto {
   endAt?: string;
 
   @ApiPropertyOptional()
+  @Transform(transformJson)
   @IsOptional()
   metadata?: any;
 }
@@ -241,12 +264,14 @@ export class QueryTrendingDto {
 
 export class UpdatePublishStatusDto {
   @ApiProperty({ example: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   isPublished: boolean;
 }
 
 export class UpdateActiveStatusDto {
   @ApiProperty({ example: true })
+  @Transform(transformBoolean)
   @IsBoolean()
   isActive: boolean;
 }
