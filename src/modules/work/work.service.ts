@@ -831,7 +831,24 @@ export class WorkService {
   ) {
     const startTime = Date.now();
     const where: any = {};
-    const numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    let numCustomerId = this.resolveCustomerId(scopedCustomerId);
+    if (!numCustomerId && scopedCustomerId) {
+      const rawStr = String(scopedCustomerId).trim();
+      const byAttr = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { domain: rawStr },
+            { email: rawStr },
+            { name: { equals: rawStr, mode: 'insensitive' } },
+            { phone: rawStr },
+          ],
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (byAttr) numCustomerId = byAttr.id;
+    }
+
     let activeSubForCustomer: any = null;
     if (numCustomerId) {
       activeSubForCustomer = await this.prisma.customerSubscription.findFirst({
@@ -843,6 +860,12 @@ export class WorkService {
       // Strict Active Plan Rule:
       // If customer has no active subscription, return 0 schedules
       if (!activeSubForCustomer) {
+        this.logger.log(`[CALENDAR_DEBUG]
+authenticatedCustomerId: CUST-${numCustomerId}
+requestedDate: ${query.date || 'ALL'}
+activePlanId: NONE
+subscriptionId: NONE
+returnedSchedules: 0`);
         this.logger.log(
           `[CALENDAR_NO_ACTIVE_SUB] customerId: CUST-${numCustomerId} has no active plan. Returning 0 schedules.`,
         );
@@ -1041,6 +1064,7 @@ export class WorkService {
         id: String(w.id),
         activityId: String(w.id),
         customerId: String(w.customerId),
+        customerName: w.customer?.name || 'Customer',
         purchaseId: purchaseRef,
         productName: isLocked ? 'Schedule Locked' : prodName,
         serviceName: isLocked ? 'Schedule Locked' : prodName,
@@ -1062,7 +1086,6 @@ export class WorkService {
         reworkActionLabel,
         isLocked,
         lockMessage,
-        customerName: w.customer?.name || 'Customer',
         assignedToId: w.assignedToId,
         assignedEmployee: isLocked
           ? '—'
@@ -1078,6 +1101,11 @@ export class WorkService {
                       if (t.includes('post') || t.includes('publish')) return 'Social Media Manager';
                       return 'Creative Lead';
                     })())),
+        assignedToName: isLocked
+          ? '—'
+          : (w.assignedTo
+              ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
+              : 'Photographer'),
         editorId: w.editorId,
         editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Video Editor'),
         team: w.team?.name || 'SSM Team A',
@@ -1089,6 +1117,41 @@ export class WorkService {
         revisionCount: isLocked ? 0 : w.revisionCount,
       };
     });
+
+    // Detailed debug logs for calendar verification
+    this.logger.log(`[CALENDAR_DEBUG]
+authenticatedCustomerId: ${numCustomerId ? `CUST-${numCustomerId}` : (scopedCustomerId || 'NONE')}
+requestedDate: ${query.date || 'ALL'}
+activePlanId: ${activeSubForCustomer?.planId ?? 'NONE'}
+subscriptionId: ${activeSubForCustomer?.id ?? 'NONE'}
+returnedSchedules: ${result.length}`);
+
+    this.logger.log(`[CALENDAR_DEBUG]
+DB schedules before filtering: ${items.length}`);
+
+    this.logger.log(`[CALENDAR_DEBUG]
+DB schedules after customer filter: ${numCustomerId ? items.filter(i => i.customerId === numCustomerId).length : items.length}`);
+
+    this.logger.log(`[CALENDAR_DEBUG]
+DB schedules after active-plan filter: ${activeSubForCustomer ? items.filter(i => i.subscriptionId === activeSubForCustomer.id).length : items.length}`);
+
+    this.logger.log(`[CALENDAR_DEBUG]
+DB schedules after date filter: ${filteredItems.length}`);
+
+    this.logger.log(`[CALENDAR_DEBUG]
+final response count: ${result.length}`);
+
+    for (const item of result) {
+      this.logger.log(`[CALENDAR_SCHEDULE_ITEM]
+scheduleId: ${item.id}
+customerId: CUST-${item.customerId}
+planId: ${activeSubForCustomer?.planId ?? item.planName}
+subscriptionId: ${item.purchaseId}
+activityId: ${item.activityId}
+activityType: ${item.activityType}
+scheduledDate: ${item.scheduledDate}
+status: ${item.status}`);
+    }
 
     const duration = Date.now() - startTime;
     this.logger.log(

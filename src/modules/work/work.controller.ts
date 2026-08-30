@@ -143,7 +143,11 @@ export class WorkController {
     const authCustId = req?.user?.customerId;
     const userRole = req?.user?.role || (Array.isArray(req?.user?.roles) ? req?.user?.roles.join(',') : 'UNKNOWN');
     const requestedCustomerCode = req?.query?.customerId || headerCustId || req?.customerExternalId || 'NONE';
-    const effectiveCustomerId = customerId || authCustId || headerCustId;
+
+    // Strict customer isolation: Normal customer users are bound to their authenticated customerId
+    const effectiveCustomerId = (authCustId && Number(authCustId) > 0)
+      ? Number(authCustId)
+      : (customerId || headerCustId || req?.customerId);
 
     logger.log(`[CALENDAR_AUTH_DEBUG]
 authenticatedUser: ${authUserId}
@@ -154,7 +158,7 @@ resolvedRequestedCustomerId: ${effectiveCustomerId || 'NONE'}
 authorization: ALLOWED`);
 
     logger.log(
-      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerCode}\nresolvedCustomerId: ${customerId}`,
+      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerCode}\nresolvedCustomerId: ${effectiveCustomerId}`,
     );
 
     try {
