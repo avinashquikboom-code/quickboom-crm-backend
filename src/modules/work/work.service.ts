@@ -1000,9 +1000,22 @@ export class WorkService {
         lockMessage,
         customerName: w.customer?.name || 'Customer',
         assignedToId: w.assignedToId,
-        assignedEmployee: isLocked ? '—' : (w.assignedTo ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim() : 'Creative Lead'),
+        assignedEmployee: isLocked
+          ? '—'
+          : (w.assignedTo
+              ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
+              : (w.editor
+                  ? `${w.editor.firstName} ${w.editor.lastName}`.trim()
+                  : (() => {
+                      const t = (w.title || w.workType || '').toLowerCase();
+                      if (t.includes('shoot') || t.includes('photo')) return 'Photographer';
+                      if (t.includes('edit')) return 'Video Editor';
+                      if (t.includes('post design') || t.includes('story design') || t.includes('design')) return 'Graphic Designer';
+                      if (t.includes('post') || t.includes('publish')) return 'Social Media Manager';
+                      return 'Creative Lead';
+                    })())),
         editorId: w.editorId,
-        editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Editor'),
+        editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Video Editor'),
         team: w.team?.name || 'SSM Team A',
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
