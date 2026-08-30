@@ -29,6 +29,23 @@ async function bootstrap() {
     }),
   );
 
+  // Temporary Production-Safe CORS & OPTIONS Preflight Debug Logger
+  app.use((req: any, res: any, next: any) => {
+    if (req.method === 'OPTIONS') {
+      const origin = req.headers['origin'] || 'NONE';
+      const accessControlRequestMethod = req.headers['access-control-request-method'] || 'NONE';
+      const accessControlRequestHeaders = req.headers['access-control-request-headers'] || 'NONE';
+      logger.log(`[CORS_DEBUG]
+method: OPTIONS
+origin: ${origin}
+path: ${req.originalUrl || req.url}
+accessControlRequestMethod: ${accessControlRequestMethod}
+accessControlRequestHeaders: ${accessControlRequestHeaders}
+handledBy: NestJS`);
+    }
+    next();
+  });
+
   const allowedOrigins = [
     'https://admin.qbapp.online',
     'https://qbapp.online',

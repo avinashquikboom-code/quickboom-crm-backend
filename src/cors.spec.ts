@@ -129,6 +129,18 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
 
+    it('handles OPTIONS /api/v1/customers/metrics preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/customers/metrics')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
     it('handles OPTIONS /api/v1/admin/plans preflight from https://admin.qbapp.online', async () => {
       const res = await request(app.getHttpServer())
         .options('/api/v1/admin/plans')
@@ -142,7 +154,7 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
     });
   });
 
-  describe('2. Actual Cross-Origin GET Requests', () => {
+  describe('2. Actual Cross-Origin GET Requests & Error Responses', () => {
     it('returns Access-Control-Allow-Origin header on GET /api/v1/plans', async () => {
       const res = await request(app.getHttpServer())
         .get('/api/v1/plans')
@@ -159,6 +171,26 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
 
       // Guarded endpoint returns 401 without token, but CORS headers are present
       expect(res.status).toBe(401);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('preserves authentication requirement while returning CORS headers on guarded /api/v1/customers/metrics', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/customers/metrics')
+        .set('Origin', 'https://admin.qbapp.online');
+
+      expect(res.status).toBe(401);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('returns CORS headers even on 404 Not Found error responses', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/non-existent-endpoint')
+        .set('Origin', 'https://admin.qbapp.online');
+
+      expect(res.status).toBe(404);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
