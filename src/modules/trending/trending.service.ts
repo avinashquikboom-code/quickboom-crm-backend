@@ -135,7 +135,7 @@ export class TrendingService {
     const content = await this.prisma.trendingContent.create({
       data: {
         customerId: targetCustomerId,
-        title: dto.title.trim(),
+        title: dto.title?.trim() || (dto.category === 'REEL' ? 'Trending Reel' : 'Trending Creative'),
         description: dto.description?.trim() || null,
         category: dto.category,
         thumbnailUrl: resolvedThumbnailUrl || null,
@@ -401,7 +401,7 @@ export class TrendingService {
     const updated = await this.prisma.trendingContent.update({
       where: { id: numId },
       data: {
-        ...(dto.title !== undefined && { title: dto.title.trim() }),
+        ...(dto.title !== undefined && { title: dto.title.trim() || 'Trending Creative' }),
         ...(dto.description !== undefined && { description: dto.description?.trim() || null }),
         ...(dto.category !== undefined && { category: dto.category }),
         ...(resolvedThumbnailUrl !== undefined && { thumbnailUrl: resolvedThumbnailUrl || null }),

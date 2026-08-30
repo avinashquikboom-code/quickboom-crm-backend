@@ -30,10 +30,10 @@ const transformJson = ({ value }: { value: any }) => {
 };
 
 export class CreateTrendingContentDto {
-  @ApiProperty({ example: 'Summer Reel Campaign' })
+  @ApiPropertyOptional({ example: 'Summer Reel Campaign' })
   @IsString()
-  @IsNotEmpty()
-  title: string;
+  @IsOptional()
+  title?: string;
 
   @ApiPropertyOptional({ example: 'Create a short-form product reel for summer promotion.' })
   @IsString()

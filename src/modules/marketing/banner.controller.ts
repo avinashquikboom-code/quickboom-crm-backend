@@ -89,8 +89,9 @@ export class BannerController {
 
     return {
       id: user?.id ?? 0,
-      customerId: isSuperAdmin && !customerId && !headerCustomerId ? null : parsedCustomerId,
+      customerId: isSuperAdmin ? (headerCustomerId || req?.query?.customerId ? parsedCustomerId : null) : parsedCustomerId,
       role: user?.role,
+      isSuperAdmin,
     };
   }
 

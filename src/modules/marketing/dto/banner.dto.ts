@@ -11,10 +11,10 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 export class CreateMarketingBannerDto {
-  @ApiProperty({ example: 'Festival Super Sale 50% Off' })
+  @ApiPropertyOptional({ example: 'Festival Super Sale 50% Off' })
   @IsString()
-  @IsNotEmpty()
-  title: string;
+  @IsOptional()
+  title?: string;
 
   @ApiPropertyOptional({ example: 'Limited time offer on all premium fitness plans' })
   @IsString()

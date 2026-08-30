@@ -85,7 +85,7 @@ export class BannerService {
       banner = await this.prisma.marketingBanner.create({
         data: {
           customerId,
-          title: dto.title.trim(),
+          title: dto.title?.trim() || 'Home Banner',
           subtitle: dto.subtitle?.trim() || null,
           description: dto.description?.trim() || null,
           imageUrl,
@@ -286,7 +286,7 @@ export class BannerService {
     const updated = await this.prisma.marketingBanner.update({
       where: { id },
       data: {
-        title: dto.title !== undefined ? dto.title.trim() : undefined,
+        title: dto.title !== undefined ? (dto.title?.trim() || 'Home Banner') : undefined,
         subtitle:
           dto.subtitle !== undefined
             ? dto.subtitle
