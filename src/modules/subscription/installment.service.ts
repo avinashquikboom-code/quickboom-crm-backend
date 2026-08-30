@@ -864,40 +864,76 @@ export class InstallmentService {
     const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
     const currentInst = lastPaidInst || (summary.installments.length > 0 ? summary.installments[0] : null);
 
+    const now = new Date();
+    const upcomingSub = await this.prisma.customerSubscription.findFirst({
+      where: {
+        customerId: numCustomerId,
+        status: { not: SubscriptionStatus.CANCELED },
+        deletedAt: null,
+        startDate: { gt: now },
+      },
+      orderBy: { startDate: 'asc' },
+      include: { plan: true },
+    });
+
+    const upcomingPlan = upcomingSub && upcomingSub.plan
+      ? {
+          id: String(upcomingSub.id),
+          subscriptionId: String(upcomingSub.id),
+          planId: String(upcomingSub.plan.id),
+          planName: upcomingSub.plan.name,
+          planCode: upcomingSub.plan.code,
+          startDate: upcomingSub.startDate ? new Date(upcomingSub.startDate).toISOString().split('T')[0] : null,
+          endDate: upcomingSub.endDate ? new Date(upcomingSub.endDate).toISOString().split('T')[0] : null,
+          status: 'UPCOMING',
+          billingCycle: upcomingSub.billingCycle || 'MONTHLY',
+          price:
+            upcomingSub.customPrice !== null && upcomingSub.customPrice !== undefined
+              ? Number(upcomingSub.customPrice)
+              : upcomingSub.billingCycle === SubscriptionBillingCycle.YEARLY
+              ? Number(upcomingSub.plan.yearlyPrice)
+              : Number(upcomingSub.plan.monthlyPrice),
+        }
+      : null;
+
+    const currentData = {
+      subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
+      customerId: String(numCustomerId),
+      planId: summary.planId ? String(summary.planId) : null,
+      planName: summary.planName || 'No Active Plan',
+      originalPlanValue: summary.originalPlanValue,
+      status: summary.planStatus,
+      currentInstallment: currentInst
+        ? {
+            number: currentInst.installmentNumber,
+            amount: currentInst.totalAmount,
+            paidAmount: currentInst.status === InstallmentStatus.PAID ? currentInst.totalAmount : 0,
+            status: currentInst.status,
+            expiryDate: currentInst.expiryDate
+              ? new Date(currentInst.expiryDate).toISOString().split('T')[0]
+              : null,
+          }
+        : null,
+      renewal: {
+        status: summary.planStatus,
+        canRenew: summary.canRenewCurrentPlan,
+        bufferStartDate: summary.bufferStartDate
+          ? new Date(summary.bufferStartDate).toISOString().split('T')[0]
+          : null,
+        bufferEndDate: summary.bufferEndDate
+          ? new Date(summary.bufferEndDate).toISOString().split('T')[0]
+          : null,
+        daysRemaining: summary.bufferRemainingDays,
+      },
+      newPlanRequired: summary.isRenewalFailed,
+      newPlanPrice: summary.isRenewalFailed ? summary.newPlanPrice : null,
+    };
+
     return {
       success: true,
-      data: {
-        subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
-        customerId: String(numCustomerId),
-        planId: summary.planId ? String(summary.planId) : null,
-        planName: summary.planName || 'No Active Plan',
-        originalPlanValue: summary.originalPlanValue,
-        status: summary.planStatus,
-        currentInstallment: currentInst
-          ? {
-              number: currentInst.installmentNumber,
-              amount: currentInst.totalAmount,
-              paidAmount: currentInst.status === InstallmentStatus.PAID ? currentInst.totalAmount : 0,
-              status: currentInst.status,
-              expiryDate: currentInst.expiryDate
-                ? new Date(currentInst.expiryDate).toISOString().split('T')[0]
-                : null,
-            }
-          : null,
-        renewal: {
-          status: summary.planStatus,
-          canRenew: summary.canRenewCurrentPlan,
-          bufferStartDate: summary.bufferStartDate
-            ? new Date(summary.bufferStartDate).toISOString().split('T')[0]
-            : null,
-          bufferEndDate: summary.bufferEndDate
-            ? new Date(summary.bufferEndDate).toISOString().split('T')[0]
-            : null,
-          daysRemaining: summary.bufferRemainingDays,
-        },
-        newPlanRequired: summary.isRenewalFailed,
-        newPlanPrice: summary.isRenewalFailed ? summary.newPlanPrice : null,
-      },
+      data: currentData,
+      currentPlan: currentData,
+      upcomingPlan,
     };
   }
 

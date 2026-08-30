@@ -100,6 +100,7 @@ export function calculateDaysRemaining(expiryDate: Date | string, now = new Date
 }
 
 export type DerivedSubscriptionStatus =
+  | 'UPCOMING'
   | 'ACTIVE'
   | 'EXPIRING_SOON'
   | 'EXPIRING_IN_5_DAYS'
@@ -111,9 +112,20 @@ export function deriveSubscriptionStatus(
   status: string,
   expiryDate: Date | string,
   now = new Date(),
+  startDate?: Date | string | null,
 ): DerivedSubscriptionStatus {
   if (status === 'CANCELED' || status === 'CANCELLED') {
     return 'CANCELLED';
+  }
+
+  const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (startDate) {
+    const start = new Date(startDate);
+    const startDateOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    if (startDateOnly > nowDate) {
+      return 'UPCOMING';
+    }
   }
 
   const days = calculateDaysRemaining(expiryDate, now);

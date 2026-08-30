@@ -25,6 +25,19 @@ export interface EffectivePlanServiceQuota {
   validUntil?: Date;
 }
 
+export interface UpcomingPlanSummary {
+  id: number | string;
+  subscriptionId?: number;
+  planId: number;
+  planName: string;
+  planCode: string;
+  startDate: Date | string;
+  endDate: Date | string;
+  status: 'UPCOMING';
+  billingCycle: string;
+  price: number;
+}
+
 export interface EffectivePlan {
   customerId: number;
   subscriptionId?: number;
@@ -51,6 +64,7 @@ export interface EffectivePlan {
   services: EffectivePlanServiceQuota[];
   quotas?: Record<string, any>;
   usage: EffectivePlanUsage;
+  upcomingPlan?: UpcomingPlanSummary | null;
 }
 
 @Injectable()
@@ -109,31 +123,113 @@ export class PlanAccessService {
     this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms (count=${subs.length})`);
 
     const now = new Date();
-    // Prioritize active non-expired subscription, otherwise latest active, otherwise latest created
+    const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // 1. Separate Future / Upcoming Subscriptions (startDate > now)
+    const upcomingSubs = subs
+      .filter((s) => {
+        if (s.status === SubscriptionStatus.CANCELED) return false;
+        if (!s.startDate) return false;
+        const sDate = new Date(s.startDate);
+        const sDateOnly = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
+        return sDateOnly > nowDate;
+      })
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+
+    const upcomingSub = upcomingSubs.length > 0 ? upcomingSubs[0] : null;
+    const upcomingPlan: UpcomingPlanSummary | null = upcomingSub && upcomingSub.plan
+      ? {
+          id: upcomingSub.id,
+          subscriptionId: upcomingSub.id,
+          planId: upcomingSub.plan.id,
+          planName: upcomingSub.plan.name,
+          planCode: upcomingSub.plan.code,
+          startDate: upcomingSub.startDate,
+          endDate: upcomingSub.endDate,
+          status: 'UPCOMING',
+          billingCycle: upcomingSub.billingCycle || 'MONTHLY',
+          price:
+            upcomingSub.customPrice !== null && upcomingSub.customPrice !== undefined
+              ? Number(upcomingSub.customPrice)
+              : upcomingSub.billingCycle === 'YEARLY'
+              ? Number(upcomingSub.plan.yearlyPrice)
+              : Number(upcomingSub.plan.monthlyPrice),
+        }
+      : null;
+
+    // 2. Resolve Active / Current Subscriptions (startDate <= now)
+    const activeSubs = subs.filter((s) => {
+      if (s.status === SubscriptionStatus.CANCELED) return false;
+      if (!s.startDate) return true;
+      const sDate = new Date(s.startDate);
+      const sDateOnly = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
+      return sDateOnly <= nowDate;
+    });
+
+    // Prioritize active non-expired subscription whose startDate <= now, otherwise active non-expired, otherwise latest active
     const sub =
-      subs.find(
+      activeSubs.find(
         (s) =>
           s.status === SubscriptionStatus.ACTIVE &&
           (!s.endDate || new Date(s.endDate) >= now),
       ) ||
-      subs.find((s) => s.status === SubscriptionStatus.ACTIVE) ||
+      activeSubs.find((s) => s.status === SubscriptionStatus.ACTIVE) ||
+      activeSubs[0] ||
       subs[0];
 
     let basePlan = sub?.plan;
 
-    // If no subscription found, return null so frontend/controllers know customer has no active plan
+    // If no subscription found, return null or empty with upcomingPlan
     if (!sub || !basePlan) {
       this.logger.debug(`[PLAN_DEBUG] No subscription found for customer ${numCustomerId}`);
+      if (upcomingPlan) {
+        return {
+          customerId: numCustomerId,
+          planId: upcomingPlan.planId,
+          planName: upcomingPlan.planName,
+          planCode: upcomingPlan.planCode,
+          status: SubscriptionStatus.PENDING,
+          isExpired: false,
+          isActive: false,
+          billingCycle: upcomingPlan.billingCycle,
+          startDate: new Date(upcomingPlan.startDate),
+          endDate: new Date(upcomingPlan.endDate),
+          price: upcomingPlan.price,
+          basePrice: upcomingPlan.price,
+          customPrice: null,
+          isCustomized: false,
+          userLimit: 5,
+          leadLimit: 500,
+          storageLimitBytes: 0,
+          scheduleLimit: 0,
+          usedSchedules: 0,
+          remainingSchedules: 0,
+          features: [],
+          services: [],
+          usage: {
+            currentUsers: 0,
+            currentLeads: 0,
+            currentStorageBytes: 0,
+            scheduledWorks: 0,
+          },
+          upcomingPlan,
+        };
+      }
       return null as any;
     }
 
-    // 2. Check expiration
+    // 2. Check expiration & future upcoming state
+    const subStartDate = sub.startDate ? new Date(sub.startDate) : null;
+    const isUpcoming = Boolean(
+      subStartDate &&
+      new Date(subStartDate.getFullYear(), subStartDate.getMonth(), subStartDate.getDate()) > nowDate,
+    );
     const subEndDate = sub.endDate ? new Date(sub.endDate) : null;
     const isDirectExpired = sub.status === SubscriptionStatus.EXPIRED || (subEndDate ? now > subEndDate : false);
     const isExpired = isDirectExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
     const isPastDue = sub.status === SubscriptionStatus.PAST_DUE || isDirectExpired;
-    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
+    const isActive = !isUpcoming && sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined
@@ -344,6 +440,7 @@ export class PlanAccessService {
         currentStorageBytes: 0,
         scheduledWorks,
       },
+      upcomingPlan,
     };
 
     const duration = Date.now() - startTime;

@@ -294,4 +294,126 @@ describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
       await expect(service.checkFeatureAccess(3, 'Enterprise AI Copilot')).rejects.toThrow(ForbiddenException);
     });
   });
+
+  describe('6. Upcoming Plan vs Active Plan vs Expired Plan Determination', () => {
+    it('returns upcomingPlan and sets isActive=false when plan startDate is in the future (purchase +2d)', async () => {
+      const futureStart = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days in future
+      const futureEnd = new Date(Date.now() + 33 * 24 * 60 * 60 * 1000);
+
+      prisma.customerSubscription.findMany.mockResolvedValue([
+        {
+          id: 501,
+          customerId: 101,
+          planId: 1,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: futureStart,
+          endDate: futureEnd,
+          plan: mockBasePremiumPlan,
+        },
+      ]);
+
+      const effective = await service.getEffectivePlan(101);
+
+      expect(effective.isActive).toBe(false);
+      expect(effective.upcomingPlan).toBeDefined();
+      expect(effective.upcomingPlan?.planName).toBe(mockBasePremiumPlan.name);
+      expect(effective.upcomingPlan?.status).toBe('UPCOMING');
+      expect(new Date(effective.upcomingPlan!.startDate).getTime()).toBe(futureStart.getTime());
+    });
+
+    it('returns both current active plan AND upcoming plan when customer purchases a renewal/future plan', async () => {
+      const activeStart = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days ago
+      const activeEnd = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days in future
+      const upcomingStart = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000); // 21 days in future
+      const upcomingEnd = new Date(Date.now() + 51 * 24 * 60 * 60 * 1000);
+
+      prisma.customerSubscription.findMany.mockResolvedValue([
+        {
+          id: 501,
+          customerId: 101,
+          planId: 1,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: activeStart,
+          endDate: activeEnd,
+          plan: mockBasePremiumPlan,
+        },
+        {
+          id: 502,
+          customerId: 101,
+          planId: 2,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: upcomingStart,
+          endDate: upcomingEnd,
+          plan: mockBaseBasicPlan,
+        },
+      ]);
+
+      const effective = await service.getEffectivePlan(101);
+
+      expect(effective.isActive).toBe(true);
+      expect(effective.planId).toBe(mockBasePremiumPlan.id);
+      expect(effective.upcomingPlan).toBeDefined();
+      expect(effective.upcomingPlan?.planId).toBe(mockBaseBasicPlan.id);
+      expect(effective.upcomingPlan?.status).toBe('UPCOMING');
+    });
+
+    it('selects earliest future plan when multiple upcoming plans exist', async () => {
+      const future1 = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+      const future2 = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000);
+
+      prisma.customerSubscription.findMany.mockResolvedValue([
+        {
+          id: 602,
+          customerId: 202,
+          planId: 2,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: future2,
+          endDate: new Date(future2.getTime() + 30 * 86400000),
+          plan: mockBaseBasicPlan,
+        },
+        {
+          id: 601,
+          customerId: 202,
+          planId: 1,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: future1,
+          endDate: new Date(future1.getTime() + 30 * 86400000),
+          plan: mockBasePremiumPlan,
+        },
+      ]);
+
+      const effective = await service.getEffectivePlan(202);
+
+      expect(effective.upcomingPlan).toBeDefined();
+      expect(effective.upcomingPlan?.planId).toBe(mockBasePremiumPlan.id); // Earliest (future1) selected
+    });
+
+    it('guarantees tenant customer isolation and does not mix customer subscriptions', async () => {
+      prisma.customerSubscription.findMany.mockImplementation(({ where }: any) => {
+        if (where.customerId === 999) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          {
+            id: 701,
+            customerId: 888,
+            planId: 1,
+            status: SubscriptionStatus.ACTIVE,
+            billingCycle: 'MONTHLY',
+            startDate: new Date(),
+            endDate: new Date(Date.now() + 30 * 86400000),
+            plan: mockBasePremiumPlan,
+          },
+        ]);
+      });
+
+      const effectiveCustomer999 = await service.getEffectivePlan(999);
+      expect(effectiveCustomer999).toBeNull();
+    });
+  });
 });

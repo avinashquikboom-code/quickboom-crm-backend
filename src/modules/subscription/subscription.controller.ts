@@ -319,48 +319,55 @@ export class SubscriptionController {
     }
     try {
       const plan = await this.planAccessService.getEffectivePlan(customerId);
-      if (!plan || !plan.isActive || !plan.subscriptionId) {
-        return {
-          success: true,
-          data: null,
-          effectivePlan: null,
-          message: 'No active subscription found',
-        };
-      }
+      const upcomingPlan = plan?.upcomingPlan || null;
+      const isCurrentActive = Boolean(plan && plan.isActive && plan.subscriptionId);
+
+      const currentPlanData = isCurrentActive
+        ? {
+            id: plan.planId,
+            subscriptionId: plan.subscriptionId,
+            name: plan.planName,
+            code: plan.planCode,
+            billingCycle: plan.billingCycle,
+            price: plan.price,
+            startDate: plan.startDate,
+            endDate: plan.endDate,
+            expiryDate: plan.endDate,
+            isActive: plan.isActive,
+            isExpired: plan.isExpired,
+            remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+            usedDays: Math.max(0, Math.floor((Date.now() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
+            totalDays: Math.max(1, Math.round((new Date(plan.endDate).getTime() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
+            features: Array.isArray(plan.features) ? plan.features : [],
+            quotas: {
+              userLimit: plan.userLimit,
+              leadLimit: plan.leadLimit,
+              storageLimitBytes: Number(plan.storageLimitBytes),
+              scheduleLimit: plan.scheduleLimit,
+              usedSchedules: plan.usedSchedules,
+              remainingSchedules: plan.remainingSchedules,
+            },
+            services: plan.services || [],
+            usage: {
+              currentUsers: plan.usage?.currentUsers || 0,
+              currentLeads: plan.usage?.currentLeads || 0,
+              currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
+              scheduledWorks: plan.usage?.scheduledWorks || 0,
+            },
+          }
+        : null;
+
       return {
         success: true,
-        data: {
-          id: plan.planId,
-          subscriptionId: plan.subscriptionId,
-          name: plan.planName,
-          code: plan.planCode,
-          billingCycle: plan.billingCycle,
-          price: plan.price,
-          startDate: plan.startDate,
-          endDate: plan.endDate,
-          expiryDate: plan.endDate,
-          isActive: plan.isActive,
-          isExpired: plan.isExpired,
-          remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
-          usedDays: Math.max(0, Math.floor((Date.now() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
-          totalDays: Math.max(1, Math.round((new Date(plan.endDate).getTime() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
-          features: Array.isArray(plan.features) ? plan.features : [],
-          quotas: {
-            userLimit: plan.userLimit,
-            leadLimit: plan.leadLimit,
-            storageLimitBytes: Number(plan.storageLimitBytes),
-            scheduleLimit: plan.scheduleLimit,
-            usedSchedules: plan.usedSchedules,
-            remainingSchedules: plan.remainingSchedules,
-          },
-          services: plan.services || [],
-          usage: {
-            currentUsers: plan.usage?.currentUsers || 0,
-            currentLeads: plan.usage?.currentLeads || 0,
-            currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
-            scheduledWorks: plan.usage?.scheduledWorks || 0,
-          },
-        },
+        data: currentPlanData,
+        currentPlan: currentPlanData,
+        upcomingPlan,
+        effectivePlan: currentPlanData,
+        message: currentPlanData
+          ? undefined
+          : upcomingPlan
+          ? 'Upcoming plan scheduled'
+          : 'No active subscription found',
       };
     } catch (err: any) {
       return {
