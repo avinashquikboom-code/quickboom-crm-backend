@@ -14,6 +14,7 @@ import {
   generateReelWorkflowActivities,
   generateAllPlanWorkflowActivities,
 } from '../../common/utils/plan-deliverable.util';
+import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 
 @Injectable()
 export class WorkService {
@@ -1164,12 +1165,24 @@ export class WorkService {
     const startDateStr = startDate.toISOString().split('T')[0];
     const endDateStr = endDate.toISOString().split('T')[0];
 
-    this.logger.log(
-      `[PLAN_SCHEDULE_GENERATION] customerId: CUST-${numCustomerId} subscriptionId: SUB-${targetSub.id} planId: PLAN-${targetSub.planId} quotas: ${JSON.stringify(deliverableQuotas)} startDate: ${startDateStr} endDate: ${endDateStr}`,
-    );
-
     // Generate dynamic workflow activities for ALL deliverable services
     const planActivities = generateAllPlanWorkflowActivities(startDate, endDate, deliverableQuotas);
+
+    const purchaseDateStr = targetSub.createdAt
+      ? new Date(targetSub.createdAt).toISOString().split('T')[0]
+      : startDateStr;
+
+    const firstScheduleDateStr = planActivities.length > 0
+      ? planActivities[0].scheduledDate.toISOString().split('T')[0]
+      : 'N/A';
+
+    const lastScheduleDateStr = planActivities.length > 0
+      ? planActivities[planActivities.length - 1].scheduledDate.toISOString().split('T')[0]
+      : 'N/A';
+
+    this.logger.log(
+      `[PLAN_SCHEDULE_DEBUG]\n\npurchaseDate: ${purchaseDateStr}\nsubscriptionStartDate: ${startDateStr}\nsubscriptionEndDate: ${endDateStr}\nplanDuration: 1 month\n\nGenerated schedules:\nfirstScheduleDate: ${firstScheduleDateStr}\nlastScheduleDate: ${lastScheduleDateStr}\ntotalSchedules: ${planActivities.length}`,
+    );
 
     let totalCreated = 0;
 
@@ -1659,8 +1672,7 @@ export class WorkService {
       throw new NotFoundException(`Plan with ID ${numPlanId} not found`);
     }
 
-    const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + 30 * 86400000);
+    const { startDate, endDate } = calculateSubscriptionDates(new Date(), 1);
 
     const subscription = await this.prisma.customerSubscription.create({
       data: {

@@ -213,4 +213,68 @@ describe('Works End-to-End Subscription & Calendar Flow Tests', () => {
     expect(monthResult.calendar['2026-08-29'].length).toBe(1);
     expect(monthResult.calendar['2026-08-29'][0].activity).toBe('Reel #1: Shoot');
   });
+
+  it('STEP 6: Plan Purchase 30 Aug 2026 -> Start 01 Sep 2026, End 01 Oct 2026, strict date boundaries', async () => {
+    const planMock = {
+      id: 2,
+      name: 'Monthly Standard Package',
+      code: 'STANDARD',
+      features: ['4 Reels', '3 Creative Posts', '3 Stories'],
+    };
+
+    const purchaseDate = new Date('2026-08-30T10:00:00.000Z');
+    // Start is 2 calendar days after purchase
+    const startDate = new Date('2026-09-01T00:00:00.000Z');
+    const endDate = new Date('2026-10-01T00:00:00.000Z');
+
+    const createdSubMock = {
+      id: 202,
+      customerId: 11,
+      planId: 2,
+      status: SubscriptionStatus.ACTIVE,
+      billingCycle: SubscriptionBillingCycle.MONTHLY,
+      startDate,
+      endDate,
+      createdAt: purchaseDate,
+      plan: planMock,
+    };
+
+    prisma.plan.findUnique.mockResolvedValue(planMock);
+    prisma.customerSubscription.findUnique.mockResolvedValue(createdSubMock);
+
+    const createdWorkItems: any[] = [];
+    prisma.work.create.mockImplementation((args: any) => {
+      const item = {
+        id: createdWorkItems.length + 1,
+        ...args.data,
+        status: WorkStatus.SCHEDULED,
+      };
+      createdWorkItems.push(item);
+      return Promise.resolve(item);
+    });
+
+    const result = await service.generatePlanSchedules(11, 202);
+
+    expect(result.success).toBe(true);
+    expect(result.createdCount).toBeGreaterThan(0);
+    expect(createdWorkItems.length).toBeGreaterThan(0);
+
+    // Verify all activities fall strictly within 01 Sep 2026 <= activityDate < 01 Oct 2026
+    for (const work of createdWorkItems) {
+      const actDate = new Date(work.scheduledDate);
+      expect(actDate.getTime()).toBeGreaterThanOrEqual(startDate.getTime());
+      expect(actDate.getTime()).toBeLessThan(endDate.getTime());
+
+      const dateStr = actDate.toISOString().split('T')[0];
+      // Must NOT be 30 Aug or 31 Aug
+      expect(dateStr).not.toBe('2026-08-30');
+      expect(dateStr).not.toBe('2026-08-31');
+      // Must NOT be 01 Oct
+      expect(dateStr).not.toBe('2026-10-01');
+    }
+
+    // First activity date must be on 2026-09-01
+    const firstDateStr = new Date(createdWorkItems[0].scheduledDate).toISOString().split('T')[0];
+    expect(firstDateStr).toBe('2026-09-01');
+  });
 });

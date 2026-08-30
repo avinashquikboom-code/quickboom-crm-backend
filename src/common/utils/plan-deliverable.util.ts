@@ -391,7 +391,7 @@ export function generateAllPlanWorkflowActivities(
         const editingDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 2, 10, 0, 0, 0));
         const postDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 4, 10, 0, 0, 0));
 
-        if (shootDate <= endLimit) {
+        if (shootDate >= start && shootDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: reelNumber,
@@ -404,7 +404,7 @@ export function generateAllPlanWorkflowActivities(
             stepOrder: 1,
           });
         }
-        if (editingDate <= endLimit) {
+        if (editingDate >= start && editingDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: reelNumber,
@@ -417,7 +417,7 @@ export function generateAllPlanWorkflowActivities(
             stepOrder: 2,
           });
         }
-        if (postDate <= endLimit) {
+        if (postDate >= start && postDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: reelNumber,
@@ -441,7 +441,7 @@ export function generateAllPlanWorkflowActivities(
         const designDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset, 10, 0, 0, 0));
         const postDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 1, 10, 0, 0, 0));
 
-        if (designDate <= endLimit) {
+        if (designDate >= start && designDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: storyNumber,
@@ -454,7 +454,7 @@ export function generateAllPlanWorkflowActivities(
             stepOrder: 1,
           });
         }
-        if (postDate <= endLimit) {
+        if (postDate >= start && postDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: storyNumber,
@@ -478,7 +478,7 @@ export function generateAllPlanWorkflowActivities(
         const designDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset, 10, 0, 0, 0));
         const publishDate = new Date(Date.UTC(startYear, startMonth, startDay + baseDayOffset + 2, 10, 0, 0, 0));
 
-        if (designDate <= endLimit) {
+        if (designDate >= start && designDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: postNumber,
@@ -491,7 +491,7 @@ export function generateAllPlanWorkflowActivities(
             stepOrder: 1,
           });
         }
-        if (publishDate <= endLimit) {
+        if (publishDate >= start && publishDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber: postNumber,
@@ -521,7 +521,7 @@ export function generateAllPlanWorkflowActivities(
         );
         const schedDate = new Date(Date.UTC(startYear, startMonth, startDay + dayOffset, 10, 0, 0, 0));
 
-        if (schedDate <= endLimit) {
+        if (schedDate >= start && schedDate < endLimit) {
           activities.push({
             serviceName: sName,
             itemNumber,

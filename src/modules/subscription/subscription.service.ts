@@ -365,8 +365,12 @@ export class SubscriptionService {
       const totalAmount = Number(p.totalAmount || (baseAmount + taxAmount));
 
       const purchaseDate = p.createdAt;
-      const activationDate = p.createdAt;
-      const expiryDate = p.subscription?.endDate || SubscriptionService.calculateExpiryDate(purchaseDate, billingCycle);
+      const sub = p.subscription;
+      const durationMonths = billingCycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+      const calculatedDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+      const startDate = sub?.startDate || calculatedDates.startDate;
+      const activationDate = startDate;
+      const expiryDate = sub?.endDate || calculatedDates.endDate;
 
       const receiptNo = p.invoiceUrl?.startsWith('REC-')
         ? p.invoiceUrl
@@ -444,7 +448,7 @@ export class SubscriptionService {
         transactionId: p.transactionId || `TXN-${p.id.toString().padStart(8, '0')}`,
         purchaseDate,
         activationDate,
-        startDate: purchaseDate,
+        startDate,
         expiryDate,
         customerName: customer?.name || 'Customer Account',
         customerEmail: customer?.email || '',
