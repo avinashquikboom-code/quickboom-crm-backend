@@ -141,6 +141,123 @@ describe('Trending Content Module', () => {
         data: { deletedAt: expect.any(Date) },
       });
     });
+
+    it('uploads multiple images and creates separate database records for each', async () => {
+      const dto = {
+        title: 'Diwali Creative',
+        description: 'Festival promotion',
+      };
+
+      const mockImageFiles: any[] = [
+        { originalname: 'image1.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('img1') },
+        { originalname: 'image2.png', mimetype: 'image/png', buffer: Buffer.from('img2') },
+        { originalname: 'image3.webp', mimetype: 'image/webp', buffer: Buffer.from('img3') },
+      ];
+
+      prisma.trendingContent.create
+        .mockResolvedValueOnce({ id: 101, customerId: 101, title: 'Diwali Creative (1)', category: TrendingCategory.STORY })
+        .mockResolvedValueOnce({ id: 102, customerId: 101, title: 'Diwali Creative (2)', category: TrendingCategory.STORY })
+        .mockResolvedValueOnce({ id: 103, customerId: 101, title: 'Diwali Creative (3)', category: TrendingCategory.STORY });
+
+      const result = await service.create(101, 1, dto as any, false, mockImageFiles);
+
+      expect(result.success).toBe(true);
+      expect(result.createdCount).toBe(3);
+      expect(prisma.trendingContent.create).toHaveBeenCalledTimes(3);
+      expect(s3Service.uploadMedia).toHaveBeenCalledTimes(3);
+    });
+
+    it('uploads multiple videos and creates separate database records with VIDEO mediaType', async () => {
+      const dto = {
+        title: 'Reels Pack',
+      };
+
+      const mockVideoFiles: any[] = [
+        { originalname: 'video1.mp4', mimetype: 'video/mp4', buffer: Buffer.from('vid1') },
+        { originalname: 'video2.mov', mimetype: 'video/quicktime', buffer: Buffer.from('vid2') },
+      ];
+
+      prisma.trendingContent.create
+        .mockResolvedValueOnce({ id: 201, customerId: 101, title: 'Reels Pack (1)', category: TrendingCategory.REEL })
+        .mockResolvedValueOnce({ id: 202, customerId: 101, title: 'Reels Pack (2)', category: TrendingCategory.REEL });
+
+      const result = await service.create(101, 1, dto as any, false, mockVideoFiles);
+
+      expect(result.success).toBe(true);
+      expect(result.createdCount).toBe(2);
+      expect(prisma.trendingContent.create).toHaveBeenCalledTimes(2);
+      expect(s3Service.uploadMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ originalname: 'video1.mp4' }),
+        'marketing/trending',
+        'VIDEO',
+      );
+      expect(s3Service.uploadMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ originalname: 'video2.mov' }),
+        'marketing/trending',
+        'VIDEO',
+      );
+    });
+
+    it('uploads mixed images and videos in one operation with respective media types', async () => {
+      const dto = {
+        title: 'Mixed Campaign',
+      };
+
+      const mockMixedFiles: any[] = [
+        { originalname: 'image1.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('img1') },
+        { originalname: 'image2.png', mimetype: 'image/png', buffer: Buffer.from('img2') },
+        { originalname: 'video1.mp4', mimetype: 'video/mp4', buffer: Buffer.from('vid1') },
+        { originalname: 'video2.webm', mimetype: 'video/webm', buffer: Buffer.from('vid2') },
+      ];
+
+      prisma.trendingContent.create
+        .mockResolvedValueOnce({ id: 301, customerId: 101, title: 'Mixed Campaign (1)', category: TrendingCategory.STORY })
+        .mockResolvedValueOnce({ id: 302, customerId: 101, title: 'Mixed Campaign (2)', category: TrendingCategory.STORY })
+        .mockResolvedValueOnce({ id: 303, customerId: 101, title: 'Mixed Campaign (3)', category: TrendingCategory.REEL })
+        .mockResolvedValueOnce({ id: 304, customerId: 101, title: 'Mixed Campaign (4)', category: TrendingCategory.REEL });
+
+      const result = await service.create(101, 1, dto as any, false, mockMixedFiles);
+
+      expect(result.success).toBe(true);
+      expect(result.createdCount).toBe(4);
+      expect(prisma.trendingContent.create).toHaveBeenCalledTimes(4);
+      expect(s3Service.uploadMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ originalname: 'image1.jpg' }),
+        'marketing/trending',
+        'IMAGE',
+      );
+      expect(s3Service.uploadMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ originalname: 'video1.mp4' }),
+        'marketing/trending',
+        'VIDEO',
+      );
+    });
+
+    it('handles partial failure gracefully when one file in the batch fails', async () => {
+      const dto = { title: 'Partial Batch' };
+      const mockFiles: any[] = [
+        { originalname: 'good1.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('good1') },
+        { originalname: 'corrupt.xyz', mimetype: 'application/unknown', buffer: Buffer.from('bad') },
+        { originalname: 'good2.mp4', mimetype: 'video/mp4', buffer: Buffer.from('good2') },
+      ];
+
+      s3Service.uploadMedia
+        .mockResolvedValueOnce({ imageUrl: 'https://s3.ap-south-1.amazonaws.com/good1.jpg', imageKey: 'good1.jpg' })
+        .mockRejectedValueOnce(new BadRequestException('Invalid format'))
+        .mockResolvedValueOnce({ imageUrl: 'https://s3.ap-south-1.amazonaws.com/good2.mp4', imageKey: 'good2.mp4' });
+
+      prisma.trendingContent.create
+        .mockResolvedValueOnce({ id: 401, customerId: 101, title: 'Partial Batch (1)' })
+        .mockResolvedValueOnce({ id: 402, customerId: 101, title: 'Partial Batch (3)' });
+
+      const result = await service.create(101, 1, dto as any, false, mockFiles);
+
+      expect(result.success).toBe(true);
+      expect(result.createdCount).toBe(2);
+      expect(result.failedCount).toBe(1);
+      expect(result.failedItems?.[0].name).toBe('corrupt.xyz');
+      expect(prisma.trendingContent.create).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('2. Customer View & Date Scheduling & Priority Ordering', () => {

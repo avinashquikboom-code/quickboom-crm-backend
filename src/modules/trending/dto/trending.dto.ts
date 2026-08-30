@@ -40,9 +40,10 @@ export class CreateTrendingContentDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ enum: TrendingCategory, example: TrendingCategory.REEL })
+  @ApiPropertyOptional({ enum: TrendingCategory, example: TrendingCategory.REEL })
   @IsEnum(TrendingCategory)
-  category: TrendingCategory;
+  @IsOptional()
+  category?: TrendingCategory;
 
   @ApiPropertyOptional({ example: 'https://cdn.example.com/thumbnails/summer.jpg' })
   @IsString()

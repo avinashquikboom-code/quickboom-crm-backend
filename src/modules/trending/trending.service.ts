@@ -94,60 +94,84 @@ export class TrendingService {
       }
     }
 
-    // ── Multi-file upload batch handling ──
+    // ── Multi-file upload batch handling (Multiple Images, Videos, or Mixed) ──
     if (filesList.length > 0) {
       const createdItems: any[] = [];
+      const failedItems: { name: string; error: string }[] = [];
 
       for (let i = 0; i < filesList.length; i++) {
         const file = filesList[i];
-        const isVideoFile = Boolean(file.mimetype?.startsWith('video/'));
-        const fileMediaType: 'IMAGE' | 'VIDEO' = isVideoFile ? 'VIDEO' : 'IMAGE';
-        const fileCategory: TrendingCategory = dto.category || (isVideoFile ? TrendingCategory.REEL : TrendingCategory.STORY);
+        try {
+          const cleanMime = (file.mimetype || '').toLowerCase();
+          const ext = file.originalname?.split('.').pop()?.toLowerCase() || '';
+          const isVideoFile = cleanMime.startsWith('video/') || ['mp4', 'mov', 'webm', 'mkv', 'avi', '3gp'].includes(ext);
+          const fileMediaType: 'IMAGE' | 'VIDEO' = isVideoFile ? 'VIDEO' : 'IMAGE';
+          const fileCategory: TrendingCategory = isVideoFile
+            ? (dto.category === TrendingCategory.REEL ? dto.category : TrendingCategory.REEL)
+            : (dto.category && dto.category !== TrendingCategory.REEL ? dto.category : TrendingCategory.STORY);
 
-        const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', fileMediaType);
-        const resolvedMediaUrl = uploadResult.imageUrl;
-        const resolvedThumbnailUrl = fileMediaType === 'IMAGE' ? uploadResult.imageUrl : (dto.thumbnailUrl?.trim() || null);
+          const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', fileMediaType);
+          const resolvedMediaUrl = uploadResult.imageUrl;
+          const resolvedThumbnailUrl = fileMediaType === 'IMAGE' ? uploadResult.imageUrl : (dto.thumbnailUrl?.trim() || null);
 
-        const metadata = {
-          ...(typeof parsedMetadata === 'object' && parsedMetadata !== null ? parsedMetadata : {}),
-          mediaType: fileMediaType,
-          mediaSource: 'UPLOAD',
-        };
+          const metadata = {
+            ...(typeof parsedMetadata === 'object' && parsedMetadata !== null ? parsedMetadata : {}),
+            mediaType: fileMediaType,
+            mediaSource: 'UPLOAD',
+          };
 
-        const itemTitle = dto.title?.trim()
-          ? (filesList.length > 1 ? `${dto.title.trim()} (${i + 1})` : dto.title.trim())
-          : (fileMediaType === 'VIDEO' ? 'Trending Reel' : 'Trending Creative');
+          const itemTitle = dto.title?.trim()
+            ? (filesList.length > 1 ? `${dto.title.trim()} (${i + 1})` : dto.title.trim())
+            : (fileMediaType === 'VIDEO' ? 'Trending Reel' : 'Trending Creative');
 
-        const content = await this.prisma.trendingContent.create({
-          data: {
-            customerId: targetCustomerId,
-            title: itemTitle,
-            description: dto.description?.trim() || null,
-            category: fileCategory,
-            thumbnailUrl: resolvedThumbnailUrl || null,
-            mediaUrl: resolvedMediaUrl || null,
-            ctaText: dto.ctaText?.trim() || null,
-            ctaUrl: dto.ctaUrl?.trim() || null,
-            platform: dto.platform?.trim() || 'INSTAGRAM',
-            objective: dto.objective?.trim() || 'ENGAGEMENT',
-            priority: dto.priority !== undefined ? Number(dto.priority) : 0,
-            isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
-            isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
-            startAt,
-            endAt,
-            createdBy: userId || null,
-            metadata,
-          },
-        });
+          const content = await this.prisma.trendingContent.create({
+            data: {
+              customerId: targetCustomerId,
+              title: itemTitle,
+              description: dto.description?.trim() || null,
+              category: fileCategory,
+              thumbnailUrl: resolvedThumbnailUrl || null,
+              mediaUrl: resolvedMediaUrl || null,
+              ctaText: dto.ctaText?.trim() || null,
+              ctaUrl: dto.ctaUrl?.trim() || null,
+              platform: dto.platform?.trim() || 'INSTAGRAM',
+              objective: dto.objective?.trim() || 'ENGAGEMENT',
+              priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+              isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
+              isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+              startAt,
+              endAt,
+              createdBy: userId || null,
+              metadata,
+            },
+          });
 
-        this.logger.log(`[TRENDING_ADMIN_CREATE_BATCH] item ${i + 1}/${filesList.length}, id: ${content.id}, type: ${fileMediaType}`);
-        createdItems.push(await this.resolveTrendingMedia(content));
+          this.logger.log(`[TRENDING_ADMIN_CREATE_BATCH] item ${i + 1}/${filesList.length}, id: ${content.id}, type: ${fileMediaType}`);
+          createdItems.push(await this.resolveTrendingMedia(content));
+        } catch (fileErr: any) {
+          this.logger.error(`[TRENDING_CREATE_BATCH_FILE_ERROR] ${file.originalname}: ${fileErr.message || fileErr}`);
+          failedItems.push({
+            name: file.originalname,
+            error: fileErr.message || 'Upload failed',
+          });
+        }
+      }
+
+      if (createdItems.length === 0 && failedItems.length > 0) {
+        throw new BadRequestException(
+          `Failed to upload media files: ${failedItems.map((f) => `"${f.name}" (${f.error})`).join('; ')}`,
+        );
       }
 
       return {
         success: true,
-        message: `${createdItems.length} trending ${createdItems.length === 1 ? 'item' : 'items'} created successfully`,
+        message: `${createdItems.length} trending ${createdItems.length === 1 ? 'item' : 'items'} created successfully${
+          failedItems.length > 0 ? ` (${failedItems.length} failed: ${failedItems.map((f) => f.name).join(', ')})` : ''
+        }`,
         data: createdItems.length === 1 ? createdItems[0] : createdItems,
+        createdCount: createdItems.length,
+        failedCount: failedItems.length,
+        failedItems: failedItems.length > 0 ? failedItems : undefined,
       };
     }
 
@@ -179,12 +203,14 @@ export class TrendingService {
       mediaSource,
     };
 
+    const resolvedCategory = dto.category || (mediaType === 'VIDEO' ? TrendingCategory.REEL : TrendingCategory.STORY);
+
     const content = await this.prisma.trendingContent.create({
       data: {
         customerId: targetCustomerId,
-        title: dto.title?.trim() || (dto.category === 'REEL' ? 'Trending Reel' : 'Trending Creative'),
+        title: dto.title?.trim() || (resolvedCategory === TrendingCategory.REEL ? 'Trending Reel' : 'Trending Creative'),
         description: dto.description?.trim() || null,
-        category: dto.category,
+        category: resolvedCategory,
         thumbnailUrl: resolvedThumbnailUrl || null,
         mediaUrl: resolvedMediaUrl || null,
         ctaText: dto.ctaText?.trim() || null,
@@ -225,53 +251,62 @@ export class TrendingService {
     const limit = Math.max(1, Math.min(100, parseInt(String(query.limit || 20), 10) || 20));
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      deletedAt: null,
-    };
+    const andConditions: any[] = [{ deletedAt: null }];
 
     if (targetCustomerId !== undefined) {
-      where.OR = [
-        { customerId: targetCustomerId },
-        { customerId: null }, // Platform-wide templates
-      ];
+      andConditions.push({
+        OR: [
+          { customerId: targetCustomerId },
+          { customerId: null }, // Platform-wide templates
+        ],
+      });
     }
 
     if (query.category) {
-      where.category = query.category;
+      andConditions.push({ category: query.category });
     }
 
     if (query.search && query.search.trim().length > 0) {
       const search = query.search.trim();
-      where.AND = [
-        ...(where.AND || []),
-        {
-          OR: [
-            { title: { contains: search, mode: 'insensitive' } },
-            { description: { contains: search, mode: 'insensitive' } },
-            { platform: { contains: search, mode: 'insensitive' } },
-            { objective: { contains: search, mode: 'insensitive' } },
-          ],
-        },
-      ];
+      andConditions.push({
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { platform: { contains: search, mode: 'insensitive' } },
+          { objective: { contains: search, mode: 'insensitive' } },
+        ],
+      });
     }
 
     if (query.isPublished !== undefined && query.isPublished !== '') {
-      where.isPublished = query.isPublished === true || query.isPublished === 'true';
+      andConditions.push({
+        isPublished: query.isPublished === true || query.isPublished === 'true',
+      });
     }
 
     if (query.isActive !== undefined && query.isActive !== '') {
-      where.isActive = query.isActive === true || query.isActive === 'true';
+      andConditions.push({
+        isActive: query.isActive === true || query.isActive === 'true',
+      });
     }
 
+    const where: any = { AND: andConditions };
+
     const baseStatsWhere: any = {
-      deletedAt: null,
+      AND: [
+        { deletedAt: null },
+        ...(targetCustomerId !== undefined
+          ? [
+              {
+                OR: [
+                  { customerId: targetCustomerId },
+                  { customerId: null },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
-    if (targetCustomerId !== undefined) {
-      baseStatsWhere.OR = [
-        { customerId: targetCustomerId },
-        { customerId: null },
-      ];
-    }
 
     const [items, total, statsGroup, totalAll] = await Promise.all([
       this.prisma.trendingContent.findMany({
