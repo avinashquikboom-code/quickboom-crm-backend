@@ -493,6 +493,7 @@ export class TrendingService {
         startAt: true,
         endAt: true,
         createdAt: true,
+        metadata: true,
       },
     });
 
