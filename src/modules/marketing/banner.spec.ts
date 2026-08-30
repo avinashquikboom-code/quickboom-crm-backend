@@ -4,6 +4,7 @@ import { BannerService } from './banner.service';
 import { BannerUploadService } from './banner-upload.service';
 import { BannerController } from './banner.controller';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 
 describe('Marketing Module - Banner Service & Controller', () => {
   let service: BannerService;
@@ -11,6 +12,15 @@ describe('Marketing Module - Banner Service & Controller', () => {
 
   const mockMarketingBanners: any[] = [];
   let bannerIdCounter = 1;
+
+  const mockS3Service = {
+    extractKey: jest.fn().mockImplementation((url: string) => url ? url.split('.amazonaws.com/')[1] || url : ''),
+    getPresignedUrl: jest.fn().mockImplementation((key: string) => Promise.resolve(`https://qbapp.online.s3.ap-south-1.amazonaws.com/${key}`)),
+    uploadMedia: jest.fn().mockImplementation((file: any, folder: string) => Promise.resolve({
+      imageUrl: `https://qbapp.online.s3.ap-south-1.amazonaws.com/${folder}/mock.jpg`,
+      imagePublicId: `${folder}/mock.jpg`,
+    })),
+  };
 
   const mockPrismaService = {
     marketingBanner: {
@@ -129,6 +139,10 @@ describe('Marketing Module - Banner Service & Controller', () => {
         {
           provide: BannerUploadService,
           useValue: mockUploadService,
+        },
+        {
+          provide: S3Service,
+          useValue: mockS3Service,
         },
       ],
     }).compile();
