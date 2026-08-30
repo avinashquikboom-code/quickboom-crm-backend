@@ -3,7 +3,7 @@ import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { WorkStatus, WorkType } from '@prisma/client';
+import { WorkStatus, WorkType, SubscriptionStatus } from '@prisma/client';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 
 describe('Customer Schedule & Calendar Data Isolation Tests', () => {
@@ -85,7 +85,12 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           customer: { name: 'Customer A Org' },
         },
       ]);
-      prisma.customerSubscription.findFirst.mockResolvedValue(null);
+      prisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 101,
+        customerId: 1,
+        status: SubscriptionStatus.ACTIVE,
+        plan: { name: 'Growth Plan' },
+      });
 
       const result = await service.getCalendar(1, { date: '2026-08-26' });
       expect(result).toHaveLength(1);
@@ -93,7 +98,7 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       expect(result[0].title).toBe('Customer A Reel Shoot');
       expect(prisma.work.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ customerId: 1 }),
+          where: expect.objectContaining({ customerId: 1, subscriptionId: 101 }),
         }),
       );
     });
@@ -112,7 +117,12 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
           customer: { name: 'Customer B Gym' },
         },
       ]);
-      prisma.customerSubscription.findFirst.mockResolvedValue(null);
+      prisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 102,
+        customerId: 2,
+        status: SubscriptionStatus.ACTIVE,
+        plan: { name: 'Standard Plan' },
+      });
 
       const result = await service.getCalendar(2, { date: '2026-08-26' });
       expect(result).toHaveLength(1);
@@ -120,9 +130,25 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
       expect(result[0].title).toBe('Customer B Story Design');
       expect(prisma.work.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ customerId: 2 }),
+          where: expect.objectContaining({ customerId: 2, subscriptionId: 102 }),
         }),
       );
+    });
+
+    it('Customer with NO ACTIVE PLAN receives 0 calendar schedules', async () => {
+      prisma.customerSubscription.findFirst.mockResolvedValue(null);
+      prisma.work.findMany.mockResolvedValue([
+        {
+          id: 999,
+          customerId: 1,
+          title: 'Old Inactive Reel',
+          scheduledDate: new Date('2026-08-26T10:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getCalendar(1, { date: '2026-08-26' });
+      expect(result).toHaveLength(0);
+      expect(result).toEqual([]);
     });
 
     it('Correctly returns and filters schedules across distinct dates (2026-08-25, 2026-08-26, 2026-08-27)', async () => {
@@ -139,7 +165,12 @@ describe('Customer Schedule & Calendar Data Isolation Tests', () => {
 
       prisma.work.count.mockResolvedValue(1);
       prisma.work.findMany.mockResolvedValue([aug26Event]);
-      prisma.customerSubscription.findFirst.mockResolvedValue(null);
+      prisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 101,
+        customerId: 1,
+        status: SubscriptionStatus.ACTIVE,
+        plan: { name: 'Growth Plan' },
+      });
 
       const result26 = await service.getCalendar(1, { date: '2026-08-26' });
       expect(result26).toHaveLength(1);

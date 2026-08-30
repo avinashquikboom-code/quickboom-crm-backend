@@ -213,12 +213,16 @@ export class InstallmentService {
       },
     });
 
-    this.logger.log(
-      `[RENEWAL_STATUS_BACKEND_DEBUG] customerId: ${customerId}, resolvedCustomerId: ${numCustomerId}, subscription lookup result: ${sub ? 'FOUND' : 'NOT_FOUND'}, subscriptionId: ${sub?.id ?? 'NONE'}, subscription status: ${sub?.status ?? 'NONE'}`,
-    );
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numCustomerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${numCustomerId} not found`);
+    }
 
     if (!sub) {
-      throw new NotFoundException(`No subscription found for customer ${numCustomerId}`);
+      return null;
     }
 
     let installments = sub.installments || [];

@@ -783,27 +783,37 @@ export class WorkService {
     const numCustomerId = this.resolveCustomerId(scopedCustomerId);
     let activeSubForCustomer: any = null;
     if (numCustomerId) {
-      where.customerId = numCustomerId;
       activeSubForCustomer = await this.prisma.customerSubscription.findFirst({
         where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
         orderBy: { createdAt: 'desc' },
         include: { plan: true },
       });
 
-      if (activeSubForCustomer) {
-        const subWorkCount = await this.prisma.work.count({
-          where: {
-            customerId: numCustomerId,
-            subscriptionId: activeSubForCustomer.id,
-            status: { not: WorkStatus.CANCELLED },
-          },
-        });
-        if (subWorkCount === 0) {
-          try {
-            await this.generatePlanSchedules(numCustomerId, activeSubForCustomer.id);
-          } catch (e: any) {
-            this.logger.warn(`Schedule generation on calendar query: ${e?.message}`);
-          }
+      // Strict Active Plan Rule:
+      // If customer has no active subscription, return 0 schedules
+      if (!activeSubForCustomer) {
+        this.logger.log(
+          `[CALENDAR_NO_ACTIVE_SUB] customerId: CUST-${numCustomerId} has no active plan. Returning 0 schedules.`,
+        );
+        return [];
+      }
+
+      // Filter exclusively by this customer's active subscription ID
+      where.customerId = numCustomerId;
+      where.subscriptionId = activeSubForCustomer.id;
+
+      const subWorkCount = await this.prisma.work.count({
+        where: {
+          customerId: numCustomerId,
+          subscriptionId: activeSubForCustomer.id,
+          status: { not: WorkStatus.CANCELLED },
+        },
+      });
+      if (subWorkCount === 0) {
+        try {
+          await this.generatePlanSchedules(numCustomerId, activeSubForCustomer.id);
+        } catch (e: any) {
+          this.logger.warn(`Schedule generation on calendar query: ${e?.message}`);
         }
       }
     }
@@ -919,9 +929,11 @@ export class WorkService {
     let unlockThresholdDate: Date | null = null;
 
     if (numCustomerId && activeSubForCustomer) {
-      const payments = await this.prisma.paymentHistory.findMany({
-        where: { customerId: numCustomerId, status: 'SUCCESS' },
-      });
+      const payments = this.prisma.paymentHistory?.findMany
+        ? await this.prisma.paymentHistory.findMany({
+            where: { customerId: numCustomerId, status: 'SUCCESS' },
+          })
+        : [];
       totalPaidForSub = Array.isArray(payments)
         ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
         : 0;
@@ -929,7 +941,7 @@ export class WorkService {
       const planTotalWithTax = Math.round(planBasePrice * 1.18);
 
       isFullyPaid = totalPaidForSub >= planTotalWithTax;
-      isFirstInstallmentPaid = totalPaidForSub > 0;
+      isFirstInstallmentPaid = activeSubForCustomer.status === SubscriptionStatus.ACTIVE || totalPaidForSub > 0;
 
       const subStartDate = new Date(activeSubForCustomer.startDate);
       unlockThresholdDate = new Date(subStartDate.getTime() + 15 * 24 * 60 * 60 * 1000);

@@ -17,7 +17,12 @@ describe('Works End-to-End Subscription & Calendar Flow Tests', () => {
       customerSubscription: {
         create: jest.fn(),
         findUnique: jest.fn(),
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 201,
+          customerId: 11,
+          status: SubscriptionStatus.ACTIVE,
+          plan: { name: 'Growth Plan' },
+        }),
       },
       work: {
         create: jest.fn(),
@@ -47,6 +52,9 @@ describe('Works End-to-End Subscription & Calendar Flow Tests', () => {
       },
       notification: {
         create: jest.fn().mockResolvedValue({ id: 1 }),
+      },
+      paymentHistory: {
+        findMany: jest.fn().mockResolvedValue([]),
       },
       $transaction: jest.fn(async (callback) => {
         if (typeof callback === 'function') {
