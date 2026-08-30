@@ -14,8 +14,8 @@ import {
 } from './dto/customer.dto';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
-import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 import { QBIdGenerator } from '../auth/qb-id.generator';
+import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
 
 @Injectable()
 export class CustomerService {
@@ -886,7 +886,7 @@ export class CustomerService {
       throw new NotFoundException(`Plan with ID ${planId} not found`);
     }
 
-    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
+    const startDate = dto.startDate ? new Date(dto.startDate) : calculateSubscriptionStartDate(new Date());
     const durationMonths = dto.duration
       ? Number(dto.duration)
       : dto.endDate

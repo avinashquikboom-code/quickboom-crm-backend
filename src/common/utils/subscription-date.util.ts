@@ -25,34 +25,27 @@
  */
 export function calculateSubscriptionStartDate(purchaseDate: Date | string = new Date()): Date {
   const purchase = new Date(purchaseDate);
-  const start = new Date(purchase);
-  start.setDate(start.getDate() + 2);
-  return start;
+  const y = purchase.getUTCFullYear();
+  const m = purchase.getUTCMonth();
+  const d = purchase.getUTCDate();
+  return new Date(Date.UTC(y, m, d + 2, 0, 0, 0, 0));
 }
 
 export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1): Date {
   const start = new Date(startDate);
-  const startYear = start.getFullYear();
-  const startMonth = start.getMonth(); // 0-indexed
-  const startDay = start.getDate();
+  const startYear = start.getUTCFullYear();
+  const startMonth = start.getUTCMonth(); // 0-indexed
+  const startDay = start.getUTCDate();
 
   const targetMonthIndex = startMonth + Number(durationMonths);
   const targetYear = startYear + Math.floor(targetMonthIndex / 12);
   const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
 
   // Clamping for month-end overflows (e.g., Jan 31 -> Feb 28/29)
-  const maxDaysInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+  const maxDaysInTargetMonth = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
   const targetDay = Math.min(startDay, maxDaysInTargetMonth);
 
-  return new Date(
-    targetYear,
-    normalizedMonth,
-    targetDay,
-    start.getHours(),
-    start.getMinutes(),
-    start.getSeconds(),
-    start.getMilliseconds(),
-  );
+  return new Date(Date.UTC(targetYear, normalizedMonth, targetDay, 23, 59, 59, 999));
 }
 
 /**

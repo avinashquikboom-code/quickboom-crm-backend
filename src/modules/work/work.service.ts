@@ -1171,29 +1171,48 @@ export class WorkService {
       };
     }
 
-    const startDate = targetSub.startDate ? new Date(targetSub.startDate) : new Date();
-    const endDate = targetSub.endDate ? new Date(targetSub.endDate) : new Date(startDate.getTime() + 30 * 86400000);
+    // 1. Get the actual purchase/subscription start date from backend/database
+    const rawPurchaseDate = targetSub.createdAt
+      ? new Date(targetSub.createdAt)
+      : (targetSub.startDate ? new Date(targetSub.startDate) : new Date());
 
-    const startDateStr = startDate.toISOString().split('T')[0];
-    const endDateStr = endDate.toISOString().split('T')[0];
+    const pYear = rawPurchaseDate.getUTCFullYear();
+    const pMonth = rawPurchaseDate.getUTCMonth();
+    const pDay = rawPurchaseDate.getUTCDate();
+    const purchaseDateStr = `${pYear}-${String(pMonth + 1).padStart(2, '0')}-${String(pDay).padStart(2, '0')}`;
 
-    // Generate dynamic workflow activities for ALL deliverable services
-    const planActivities = generateAllPlanWorkflowActivities(startDate, endDate, deliverableQuotas);
+    // 2. Calculate: scheduleStartDate = purchaseDate + 2 calendar days
+    let scheduleStartDate: Date;
+    if (targetSub.startDate) {
+      const subStart = new Date(targetSub.startDate);
+      const subStartStr = `${subStart.getUTCFullYear()}-${String(subStart.getUTCMonth() + 1).padStart(2, '0')}-${String(subStart.getUTCDate()).padStart(2, '0')}`;
+      if (subStartStr !== purchaseDateStr) {
+        // targetSub.startDate is already an advanced schedule start date
+        scheduleStartDate = subStart;
+      } else {
+        // targetSub.startDate equals purchaseDate -> strictly advance by 2 calendar days
+        scheduleStartDate = new Date(Date.UTC(pYear, pMonth, pDay + 2, 10, 0, 0, 0));
+      }
+    } else {
+      scheduleStartDate = new Date(Date.UTC(pYear, pMonth, pDay + 2, 10, 0, 0, 0));
+    }
 
-    const purchaseDateStr = targetSub.createdAt
-      ? new Date(targetSub.createdAt).toISOString().split('T')[0]
-      : startDateStr;
+    const sYear = scheduleStartDate.getUTCFullYear();
+    const sMonth = scheduleStartDate.getUTCMonth();
+    const sDay = scheduleStartDate.getUTCDate();
+    const scheduleStartDateStr = `${sYear}-${String(sMonth + 1).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
 
-    const firstScheduleDateStr = planActivities.length > 0
-      ? planActivities[0].scheduledDate.toISOString().split('T')[0]
-      : 'N/A';
+    let endDate = targetSub.endDate ? new Date(targetSub.endDate) : new Date(scheduleStartDate.getTime() + 30 * 86400000);
+    if (endDate <= scheduleStartDate) {
+      endDate = new Date(Date.UTC(sYear, sMonth + 1, sDay, 23, 59, 59, 999));
+    }
+    const endDateStr = `${endDate.getUTCFullYear()}-${String(endDate.getUTCMonth() + 1).padStart(2, '0')}-${String(endDate.getUTCDate()).padStart(2, '0')}`;
 
-    const lastScheduleDateStr = planActivities.length > 0
-      ? planActivities[planActivities.length - 1].scheduledDate.toISOString().split('T')[0]
-      : 'N/A';
+    // 3. Generate the plan activities starting from scheduleStartDate
+    const planActivities = generateAllPlanWorkflowActivities(scheduleStartDate, endDate, deliverableQuotas);
 
     this.logger.log(
-      `[PLAN_SCHEDULE_DEBUG]\n\npurchaseDate: ${purchaseDateStr}\nsubscriptionStartDate: ${startDateStr}\nsubscriptionEndDate: ${endDateStr}\nplanDuration: 1 month\n\nGenerated schedules:\nfirstScheduleDate: ${firstScheduleDateStr}\nlastScheduleDate: ${lastScheduleDateStr}\ntotalSchedules: ${planActivities.length}`,
+      `[PLAN_SCHEDULE]\npurchaseDate: ${purchaseDateStr}\nscheduleStartDate: ${scheduleStartDateStr}\nactivePlanId: ${targetSub.planId || targetSub.id}\ngeneratedActivities: ${planActivities.length}`,
     );
 
     let totalCreated = 0;
