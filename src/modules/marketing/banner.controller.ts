@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  Logger,
   Param,
   ParseIntPipe,
   Patch,
@@ -34,6 +35,8 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @ApiTags('Marketing Banners')
 @Controller()
 export class BannerController {
+  private readonly logger = new Logger(BannerController.name);
+
   constructor(private readonly bannerService: BannerService) {}
 
   private checkCompanyAdminAccess(user: any) {
@@ -155,9 +158,17 @@ export class BannerController {
     @Body() dto: UpdateMarketingBannerDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    this.checkCompanyAdminAccess(user);
-    const context = this.resolveCustomerContext(customerId, user);
-    return this.bannerService.update(id, dto, context, file);
+    this.logger.log(`[HOME_BANNER_UPDATE_REQUEST]\nbannerId: ${id}\npayload: ${JSON.stringify(dto)}`);
+    try {
+      this.checkCompanyAdminAccess(user);
+      const context = this.resolveCustomerContext(customerId, user);
+      const result = await this.bannerService.update(id, dto, context, file);
+      this.logger.log(`[HOME_BANNER_UPDATE_RESPONSE]\nstatus: 200\ndata: ${JSON.stringify(result)}`);
+      return result;
+    } catch (err: any) {
+      this.logger.error(`[HOME_BANNER_UPDATE_ERROR]\nerror: ${err?.message || err}`);
+      throw err;
+    }
   }
 
   @Delete('admin/marketing/banners/:id')
