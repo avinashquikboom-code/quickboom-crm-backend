@@ -1119,6 +1119,10 @@ returnedSchedules: 0`);
     });
 
     // Detailed debug logs for calendar verification
+    this.logger.log(`[CALENDAR_DATE_DEBUG]
+requestedDate: ${query.date || 'ALL'}
+returnedSchedules: ${result.length}`);
+
     this.logger.log(`[CALENDAR_DEBUG]
 authenticatedCustomerId: ${numCustomerId ? `CUST-${numCustomerId}` : (scopedCustomerId || 'NONE')}
 requestedDate: ${query.date || 'ALL'}
