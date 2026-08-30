@@ -37,6 +37,24 @@ export class CreateTrendingContentDto {
   @IsOptional()
   mediaUrl?: string;
 
+  @ApiPropertyOptional({ enum: ['IMAGE', 'VIDEO'], example: 'IMAGE' })
+  @IsOptional()
+  mediaType?: 'IMAGE' | 'VIDEO';
+
+  @ApiPropertyOptional({ enum: ['UPLOAD', 'URL'], example: 'URL' })
+  @IsOptional()
+  mediaSource?: 'UPLOAD' | 'URL';
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/images/banner.jpg' })
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/videos/reel.mp4' })
+  @IsString()
+  @IsOptional()
+  videoUrl?: string;
+
   @ApiPropertyOptional({ example: 'View Idea' })
   @IsString()
   @IsOptional()
@@ -118,6 +136,24 @@ export class UpdateTrendingContentDto {
   @IsString()
   @IsOptional()
   mediaUrl?: string;
+
+  @ApiPropertyOptional({ enum: ['IMAGE', 'VIDEO'], example: 'IMAGE' })
+  @IsOptional()
+  mediaType?: 'IMAGE' | 'VIDEO';
+
+  @ApiPropertyOptional({ enum: ['UPLOAD', 'URL'], example: 'URL' })
+  @IsOptional()
+  mediaSource?: 'UPLOAD' | 'URL';
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/images/banner.jpg' })
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/videos/reel.mp4' })
+  @IsString()
+  @IsOptional()
+  videoUrl?: string;
 
   @ApiPropertyOptional({ example: 'Learn More' })
   @IsString()

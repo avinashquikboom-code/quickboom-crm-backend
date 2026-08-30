@@ -9,8 +9,11 @@ import {
   Query,
   UseGuards,
   ForbiddenException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { TrendingService } from './trending.service';
 import {
   CreateTrendingContentDto,
@@ -59,15 +62,18 @@ export class TrendingController {
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
   @Post(['admin/trending', 'admin/marketing/trending'])
-  @ApiOperation({ summary: 'Create new trending content item (Company Admin only)' })
+  @ApiOperation({ summary: 'Create new trending content item with optional file upload (Company Admin only)' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('file'))
   async create(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: CreateTrendingContentDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
     this.checkCompanyAdminAccess(user);
     const isSuperAdmin = isUserSuperAdmin(user);
-    return this.trendingService.create(customerId, user?.id, dto, isSuperAdmin);
+    return this.trendingService.create(customerId, user?.id, dto, isSuperAdmin, file);
   }
 
   @Get(['admin/trending', 'admin/marketing/trending'])
@@ -95,16 +101,19 @@ export class TrendingController {
   }
 
   @Patch(['admin/trending/:id', 'admin/marketing/trending/:id'])
-  @ApiOperation({ summary: 'Update trending content (Company Admin only)' })
+  @ApiOperation({ summary: 'Update trending content with optional file upload (Company Admin only)' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('file'))
   async update(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Param('id') id: string,
     @Body() dto: UpdateTrendingContentDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
     this.checkCompanyAdminAccess(user);
     const isSuperAdmin = isUserSuperAdmin(user);
-    return this.trendingService.update(customerId, id, dto, isSuperAdmin);
+    return this.trendingService.update(customerId, id, dto, isSuperAdmin, file);
   }
 
   @Delete(['admin/trending/:id', 'admin/marketing/trending/:id'])

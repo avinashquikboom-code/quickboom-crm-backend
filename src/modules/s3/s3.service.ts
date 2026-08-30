@@ -113,6 +113,106 @@ export class S3Service {
     }
   }
 
+  /**
+   * Universal media upload method supporting Images (JPG, PNG, WEBP) & Videos (MP4, MOV, WEBM)
+   */
+  async uploadMedia(
+    file: Express.Multer.File,
+    folder = 'marketing/trending',
+    expectedType?: 'IMAGE' | 'VIDEO',
+  ): Promise<S3UploadResult> {
+    if (!file) {
+      throw new BadRequestException('File is required for upload');
+    }
+
+    const imageMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const videoMimes = [
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'video/x-matroska',
+      'video/avi',
+      'video/mpeg',
+      'video/ogg',
+      'video/3gpp',
+    ];
+
+    const cleanMime = (file.mimetype || '').toLowerCase();
+    const isImage = imageMimes.includes(cleanMime);
+    const isVideo = videoMimes.includes(cleanMime);
+
+    if (expectedType === 'IMAGE' && !isImage) {
+      throw new BadRequestException(
+        `Invalid image format "${file.mimetype}". Supported image formats: JPG, JPEG, PNG, WEBP`,
+      );
+    }
+
+    if (expectedType === 'VIDEO' && !isVideo) {
+      throw new BadRequestException(
+        `Invalid video format "${file.mimetype}". Supported video formats: MP4, MOV, WEBM, MKV, AVI`,
+      );
+    }
+
+    if (!isImage && !isVideo) {
+      throw new BadRequestException(
+        `Unsupported media format "${file.mimetype}". Please upload an image (JPG, PNG, WEBP) or video (MP4, MOV, WEBM).`,
+      );
+    }
+
+    const maxImageSize = 10 * 1024 * 1024; // 10MB
+    const maxVideoSize = 100 * 1024 * 1024; // 100MB
+
+    if (isImage && file.size > maxImageSize) {
+      throw new BadRequestException(
+        `Image size exceeds maximum limit of 10MB (file size: ${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      );
+    }
+
+    if (isVideo && file.size > maxVideoSize) {
+      throw new BadRequestException(
+        `Video size exceeds maximum limit of 100MB (file size: ${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      );
+    }
+
+    const uniqueId = crypto.randomBytes(8).toString('hex');
+    const sanitizedName = (file.originalname || (isImage ? 'media.jpg' : 'media.mp4'))
+      .replace(/[^a-zA-Z0-9.-]/g, '_')
+      .toLowerCase();
+    const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
+
+    const { client, bucket, region, customDomain } = await this.resolveS3Client();
+
+    this.logger.log(
+      `[MEDIA_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
+    );
+
+    const imageUrl = customDomain
+      ? `https://${customDomain}/${imageKey}`
+      : `https://${bucket}.s3.${region}.amazonaws.com/${imageKey}`;
+
+    try {
+      const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: imageKey,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+      });
+
+      await client.send(command);
+
+      this.logger.log(
+        `[MEDIA_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadSuccess: true\ns3Url: ${imageUrl}`,
+      );
+
+      return { imageUrl, imageKey };
+    } catch (err: any) {
+      this.logger.error(
+        `[S3_UPLOAD_FAILED]\nbucket: ${bucket}\nkey: ${imageKey}\nerror: ${err?.message || err}`,
+      );
+      throw new Error(`S3 upload failed: ${err?.message || err}`);
+    }
+  }
+
   async uploadBuffer(
     buffer: Buffer,
     mimetype: string,

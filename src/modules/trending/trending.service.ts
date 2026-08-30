@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import {
   CreateTrendingContentDto,
   UpdateTrendingContentDto,
@@ -16,7 +17,10 @@ import { TrendingCategory } from '@prisma/client';
 export class TrendingService {
   private readonly logger = new Logger(TrendingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
+  ) {}
 
   /**
    * Helper to normalize customerId into numeric representation.
@@ -39,6 +43,7 @@ export class TrendingService {
     userId: number,
     dto: CreateTrendingContentDto,
     isSuperAdmin = false,
+    file?: Express.Multer.File,
   ) {
     const targetCustomerId = isSuperAdmin && dto.customerId
       ? this.parseCustomerId(dto.customerId)
@@ -51,34 +56,73 @@ export class TrendingService {
       throw new BadRequestException('startAt cannot be later than endAt');
     }
 
+    // Determine Media Type: IMAGE | VIDEO
+    let mediaType: 'IMAGE' | 'VIDEO' = dto.mediaType || (
+      file
+        ? (file.mimetype?.startsWith('video/') ? 'VIDEO' : 'IMAGE')
+        : (dto.category === 'REEL' || dto.videoUrl ? 'VIDEO' : 'IMAGE')
+    );
+
+    // Determine Media Source: UPLOAD | URL
+    let mediaSource: 'UPLOAD' | 'URL' = dto.mediaSource || (file ? 'UPLOAD' : 'URL');
+
+    let resolvedMediaUrl = (dto.mediaUrl || (mediaType === 'IMAGE' ? dto.imageUrl : dto.videoUrl) || '').trim();
+    let resolvedThumbnailUrl = (dto.thumbnailUrl || (mediaType === 'IMAGE' ? dto.imageUrl : '') || '').trim();
+
+    // 1. Handle File Upload
+    if (file) {
+      mediaSource = 'UPLOAD';
+      const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', mediaType);
+      resolvedMediaUrl = uploadResult.imageUrl;
+      if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
+        resolvedThumbnailUrl = uploadResult.imageUrl;
+      }
+    } else if (mediaSource === 'UPLOAD' && !resolvedMediaUrl) {
+      throw new BadRequestException(`A ${mediaType.toLowerCase()} file is required when upload source is selected.`);
+    }
+
+    // 2. Validate URL if source is URL or URL was provided
+    if (mediaSource === 'URL') {
+      if (!resolvedMediaUrl) {
+        throw new BadRequestException(`Please enter a valid ${mediaType.toLowerCase()} URL.`);
+      }
+      if (!resolvedMediaUrl.startsWith('http://') && !resolvedMediaUrl.startsWith('https://')) {
+        throw new BadRequestException('Media URL must start with http:// or https://');
+      }
+      if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
+        resolvedThumbnailUrl = resolvedMediaUrl;
+      }
+    }
+
+    const metadata = {
+      ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      mediaType,
+      mediaSource,
+    };
+
     const content = await this.prisma.trendingContent.create({
       data: {
         customerId: targetCustomerId,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
         category: dto.category,
-        thumbnailUrl: dto.thumbnailUrl?.trim() || null,
-        mediaUrl: dto.mediaUrl?.trim() || null,
+        thumbnailUrl: resolvedThumbnailUrl || null,
+        mediaUrl: resolvedMediaUrl || null,
         ctaText: dto.ctaText?.trim() || null,
         ctaUrl: dto.ctaUrl?.trim() || null,
         platform: dto.platform?.trim() || 'INSTAGRAM',
         objective: dto.objective?.trim() || 'ENGAGEMENT',
-        priority: dto.priority !== undefined ? dto.priority : 0,
-        isPublished: dto.isPublished !== undefined ? dto.isPublished : true,
-        isActive: dto.isActive !== undefined ? dto.isActive : true,
+        priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+        isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
+        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
         startAt,
         endAt,
         createdBy: userId || null,
-        metadata: dto.metadata || null,
+        metadata,
       },
     });
 
-    console.log('[TRENDING_ADMIN_CREATE]', {
-      adminId: userId,
-      customerId: targetCustomerId,
-      contentId: content.id,
-      category: content.category,
-    });
+    this.logger.log(`[TRENDING_ADMIN_CREATE] id: ${content.id}, customer: ${targetCustomerId}, type: ${mediaType}, source: ${mediaSource}, url: ${resolvedMediaUrl}`);
 
     return {
       success: true,
@@ -222,16 +266,57 @@ export class TrendingService {
     id: number | string,
     dto: UpdateTrendingContentDto,
     isSuperAdmin = false,
+    file?: Express.Multer.File,
   ) {
-    await this.findOne(authCustomerId, id, isSuperAdmin);
+    const existing = await this.findOne(authCustomerId, id, isSuperAdmin);
     const numId = parseInt(String(id), 10);
 
-    const startAt = dto.startAt ? new Date(dto.startAt) : undefined;
-    const endAt = dto.endAt ? new Date(dto.endAt) : undefined;
+    const startAt = dto.startAt !== undefined ? (dto.startAt ? new Date(dto.startAt) : null) : undefined;
+    const endAt = dto.endAt !== undefined ? (dto.endAt ? new Date(dto.endAt) : null) : undefined;
 
     if (startAt && endAt && startAt > endAt) {
       throw new BadRequestException('startAt cannot be later than endAt');
     }
+
+    const existingMetadata = (existing.data?.metadata && typeof existing.data.metadata === 'object') ? (existing.data.metadata as any) : {};
+    let mediaType: 'IMAGE' | 'VIDEO' = dto.mediaType || existingMetadata.mediaType || (
+      file
+        ? (file.mimetype?.startsWith('video/') ? 'VIDEO' : 'IMAGE')
+        : (dto.category === 'REEL' || dto.videoUrl ? 'VIDEO' : 'IMAGE')
+    );
+
+    let mediaSource: 'UPLOAD' | 'URL' = dto.mediaSource || (file ? 'UPLOAD' : existingMetadata.mediaSource || 'URL');
+
+    let resolvedMediaUrl: string | undefined = dto.mediaUrl !== undefined
+      ? dto.mediaUrl?.trim()
+      : (mediaType === 'IMAGE' && dto.imageUrl ? dto.imageUrl.trim() : (mediaType === 'VIDEO' && dto.videoUrl ? dto.videoUrl.trim() : undefined));
+
+    let resolvedThumbnailUrl: string | undefined = dto.thumbnailUrl !== undefined
+      ? dto.thumbnailUrl?.trim()
+      : (mediaType === 'IMAGE' && dto.imageUrl ? dto.imageUrl.trim() : undefined);
+
+    if (file) {
+      mediaSource = 'UPLOAD';
+      const uploadResult = await this.s3Service.uploadMedia(file, 'marketing/trending', mediaType);
+      resolvedMediaUrl = uploadResult.imageUrl;
+      if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
+        resolvedThumbnailUrl = uploadResult.imageUrl;
+      }
+    } else if (mediaSource === 'URL' && resolvedMediaUrl) {
+      if (!resolvedMediaUrl.startsWith('http://') && !resolvedMediaUrl.startsWith('https://')) {
+        throw new BadRequestException('Media URL must start with http:// or https://');
+      }
+      if (mediaType === 'IMAGE' && !resolvedThumbnailUrl) {
+        resolvedThumbnailUrl = resolvedMediaUrl;
+      }
+    }
+
+    const metadata = {
+      ...existingMetadata,
+      ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      mediaType,
+      mediaSource,
+    };
 
     const updated = await this.prisma.trendingContent.update({
       where: { id: numId },
@@ -239,20 +324,22 @@ export class TrendingService {
         ...(dto.title !== undefined && { title: dto.title.trim() }),
         ...(dto.description !== undefined && { description: dto.description?.trim() || null }),
         ...(dto.category !== undefined && { category: dto.category }),
-        ...(dto.thumbnailUrl !== undefined && { thumbnailUrl: dto.thumbnailUrl?.trim() || null }),
-        ...(dto.mediaUrl !== undefined && { mediaUrl: dto.mediaUrl?.trim() || null }),
+        ...(resolvedThumbnailUrl !== undefined && { thumbnailUrl: resolvedThumbnailUrl || null }),
+        ...(resolvedMediaUrl !== undefined && { mediaUrl: resolvedMediaUrl || null }),
         ...(dto.ctaText !== undefined && { ctaText: dto.ctaText?.trim() || null }),
         ...(dto.ctaUrl !== undefined && { ctaUrl: dto.ctaUrl?.trim() || null }),
         ...(dto.platform !== undefined && { platform: dto.platform?.trim() || 'INSTAGRAM' }),
         ...(dto.objective !== undefined && { objective: dto.objective?.trim() || 'ENGAGEMENT' }),
-        ...(dto.priority !== undefined && { priority: dto.priority }),
-        ...(dto.isPublished !== undefined && { isPublished: dto.isPublished }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.startAt !== undefined && { startAt }),
-        ...(dto.endAt !== undefined && { endAt }),
-        ...(dto.metadata !== undefined && { metadata: dto.metadata }),
+        ...(dto.priority !== undefined && { priority: Number(dto.priority) }),
+        ...(dto.isPublished !== undefined && { isPublished: Boolean(dto.isPublished) }),
+        ...(dto.isActive !== undefined && { isActive: Boolean(dto.isActive) }),
+        ...(startAt !== undefined && { startAt }),
+        ...(endAt !== undefined && { endAt }),
+        metadata,
       },
     });
+
+    this.logger.log(`[TRENDING_ADMIN_UPDATE] id: ${numId}, type: ${mediaType}, source: ${mediaSource}, url: ${resolvedMediaUrl || updated.mediaUrl}`);
 
     return {
       success: true,
