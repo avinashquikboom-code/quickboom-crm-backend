@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
@@ -15,6 +16,7 @@ import {
   generateAllPlanWorkflowActivities,
 } from '../../common/utils/plan-deliverable.util';
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
+import { PlanScheduleGateway } from './plan-schedule.gateway';
 
 @Injectable()
 export class WorkService {
@@ -22,7 +24,33 @@ export class WorkService {
 
   constructor(
     private readonly prisma: PrismaService,
+    @Optional() private readonly planScheduleGateway?: PlanScheduleGateway,
   ) {}
+
+  /**
+   * Helper to emit customer-isolated real-time plan/schedule events
+   */
+  private emitRealtimeScheduleEvent(
+    customerId: number | string,
+    event:
+      | 'PLAN_SCHEDULE_CREATED'
+      | 'PLAN_SCHEDULE_UPDATED'
+      | 'PLAN_SCHEDULE_DELETED'
+      | 'ACTIVE_PLAN_UPDATED'
+      | 'SCHEDULE_STATUS_CHANGED',
+    data?: { scheduleId?: number | string; planId?: number | string; date?: string; [key: string]: any },
+  ) {
+    if (this.planScheduleGateway) {
+      try {
+        this.planScheduleGateway.emitPlanScheduleEvent(customerId, {
+          event,
+          ...data,
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to emit real-time schedule event: ${err?.message}`);
+      }
+    }
+  }
 
   /**
    * Self-contained active plan resolver using only PrismaService.
@@ -298,7 +326,7 @@ export class WorkService {
     // 3. Resolve Service Name and Check / Initialize Entitlement
     const serviceName = this.resolveServiceName(dto.workType, dto.serviceName);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Find or create PlanEntitlement for this service
       let entitlement = await tx.planEntitlement.findFirst({
         where: { customerId: numCustomerId, serviceName },
@@ -442,6 +470,14 @@ export class WorkService {
 
       return work;
     });
+
+    this.emitRealtimeScheduleEvent(result.customerId, 'PLAN_SCHEDULE_CREATED', {
+      scheduleId: result.id,
+      planId: result.subscriptionId,
+      date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
+    });
+
+    return result;
   }
 
   /**
@@ -468,7 +504,7 @@ export class WorkService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Handle quota transition if status changed to COMPLETED or CANCELLED
       if (dto.status === WorkStatus.COMPLETED && existing.status !== WorkStatus.COMPLETED && existing.entitlementId) {
         await tx.planEntitlement.update({
@@ -501,6 +537,14 @@ export class WorkService {
         },
       });
     });
+
+    this.emitRealtimeScheduleEvent(result.customerId, 'PLAN_SCHEDULE_UPDATED', {
+      scheduleId: result.id,
+      planId: result.subscriptionId,
+      date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
+    });
+
+    return result;
   }
 
   /**
@@ -735,7 +779,7 @@ export class WorkService {
       return { success: true, message: 'Work already cancelled.', work: existing };
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.work.update({
         where: { id: numId },
         data: { status: WorkStatus.CANCELLED },
@@ -761,6 +805,13 @@ export class WorkService {
         work: updated,
       };
     });
+
+    this.emitRealtimeScheduleEvent(existing.customerId, 'PLAN_SCHEDULE_DELETED', {
+      scheduleId: existing.id,
+      planId: existing.subscriptionId,
+    });
+
+    return result;
   }
 
   /**
@@ -1673,6 +1724,12 @@ export class WorkService {
       });
     }
 
+    this.emitRealtimeScheduleEvent(numCustomerId, 'PLAN_SCHEDULE_CREATED', {
+      scheduleId: reworkItem.id,
+      planId: existing.subscriptionId,
+      date: reworkItem.scheduledDate ? new Date(reworkItem.scheduledDate).toISOString().split('T')[0] : undefined,
+    });
+
     return {
       success: true,
       message: 'Rework request submitted successfully.',
@@ -1719,6 +1776,11 @@ export class WorkService {
 
     const scheduleGenResult = await this.generatePlanSchedules(numCustomerId, subscription.id);
 
+    this.emitRealtimeScheduleEvent(numCustomerId, 'ACTIVE_PLAN_UPDATED', {
+      planId: subscription.planId,
+      scheduleId: subscription.id,
+    });
+
     return {
       success: true,
       subscriptionId: subscription.id,
@@ -1760,6 +1822,11 @@ export class WorkService {
       },
     });
 
+    this.emitRealtimeScheduleEvent(existing.customerId, 'SCHEDULE_STATUS_CHANGED', {
+      scheduleId: updated.id,
+      status: 'completed',
+    });
+
     return {
       success: true,
       activity: {
@@ -1784,6 +1851,11 @@ export class WorkService {
       data: {
         status: WorkStatus.CANCELLED,
       },
+    });
+
+    this.emitRealtimeScheduleEvent(updated.customerId, 'SCHEDULE_STATUS_CHANGED', {
+      scheduleId: updated.id,
+      status: 'cancelled',
     });
 
     return {
