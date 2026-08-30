@@ -269,15 +269,18 @@ export class BannerService {
         ? dto.startAt
           ? new Date(dto.startAt)
           : null
-        : existing.startAt;
+        : undefined;
     const endAt =
       dto.endAt !== undefined
         ? dto.endAt
           ? new Date(dto.endAt)
           : null
-        : existing.endAt;
+        : undefined;
 
-    if (startAt && endAt && endAt < startAt) {
+    const effectiveStartAt = startAt !== undefined ? startAt : existing.startAt;
+    const effectiveEndAt = endAt !== undefined ? endAt : existing.endAt;
+
+    if (effectiveStartAt && effectiveEndAt && effectiveEndAt < effectiveStartAt) {
       throw new BadRequestException('endAt cannot be earlier than startAt');
     }
 
@@ -286,40 +289,31 @@ export class BannerService {
     const updated = await this.prisma.marketingBanner.update({
       where: { id },
       data: {
-        title: dto.title !== undefined ? (dto.title?.trim() || 'Home Banner') : undefined,
-        subtitle:
-          dto.subtitle !== undefined
-            ? dto.subtitle
-              ? dto.subtitle.trim()
-              : null
-            : undefined,
-        description:
-          dto.description !== undefined
-            ? dto.description
-              ? dto.description.trim()
-              : null
-            : undefined,
-        imageUrl: imageUrl !== undefined ? imageUrl : undefined,
-        imagePublicId: cleanKey !== undefined ? cleanKey : undefined,
-        imageKey: cleanKey !== undefined ? cleanKey : undefined,
-        ctaText:
-          dto.ctaText !== undefined
-            ? dto.ctaText
-              ? dto.ctaText.trim()
-              : null
-            : undefined,
-        ctaUrl:
-          dto.ctaUrl !== undefined
-            ? dto.ctaUrl
-              ? dto.ctaUrl.trim()
-              : null
-            : undefined,
-        priority: dto.priority !== undefined ? Number(dto.priority) : undefined,
-        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : undefined,
-        isPublished:
-          dto.isPublished !== undefined ? Boolean(dto.isPublished) : undefined,
-        startAt,
-        endAt,
+        ...(dto.title !== undefined && { title: dto.title?.trim() || 'Home Banner' }),
+        ...(dto.subtitle !== undefined && {
+          subtitle: dto.subtitle ? dto.subtitle.trim() : null,
+        }),
+        ...(dto.description !== undefined && {
+          description: dto.description ? dto.description.trim() : null,
+        }),
+        ...(imageUrl !== undefined && { imageUrl }),
+        ...(cleanKey !== undefined && {
+          imagePublicId: cleanKey,
+          imageKey: cleanKey,
+        }),
+        ...(dto.ctaText !== undefined && {
+          ctaText: dto.ctaText ? dto.ctaText.trim() : null,
+        }),
+        ...(dto.ctaUrl !== undefined && {
+          ctaUrl: dto.ctaUrl ? dto.ctaUrl.trim() : null,
+        }),
+        ...(dto.priority !== undefined && { priority: Number(dto.priority) }),
+        ...(dto.isActive !== undefined && { isActive: Boolean(dto.isActive) }),
+        ...(dto.isPublished !== undefined && {
+          isPublished: Boolean(dto.isPublished),
+        }),
+        ...(startAt !== undefined && { startAt }),
+        ...(endAt !== undefined && { endAt }),
       },
     });
 

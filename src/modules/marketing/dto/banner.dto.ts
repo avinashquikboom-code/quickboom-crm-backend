@@ -55,23 +55,35 @@ export class CreateMarketingBannerDto {
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => (value === 'false' || value === false || value === 0 || value === '0') ? false : true)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (value === 'false' || value === false || value === 0 || value === '0') return false;
+    if (value === 'true' || value === true || value === 1 || value === '1') return true;
+    return undefined;
+  })
   isActive?: boolean;
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsBoolean()
   @IsOptional()
-  @Transform(({ value }) => (value === 'false' || value === false || value === 0 || value === '0') ? false : true)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (value === 'false' || value === false || value === 0 || value === '0') return false;
+    if (value === 'true' || value === true || value === 1 || value === '1') return true;
+    return undefined;
+  })
   isPublished?: boolean;
 
   @ApiPropertyOptional({ example: '2026-08-20T00:00:00.000Z' })
   @IsDateString()
   @IsOptional()
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
   startAt?: string;
 
   @ApiPropertyOptional({ example: '2026-09-20T23:59:59.000Z' })
   @IsDateString()
   @IsOptional()
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
   endAt?: string;
 }
 
