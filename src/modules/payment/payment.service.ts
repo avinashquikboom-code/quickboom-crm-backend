@@ -708,6 +708,9 @@ export class PaymentService {
     this.logger.log(
       `[PAYMENT_VERIFIED_SUCCESS] customerId=${customerId} plan=${plan.name} paymentId=${dto.razorpay_payment_id}`,
     );
+    this.logger.log(
+      `[PLAN_PURCHASE]\ncustomerId: ${customerId}\nplanId: ${plan.id}\npurchaseDate: ${new Date().toISOString().split('T')[0]}\npaymentStatus: ${result.isFullyPaid ? 'PAID' : 'PARTIALLY_PAID'}\nsubscriptionId: ${result.subscription.id}`,
+    );
 
     const remainingDays = Math.max(0, Math.ceil((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
     const totalDays = cycle === SubscriptionBillingCycle.YEARLY ? 365 : 30;

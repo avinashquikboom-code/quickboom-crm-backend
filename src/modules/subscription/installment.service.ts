@@ -15,6 +15,7 @@ import {
   PaymentMethod,
   InvoiceStatus,
 } from '@prisma/client';
+import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 
 export const DEFAULT_BUFFER_DAYS = 0;
 
@@ -689,8 +690,10 @@ export class InstallmentService {
     const secondInstallmentBase = Math.round((secondInstallmentTotal / 1.18) * 100) / 100;
     const secondInstallmentTax = Math.round((secondInstallmentTotal - secondInstallmentBase) * 100) / 100;
 
-    const durationDays = cycle === SubscriptionBillingCycle.YEARLY ? 365 : 30;
-    const newEndDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const { startDate, endDate: newEndDate } = calculateSubscriptionDates(now, durationMonths);
+    const secondDueDate = new Date(startDate);
+    secondDueDate.setDate(secondDueDate.getDate() + 30);
 
     const newSubResult = await this.prisma.$transaction(async (tx) => {
       // 1. Create NEW Subscription Record
@@ -700,7 +703,7 @@ export class InstallmentService {
           planId: plan.id,
           status: SubscriptionStatus.ACTIVE,
           billingCycle: cycle,
-          startDate: now,
+          startDate,
           endDate: newEndDate,
           customPrice: dto.customPrice !== undefined ? dto.customPrice : null,
           customUserLimit: plan.userLimit,
@@ -771,10 +774,6 @@ export class InstallmentService {
       });
 
       // 4. Create Installments Schedule for the New Plan (50% + 50%)
-      const inst1Expiry = new Date(now);
-      inst1Expiry.setDate(inst1Expiry.getDate() + 30);
-      const inst1BufferEnd = new Date(inst1Expiry);
-
       await tx.subscriptionInstallment.create({
         data: {
           customerId: numCustomerId,
@@ -786,10 +785,10 @@ export class InstallmentService {
           taxAmount: firstInstallmentTax,
           totalAmount: firstInstallmentTotal,
           status: InstallmentStatus.PAID,
-          dueDate: now,
-          expiryDate: inst1Expiry,
+          dueDate: startDate,
+          expiryDate: secondDueDate,
           bufferDays: 0,
-          bufferEndDate: inst1BufferEnd,
+          bufferEndDate: secondDueDate,
           paidAt: now,
           paymentHistoryId: payment.id,
           invoiceId: invoice.id,
@@ -798,11 +797,6 @@ export class InstallmentService {
       });
 
       // Installment 2 (Second 50% Installment)
-      const inst2Start = new Date(inst1Expiry);
-      const inst2Expiry = new Date(inst2Start);
-      inst2Expiry.setDate(inst2Expiry.getDate() + 30);
-      const inst2BufferEnd = new Date(inst2Expiry);
-
       await tx.subscriptionInstallment.create({
         data: {
           customerId: numCustomerId,
@@ -814,10 +808,10 @@ export class InstallmentService {
           taxAmount: secondInstallmentTax,
           totalAmount: secondInstallmentTotal,
           status: InstallmentStatus.DUE,
-          dueDate: inst2Start,
-          expiryDate: inst2Expiry,
+          dueDate: secondDueDate,
+          expiryDate: newEndDate,
           bufferDays: 0,
-          bufferEndDate: inst2BufferEnd,
+          bufferEndDate: newEndDate,
         },
       });
 
@@ -835,6 +829,9 @@ export class InstallmentService {
 
     this.logger.log(
       `[NEW_PLAN] oldSubscriptionId: ${oldSub?.id || null}, newSubscriptionId: ${newSubResult.newSub.id}, originalPlanValue: ${fullTotalAmount}, newPlanValue: ${fullTotalAmount}`,
+    );
+    this.logger.log(
+      `[PLAN_PURCHASE]\ncustomerId: ${numCustomerId}\nplanId: ${plan.id}\npurchaseDate: ${now.toISOString().split('T')[0]}\npaymentStatus: PARTIALLY_PAID\nsubscriptionId: ${newSubResult.newSub.id}`,
     );
 
     const summary = await this.getCustomerInstallmentSummary(numCustomerId);
