@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TrendingService } from './trending.service';
 import { TrendingController } from './trending.controller';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { TrendingCategory } from '@prisma/client';
 
@@ -9,6 +10,7 @@ describe('Trending Content Module', () => {
   let service: TrendingService;
   let controller: TrendingController;
   let prisma: any;
+  let s3Service: any;
 
   beforeEach(async () => {
     prisma = {
@@ -17,8 +19,19 @@ describe('Trending Content Module', () => {
         findMany: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
-        count: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
+    };
+
+    s3Service = {
+      uploadMedia: jest.fn().mockResolvedValue({
+        imageUrl: 'https://s3.ap-south-1.amazonaws.com/quikboom/marketing/trending/test.mp4',
+        imageKey: 'marketing/trending/test.mp4',
+      }),
+      getPresignedUrl: jest.fn().mockImplementation((url) => Promise.resolve(url)),
+      formatS3Url: jest.fn().mockReturnValue('https://s3.ap-south-1.amazonaws.com/quikboom/test.mp4'),
+      deleteFile: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -26,6 +39,7 @@ describe('Trending Content Module', () => {
       providers: [
         TrendingService,
         { provide: PrismaService, useValue: prisma },
+        { provide: S3Service, useValue: s3Service },
       ],
     }).compile();
 
