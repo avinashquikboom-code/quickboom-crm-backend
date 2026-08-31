@@ -176,6 +176,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (cust) {
         customerId = cust.id;
       }
+    }
+
     const customerCode = customerId ? `QB-CUST-${String(customerId).padStart(3, '0')}` : 'NONE';
     this.logger.log(
       `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
@@ -195,5 +197,4 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       permissions: Array.from(permissionsMap.values()),
     };
   }
-}
 }
