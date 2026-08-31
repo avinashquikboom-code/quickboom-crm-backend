@@ -79,12 +79,11 @@ authorization: ALLOWED (ADMIN)`);
         });
       }
 
-      // Fallback: lookup customer by user ID or user email
+      // Fallback: lookup customer by user ID or user email via relationship
       if (!customer && user.id) {
         customer = await this.prisma.customer.findFirst({
           where: {
             OR: [
-              { id: user.id },
               { users: { some: { id: user.id } } },
               ...(user.email ? [{ email: user.email }] : []),
               ...(user.phone ? [{ phone: user.phone }] : []),
@@ -102,57 +101,17 @@ authorization: ALLOWED (ADMIN)`);
         throw new ForbiddenException('User does not belong to any customer');
       }
 
-      if (!customer || customer.isActive === false) {
+      if (!customer && authCustomerPk) {
         throw new ForbiddenException('Customer record not found or deactivated');
       }
 
-      this.logger.log(`[AUTH_DEBUG]
-userId: ${user.id}
-customerId: ${customer.id}
-customerCode: QB-CUST-${String(customer.id).padStart(3, '0')}
-role: ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`);
-
-      // Check header x-customer-id
-      if (headerCustomerId) {
-        const headerStr = String(headerCustomerId).trim();
-        const resolvedHeaderPk = await this.resolveCustomerPk(headerStr);
-        if (resolvedHeaderPk !== undefined && resolvedHeaderPk !== authCustomerPk) {
-          throw new ForbiddenException('Cross-customer access forbidden');
-        } else if (resolvedHeaderPk === undefined) {
-          if (!this.isDirectAlias(headerStr, authCustomerPk!, customer)) {
-            throw new ForbiddenException('Cross-customer access forbidden');
-          }
-        }
-      }
-
-      // Check query customerId
-      if (queryCustomerId) {
-        const queryStr = String(queryCustomerId).trim();
-        const resolvedQueryPk = await this.resolveCustomerPk(queryStr);
-        if (resolvedQueryPk !== undefined && resolvedQueryPk !== authCustomerPk) {
-          throw new ForbiddenException('Cross-customer access forbidden');
-        } else if (resolvedQueryPk === undefined) {
-          if (!this.isDirectAlias(queryStr, authCustomerPk!, customer)) {
-            throw new ForbiddenException('Cross-customer access forbidden');
-          }
-        }
+      if (!customer || customer.isActive === false) {
+        throw new ForbiddenException('Customer record not found or deactivated');
       }
     } else {
       // Fallback for isolated unit tests without Prisma
       if (authCustomerPk == null || authCustomerPk <= 0) {
         throw new ForbiddenException('User does not belong to any customer');
-      }
-      if (headerCustomerId) {
-        const headerStr = String(headerCustomerId).trim();
-        if (!this.isDirectAlias(headerStr, authCustomerPk)) {
-          throw new ForbiddenException('Cross-customer access forbidden');
-        }
-      }
-      if (queryCustomerId) {
-        const queryStr = String(queryCustomerId).trim();
-        if (!this.isDirectAlias(queryStr, authCustomerPk)) {
-          throw new ForbiddenException('Cross-customer access forbidden');
-        }
       }
     }
 
@@ -160,23 +119,74 @@ role: ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`)
       throw new ForbiddenException('User does not belong to any customer');
     }
 
+    const authCustomerCode = `QB-CUST-${String(authCustomerPk).padStart(3, '0')}`;
+
+    // Resolve and validate header x-customer-id
+    let resolvedHeaderPk: number | undefined;
+    if (headerCustomerId) {
+      const headerStr = String(headerCustomerId).trim();
+      resolvedHeaderPk = await this.resolveCustomerPk(headerStr);
+      if (resolvedHeaderPk === undefined && this.isDirectAlias(headerStr, authCustomerPk, customer)) {
+        resolvedHeaderPk = authCustomerPk;
+      }
+      if (resolvedHeaderPk === undefined || resolvedHeaderPk !== authCustomerPk) {
+        throw new ForbiddenException('Cross-customer access forbidden');
+      }
+    }
+
+    // Resolve and validate query customerId
+    let resolvedQueryPk: number | undefined;
+    if (queryCustomerId) {
+      const queryStr = String(queryCustomerId).trim();
+      resolvedQueryPk = await this.resolveCustomerPk(queryStr);
+      if (resolvedQueryPk === undefined && this.isDirectAlias(queryStr, authCustomerPk, customer)) {
+        resolvedQueryPk = authCustomerPk;
+      }
+      if (resolvedQueryPk === undefined || resolvedQueryPk !== authCustomerPk) {
+        throw new ForbiddenException('Cross-customer access forbidden');
+      }
+    }
+
+    // Safe debug logs immediately before passing authorization
+    this.logger.log(`[CustomerGuard]
+user.id = ${user.id}
+user.customerId = ${user.customerId}
+user.customerCode = ${user.customerCode || authCustomerCode}
+request.query.customerId = ${queryCustomerId || 'NONE'}
+request.headers.x-customer-id = ${headerCustomerId || 'NONE'}
+resolvedQueryCustomerId = ${queryCustomerId ? (resolvedQueryPk ?? 'NOT_FOUND') : 'NONE'}
+resolvedHeaderCustomerId = ${headerCustomerId ? (resolvedHeaderPk ?? 'NOT_FOUND') : 'NONE'}
+resolvedAuthenticatedCustomerId = ${authCustomerPk}
+user.role = ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`);
+
+    this.logger.log(`[CustomerGuard]
+authenticatedUserId: ${user.id}
+authenticatedCustomerId: ${authCustomerPk}
+authenticatedCustomerCode: ${authCustomerCode}
+
+requestedCustomerId: ${queryCustomerId || headerCustomerId || authCustomerPk}
+resolvedRequestedCustomerId: ${resolvedQueryPk ?? resolvedHeaderPk ?? authCustomerPk}
+
+customerMatch: true
+customerActive: ${customer ? customer.isActive !== false : true}`);
+
     request.customerId = authCustomerPk;
-    request.customerExternalId = requestedIdentifier ? String(requestedIdentifier) : `QB-CUST-${String(authCustomerPk).padStart(3, '0')}`;
+    request.customerExternalId = authCustomerCode;
     return true;
   }
 
   private async resolveCustomerPk(rawId: any): Promise<number | undefined> {
     if (rawId == null) return undefined;
     const str = String(rawId).trim();
-    if (!str) return undefined;
+    if (!str || str === 'null' || str === 'undefined') return undefined;
 
     // 1. Direct integer check
     const directNum = parseInt(str, 10);
     if (!isNaN(directNum) && String(directNum) === str && directNum > 0) {
       if (this.prisma) {
         const exists = await this.prisma.customer.findFirst({
-          where: { id: directNum, deletedAt: null, isActive: true },
-          select: { id: true },
+          where: { id: directNum, deletedAt: null },
+          select: { id: true, isActive: true },
         });
         if (exists) return exists.id;
       } else {
@@ -192,8 +202,8 @@ role: ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`)
       if (!isNaN(extractedNum) && extractedNum > 0) {
         if (this.prisma) {
           const exists = await this.prisma.customer.findFirst({
-            where: { id: extractedNum, deletedAt: null, isActive: true },
-            select: { id: true },
+            where: { id: extractedNum, deletedAt: null },
+            select: { id: true, isActive: true },
           });
           if (exists) return exists.id;
         } else {
@@ -214,9 +224,8 @@ role: ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`)
             { phone: str },
           ],
           deletedAt: null,
-          isActive: true,
         },
-        select: { id: true },
+        select: { id: true, isActive: true },
       });
       if (byAttr) return byAttr.id;
     }
