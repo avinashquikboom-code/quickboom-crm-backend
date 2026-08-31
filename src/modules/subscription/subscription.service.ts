@@ -1264,6 +1264,10 @@ export class SubscriptionService {
       },
     });
 
+    this.logger.log(
+      `[PLAN_DELETE_DEBUG]\nplanId: ${planId}\ndeleteResponse: SUCCESS\ndatabaseStatusAfterDelete: isActive=${plan.isActive}, deletedAt=${plan.deletedAt}`,
+    );
+
     return {
       id: plan.id,
       name: plan.name,
