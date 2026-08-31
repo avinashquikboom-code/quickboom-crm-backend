@@ -62,6 +62,14 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
         findUnique: jest.fn().mockImplementation(({ where }) => {
           return mockPlans.find((p) => p.id === where.id) || null;
         }),
+        findFirst: jest.fn().mockImplementation(({ where }) => {
+          return mockPlans.find((p) => {
+            if (where?.id && p.id !== where.id) return false;
+            if (where?.deletedAt === null && p.deletedAt) return false;
+            if (where?.isActive === true && p.isActive === false) return false;
+            return true;
+          }) || null;
+        }),
       },
       subscriptionInstallment: {
         create: jest.fn().mockImplementation(({ data }) => {
