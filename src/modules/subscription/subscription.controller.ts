@@ -320,7 +320,7 @@ export class SubscriptionController {
     try {
       const plan = await this.planAccessService.getEffectivePlan(customerId);
       const upcomingPlan = plan?.upcomingPlan || null;
-      const isCurrentActive = Boolean(plan && plan.isActive && plan.subscriptionId);
+      const isCurrentActive = Boolean(plan && (plan.isActive || plan.status === 'ACTIVE') && plan.subscriptionId);
 
       const currentPlanData = isCurrentActive
         ? {
