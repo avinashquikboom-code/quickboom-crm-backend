@@ -49,7 +49,15 @@ export class ClaimService {
 
   async findAll(
     customerId: any,
-    query?: { status?: ClaimStatus; category?: string; employeeId?: number; search?: string; page?: number; limit?: number },
+    query?: {
+      user?: any;
+      status?: ClaimStatus;
+      category?: string;
+      employeeId?: number;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
   ) {
     const cid = this.resolveCustomerId(customerId);
     const page = Math.max(Number(query?.page) || 1, 1);
@@ -58,14 +66,28 @@ export class ClaimService {
 
     const where: any = { customerId: cid };
 
+    // If calling user is an Employee role, auto-scope to their own employee ID
+    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: query.user.id },
+            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        where.employeeId = emp.id;
+      }
+    } else if (query?.employeeId) {
+      where.employeeId = Number(query.employeeId);
+    }
+
     if (query?.status) {
       where.status = query.status;
     }
     if (query?.category && query.category !== 'ALL') {
       where.category = query.category;
-    }
-    if (query?.employeeId) {
-      where.employeeId = Number(query.employeeId);
     }
     if (query?.search) {
       const q = query.search.trim();
@@ -102,18 +124,15 @@ export class ClaimService {
       this.prisma.employeeClaim.count({ where }),
     ]);
 
-    const formatted = items.map((claim) => ({
-      ...claim,
-      employeeName: `${claim.employee?.firstName || ''} ${claim.employee?.lastName || ''}`.trim() || 'Staff Member',
-      department: claim.employee?.department?.name || 'General',
-      designation: claim.employee?.designation?.name || 'Staff',
-    }));
-
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
-      data: formatted,
-      items: formatted,
+      data: items.map((c) => ({
+        ...c,
+        employeeName: `${c.employee?.firstName || ''} ${c.employee?.lastName || ''}`.trim() || 'Staff Member',
+        department: c.employee?.department?.name || 'General',
+        designation: c.employee?.designation?.name || 'Staff',
+      })),
       pagination: {
         page,
         pageSize: limit,
@@ -161,14 +180,34 @@ export class ClaimService {
     };
   }
 
-  async create(customerId: any, dto: CreateClaimDto) {
+  async create(customerId: any, dto: CreateClaimDto, user?: any) {
     const cid = this.resolveCustomerId(customerId);
+
+    let employeeId = dto.employeeId;
+    if (!employeeId && user) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        employeeId = emp.id;
+      }
+    }
+
+    if (!employeeId) {
+      throw new NotFoundException('Employee ID is required to submit a claim');
+    }
+
     const employee = await this.prisma.employee.findFirst({
-      where: { id: dto.employeeId, customerId: cid },
+      where: { id: employeeId, customerId: cid },
     });
 
     if (!employee) {
-      throw new NotFoundException(`Employee with ID #${dto.employeeId} not found`);
+      throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
     const claimDate = dto.claimDate ? new Date(dto.claimDate) : new Date();
@@ -176,8 +215,8 @@ export class ClaimService {
     return this.prisma.employeeClaim.create({
       data: {
         customerId: cid,
-        employeeId: dto.employeeId,
-        category: dto.category.toUpperCase(),
+        employeeId: employeeId,
+        category: (dto.category || 'GENERAL').toUpperCase(),
         amount: dto.amount,
         description: dto.description,
         claimDate,

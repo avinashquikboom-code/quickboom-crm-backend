@@ -69,20 +69,41 @@ export class AttendanceService {
   }
 
   private async resolveOfficeForEmployee(employee: any) {
-    if (employee.office && employee.office.isActive) {
-      return employee.office;
-    }
+    const activeOffices = await this.prisma.branchGeofence.findMany({
+      where: { customerId: employee.customerId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        latitude: true,
+        longitude: true,
+        radiusMeters: true,
+        isActive: true,
+      },
+    });
 
-    if (employee.officeId) {
+    console.log('[ATTENDANCE_DEBUG]', {
+      employeeId: employee.id,
+      organizationId: employee.customerId,
+      branchId: employee.branch || null,
+      officeLocationId: employee.officeId || (employee.office ? employee.office.id : null),
+      activeOfficeLocations: activeOffices,
+    });
+
+    let selectedOffice: any = null;
+
+    if (employee.office && employee.office.isActive) {
+      selectedOffice = employee.office;
+    } else if (employee.officeId) {
       const office = await this.prisma.branchGeofence.findUnique({
         where: { id: employee.officeId },
       });
       if (office && office.isActive) {
-        return office;
+        selectedOffice = office;
       }
     }
 
-    if (employee.branch) {
+    if (!selectedOffice && employee.branch) {
       const office = await this.prisma.branchGeofence.findFirst({
         where: {
           customerId: employee.customerId,
@@ -90,21 +111,71 @@ export class AttendanceService {
           isActive: true,
         },
       });
-      if (office) return office;
+      if (office) selectedOffice = office;
     }
 
-    const defaultOffice = await this.prisma.branchGeofence.findFirst({
-      where: { customerId: employee.customerId, isActive: true },
-      orderBy: { id: 'asc' },
-    });
+    if (!selectedOffice) {
+      const defaultOffice = await this.prisma.branchGeofence.findFirst({
+        where: { customerId: employee.customerId, isActive: true },
+        orderBy: { id: 'asc' },
+      });
+      if (defaultOffice) selectedOffice = defaultOffice;
+    }
 
-    if (!defaultOffice) {
+    // If still no office location configured for customer, auto-provision default Head Office for active customer
+    if (!selectedOffice) {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: employee.customerId },
+      });
+
+      if (customer && customer.isActive) {
+        selectedOffice = await this.prisma.branchGeofence.create({
+          data: {
+            customerId: customer.id,
+            name: 'Head Office',
+            city: 'Mumbai',
+            latitude: 19.0760,
+            longitude: 72.8777,
+            radiusMeters: 500.0,
+            isActive: true,
+          },
+        });
+        console.log(`[ATTENDANCE_DEBUG] Auto-provisioned default Head Office for Customer ID: ${customer.id}`);
+        // Link to employee
+        await this.prisma.employee.update({
+          where: { id: employee.id },
+          data: { officeId: selectedOffice.id, branch: selectedOffice.name },
+        });
+      }
+    }
+
+    if (!selectedOffice) {
       throw new BadRequestException(
         'No active office location configured for your organization. Please contact Admin.',
       );
     }
 
-    return defaultOffice;
+    // Validate latitude, longitude, and radius
+    if (
+      isNaN(selectedOffice.latitude) ||
+      isNaN(selectedOffice.longitude) ||
+      selectedOffice.latitude < -90 ||
+      selectedOffice.latitude > 90 ||
+      selectedOffice.longitude < -180 ||
+      selectedOffice.longitude > 180
+    ) {
+      throw new BadRequestException(
+        `Invalid GPS coordinates (${selectedOffice.latitude}, ${selectedOffice.longitude}) configured for office "${selectedOffice.name}". Coordinates must be valid latitude (-90 to 90) and longitude (-180 to 180). Please contact Admin.`,
+      );
+    }
+
+    if (!selectedOffice.radiusMeters || selectedOffice.radiusMeters <= 0) {
+      throw new BadRequestException(
+        `Invalid attendance radius (${selectedOffice.radiusMeters}m) configured for office "${selectedOffice.name}". Radius must be greater than 0 meters. Please contact Admin.`,
+      );
+    }
+
+    return selectedOffice;
   }
 
   private async getActiveAttendancePolicy(customerId: number, officeId?: number | null) {

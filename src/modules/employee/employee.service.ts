@@ -1344,4 +1344,97 @@ export class EmployeeService {
       },
     };
   }
+
+  async getMyProfile(user: any, customerId?: number | string) {
+    if (!user) {
+      throw new ForbiddenException('Authenticated user required');
+    }
+
+    let employee = await this.prisma.employee.findFirst({
+      where: {
+        OR: [
+          { userId: user.id },
+          { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+      include: {
+        department: true,
+        designation: true,
+        office: true,
+        shift: true,
+        customer: {
+          select: {
+            id: true,
+            companyName: true,
+            name: true,
+            email: true,
+            phone: true,
+            city: true,
+            state: true,
+          },
+        },
+      },
+    });
+
+    if (!employee && customerId) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId)) {
+        employee = await this.prisma.employee.findFirst({
+          where: { customerId: numCustomerId, status: 'ACTIVE' },
+          include: {
+            department: true,
+            designation: true,
+            office: true,
+            shift: true,
+            customer: true,
+          },
+        });
+      }
+    }
+
+    if (!employee) {
+      throw new NotFoundException('Employee profile not found');
+    }
+
+    let managerName = 'Direct Reporting';
+    if (employee.managerId) {
+      const manager = await this.prisma.employee.findUnique({
+        where: { id: employee.managerId },
+        select: { firstName: true, lastName: true },
+      });
+      if (manager) {
+        managerName = `${manager.firstName} ${manager.lastName}`;
+      }
+    }
+
+    return {
+      id: employee.id,
+      customerId: employee.customerId,
+      employeeCode: employee.employeeCode,
+      firstName: employee.firstName,
+      lastName: employee.lastName,
+      name: `${employee.firstName} ${employee.lastName}`.trim(),
+      email: employee.email,
+      phone: employee.phone || '',
+      gender: employee.gender || '',
+      dob: employee.dob ? employee.dob.toISOString().split('T')[0] : '',
+      joiningDate: employee.joiningDate ? employee.joiningDate.toISOString().split('T')[0] : '',
+      department: employee.department?.name || 'General',
+      departmentId: employee.departmentId,
+      designation: employee.designation?.name || 'Staff',
+      designationId: employee.designationId,
+      branch: employee.branch || employee.office?.name || 'Head Office',
+      officeId: employee.officeId,
+      office: employee.office,
+      manager: managerName,
+      managerId: employee.managerId,
+      employmentType: employee.employmentType || 'FULL_TIME',
+      address: employee.address || '',
+      emergencyContact: employee.emergencyContact || '',
+      bankDetails: employee.bankDetails || {},
+      documents: employee.documents || [],
+      status: employee.status || 'ACTIVE',
+      organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',
+    };
+  }
 }

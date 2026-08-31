@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @Controller('admin/payroll')
 export class PayrollController {
@@ -71,6 +72,7 @@ export class PayrollController {
 
   @Get('slips')
   async findSlips(
+    @CurrentUser() user: any,
     @CurrentCustomer() currentCustomer?: any,
     @Query('customerId') customerIdQuery?: string,
     @Query('page') page?: string,
@@ -81,6 +83,7 @@ export class PayrollController {
   ) {
     const customerId = customerIdQuery || currentCustomer;
     return this.payrollService.getSalarySlips(customerId, {
+      user,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
       search,

@@ -88,6 +88,24 @@ export class EmployeeController {
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
   }
 
+  @Get('profile/me')
+  @ApiOperation({ summary: 'Get current authenticated employee full profile' })
+  async getMyProfile(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    return this.employeeService.getMyProfile(user, customerId);
+  }
+
+  @Get('me')
+  @ApiOperation({ summary: 'Alias to get current authenticated employee profile' })
+  async getMe(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    return this.employeeService.getMyProfile(user, customerId);
+  }
+
   @Get('hrm/offices')
   @ApiOperation({ summary: 'Get list of real branches/offices for filtering' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })

@@ -314,7 +314,7 @@ export class PayrollService {
 
   async getSalarySlips(
     customerId?: number | string,
-    query?: { page?: number; limit?: number; search?: string; month?: number; year?: number },
+    query?: { user?: any; page?: number; limit?: number; search?: string; month?: number; year?: number },
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const page = Math.max(Number(query?.page) || 1, 1);
@@ -324,6 +324,20 @@ export class PayrollService {
     const where: any = { customerId: numCustomerId };
     if (query?.month) where.month = Number(query.month);
     if (query?.year) where.year = Number(query.year);
+
+    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: query.user.id },
+            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        where.employeeId = emp.id;
+      }
+    }
 
     if (query?.search && query.search.trim()) {
       const s = query.search.trim();

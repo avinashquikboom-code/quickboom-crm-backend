@@ -172,6 +172,26 @@ async function main() {
     console.log(`✅ Refreshed credentials for (${demoEmail})`);
   }
 
+  // 5.1 Ensure default office location (BranchGeofence) exists for the customer
+  let headOffice = await prisma.branchGeofence.findFirst({
+    where: { customerId: customer.id, isActive: true },
+  });
+
+  if (!headOffice) {
+    headOffice = await prisma.branchGeofence.create({
+      data: {
+        customerId: customer.id,
+        name: 'Head Office',
+        city: 'Mumbai',
+        latitude: 19.0760,
+        longitude: 72.8777,
+        radiusMeters: 500.0,
+        isActive: true,
+      },
+    });
+    console.log(`✅ Created Head Office geofence for customer ${customer.id}`);
+  }
+
   // 6. Ensure Employee record exists for demoUser
   let employee = await prisma.employee.findUnique({
     where: { userId: demoUser.id },
@@ -187,7 +207,8 @@ async function main() {
         lastName: 'Employee',
         email: demoEmail,
         phone: '+91-9876543210',
-        branch: 'Head Office',
+        branch: headOffice.name,
+        officeId: headOffice.id,
         status: 'ACTIVE',
         mobileLoginEnabled: true,
       },
@@ -198,6 +219,8 @@ async function main() {
       where: { id: employee.id },
       data: {
         customerId: customer.id,
+        officeId: headOffice.id,
+        branch: headOffice.name,
         status: 'ACTIVE',
         mobileLoginEnabled: true,
       },

@@ -40,6 +40,7 @@ export class ClaimController {
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'search', required: false })
   async findAll(
+    @CurrentUser() user: any,
     @CurrentCustomer() customerId: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -49,6 +50,7 @@ export class ClaimController {
     @Query('search') search?: string,
   ) {
     return this.claimService.findAll(customerId, {
+      user,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
       status,
@@ -66,8 +68,12 @@ export class ClaimController {
 
   @Post()
   @ApiOperation({ summary: 'Submit a new employee expense claim' })
-  async create(@CurrentCustomer() customerId: any, @Body() dto: CreateClaimDto) {
-    return this.claimService.create(customerId, dto);
+  async create(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Body() dto: CreateClaimDto,
+  ) {
+    return this.claimService.create(customerId, dto, user);
   }
 
   @Patch(':id')
