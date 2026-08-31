@@ -71,46 +71,62 @@ authorization: ALLOWED (ADMIN)`);
     }
 
     let customer: any = null;
+    let customerExists = false;
+    let customerActive = false;
+    let customerDeleted = false;
+
     if (this.prisma) {
       if (authCustomerPk) {
-        customer = await this.prisma.customer.findFirst({
-          where: { id: authCustomerPk, deletedAt: null },
-          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
+        const rawCustomer = await this.prisma.customer.findFirst({
+          where: { id: authCustomerPk },
+          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true, deletedAt: true },
         });
+        if (rawCustomer) {
+          customerExists = true;
+          customerActive = rawCustomer.isActive !== false;
+          customerDeleted = Boolean(rawCustomer.deletedAt);
+          if (!rawCustomer.deletedAt) {
+            customer = rawCustomer;
+          }
+        }
       }
 
       // Fallback: lookup customer by user ID or user email via relationship
       if (!customer && user.id) {
-        customer = await this.prisma.customer.findFirst({
+        const rawCustomer = await this.prisma.customer.findFirst({
           where: {
             OR: [
               { users: { some: { id: user.id } } },
-              ...(user.email ? [{ email: user.email }] : []),
+              ...(user.email ? [{ email: user.email }, { users: { some: { email: user.email } } }] : []),
               ...(user.phone ? [{ phone: user.phone }] : []),
             ],
-            deletedAt: null,
           },
-          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
+          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true, deletedAt: true },
         });
-        if (customer) {
-          authCustomerPk = customer.id;
+        if (rawCustomer) {
+          customerExists = true;
+          customerActive = rawCustomer.isActive !== false;
+          customerDeleted = Boolean(rawCustomer.deletedAt);
+          if (!rawCustomer.deletedAt) {
+            customer = rawCustomer;
+            authCustomerPk = rawCustomer.id;
+          }
         }
       }
 
-      if (!customer && !authCustomerPk) {
+      if (!customerExists && !authCustomerPk) {
         throw new ForbiddenException('User does not belong to any customer');
       }
 
-      if (!customer && authCustomerPk) {
-        throw new ForbiddenException('Customer record not found or deactivated');
-      }
-
-      if (!customer || customer.isActive === false) {
+      if (!customerExists || customerDeleted || !customerActive) {
         throw new ForbiddenException('Customer record not found or deactivated');
       }
     } else {
       // Fallback for isolated unit tests without Prisma
-      if (authCustomerPk == null || authCustomerPk <= 0) {
+      customerExists = authCustomerPk != null && authCustomerPk > 0;
+      customerActive = customerExists;
+      customerDeleted = false;
+      if (!customerExists) {
         throw new ForbiddenException('User does not belong to any customer');
       }
     }
@@ -147,28 +163,11 @@ authorization: ALLOWED (ADMIN)`);
       }
     }
 
-    // Safe debug logs immediately before passing authorization
-    this.logger.log(`[CustomerGuard]
-user.id = ${user.id}
-user.customerId = ${user.customerId}
-user.customerCode = ${user.customerCode || authCustomerCode}
-request.query.customerId = ${queryCustomerId || 'NONE'}
-request.headers.x-customer-id = ${headerCustomerId || 'NONE'}
-resolvedQueryCustomerId = ${queryCustomerId ? (resolvedQueryPk ?? 'NOT_FOUND') : 'NONE'}
-resolvedHeaderCustomerId = ${headerCustomerId ? (resolvedHeaderPk ?? 'NOT_FOUND') : 'NONE'}
-resolvedAuthenticatedCustomerId = ${authCustomerPk}
-user.role = ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`);
+    const resolvedRequestedCustomerId = resolvedQueryPk ?? resolvedHeaderPk ?? authCustomerPk;
 
-    this.logger.log(`[CustomerGuard]
-authenticatedUserId: ${user.id}
-authenticatedCustomerId: ${authCustomerPk}
-authenticatedCustomerCode: ${authCustomerCode}
-
-requestedCustomerId: ${queryCustomerId || headerCustomerId || authCustomerPk}
-resolvedRequestedCustomerId: ${resolvedQueryPk ?? resolvedHeaderPk ?? authCustomerPk}
-
-customerMatch: true
-customerActive: ${customer ? customer.isActive !== false : true}`);
+    this.logger.log(
+      `[CustomerGuard DEBUG]\nuser.id: ${user?.id ?? 'NONE'}\nuser.customerId: ${user?.customerId ?? 'NONE'}\nuser.customerCode: ${user?.customerCode ?? authCustomerCode}\nuser.role: ${user?.role ?? 'CUSTOMER'}\n\nquery.customerId: ${queryCustomerId ?? 'NONE'}\nheader.x-customer-id: ${headerCustomerId ?? 'NONE'}\n\nresolvedAuthenticatedCustomerId: ${authCustomerPk}\nresolvedRequestedCustomerId: ${resolvedRequestedCustomerId}\n\ncustomerExists: ${customerExists}\ncustomerActive: ${customerActive}\ncustomerDeleted: ${customerDeleted}`,
+    );
 
     request.customerId = authCustomerPk;
     request.customerExternalId = authCustomerCode;
