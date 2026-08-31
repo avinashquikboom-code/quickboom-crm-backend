@@ -65,39 +65,44 @@ authorization: ALLOWED (ADMIN)`);
     }
 
     // ── 2. NORMAL CUSTOMER TENANT ACCESS ─────────────────────────────────────
-    const userCustomerId = user?.customerId;
-    if (userCustomerId == null || Number(userCustomerId) <= 0) {
-      throw new ForbiddenException('User does not belong to any customer');
+    let authCustomerPk: number | undefined;
+    if (user?.customerId != null && Number(user.customerId) > 0) {
+      authCustomerPk = Number(user.customerId);
     }
-
-    const authCustomerPk = Number(userCustomerId);
-    let resolvedRequestedPk: number | undefined;
-
-    if (requestedIdentifier) {
-      resolvedRequestedPk = await this.resolveCustomerPk(requestedIdentifier);
-    }
-
-    this.logger.log(`[CUSTOMER_GUARD_DEBUG]
-userId: ${user.id}
-user.email: ${user.email}
-user.role: ${user.role || 'CUSTOMER'}
-user.customerId: ${user.customerId}
-user.customerCode: ${user.customerCode || 'NONE'}
-headerCustomerId: ${headerCustomerId || 'NONE'}
-queryCustomerId: ${queryCustomerId || 'NONE'}
-resolvedRequestedCustomerId: ${resolvedRequestedPk ?? 'NOT_RESOLVED'}
-resolvedAuthenticatedCustomerId: ${authCustomerPk}
-requestedCustomerIdentifierType: ${typeof requestedIdentifier}
-authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
 
     let customer: any = null;
     if (this.prisma) {
-      customer = await this.prisma.customer.findFirst({
-        where: { id: authCustomerPk, deletedAt: null, isActive: true },
-        select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
-      });
+      if (authCustomerPk) {
+        customer = await this.prisma.customer.findFirst({
+          where: { id: authCustomerPk, deletedAt: null },
+          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
+        });
+      }
 
-      if (!customer || !customer.isActive) {
+      // Fallback: lookup customer by user ID or user email
+      if (!customer && user.id) {
+        customer = await this.prisma.customer.findFirst({
+          where: {
+            OR: [
+              { id: user.id },
+              { users: { some: { id: user.id } } },
+              ...(user.email ? [{ email: user.email }] : []),
+              ...(user.phone ? [{ phone: user.phone }] : []),
+            ],
+            deletedAt: null,
+          },
+          select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
+        });
+        if (customer) {
+          authCustomerPk = customer.id;
+        }
+      }
+
+      if (!customer && !authCustomerPk) {
+        throw new ForbiddenException('User does not belong to any customer');
+      }
+
+      if (!customer || customer.isActive === false) {
         throw new ForbiddenException('Customer record not found or deactivated');
       }
 
@@ -108,7 +113,7 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
         if (resolvedHeaderPk !== undefined && resolvedHeaderPk !== authCustomerPk) {
           throw new ForbiddenException('Cross-customer access forbidden');
         } else if (resolvedHeaderPk === undefined) {
-          if (!this.isDirectAlias(headerStr, authCustomerPk, customer)) {
+          if (!this.isDirectAlias(headerStr, authCustomerPk!, customer)) {
             throw new ForbiddenException('Cross-customer access forbidden');
           }
         }
@@ -121,13 +126,16 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
         if (resolvedQueryPk !== undefined && resolvedQueryPk !== authCustomerPk) {
           throw new ForbiddenException('Cross-customer access forbidden');
         } else if (resolvedQueryPk === undefined) {
-          if (!this.isDirectAlias(queryStr, authCustomerPk, customer)) {
+          if (!this.isDirectAlias(queryStr, authCustomerPk!, customer)) {
             throw new ForbiddenException('Cross-customer access forbidden');
           }
         }
       }
     } else {
       // Fallback for isolated unit tests without Prisma
+      if (authCustomerPk == null || authCustomerPk <= 0) {
+        throw new ForbiddenException('User does not belong to any customer');
+      }
       if (headerCustomerId) {
         const headerStr = String(headerCustomerId).trim();
         if (!this.isDirectAlias(headerStr, authCustomerPk)) {
@@ -140,6 +148,10 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
           throw new ForbiddenException('Cross-customer access forbidden');
         }
       }
+    }
+
+    if (authCustomerPk == null || authCustomerPk <= 0) {
+      throw new ForbiddenException('User does not belong to any customer');
     }
 
     request.customerId = authCustomerPk;
