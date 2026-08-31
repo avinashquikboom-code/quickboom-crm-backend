@@ -106,6 +106,12 @@ authorization: ALLOWED (ADMIN)`);
         throw new ForbiddenException('Customer record not found or deactivated');
       }
 
+      this.logger.log(`[AUTH_DEBUG]
+userId: ${user.id}
+customerId: ${customer.id}
+customerCode: QB-CUST-${String(customer.id).padStart(3, '0')}
+role: ${user.role || (Array.isArray(user.roles) ? user.roles[0] : 'CUSTOMER')}`);
+
       // Check header x-customer-id
       if (headerCustomerId) {
         const headerStr = String(headerCustomerId).trim();
