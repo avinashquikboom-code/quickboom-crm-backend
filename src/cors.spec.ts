@@ -141,6 +141,17 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
 
+    it('handles OPTIONS /api/v1/health preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/health')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
     it('handles OPTIONS /api/v1/admin/plans preflight from https://admin.qbapp.online', async () => {
       const res = await request(app.getHttpServer())
         .options('/api/v1/admin/plans')
@@ -155,6 +166,18 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
   });
 
   describe('2. Actual Cross-Origin GET Requests & Error Responses', () => {
+    it('returns health payload with CORS headers on GET /api/v1/health', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/health')
+        .set('Origin', 'https://admin.qbapp.online');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.status).toBe('ok');
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
     it('returns Access-Control-Allow-Origin header on GET /api/v1/plans', async () => {
       const res = await request(app.getHttpServer())
         .get('/api/v1/plans')
