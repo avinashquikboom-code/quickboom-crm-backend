@@ -223,6 +223,18 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
+
+    it('handles OPTIONS /api/v1/admin/hrms/live-dashboard preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/admin/hrms/live-dashboard')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
   });
 
   describe('2. Actual Cross-Origin GET Requests & Error Responses', () => {

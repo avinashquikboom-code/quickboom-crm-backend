@@ -363,4 +363,148 @@ describe('AttendanceService (Punch In / Punch Out & Geofencing)', () => {
       );
     });
   });
+
+  describe('HRMS Live Dashboard', () => {
+    const mockAdminUser = {
+      id: 1,
+      email: 'admin@quickboom.online',
+      role: 'SUPER_ADMIN',
+    };
+
+    beforeEach(() => {
+      prisma.customer = {
+        findFirst: jest.fn().mockResolvedValue({ id: 1, name: 'QuickBoom Inc' }),
+      };
+      prisma.employeeLocation = {
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+    });
+
+    it('calculates full live dashboard summary with present, working, on-break, and radius status', async () => {
+      prisma.employee.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 10,
+          customerId: 1,
+          employeeCode: 'QB-001',
+          firstName: 'John',
+          lastName: 'Doe',
+          email: 'john@example.com',
+          status: 'ACTIVE',
+          department: { name: 'Engineering' },
+          designation: { name: 'Developer' },
+          office: {
+            id: 1,
+            name: 'Head Office',
+            city: 'Mumbai',
+            latitude: 19.076,
+            longitude: 72.8777,
+            radiusMeters: 200,
+          },
+          shift: {
+            id: 1,
+            name: 'Morning Shift',
+            code: 'MS-01',
+            startTime: '09:30 AM',
+            endTime: '06:30 PM',
+            gracePeriodMinutes: 15,
+            durationHours: 8,
+          },
+        },
+      ]);
+
+      prisma.branchGeofence.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          name: 'Head Office',
+          city: 'Mumbai',
+          latitude: 19.076,
+          longitude: 72.8777,
+          radiusMeters: 200,
+          isActive: true,
+        },
+      ]);
+
+      prisma.attendance.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 50,
+          customerId: 1,
+          employeeId: 10,
+          date: new Date(),
+          punchIn: new Date(Date.now() - 3600000), // 1 hour ago
+          punchOut: null,
+          status: 'PRESENT',
+          latitude: 19.0761,
+          longitude: 72.8778,
+          locationStatus: 'INSIDE_RADIUS',
+          workMode: 'OFFICE',
+          breaks: [],
+        },
+      ]);
+
+      const result = await service.getLiveDashboardData(mockAdminUser, 1);
+
+      expect(result.success).toBe(true);
+      expect(result.data.summary.totalEmployees).toBe(1);
+      expect(result.data.summary.present).toBe(1);
+      expect(result.data.summary.absent).toBe(0);
+      expect(result.data.summary.working).toBe(1);
+      expect(result.data.summary.onBreak).toBe(0);
+      expect(result.data.summary.insideRadius).toBe(1);
+      expect(result.data.employees.length).toBe(1);
+      expect(result.data.employees[0].currentStatus).toBe('WORKING');
+    });
+
+    it('identifies on-break status when active break is open', async () => {
+      prisma.employee.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 10,
+          customerId: 1,
+          employeeCode: 'QB-001',
+          firstName: 'John',
+          lastName: 'Doe',
+          email: 'john@example.com',
+          status: 'ACTIVE',
+          department: { name: 'Engineering' },
+          designation: { name: 'Developer' },
+          office: {
+            id: 1,
+            name: 'Head Office',
+            city: 'Mumbai',
+            latitude: 19.076,
+            longitude: 72.8777,
+            radiusMeters: 200,
+          },
+        },
+      ]);
+
+      prisma.branchGeofence.findMany = jest.fn().mockResolvedValue([]);
+      prisma.attendance.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 50,
+          customerId: 1,
+          employeeId: 10,
+          date: new Date(),
+          punchIn: new Date(Date.now() - 7200000),
+          punchOut: null,
+          status: 'PRESENT',
+          breaks: [
+            {
+              id: 1,
+              breakStart: new Date(Date.now() - 600000),
+              breakEnd: null,
+              duration: null,
+            },
+          ],
+        },
+      ]);
+
+      const result = await service.getLiveBreaks(mockAdminUser, 1);
+
+      expect(result.success).toBe(true);
+      expect(result.data.onBreakCount).toBe(1);
+      expect(result.data.activeBreaks.length).toBe(1);
+      expect(result.data.activeBreaks[0].breakStatus).toBe('ON_BREAK');
+    });
+  });
 });
+
