@@ -843,4 +843,375 @@ result: SUCCESS`);
       todayAttendance: todayAtt,
     };
   }
+
+  public async resolveCustomerId(user: any, customerId?: number | string): Promise<number> {
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.role === 'Super Admin' ||
+      (Array.isArray(user?.roles) && user.roles.some((r: string) => r.toUpperCase() === 'SUPER_ADMIN'));
+
+    if (customerId !== undefined && customerId !== null) {
+      const num = Number(customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+
+    if (user?.customerId !== undefined && user?.customerId !== null) {
+      const num = Number(user.customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+
+    if (isSuperAdmin) {
+      const firstCustomer = await this.prisma.customer.findFirst({
+        where: { isActive: true },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (firstCustomer) return firstCustomer.id;
+    }
+
+    throw new ForbiddenException('A valid organization or customer context is required.');
+  }
+
+  private parseTimeStrToDate(timeStr: string | null | undefined, baseDate: Date): Date | null {
+    if (!timeStr) return null;
+    const clean = timeStr.trim().toUpperCase();
+    const match = clean.match(/(\d+):(\d+)(?::(\d+))?\s*(AM|PM)?/);
+    if (!match) return null;
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const meridian = match[4];
+    if (meridian === 'PM' && hours < 12) hours += 12;
+    if (meridian === 'AM' && hours === 12) hours = 0;
+    const d = new Date(baseDate);
+    d.setHours(hours, minutes, 0, 0);
+    return d;
+  }
+
+  async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string) {
+    const customerId = await this.resolveCustomerId(user, customerIdParam);
+
+    const targetDate = dateParam ? new Date(dateParam) : new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [activeEmployees, offices, attendances, locations] = await Promise.all([
+      this.prisma.employee.findMany({
+        where: {
+          customerId,
+          status: 'ACTIVE',
+        },
+        include: {
+          department: true,
+          designation: true,
+          office: true,
+          shift: true,
+        },
+        orderBy: { id: 'asc' },
+      }),
+      this.prisma.branchGeofence.findMany({
+        where: {
+          customerId,
+          isActive: true,
+        },
+        orderBy: { id: 'asc' },
+      }),
+      this.prisma.attendance.findMany({
+        where: {
+          customerId,
+          date: { gte: startOfDay, lte: endOfDay },
+        },
+        include: {
+          breaks: {
+            orderBy: { breakStart: 'asc' },
+          },
+          office: true,
+        },
+      }),
+      this.prisma.employeeLocation.findMany({
+        where: {
+          customerId,
+          timestamp: { gte: startOfDay, lte: endOfDay },
+        },
+        orderBy: { timestamp: 'desc' },
+      }),
+    ]);
+
+    const attMap = new Map<number, (typeof attendances)[0]>();
+    for (const att of attendances) {
+      attMap.set(att.employeeId, att);
+    }
+
+    const locMap = new Map<number, (typeof locations)[0]>();
+    for (const loc of locations) {
+      if (!locMap.has(loc.employeeId)) {
+        locMap.set(loc.employeeId, loc);
+      }
+    }
+
+    const now = new Date();
+
+    const formattedEmployees = activeEmployees.map((emp) => {
+      const att = attMap.get(emp.id);
+      const latestLoc = locMap.get(emp.id);
+      const assignedOffice =
+        emp.office || offices.find((o) => o.id === emp.officeId) || offices[0] || null;
+
+      const punchInDate = att?.punchIn ? new Date(att.punchIn) : null;
+      const punchOutDate = att?.punchOut ? new Date(att.punchOut) : null;
+
+      const breaks = att?.breaks || [];
+      const activeBreak = breaks.find((b) => !b.breakEnd);
+      const isOnBreak = Boolean(activeBreak);
+      const activeBreakStart = activeBreak?.breakStart ? activeBreak.breakStart.toISOString() : null;
+
+      let currentBreakMinutes = 0;
+      if (activeBreak) {
+        currentBreakMinutes = Math.max(
+          0,
+          Math.round((now.getTime() - new Date(activeBreak.breakStart).getTime()) / (1000 * 60)),
+        );
+      }
+
+      const totalBreakMinutesToday = breaks.reduce((sum, b) => {
+        if (b.duration) return sum + b.duration;
+        if (b.breakEnd) {
+          return (
+            sum +
+            Math.round(
+              (new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60),
+            )
+          );
+        }
+        return sum + currentBreakMinutes;
+      }, 0);
+
+      let workingMinutes = 0;
+      if (punchInDate) {
+        const endWork = punchOutDate || now;
+        const totalElapsed = Math.max(
+          0,
+          Math.round((endWork.getTime() - punchInDate.getTime()) / (1000 * 60)),
+        );
+        workingMinutes = Math.max(0, totalElapsed - totalBreakMinutesToday);
+      }
+
+      let currentStatus = 'NOT_CHECKED_IN';
+      let attendanceStatus = 'ABSENT';
+
+      if (punchInDate) {
+        if (punchOutDate) {
+          currentStatus = 'PUNCHED_OUT';
+          attendanceStatus = att?.status ? String(att.status) : 'PRESENT';
+        } else if (isOnBreak) {
+          currentStatus = 'ON_BREAK';
+          attendanceStatus = att?.status ? String(att.status) : 'PRESENT';
+        } else {
+          currentStatus = 'WORKING';
+          attendanceStatus = att?.status ? String(att.status) : 'PRESENT';
+        }
+      }
+
+      let isLate = Boolean(att?.isLate);
+      let lateMinutes = att?.lateMinutes || 0;
+
+      if (punchInDate && emp.shift?.startTime) {
+        const shiftStart = this.parseTimeStrToDate(emp.shift.startTime, punchInDate);
+        if (shiftStart) {
+          const grace = (emp.shift.gracePeriodMinutes || 15) * 60 * 1000;
+          if (punchInDate.getTime() > shiftStart.getTime() + grace) {
+            isLate = true;
+            lateMinutes = Math.max(
+              1,
+              Math.round((punchInDate.getTime() - shiftStart.getTime()) / (1000 * 60)),
+            );
+          }
+        }
+      }
+
+      const empLat = latestLoc?.latitude ?? att?.punchOutLatitude ?? att?.latitude ?? null;
+      const empLng = latestLoc?.longitude ?? att?.punchOutLongitude ?? att?.longitude ?? null;
+      const lastLocationUpdate =
+        latestLoc?.timestamp?.toISOString() ?? (att?.updatedAt ? att.updatedAt.toISOString() : null);
+
+      let distanceFromOffice: number | null = null;
+      let locationStatus = 'UNAVAILABLE';
+
+      if (
+        empLat != null &&
+        empLng != null &&
+        assignedOffice?.latitude != null &&
+        assignedOffice?.longitude != null
+      ) {
+        distanceFromOffice = calculateDistanceMeters(
+          empLat,
+          empLng,
+          assignedOffice.latitude,
+          assignedOffice.longitude,
+        );
+        const radius = assignedOffice.radiusMeters || 200;
+        locationStatus = distanceFromOffice <= radius ? 'INSIDE_RADIUS' : 'OUTSIDE_RADIUS';
+      } else if (att?.locationStatus) {
+        locationStatus = att.locationStatus;
+        distanceFromOffice = att.distanceFromOffice ?? null;
+      }
+
+      const workMode = att?.workMode || (emp as any).workMode || 'OFFICE';
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`.trim(),
+        email: emp.email,
+        phone: emp.phone || null,
+        department: emp.department?.name || 'General',
+        departmentId: emp.departmentId || null,
+        designation: emp.designation?.name || 'Staff',
+        office: assignedOffice
+          ? {
+              id: assignedOffice.id,
+              name: assignedOffice.name,
+              city: assignedOffice.city,
+              latitude: assignedOffice.latitude,
+              longitude: assignedOffice.longitude,
+              radiusMeters: assignedOffice.radiusMeters,
+            }
+          : null,
+        shift: emp.shift
+          ? {
+              id: emp.shift.id,
+              name: emp.shift.name,
+              code: emp.shift.code,
+              startTime: emp.shift.startTime,
+              endTime: emp.shift.endTime,
+              gracePeriodMinutes: emp.shift.gracePeriodMinutes || 15,
+              durationHours: emp.shift.durationHours || 8,
+            }
+          : null,
+        punchIn: punchInDate ? punchInDate.toISOString() : null,
+        punchOut: punchOutDate ? punchOutDate.toISOString() : null,
+        workingMinutes,
+        currentStatus,
+        breakStatus: isOnBreak ? 'ON_BREAK' : 'NO_ACTIVE_BREAK',
+        activeBreakStart,
+        currentBreakMinutes,
+        totalBreakMinutesToday,
+        attendanceStatus,
+        locationStatus,
+        workMode,
+        distanceFromOffice,
+        latitude: empLat,
+        longitude: empLng,
+        lastLocationUpdate,
+        isLate,
+        lateMinutes,
+        breaks: breaks.map((b) => ({
+          id: b.id,
+          breakStart: b.breakStart.toISOString(),
+          breakEnd: b.breakEnd ? b.breakEnd.toISOString() : null,
+          duration: b.duration || 0,
+        })),
+      };
+    });
+
+    const totalEmployees = activeEmployees.length;
+    const present = formattedEmployees.filter((e) => e.punchIn !== null).length;
+    const absent = Math.max(0, totalEmployees - present);
+    const late = formattedEmployees.filter((e) => e.isLate).length;
+    const working = formattedEmployees.filter((e) => e.currentStatus === 'WORKING').length;
+    const onBreak = formattedEmployees.filter((e) => e.currentStatus === 'ON_BREAK').length;
+    const punchedOut = formattedEmployees.filter((e) => e.currentStatus === 'PUNCHED_OUT').length;
+    const remote = formattedEmployees.filter((e) => e.workMode.toUpperCase() === 'REMOTE').length;
+    const insideRadius = formattedEmployees.filter(
+      (e) => e.locationStatus === 'INSIDE_RADIUS',
+    ).length;
+    const outsideRadius = formattedEmployees.filter(
+      (e) => e.locationStatus === 'OUTSIDE_RADIUS',
+    ).length;
+
+    return {
+      success: true,
+      data: {
+        summary: {
+          totalEmployees,
+          present,
+          absent,
+          late,
+          working,
+          onBreak,
+          punchedOut,
+          remote,
+          insideRadius,
+          outsideRadius,
+        },
+        employees: formattedEmployees,
+        offices: offices.map((o) => ({
+          id: o.id,
+          name: o.name,
+          city: o.city,
+          latitude: o.latitude,
+          longitude: o.longitude,
+          radiusMeters: o.radiusMeters,
+        })),
+        timestamp: new Date().toISOString(),
+      },
+    };
+  }
+
+  async getLiveEmployees(user: any, customerIdParam?: number | string, dateParam?: string) {
+    const full = await this.getLiveDashboardData(user, customerIdParam, dateParam);
+    return {
+      success: true,
+      data: full.data.employees,
+      timestamp: full.data.timestamp,
+    };
+  }
+
+  async getLiveLocations(user: any, customerIdParam?: number | string, dateParam?: string) {
+    const full = await this.getLiveDashboardData(user, customerIdParam, dateParam);
+    return {
+      success: true,
+      data: {
+        offices: full.data.offices,
+        employees: full.data.employees.filter((e) => e.latitude != null && e.longitude != null),
+      },
+      timestamp: full.data.timestamp,
+    };
+  }
+
+  async getLiveBreaks(user: any, customerIdParam?: number | string, dateParam?: string) {
+    const full = await this.getLiveDashboardData(user, customerIdParam, dateParam);
+    const onBreakEmployees = full.data.employees.filter((e) => e.breakStatus === 'ON_BREAK');
+    const allBreaks = full.data.employees.flatMap((e) =>
+      e.breaks.map((b) => ({
+        employeeId: e.id,
+        employeeName: e.name,
+        department: e.department,
+        ...b,
+      })),
+    );
+
+    return {
+      success: true,
+      data: {
+        onBreakCount: onBreakEmployees.length,
+        activeBreaks: onBreakEmployees,
+        allBreaks,
+      },
+      timestamp: full.data.timestamp,
+    };
+  }
+
+  async getTodayAttendanceSummary(user: any, customerIdParam?: number | string, dateParam?: string) {
+    const full = await this.getLiveDashboardData(user, customerIdParam, dateParam);
+    return {
+      success: true,
+      data: {
+        summary: full.data.summary,
+        date: dateParam || new Date().toISOString().split('T')[0],
+      },
+      timestamp: full.data.timestamp,
+    };
+  }
 }
