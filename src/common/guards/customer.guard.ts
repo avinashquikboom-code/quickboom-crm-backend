@@ -65,6 +65,10 @@ authorization: ALLOWED (ADMIN)`);
     }
 
     // ── 2. NORMAL CUSTOMER TENANT ACCESS ─────────────────────────────────────
+    this.logger.log(
+      `[CUSTOMER_GUARD_DEBUG]\nuserId: ${user?.id ?? 'NONE'}\nuserCustomerId: ${user?.customerId ?? 'NONE'}\nuserCustomerCode: ${user?.customerCode ?? 'NONE'}\nqueryCustomerId: ${queryCustomerId ?? 'NONE'}\nheaderCustomerId: ${headerCustomerId ?? 'NONE'}\nrole: ${user?.role ?? 'CUSTOMER'}`,
+    );
+
     let authCustomerPk: number | undefined;
     if (user?.customerId != null && Number(user.customerId) > 0) {
       authCustomerPk = Number(user.customerId);
@@ -164,6 +168,11 @@ authorization: ALLOWED (ADMIN)`);
     }
 
     const resolvedRequestedCustomerId = resolvedQueryPk ?? resolvedHeaderPk ?? authCustomerPk;
+    const requestedId = queryCustomerId ?? headerCustomerId ?? (authCustomerPk ? String(authCustomerPk) : 'NONE');
+
+    this.logger.log(
+      `[CUSTOMER_LOOKUP]\nrequestedId: ${requestedId}\nresolvedCustomerId: ${resolvedRequestedCustomerId}\ncustomerCode: ${authCustomerCode}\nisActive: ${customerActive}\nstatus: ${customerActive ? 'ACTIVE' : 'INACTIVE'}\ndeletedAt: ${customerDeleted ? 'DELETED' : 'null'}`,
+    );
 
     this.logger.log(
       `[CustomerGuard DEBUG]\nuser.id: ${user?.id ?? 'NONE'}\nuser.customerId: ${user?.customerId ?? 'NONE'}\nuser.customerCode: ${user?.customerCode ?? authCustomerCode}\nuser.role: ${user?.role ?? 'CUSTOMER'}\n\nquery.customerId: ${queryCustomerId ?? 'NONE'}\nheader.x-customer-id: ${headerCustomerId ?? 'NONE'}\n\nresolvedAuthenticatedCustomerId: ${authCustomerPk}\nresolvedRequestedCustomerId: ${resolvedRequestedCustomerId}\n\ncustomerExists: ${customerExists}\ncustomerActive: ${customerActive}\ncustomerDeleted: ${customerDeleted}`,

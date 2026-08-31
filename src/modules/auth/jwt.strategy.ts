@@ -176,12 +176,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (cust) {
         customerId = cust.id;
       }
-    }
+    const customerCode = customerId ? `QB-CUST-${String(customerId).padStart(3, '0')}` : 'NONE';
+    this.logger.log(
+      `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
+    );
 
     return {
       id: user.id,
       email: user.email,
       customerId: customerId,
+      customerCode: customerCode,
       firstName: user.firstName,
       lastName: user.lastName,
       role: primaryRole,
@@ -192,4 +196,4 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 }
-
+}
