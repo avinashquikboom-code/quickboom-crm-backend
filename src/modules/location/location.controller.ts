@@ -81,4 +81,27 @@ export class LocationController {
     const targetCustomerId = customerIdQuery || customerId || user?.customerId || 1;
     return this.locationService.createBranchGeofence(targetCustomerId, body);
   }
+
+  // Branch Location API: GET /api/v1/branches/:id/location
+  @Get('branches/:id/location')
+  async getBranchLocation(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    const targetCustomerId = customerId || user?.customerId;
+    return this.locationService.getBranchLocation(Number(id), targetCustomerId);
+  }
+
+  // Branch Location API: PATCH /api/v1/branches/:id/location
+  @Post('branches/:id/location')
+  async updateBranchLocationPost(
+    @Param('id') id: string,
+    @Body() body: { latitude?: number; longitude?: number; radiusMeters?: number },
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    const targetCustomerId = customerId || user?.customerId;
+    return this.locationService.updateBranchLocation(Number(id), targetCustomerId, body);
+  }
 }

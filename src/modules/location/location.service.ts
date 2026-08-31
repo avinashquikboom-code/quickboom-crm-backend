@@ -1,4 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface LocationUpdateDto {
@@ -170,6 +176,73 @@ export class LocationService {
     return this.prisma.branchGeofence.findMany({
       where: whereClause,
     });
+  }
+
+  async getBranchLocation(branchId: number, customerId?: number | string) {
+    const numCustomerId = customerId ? Number(customerId) : NaN;
+    const branch = await this.prisma.branchGeofence.findUnique({
+      where: { id: branchId },
+    });
+    if (!branch) {
+      throw new NotFoundException(`Branch with ID ${branchId} not found`);
+    }
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && branch.customerId !== numCustomerId) {
+      throw new ForbiddenException('You do not have access to this branch location');
+    }
+    return {
+      success: true,
+      data: {
+        id: branch.id,
+        name: branch.name,
+        city: branch.city,
+        latitude: branch.latitude,
+        longitude: branch.longitude,
+        radiusMeters: branch.radiusMeters,
+        isActive: branch.isActive,
+      },
+    };
+  }
+
+  async updateBranchLocation(
+    branchId: number,
+    customerId: number | string | undefined,
+    data: { latitude?: number; longitude?: number; radiusMeters?: number },
+  ) {
+    const numCustomerId = customerId ? Number(customerId) : NaN;
+    const branch = await this.prisma.branchGeofence.findUnique({
+      where: { id: branchId },
+    });
+    if (!branch) {
+      throw new NotFoundException(`Branch with ID ${branchId} not found`);
+    }
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && branch.customerId !== numCustomerId) {
+      throw new ForbiddenException('You do not have access to update this branch location');
+    }
+
+    if (data.latitude !== undefined && (data.latitude < -90 || data.latitude > 90)) {
+      throw new BadRequestException('Latitude must be between -90 and 90');
+    }
+    if (data.longitude !== undefined && (data.longitude < -180 || data.longitude > 180)) {
+      throw new BadRequestException('Longitude must be between -180 and 180');
+    }
+    if (data.radiusMeters !== undefined && data.radiusMeters <= 0) {
+      throw new BadRequestException('Radius must be greater than 0 meters');
+    }
+
+    const updated = await this.prisma.branchGeofence.update({
+      where: { id: branchId },
+      data: {
+        ...(data.latitude !== undefined ? { latitude: data.latitude } : {}),
+        ...(data.longitude !== undefined ? { longitude: data.longitude } : {}),
+        ...(data.radiusMeters !== undefined ? { radiusMeters: data.radiusMeters } : {}),
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Branch location updated successfully',
+      data: updated,
+    };
   }
 
   async createBranchGeofence(

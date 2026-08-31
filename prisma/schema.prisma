@@ -881,23 +881,27 @@ model FeatureToggle {
 }
 
 model EmployeeLocation {
-  id           Int          @id @default(autoincrement())
-  customerId   Int
-  employeeId   Int
-  latitude     Float
-  longitude    Float
-  accuracy     Float?
-  address      String?
-  trackingType TrackingType @default(ATTENDANCE)
-  attendanceId Int?
-  visitId      Int?
-  timestamp    DateTime     @default(now())
-  createdAt    DateTime     @default(now())
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  id                 Int          @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int
+  latitude           Float
+  longitude          Float
+  accuracy           Float?
+  address            String?
+  distanceFromOffice Float?
+  locationStatus     String?
+  trackingType       TrackingType @default(ATTENDANCE)
+  attendanceId       Int?
+  visitId            Int?
+  timestamp          DateTime     @default(now())
+  createdAt          DateTime     @default(now())
+  customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee           Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
   @@index([employeeId])
   @@index([timestamp])
+  @@index([employeeId, timestamp])
 }
 
 model BranchGeofence {
@@ -1015,6 +1019,7 @@ model Employee {
   employeeClaims           EmployeeClaim[]
   leaveBalances            EmployeeLeaveBalance[]
   employeeLoans            EmployeeLoan[]
+  employeeLocations        EmployeeLocation[]
   leaveAdjustments         LeaveAdjustmentHistory[]
   leaveRequests            LeaveRequest[]
   payrollItems             PayrollItem[]
@@ -1043,7 +1048,12 @@ model Attendance {
   punchIn            DateTime?
   punchOut           DateTime?
   workingHours       Float             @default(0.0)
+  workingMinutes     Int?              @default(0)
   breakDuration      Float             @default(0.0)
+  lateMinutes        Int?              @default(0)
+  isLate             Boolean?          @default(false)
+  workMode           String?           @default("OFFICE")
+  locationStatus     String?           @default("INSIDE_RADIUS")
   status             AttendanceStatus  @default(PRESENT)
   locationIn         String?
   locationOut        String?
@@ -1052,6 +1062,10 @@ model Attendance {
   distanceFromOffice Float?
   latitude           Float?
   longitude          Float?
+  accuracy           Float?
+  punchOutLatitude   Float?
+  punchOutLongitude  Float?
+  punchOutAccuracy   Float?
   officeId           Int?
   employee           Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office             BranchGeofence?   @relation(fields: [officeId], references: [id])
@@ -1061,6 +1075,9 @@ model Attendance {
   @@index([employeeId])
   @@index([officeId])
   @@index([date])
+  @@index([status])
+  @@index([workMode])
+  @@index([customerId, employeeId, date])
 }
 
 model AttendanceBreak {
@@ -1069,9 +1086,12 @@ model AttendanceBreak {
   breakStart   DateTime   @default(now())
   breakEnd     DateTime?
   duration     Float      @default(0.0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @default(now()) @updatedAt
   attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
 
   @@index([attendanceId])
+  @@index([breakStart])
 }
 
 model LeaveType {

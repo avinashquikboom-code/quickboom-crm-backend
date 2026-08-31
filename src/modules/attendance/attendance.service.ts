@@ -3,9 +3,10 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PunchAttendanceDto } from './dto/punch.dto';
+import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
 
 export function calculateDistanceMeters(
@@ -65,31 +66,14 @@ export class AttendanceService {
       throw new NotFoundException('No active employee profile linked to your user account.');
     }
 
+    if (employee.status && employee.status.toUpperCase() === 'INACTIVE') {
+      throw new ForbiddenException('Employee profile is inactive.');
+    }
+
     return employee;
   }
 
-  private async resolveOfficeForEmployee(employee: any) {
-    const activeOffices = await this.prisma.branchGeofence.findMany({
-      where: { customerId: employee.customerId, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        city: true,
-        latitude: true,
-        longitude: true,
-        radiusMeters: true,
-        isActive: true,
-      },
-    });
-
-    console.log('[ATTENDANCE_DEBUG]', {
-      employeeId: employee.id,
-      organizationId: employee.customerId,
-      branchId: employee.branch || null,
-      officeLocationId: employee.officeId || (employee.office ? employee.office.id : null),
-      activeOfficeLocations: activeOffices,
-    });
-
+  async resolveOfficeForEmployee(employee: any) {
     let selectedOffice: any = null;
 
     if (employee.office && employee.office.isActive) {
@@ -122,7 +106,7 @@ export class AttendanceService {
       if (defaultOffice) selectedOffice = defaultOffice;
     }
 
-    // If still no office location configured for customer, auto-provision default Head Office for active customer
+    // Auto-provision default Head Office if active customer exists with no office yet
     if (!selectedOffice) {
       const customer = await this.prisma.customer.findUnique({
         where: { id: employee.customerId },
@@ -136,12 +120,10 @@ export class AttendanceService {
             city: 'Mumbai',
             latitude: 19.0760,
             longitude: 72.8777,
-            radiusMeters: 500.0,
+            radiusMeters: 200.0,
             isActive: true,
           },
         });
-        console.log(`[ATTENDANCE_DEBUG] Auto-provisioned default Head Office for Customer ID: ${customer.id}`);
-        // Link to employee
         await this.prisma.employee.update({
           where: { id: employee.id },
           data: { officeId: selectedOffice.id, branch: selectedOffice.name },
@@ -155,7 +137,6 @@ export class AttendanceService {
       );
     }
 
-    // Validate latitude, longitude, and radius
     if (
       isNaN(selectedOffice.latitude) ||
       isNaN(selectedOffice.longitude) ||
@@ -236,6 +217,28 @@ export class AttendanceService {
     const office = await this.resolveOfficeForEmployee(employee);
     const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
+    // Validate GPS inputs
+    if (
+      dto.latitude === undefined ||
+      dto.longitude === undefined ||
+      isNaN(dto.latitude) ||
+      isNaN(dto.longitude) ||
+      dto.latitude < -90 ||
+      dto.latitude > 90 ||
+      dto.longitude < -180 ||
+      dto.longitude > 180
+    ) {
+      throw new BadRequestException('Valid GPS latitude (-90 to 90) and longitude (-180 to 180) are required.');
+    }
+
+    if (dto.latitude === 0 && dto.longitude === 0 && (office.latitude !== 0 || office.longitude !== 0)) {
+      throw new BadRequestException('Invalid GPS coordinates (0, 0). Please enable GPS and try again.');
+    }
+
+    if (dto.accuracy !== undefined && (isNaN(dto.accuracy) || dto.accuracy <= 0)) {
+      throw new BadRequestException('GPS accuracy must be a positive number.');
+    }
+
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
@@ -254,35 +257,78 @@ export class AttendanceService {
       },
     });
 
-    let distanceMeters = 0;
+    const distanceMeters = calculateDistanceMeters(
+      dto.latitude,
+      dto.longitude,
+      office.latitude,
+      office.longitude,
+    );
     const allowedRadius = office.radiusMeters || 200.0;
-    let locationInStr = `${office.name}`;
+    let locationInStr = `${office.name} (${distanceMeters}m)`;
 
-    if (policy.gpsRequired && (dto.latitude !== undefined && dto.longitude !== undefined && !isNaN(dto.latitude) && !isNaN(dto.longitude))) {
-      distanceMeters = calculateDistanceMeters(
-        dto.latitude,
-        dto.longitude,
-        office.latitude,
-        office.longitude,
-      );
-      locationInStr = `${office.name} (${distanceMeters}m)`;
+    // GEOFENCE VALIDATION
+    if (!approvedRemote && distanceMeters > allowedRadius) {
+      console.log(`[ATTENDANCE]
+employeeId: ${employee.id}
+branchId: ${office.id}
+action: PUNCH_IN
+distanceMeters: ${distanceMeters}
+allowedRadiusMeters: ${allowedRadius}
+result: REJECTED`);
+
+      console.log(`[ATTENDANCE_DEBUG]
+authenticatedUserId: ${user.id}
+employeeId: ${employee.id}
+customerId: ${employee.customerId}
+branchId: ${office.id}
+officeLatitude: ${office.latitude}
+officeLongitude: ${office.longitude}
+allowedRadiusMeters: ${allowedRadius}
+employeeLatitude: ${dto.latitude}
+employeeLongitude: ${dto.longitude}
+gpsAccuracy: ${dto.accuracy ?? 'N/A'}
+distanceMeters: ${distanceMeters}
+result: REJECTED`);
+
+      throw new ForbiddenException({
+        statusCode: 403,
+        success: false,
+        message: 'You are outside the allowed office radius',
+        data: {
+          distanceMeters,
+          allowedRadiusMeters: allowedRadius,
+          officeName: office.name,
+        },
+      });
     }
 
-    // GEO-FENCE VALIDATION
-    if (policy.officeAttendanceRequired && !approvedRemote && !policy.allowOutsideCheckIn) {
-      if (dto.latitude === undefined || dto.longitude === undefined || isNaN(dto.latitude) || isNaN(dto.longitude)) {
-        throw new BadRequestException('Valid GPS coordinates are required for attendance check-in.');
-      }
-      if (distanceMeters > allowedRadius) {
-        throw new BadRequestException(
-          `You are outside your assigned office attendance area. Current distance: ${distanceMeters}m (Allowed radius: ${allowedRadius}m for ${office.name}).`,
-        );
-      }
-    } else if (approvedRemote) {
+    console.log(`[ATTENDANCE]
+employeeId: ${employee.id}
+branchId: ${office.id}
+action: PUNCH_IN
+distanceMeters: ${distanceMeters}
+allowedRadiusMeters: ${allowedRadius}
+result: ALLOWED`);
+
+    console.log(`[ATTENDANCE_DEBUG]
+authenticatedUserId: ${user.id}
+employeeId: ${employee.id}
+customerId: ${employee.customerId}
+branchId: ${office.id}
+officeLatitude: ${office.latitude}
+officeLongitude: ${office.longitude}
+allowedRadiusMeters: ${allowedRadius}
+employeeLatitude: ${dto.latitude}
+employeeLongitude: ${dto.longitude}
+gpsAccuracy: ${dto.accuracy ?? 'N/A'}
+distanceMeters: ${distanceMeters}
+result: ALLOWED`);
+
+    if (approvedRemote) {
       locationInStr = `Remote Work (${approvedRemote.reason || 'Approved Remote Duty'})`;
     }
 
-    // Determine Status based on Policy Start Time and Grace Period
+    // Determine status based on Policy
     let attendanceStatus: AttendanceStatus = AttendanceStatus.PRESENT;
     try {
       const [startHour, startMin] = (policy.officeStartTime || '09:30').split(':').map(Number);
@@ -314,10 +360,12 @@ export class AttendanceService {
         },
       });
 
-      if (attendance && attendance.punchIn && !attendance.punchOut && !policy.multiplePunchInAllowed) {
-        throw new BadRequestException(
-          `You are already punched in for today at ${attendance.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
-        );
+      if (attendance && attendance.punchIn && !attendance.punchOut) {
+        throw new ConflictException({
+          statusCode: 409,
+          success: false,
+          message: 'You are already punched in',
+        });
       }
 
       if (attendance) {
@@ -325,10 +373,12 @@ export class AttendanceService {
           where: { id: attendance.id },
           data: {
             punchIn: now,
+            punchOut: null,
             status: attendanceStatus,
             officeId: office.id,
-            latitude: dto.latitude ?? null,
-            longitude: dto.longitude ?? null,
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            accuracy: dto.accuracy ?? null,
             distanceFromOffice: distanceMeters,
             locationIn: locationInStr,
           },
@@ -342,8 +392,9 @@ export class AttendanceService {
             punchIn: now,
             status: attendanceStatus,
             officeId: office.id,
-            latitude: dto.latitude ?? null,
-            longitude: dto.longitude ?? null,
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            accuracy: dto.accuracy ?? null,
             distanceFromOffice: distanceMeters,
             locationIn: locationInStr,
           },
@@ -379,20 +430,11 @@ export class AttendanceService {
 
     const now = new Date();
 
-    const approvedRemote = await this.prisma.remoteRequest.findFirst({
-      where: {
-        employeeId: employee.id,
-        status: 'APPROVED',
-        fromDate: { lte: todayEnd },
-        toDate: { gte: todayStart },
-      },
-    });
-
     let distanceMeters = 0;
     const allowedRadius = office.radiusMeters || 200.0;
     let locationOutStr = `${office.name}`;
 
-    if (policy.gpsRequired && (dto.latitude !== undefined && dto.longitude !== undefined && !isNaN(dto.latitude) && !isNaN(dto.longitude))) {
+    if (dto.latitude !== undefined && dto.longitude !== undefined && !isNaN(dto.latitude) && !isNaN(dto.longitude)) {
       distanceMeters = calculateDistanceMeters(
         dto.latitude,
         dto.longitude,
@@ -400,16 +442,6 @@ export class AttendanceService {
         office.longitude,
       );
       locationOutStr = `${office.name} (${distanceMeters}m)`;
-    }
-
-    if (policy.officeAttendanceRequired && !approvedRemote && !policy.allowOutsideCheckOut) {
-      if (dto.latitude !== undefined && dto.longitude !== undefined && distanceMeters > allowedRadius) {
-        throw new BadRequestException(
-          `You are outside your assigned office attendance area for Check-Out. Current distance: ${distanceMeters}m (Allowed radius: ${allowedRadius}m for ${office.name}).`,
-        );
-      }
-    } else if (approvedRemote) {
-      locationOutStr = `Remote Work (${approvedRemote.reason || 'Approved Remote Duty'})`;
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -424,11 +456,19 @@ export class AttendanceService {
       });
 
       if (!attendance || !attendance.punchIn) {
-        throw new BadRequestException('Cannot punch out without an active punch-in for today.');
+        throw new NotFoundException({
+          statusCode: 404,
+          success: false,
+          message: 'No active punch-in found',
+        });
       }
 
       if (attendance.punchOut) {
-        throw new BadRequestException('You have already punched out for today.');
+        throw new ConflictException({
+          statusCode: 409,
+          success: false,
+          message: 'Already punched out',
+        });
       }
 
       // Check if there is an active break currently running
@@ -449,6 +489,7 @@ export class AttendanceService {
       // Calculate working hours
       const totalElapsedMs = now.getTime() - new Date(attendance.punchIn).getTime();
       const totalElapsedHours = Math.max(0, totalElapsedMs / (1000 * 60 * 60));
+      const totalElapsedMinutes = Math.max(0, Math.round(totalElapsedMs / (1000 * 60)));
 
       let actualWorkingHours = totalElapsedHours;
       if (policy.breakType === 'UNPAID') {
@@ -456,7 +497,6 @@ export class AttendanceService {
       }
       actualWorkingHours = Math.round(actualWorkingHours * 100) / 100;
 
-      // Check Early Checkout vs Minimum Working Hours & Grace
       const minRequiredHours = policy.minWorkingHours || 8.0;
       const earlyGraceHours = (policy.earlyCheckoutGraceMinutes || 15) / 60;
       let finalStatus = attendance.status;
@@ -475,13 +515,27 @@ export class AttendanceService {
           breakDuration: totalBreakHours,
           status: finalStatus,
           locationOut: locationOutStr,
+          punchOutLatitude: dto.latitude ?? null,
+          punchOutLongitude: dto.longitude ?? null,
+          punchOutAccuracy: dto.accuracy ?? null,
         },
       });
 
+      console.log(`[ATTENDANCE]
+employeeId: ${employee.id}
+branchId: ${office.id}
+action: PUNCH_OUT
+distanceMeters: ${distanceMeters}
+workingMinutes: ${totalElapsedMinutes}
+result: SUCCESS`);
+
       return {
         success: true,
-        message: `Punch Out successful. Total working hours: ${actualWorkingHours} hrs (Breaks: ${totalBreakHours} hrs).`,
-        data: updated,
+        message: `Punch Out successful. Total working hours: ${actualWorkingHours} hrs (${totalElapsedMinutes} mins).`,
+        data: {
+          ...updated,
+          workingMinutes: totalElapsedMinutes,
+        },
         office: {
           id: office.id,
           name: office.name,
@@ -491,6 +545,118 @@ export class AttendanceService {
         },
       };
     });
+  }
+
+  async getTodayAttendance(user: any, customerId: number | string | undefined) {
+    const employee = await this.getAuthenticatedEmployee(user, customerId);
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const todayAtt = await this.prisma.attendance.findFirst({
+      where: {
+        employeeId: employee.id,
+        date: { gte: todayStart, lte: todayEnd },
+      },
+      include: {
+        breaks: true,
+      },
+    });
+
+    const isPunchedIn = Boolean(todayAtt?.punchIn && !todayAtt?.punchOut);
+    const isPunchedOut = Boolean(todayAtt?.punchIn && todayAtt?.punchOut);
+    let workingMinutes = 0;
+
+    if (todayAtt?.punchIn) {
+      const endTime = todayAtt.punchOut ? new Date(todayAtt.punchOut) : new Date();
+      const elapsedMs = endTime.getTime() - new Date(todayAtt.punchIn).getTime();
+      workingMinutes = Math.max(0, Math.round(elapsedMs / (1000 * 60)));
+    }
+
+    const currentStatus = isPunchedIn
+      ? 'PUNCHED_IN'
+      : isPunchedOut
+      ? 'PUNCHED_OUT'
+      : 'NOT_MARKED';
+
+    return {
+      success: true,
+      data: {
+        date: new Date().toISOString().split('T')[0],
+        status: currentStatus,
+        punchInAt: todayAtt?.punchIn ? todayAtt.punchIn.toISOString() : null,
+        punchOutAt: todayAtt?.punchOut ? todayAtt.punchOut.toISOString() : null,
+        workingMinutes,
+        workingHours: todayAtt?.workingHours || 0,
+        isPunchedIn,
+        rawStatus: todayAtt?.status || 'NOT_MARKED',
+      },
+    };
+  }
+
+  async getAttendanceHistory(
+    user: any,
+    customerId: number | string | undefined,
+    query: QueryAttendanceHistoryDto,
+  ) {
+    const employee = await this.getAuthenticatedEmployee(user, customerId);
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const whereClause: any = {
+      customerId: employee.customerId,
+      employeeId: employee.id,
+    };
+
+    if (query.date) {
+      const dStart = new Date(query.date);
+      dStart.setHours(0, 0, 0, 0);
+      const dEnd = new Date(query.date);
+      dEnd.setHours(23, 59, 59, 999);
+      whereClause.date = { gte: dStart, lte: dEnd };
+    } else if (query.dateFrom || query.dateTo) {
+      whereClause.date = {};
+      if (query.dateFrom) {
+        const from = new Date(query.dateFrom);
+        from.setHours(0, 0, 0, 0);
+        whereClause.date.gte = from;
+      }
+      if (query.dateTo) {
+        const to = new Date(query.dateTo);
+        to.setHours(23, 59, 59, 999);
+        whereClause.date.lte = to;
+      }
+    }
+
+    const [total, items] = await Promise.all([
+      this.prisma.attendance.count({ where: whereClause }),
+      this.prisma.attendance.findMany({
+        where: whereClause,
+        orderBy: { date: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          office: {
+            select: { id: true, name: true, city: true, radiusMeters: true },
+          },
+          breaks: true,
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      data: items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async startBreak(user: any, customerId: number | string | undefined, dto?: any) {
@@ -529,7 +695,6 @@ export class AttendanceService {
         throw new BadRequestException('Cannot start a break after punching out.');
       }
 
-      // Check if already on break
       const activeBreak = attendance.breaks.find((b) => !b.breakEnd);
       if (activeBreak) {
         throw new BadRequestException(
@@ -537,7 +702,6 @@ export class AttendanceService {
         );
       }
 
-      // Check max breaks count
       const completedBreaksCount = attendance.breaks.length;
       if (completedBreaksCount >= (policy.maxBreaksPerDay || 2)) {
         throw new BadRequestException(
@@ -563,7 +727,6 @@ export class AttendanceService {
   async endBreak(user: any, customerId: number | string | undefined, dto?: any) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
-    const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -606,7 +769,6 @@ export class AttendanceService {
         },
       });
 
-      // Recalculate total break duration for attendance
       const allBreaks = await tx.attendanceBreak.findMany({
         where: { attendanceId: attendance.id, breakEnd: { not: null } },
       });

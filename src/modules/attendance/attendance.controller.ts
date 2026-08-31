@@ -3,11 +3,12 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AttendanceService } from './attendance.service';
-import { PunchAttendanceDto } from './dto/punch.dto';
+import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -27,6 +28,25 @@ export class AttendanceController {
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
     return this.attendanceService.getMyAttendanceStatus(user, customerId);
+  }
+
+  @Get('today')
+  @ApiOperation({ summary: 'Get today attendance summary for authenticated employee' })
+  async getToday(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    return this.attendanceService.getTodayAttendance(user, customerId);
+  }
+
+  @Get('history')
+  @ApiOperation({ summary: 'Get paginated attendance history for authenticated employee' })
+  async getHistory(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query() query: QueryAttendanceHistoryDto,
+  ) {
+    return this.attendanceService.getAttendanceHistory(user, customerId, query);
   }
 
   @Post('check-in')
@@ -50,7 +70,7 @@ export class AttendanceController {
   }
 
   @Post('check-out')
-  @ApiOperation({ summary: 'Employee Check-Out with GPS Geo-fence verification' })
+  @ApiOperation({ summary: 'Employee Check-Out with GPS verification' })
   async checkOut(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
