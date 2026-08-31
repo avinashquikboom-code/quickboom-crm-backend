@@ -159,10 +159,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const primaryRoleRecord = user.userRoles?.[0]?.role;
     const roleId = payload.roleId || primaryRoleRecord?.id || (user.userRoles?.[0]?.roleId ?? null);
 
+    let customerId = user.customerId ?? (payload.customerId ? Number(payload.customerId) : null);
+    if (!customerId && !isSuperAdmin && this.prisma) {
+      const cust = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: user.id } } },
+            ...(user.email ? [{ email: user.email }] : []),
+            ...(user.phone ? [{ phone: user.phone }] : []),
+          ],
+          deletedAt: null,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      if (cust) {
+        customerId = cust.id;
+      }
+    }
+
     return {
       id: user.id,
       email: user.email,
-      customerId: user.customerId,
+      customerId: customerId,
       firstName: user.firstName,
       lastName: user.lastName,
       role: primaryRole,

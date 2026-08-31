@@ -480,9 +480,31 @@ export class AuthService {
     const primaryRole = user.userRoles?.[0]?.role;
     const roleId = primaryRole?.id || (user.userRoles?.[0]?.roleId ?? null);
 
+    let effectiveCustomerId = user.customerId || user.customer?.id || null;
+    if (!effectiveCustomerId && userRole !== 'SUPER_ADMIN') {
+      const cust = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: user.id } } },
+            ...(user.email ? [{ email: user.email }] : []),
+            ...(user.phone ? [{ phone: user.phone }] : []),
+          ],
+          deletedAt: null,
+          isActive: true,
+        },
+        select: { id: true, name: true },
+      });
+      if (cust) {
+        effectiveCustomerId = cust.id;
+        if (!user.customer) {
+          (user as any).customer = cust;
+        }
+      }
+    }
+
     const tokens = await this.generateTokens(
       user.id,
-      user.customerId,
+      effectiveCustomerId,
       user.email,
       userRole,
       userRoleType,
@@ -517,7 +539,7 @@ export class AuthService {
 
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
-      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
+      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (effectiveCustomerId || user.id) : user.id);
     const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
     const userData: any = {
@@ -531,7 +553,7 @@ export class AuthService {
       roleType: userRoleType,
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
-      ...(userRole !== 'SUPER_ADMIN' && user.customerId && { customerId: user.customerId, customerName: user.customer?.name ?? null }),
+      ...(userRole !== 'SUPER_ADMIN' && effectiveCustomerId && { customerId: effectiveCustomerId, customerName: user.customer?.name ?? null }),
     };
 
     if (userRole === 'EMPLOYEE' && employeeData) {
