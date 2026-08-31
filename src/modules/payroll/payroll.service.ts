@@ -179,25 +179,61 @@ export class PayrollService {
     };
   }
 
-  async approvePayroll(customerId: number | string | undefined, payrollId: number | string) {
+  async approvePayroll(customerId: number | string | undefined, payrollId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numPayrollId = Number(payrollId);
-    return this.prisma.payroll.updateMany({
-      where: { id: numPayrollId, customerId: numCustomerId },
+
+    let payroll: any;
+    if (!isNaN(numPayrollId) && numPayrollId > 0) {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { id: numPayrollId, customerId: numCustomerId },
+      });
+    } else {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { customerId: numCustomerId },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    if (!payroll) {
+      // Auto-calculate current month payroll if none exists
+      const currentMonth = new Date().getMonth() + 1;
+      const currentYear = new Date().getFullYear();
+      payroll = await this.calculatePayroll(numCustomerId, currentMonth, currentYear);
+    }
+
+    const updated = await this.prisma.payroll.update({
+      where: { id: payroll.id },
       data: {
         status: 'APPROVED',
         approvedAt: new Date(),
       },
     });
+
+    return {
+      success: true,
+      message: `Payroll batch #${payroll.id} approved successfully`,
+      data: updated,
+    };
   }
 
-  async generatePayroll(customerId: number | string | undefined, payrollId: number | string) {
+  async generatePayroll(customerId: number | string | undefined, payrollId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numPayrollId = Number(payrollId);
-    const payroll = await this.prisma.payroll.findFirst({
-      where: { id: numPayrollId, customerId: numCustomerId },
-      include: { items: true },
-    });
+
+    let payroll: any;
+    if (!isNaN(numPayrollId) && numPayrollId > 0) {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { id: numPayrollId, customerId: numCustomerId },
+        include: { items: true },
+      });
+    } else {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { customerId: numCustomerId },
+        orderBy: { createdAt: 'desc' },
+        include: { items: true },
+      });
+    }
 
     if (!payroll) {
       throw new NotFoundException('Payroll record not found');
@@ -230,24 +266,53 @@ export class PayrollService {
       }
     }
 
-    return this.prisma.payroll.update({
-      where: { id: numPayrollId },
+    const updated = await this.prisma.payroll.update({
+      where: { id: payroll.id },
       data: {
         status: 'GENERATED',
       },
     });
+
+    return {
+      success: true,
+      message: `Salary slips generated for payroll #${payroll.id}`,
+      data: updated,
+    };
   }
 
-  async disbursePayroll(customerId: number | string | undefined, payrollId: number | string) {
+  async disbursePayroll(customerId: number | string | undefined, payrollId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numPayrollId = Number(payrollId);
-    return this.prisma.payroll.updateMany({
-      where: { id: numPayrollId, customerId: numCustomerId },
+
+    let payroll: any;
+    if (!isNaN(numPayrollId) && numPayrollId > 0) {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { id: numPayrollId, customerId: numCustomerId },
+      });
+    } else {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { customerId: numCustomerId },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    if (!payroll) {
+      throw new NotFoundException('No payroll batch found to disburse. Please calculate and approve payroll first.');
+    }
+
+    const updated = await this.prisma.payroll.update({
+      where: { id: payroll.id },
       data: {
         status: 'PAID',
         disbursedAt: new Date(),
       },
     });
+
+    return {
+      success: true,
+      message: `Payroll batch #${payroll.id} disbursed successfully`,
+      data: updated,
+    };
   }
 
   async getPayrolls(

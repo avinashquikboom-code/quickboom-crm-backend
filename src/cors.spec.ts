@@ -152,12 +152,72 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
 
-    it('handles OPTIONS /api/v1/admin/plans preflight from https://admin.qbapp.online', async () => {
+    it('handles OPTIONS /api/v1/departments preflight from https://admin.qbapp.online', async () => {
       const res = await request(app.getHttpServer())
-        .options('/api/v1/admin/plans')
+        .options('/api/v1/departments')
         .set('Origin', 'https://admin.qbapp.online')
         .set('Access-Control-Request-Method', 'GET')
-        .set('Access-Control-Request-Headers', 'authorization,content-type');
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/employees preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/employees')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/shifts preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/shifts')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/shifts/metrics preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/shifts/metrics')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/admin/payroll/approve preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/admin/payroll/approve')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('handles OPTIONS /api/v1/admin/payroll/disburse preflight from https://admin.qbapp.online', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/api/v1/admin/payroll/disburse')
+        .set('Origin', 'https://admin.qbapp.online')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
 
       expect(res.status).toBe(204);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
