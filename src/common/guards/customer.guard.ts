@@ -93,11 +93,11 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
     let customer: any = null;
     if (this.prisma) {
       customer = await this.prisma.customer.findFirst({
-        where: { id: authCustomerPk, deletedAt: null },
-        select: { id: true, name: true, domain: true, email: true, companyName: true },
+        where: { id: authCustomerPk, deletedAt: null, isActive: true },
+        select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true },
       });
 
-      if (!customer) {
+      if (!customer || !customer.isActive) {
         throw new ForbiddenException('Customer record not found or deactivated');
       }
 
@@ -157,7 +157,7 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
     if (!isNaN(directNum) && String(directNum) === str && directNum > 0) {
       if (this.prisma) {
         const exists = await this.prisma.customer.findFirst({
-          where: { id: directNum, deletedAt: null },
+          where: { id: directNum, deletedAt: null, isActive: true },
           select: { id: true },
         });
         if (exists) return exists.id;
@@ -174,7 +174,7 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
       if (!isNaN(extractedNum) && extractedNum > 0) {
         if (this.prisma) {
           const exists = await this.prisma.customer.findFirst({
-            where: { id: extractedNum, deletedAt: null },
+            where: { id: extractedNum, deletedAt: null, isActive: true },
             select: { id: true },
           });
           if (exists) return exists.id;
@@ -196,6 +196,7 @@ authenticatedCustomerIdentifierType: ${typeof authCustomerPk}`);
             { phone: str },
           ],
           deletedAt: null,
+          isActive: true,
         },
         select: { id: true },
       });

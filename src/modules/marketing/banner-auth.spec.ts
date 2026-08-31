@@ -77,7 +77,16 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
     customer: {
       findFirst: jest.fn().mockImplementation(({ where }) => {
         if (where.id === 101 || where.id === 202) {
-          return Promise.resolve({ id: where.id, name: `Customer ${where.id}`, domain: `cust${where.id}.com` });
+          if (where.isActive === true || where.isActive === undefined) {
+            return Promise.resolve({ id: where.id, name: `Customer ${where.id}`, domain: `cust${where.id}.com`, isActive: true });
+          }
+        }
+        if (where.id === 303) {
+          // Deactivated customer (isActive: false)
+          if (where.isActive === true) {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve({ id: 303, name: 'Deactivated Customer', isActive: false });
         }
         return Promise.resolve(null);
       }),
@@ -121,6 +130,36 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
             isActive: true,
             deletedAt: null,
             customerId: 101,
+            userRoles: [{ role: { type: 'CUSTOMER', rolePermissions: [] } }],
+          });
+        }
+        if (where.id === 5) {
+          return Promise.resolve({
+            id: 5,
+            email: 'deactivated-cust@company303.com',
+            isActive: true,
+            deletedAt: null,
+            customerId: 303,
+            userRoles: [{ role: { type: 'CUSTOMER', rolePermissions: [] } }],
+          });
+        }
+        if (where.id === 6) {
+          return Promise.resolve({
+            id: 6,
+            email: 'nonexistent-cust@nowhere.com',
+            isActive: true,
+            deletedAt: null,
+            customerId: 999,
+            userRoles: [{ role: { type: 'CUSTOMER', rolePermissions: [] } }],
+          });
+        }
+        if (where.id === 7) {
+          return Promise.resolve({
+            id: 7,
+            email: 'nocustomer@nowhere.com',
+            isActive: true,
+            deletedAt: null,
+            customerId: null,
             userRoles: [{ role: { type: 'CUSTOMER', rolePermissions: [] } }],
           });
         }
@@ -178,7 +217,7 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
     });
   });
 
-  describe('2. CustomerGuard Scope Verification', () => {
+  describe('2. CustomerGuard Scope & Authentication Verification', () => {
     it('allows SUPER_ADMIN to activate without customer assignment', async () => {
       const customerGuard = new CustomerGuard(mockPrisma as any);
       const req: any = {
@@ -211,22 +250,145 @@ describe('Admin Marketing Banners - End-to-End Authentication & Authorization Su
       expect(req.customerId).toBe(101);
     });
 
-    it('rejects cross-customer header tampering', async () => {
+    it('allows active authenticated CUSTOMER with valid customerId to activate', async () => {
       const customerGuard = new CustomerGuard(mockPrisma as any);
       const req: any = {
-        user: { id: 2, email: 'admin@company101.com', customerId: 101, role: 'COMPANY_ADMIN', roles: ['COMPANY_ADMIN'] },
+        user: { id: 4, email: 'customer@company101.com', customerId: 101, role: 'CUSTOMER', roles: ['CUSTOMER'] },
         query: {},
-        headers: { 'x-customer-id': '999' },
+        headers: { 'x-customer-id': '101' },
+      };
+      const context: any = {
+        switchToHttp: () => ({ getRequest: () => req }),
+      };
+
+      const allowed = await customerGuard.canActivate(context);
+      expect(allowed).toBe(true);
+      expect(req.customerId).toBe(101);
+    });
+
+    it('throws 403 Forbidden when customer does not exist', async () => {
+      const customerGuard = new CustomerGuard(mockPrisma as any);
+      const req: any = {
+        user: { id: 6, email: 'nonexistent-cust@nowhere.com', customerId: 999, role: 'CUSTOMER', roles: ['CUSTOMER'] },
+        query: {},
+        headers: {},
       };
       const context: any = {
         switchToHttp: () => ({ getRequest: () => req }),
       };
 
       await expect(customerGuard.canActivate(context)).rejects.toThrow(ForbiddenException);
+      try {
+        await customerGuard.canActivate(context);
+      } catch (err: any) {
+        expect(err.message).toBe('Customer record not found or deactivated');
+        expect(err.getStatus()).toBe(403);
+      }
+    });
+
+    it('throws 403 Forbidden when customer is deactivated (isActive = false)', async () => {
+      const customerGuard = new CustomerGuard(mockPrisma as any);
+      const req: any = {
+        user: { id: 5, email: 'deactivated-cust@company303.com', customerId: 303, role: 'CUSTOMER', roles: ['CUSTOMER'] },
+        query: {},
+        headers: {},
+      };
+      const context: any = {
+        switchToHttp: () => ({ getRequest: () => req }),
+      };
+
+      await expect(customerGuard.canActivate(context)).rejects.toThrow(ForbiddenException);
+      try {
+        await customerGuard.canActivate(context);
+      } catch (err: any) {
+        expect(err.message).toBe('Customer record not found or deactivated');
+        expect(err.getStatus()).toBe(403);
+      }
+    });
+
+    it('throws 403 Forbidden when user has no customerId (customerId = null)', async () => {
+      const customerGuard = new CustomerGuard(mockPrisma as any);
+      const req: any = {
+        user: { id: 7, email: 'nocustomer@nowhere.com', customerId: null, role: 'CUSTOMER', roles: ['CUSTOMER'] },
+        query: {},
+        headers: {},
+      };
+      const context: any = {
+        switchToHttp: () => ({ getRequest: () => req }),
+      };
+
+      await expect(customerGuard.canActivate(context)).rejects.toThrow(ForbiddenException);
+      try {
+        await customerGuard.canActivate(context);
+      } catch (err: any) {
+        expect(err.message).toBe('User does not belong to any customer');
+        expect(err.getStatus()).toBe(403);
+      }
+    });
+
+    it('rejects cross-customer header tampering with 403 Forbidden', async () => {
+      const customerGuard = new CustomerGuard(mockPrisma as any);
+      const req: any = {
+        user: { id: 2, email: 'admin@company101.com', customerId: 101, role: 'COMPANY_ADMIN', roles: ['COMPANY_ADMIN'] },
+        query: {},
+        headers: { 'x-customer-id': '202' },
+      };
+      const context: any = {
+        switchToHttp: () => ({ getRequest: () => req }),
+      };
+
+      await expect(customerGuard.canActivate(context)).rejects.toThrow(ForbiddenException);
+      try {
+        await customerGuard.canActivate(context);
+      } catch (err: any) {
+        expect(err.message).toBe('Cross-customer access forbidden');
+        expect(err.getStatus()).toBe(403);
+      }
     });
   });
 
-  describe('3. BannerController Role Authorization & Listing', () => {
+  describe('3. Customer Marketing Banners API & Tenant Isolation', () => {
+    it('returns customer-specific banners and global banners for valid active customer', async () => {
+      const customerUser = {
+        id: 4,
+        email: 'customer@company101.com',
+        role: 'CUSTOMER',
+        roles: ['CUSTOMER'],
+        customerId: 101,
+      };
+
+      const req: any = { customerId: 101, headers: {} };
+      const banners = await controller.getCustomerBanners(customerUser, req, '101', '101');
+
+      expect(banners).toBeDefined();
+      expect(Array.isArray(banners)).toBe(true);
+      expect(banners).toHaveLength(2); // Company 101 Exclusive Banner + Global Platform Banner
+      expect(banners.some((b: any) => b.title === 'Company 101 Exclusive Banner')).toBe(true);
+      expect(banners.some((b: any) => b.title === 'Global Platform Banner')).toBe(true);
+      expect(banners.some((b: any) => b.title === 'Company 202 Exclusive Banner')).toBe(false);
+    });
+
+    it('enforces strict tenant isolation: Customer 202 does not receive Customer 101 banners', async () => {
+      const customerUser202 = {
+        id: 8,
+        email: 'customer@company202.com',
+        role: 'CUSTOMER',
+        roles: ['CUSTOMER'],
+        customerId: 202,
+      };
+
+      const req: any = { customerId: 202, headers: {} };
+      const banners = await controller.getCustomerBanners(customerUser202, req, '202', '202');
+
+      expect(banners).toBeDefined();
+      expect(banners).toHaveLength(2); // Company 202 Exclusive Banner + Global Platform Banner
+      expect(banners.some((b: any) => b.title === 'Company 202 Exclusive Banner')).toBe(true);
+      expect(banners.some((b: any) => b.title === 'Global Platform Banner')).toBe(true);
+      expect(banners.some((b: any) => b.title === 'Company 101 Exclusive Banner')).toBe(false);
+    });
+  });
+
+  describe('4. BannerController Admin Role Authorization & Listing', () => {
     it('allows SUPER_ADMIN to call GET /admin/marketing/banners and returns all banners', async () => {
       const superAdminUser = {
         id: 1,
