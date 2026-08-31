@@ -35,18 +35,11 @@ export class SubscriptionService {
   }
 
   async getPlans(includeInactive = false) {
-    const where: any = { deletedAt: null };
-    if (!includeInactive) {
-      where.isActive = true;
-    }
+    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /plans\nincludeInactive: ${includeInactive}`);
 
-    let plans = await this.prisma.plan.findMany({
-      where,
-      orderBy: { monthlyPrice: 'asc' },
-    });
-
-    if (plans.length === 0 && !includeInactive) {
-      // Seed standard QuikBoom subscription packages
+    const totalCount = await this.prisma.plan.count();
+    if (totalCount === 0) {
+      // Seed standard QuikBoom subscription packages on initial empty database
       const standardPlans = [
         {
           name: 'Basic Package',
@@ -125,14 +118,21 @@ export class SubscriptionService {
       for (const p of standardPlans) {
         await this.prisma.plan.create({ data: p });
       }
-
-      plans = await this.prisma.plan.findMany({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { monthlyPrice: 'asc' },
-      });
     }
 
-    return plans.map((p) => {
+    const where: any = { deletedAt: null };
+    if (!includeInactive) {
+      where.isActive = true;
+    }
+
+    const plans = await this.prisma.plan.findMany({
+      where,
+      orderBy: { monthlyPrice: 'asc' },
+    });
+
+    this.logger.log(`[PLAN_API_DEBUG]\ndatabaseResult count: ${plans.length}`);
+
+    const mapped = plans.map((p) => {
       let subtitle = 'Custom Plan';
       if (p.code === 'BASIC') subtitle = 'Starter Plan';
       else if (p.code === 'STANDARD') subtitle = 'Growth Plan';
@@ -155,12 +155,29 @@ export class SubscriptionService {
         isRecommended: p.code === 'STANDARD',
       };
     });
+
+    this.logger.log(`[PLAN_API_DEBUG]\nresponseData count: ${mapped.length}`);
+    return mapped;
   }
 
-  async getPlanById(id: number | string) {
+  async getPlanById(id: number | string, includeInactive = false) {
+    const numId = Number(id);
+    if (!numId || isNaN(numId)) {
+      throw new BadRequestException('Valid Plan ID is required');
+    }
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!includeInactive) {
+      where.isActive = true;
+    }
+
     const plan = await this.prisma.plan.findFirst({
-      where: { id: Number(id), deletedAt: null },
+      where,
     });
+
+    if (!plan) {
+      throw new NotFoundException('This subscription plan is no longer available.');
+    }
 
     let subtitle = 'Custom Plan';
     if (plan.code === 'BASIC') subtitle = 'Starter Plan';
@@ -703,11 +720,11 @@ export class SubscriptionService {
   async createOrder(customerId: number | string, dto: CreateOrderDto) {
     const numCustomerId = Number(customerId);
     const numPlanId = Number(dto.planId);
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: numPlanId },
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: numPlanId, deletedAt: null, isActive: true },
     });
     if (!plan) {
-      throw new NotFoundException('Plan not found');
+      throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
@@ -1231,11 +1248,11 @@ export class SubscriptionService {
       throw new BadRequestException('Valid Plan ID is required');
     }
 
-    const existing = await this.prisma.plan.findUnique({
-      where: { id: planId },
+    const existing = await this.prisma.plan.findFirst({
+      where: { id: planId, deletedAt: null },
     });
     if (!existing) {
-      throw new NotFoundException(`Plan with ID ${planId} not found`);
+      throw new NotFoundException(`Plan with ID ${planId} not found or already deleted`);
     }
 
     // Soft-delete / deactivate plan so existing customer subscriptions and records remain linked

@@ -878,12 +878,12 @@ export class CustomerService {
     }
 
     const planId = Number(dto.planId);
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: planId },
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: planId, deletedAt: null, isActive: true },
     });
 
     if (!plan) {
-      throw new NotFoundException(`Plan with ID ${planId} not found`);
+      throw new BadRequestException('This subscription plan is no longer available.');
     }
 
     const startDate = dto.startDate ? new Date(dto.startDate) : calculateSubscriptionStartDate(new Date());

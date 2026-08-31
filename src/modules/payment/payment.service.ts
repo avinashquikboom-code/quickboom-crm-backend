@@ -104,12 +104,14 @@ export class PaymentService {
       throw new NotFoundException('Customer organization not found');
     }
 
-    // Resolve plan by numeric ID or code (e.g. BASIC, STANDARD, PREMIUM, STARTER, GROWTH, SCALE)
+    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/razorpay/order\ncustomerId: ${customerId}\nrequestedPlanId: ${dto.planId}`);
+
+    // Resolve plan by numeric ID or code (e.g. BASIC, STANDARD, PREMIUM)
     let plan: any = null;
     const numPlanId = Number(dto.planId);
     if (!isNaN(numPlanId) && numPlanId > 0) {
       plan = await this.prisma.plan.findFirst({
-        where: { id: numPlanId, deletedAt: null },
+        where: { id: numPlanId, deletedAt: null, isActive: true },
       });
     }
 
@@ -117,33 +119,17 @@ export class PaymentService {
       const codeUpper = String(dto.planId).trim().toUpperCase();
       plan = await this.prisma.plan.findFirst({
         where: {
-          OR: [
-            { code: codeUpper },
-            {
-              code:
-                codeUpper === 'STARTER'
-                  ? 'BASIC'
-                  : codeUpper === 'GROWTH'
-                  ? 'STANDARD'
-                  : codeUpper === 'SCALE'
-                  ? 'PREMIUM'
-                  : codeUpper,
-            },
-          ],
+          code: codeUpper,
           deletedAt: null,
+          isActive: true,
         },
       });
     }
 
-    if (!plan) {
-      plan = await this.prisma.plan.findFirst({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { monthlyPrice: 'asc' },
-      });
-    }
+    this.logger.log(`[PLAN_API_DEBUG]\ndatabaseResult: ${plan ? `Plan #${plan.id} (${plan.name}, active=${plan.isActive})` : 'NULL'}`);
 
     if (!plan) {
-      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
+      throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
@@ -283,12 +269,14 @@ export class PaymentService {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
+    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/razorpay/verify\ncustomerId: ${customerId}\nplanId: ${dto.planId}`);
+
     // Resolve plan by numeric ID or code
     let plan: any = null;
     const numPlanId = Number(dto.planId);
     if (!isNaN(numPlanId) && numPlanId > 0) {
       plan = await this.prisma.plan.findFirst({
-        where: { id: numPlanId, deletedAt: null },
+        where: { id: numPlanId, deletedAt: null, isActive: true },
       });
     }
 
@@ -296,33 +284,15 @@ export class PaymentService {
       const codeUpper = String(dto.planId).trim().toUpperCase();
       plan = await this.prisma.plan.findFirst({
         where: {
-          OR: [
-            { code: codeUpper },
-            {
-              code:
-                codeUpper === 'STARTER'
-                  ? 'BASIC'
-                  : codeUpper === 'GROWTH'
-                  ? 'STANDARD'
-                  : codeUpper === 'SCALE'
-                  ? 'PREMIUM'
-                  : codeUpper,
-            },
-          ],
+          code: codeUpper,
           deletedAt: null,
+          isActive: true,
         },
       });
     }
 
     if (!plan) {
-      plan = await this.prisma.plan.findFirst({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { monthlyPrice: 'asc' },
-      });
-    }
-
-    if (!plan) {
-      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
+      throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
     const orderId = dto.razorpay_order_id || (dto as any).orderId;
@@ -1055,12 +1025,14 @@ export class PaymentService {
       throw new NotFoundException(`Customer organization #${customerId} not found`);
     }
 
+    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/offline/order\ncustomerId: ${customerId}\nplanId: ${dto.planId}`);
+
     // Resolve plan
     let plan: any = null;
     const numPlanId = Number(dto.planId);
     if (!isNaN(numPlanId) && numPlanId > 0) {
       plan = await this.prisma.plan.findFirst({
-        where: { id: numPlanId, deletedAt: null },
+        where: { id: numPlanId, deletedAt: null, isActive: true },
       });
     }
 
@@ -1068,26 +1040,15 @@ export class PaymentService {
       const codeUpper = String(dto.planId).trim().toUpperCase();
       plan = await this.prisma.plan.findFirst({
         where: {
-          OR: [
-            { code: codeUpper },
-            {
-              code:
-                codeUpper === 'STARTER'
-                  ? 'BASIC'
-                  : codeUpper === 'GROWTH'
-                  ? 'STANDARD'
-                  : codeUpper === 'SCALE'
-                  ? 'PREMIUM'
-                  : codeUpper,
-            },
-          ],
+          code: codeUpper,
           deletedAt: null,
+          isActive: true,
         },
       });
     }
 
     if (!plan) {
-      throw new NotFoundException(`Plan with ID/code ${dto.planId} not found`);
+      throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;

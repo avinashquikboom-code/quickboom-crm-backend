@@ -667,13 +667,13 @@ export class InstallmentService {
     }
 
     // Resolve plan to purchase
-    const planId = dto.planId || oldSub?.planId || 1;
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: planId },
+    const planId = Number(dto.planId || oldSub?.planId || 1);
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: planId, deletedAt: null, isActive: true },
     });
 
     if (!plan) {
-      throw new NotFoundException(`Plan #${planId} not found`);
+      throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
     const cycle = (dto.billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;
