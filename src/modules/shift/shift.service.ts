@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -13,10 +14,26 @@ import {
 
 @Injectable()
 export class ShiftService {
+  private readonly logger = new Logger(ShiftService.name);
+
   constructor(private prisma: PrismaService) {}
 
-  async getMetrics(customerId: number | string) {
-    const numCustomerId = Number(customerId);
+  private async resolveCustomerId(customerId?: number | string | null): Promise<number> {
+    if (typeof customerId === 'number' && !isNaN(customerId) && customerId > 0) return customerId;
+    if (typeof customerId === 'string' && !isNaN(Number(customerId)) && Number(customerId) > 0) {
+      return Number(customerId);
+    }
+    const firstCustomer = await this.prisma.customer.findFirst({
+      where: { deletedAt: null, isActive: true },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    return firstCustomer?.id || 1;
+  }
+
+  async getMetrics(customerId?: number | string | null, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    this.logger.log(`[SHIFT_METRICS_DEBUG] queryStarted: true, customerId: ${numCustomerId}`);
 
     const [total, active, nightShifts, rotationalShifts, assignedEmployees] = await Promise.all([
       this.prisma.shift.count({ where: { customerId: numCustomerId, deletedAt: null } }),
@@ -28,20 +45,25 @@ export class ShiftService {
       }),
     ]);
 
-    return {
+    const result = {
       total,
       active,
       nightShifts,
       rotationalShifts,
       assignedEmployees,
     };
+    this.logger.log(`[SHIFT_METRICS_DEBUG] result: ${JSON.stringify(result)}`);
+    return result;
   }
 
   async findAll(
-    customerId: number | string,
-    query: { status?: string; search?: string; type?: string },
+    customerId?: number | string | null,
+    query: { status?: string; search?: string; type?: string } = {},
+    isSuperAdmin = false,
   ) {
-    const numCustomerId = Number(customerId);
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    this.logger.log(`[SHIFT_DEBUG] request: GET /shifts, customerId: ${numCustomerId}`);
+
     const where: any = { customerId: numCustomerId, deletedAt: null };
 
     if (query.status && query.status !== 'ALL') {
@@ -54,11 +76,12 @@ export class ShiftService {
       where.isRotational = true;
     }
 
-    if (query.search) {
+    if (query.search && query.search.trim()) {
+      const q = query.search.trim();
       where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { code: { contains: query.search, mode: 'insensitive' } },
-        { notes: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: q, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { notes: { contains: q, mode: 'insensitive' } },
       ];
     }
 
@@ -73,18 +96,29 @@ export class ShiftService {
       },
     });
 
-    return shifts.map((s) => ({
+    const results = shifts.map((s) => ({
       ...s,
       employeeCount: s._count?.employees || 0,
     }));
+    this.logger.log(`[SHIFT_DEBUG] database: connected, queryStarted: true, resultCount: ${results.length}`);
+    return results;
   }
 
-  async findOne(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async findOne(customerId?: number | string | null, id?: number | string, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
 
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException('Invalid shift ID');
+    }
+
+    const where: any = { id: numId, deletedAt: null };
+    if (!isSuperAdmin) {
+      where.customerId = numCustomerId;
+    }
+
     const shift = await this.prisma.shift.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
+      where,
       include: {
         guidance: true,
         employees: {
@@ -109,26 +143,27 @@ export class ShiftService {
     return shift;
   }
 
-  async create(customerId: number | string, dto: CreateShiftDto) {
-    const numCustomerId = Number(customerId);
+  async create(customerId: number | string | null, dto: CreateShiftDto) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
 
     // Verify code uniqueness for customer
+    const cleanCode = dto.code ? dto.code.trim().toUpperCase() : 'SHIFT';
     const existing = await this.prisma.shift.findFirst({
-      where: { customerId: numCustomerId, code: dto.code, deletedAt: null },
+      where: { customerId: numCustomerId, code: cleanCode, deletedAt: null },
     });
 
     if (existing) {
-      throw new BadRequestException(`Shift with code "${dto.code}" already exists`);
+      throw new BadRequestException(`Shift with code "${cleanCode}" already exists`);
     }
 
     return this.prisma.$transaction(async (tx) => {
       const shift = await tx.shift.create({
         data: {
           customerId: numCustomerId,
-          name: dto.name,
-          code: dto.code.toUpperCase(),
-          startTime: dto.startTime,
-          endTime: dto.endTime,
+          name: dto.name.trim(),
+          code: cleanCode,
+          startTime: dto.startTime || '09:30 AM',
+          endTime: dto.endTime || '06:30 PM',
           durationHours: dto.durationHours ?? 9.0,
           gracePeriodMinutes: dto.gracePeriodMinutes ?? 15,
           halfDayThresholdHours: dto.halfDayThresholdHours ?? 4.5,
@@ -147,11 +182,11 @@ export class ShiftService {
         data: {
           shiftId: shift.id,
           customerId: numCustomerId,
-          overtimeRule: dto.guidance?.overtimeRule || 'Overtime commences after 9 hours of active work at 1.5x regular wage.',
+          overtimeRule: dto.guidance?.overtimeRule || 'Overtime commences after 9 hours of active shift work; calculated at 1.5x regular wage.',
           punchInRule: dto.guidance?.punchInRule || 'Punch-in permitted 30 mins before shift start. 15-minute grace period applies.',
           punchOutRule: dto.guidance?.punchOutRule || 'Early departure before shift completion requires supervisor half-day clearance.',
-          breakPolicy: dto.guidance?.breakPolicy || '1-hour lunch break + two 15-minute relaxation periods.',
-          nightShiftAllowance: dto.guidance?.nightShiftAllowance || (dto.isNightShift ? '₹250 per night shift allowance with transport.' : 'N/A'),
+          breakPolicy: dto.guidance?.breakPolicy || '1-hour lunch break between 01:00 PM and 02:00 PM + two 15-minute relaxation periods.',
+          nightShiftAllowance: dto.guidance?.nightShiftAllowance || (dto.isNightShift ? '₹250 per night shift allowance + complimentary company transport.' : 'N/A'),
           swapPolicy: dto.guidance?.swapPolicy || 'Shift swap requests must be submitted 24 hours in advance with mutual consent.',
           geofenceRequirement: dto.guidance?.geofenceRequirement || 'Mandatory GPS check-in within 150m of assigned office geofence.',
           emergencyContactProtocol: dto.guidance?.emergencyContactProtocol || 'Notify HR & Shift Supervisor immediately on emergency absence.',
@@ -166,17 +201,17 @@ export class ShiftService {
     });
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateShiftDto) {
-    const numCustomerId = Number(customerId);
+  async update(customerId: number | string | null, id: number | string, dto: UpdateShiftDto, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(numCustomerId, numId, isSuperAdmin);
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.shift.update({
         where: { id: numId },
         data: {
-          name: dto.name,
-          code: dto.code ? dto.code.toUpperCase() : undefined,
+          name: dto.name ? dto.name.trim() : undefined,
+          code: dto.code ? dto.code.trim().toUpperCase() : undefined,
           startTime: dto.startTime,
           endTime: dto.endTime,
           durationHours: dto.durationHours,
@@ -214,10 +249,10 @@ export class ShiftService {
     });
   }
 
-  async updateGuidance(customerId: number | string, id: number | string, dto: UpdateShiftGuidanceDto) {
-    const numCustomerId = Number(customerId);
+  async updateGuidance(customerId: number | string | null, id: number | string, dto: UpdateShiftGuidanceDto, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(numCustomerId, numId, isSuperAdmin);
 
     return this.prisma.shiftGuidance.upsert({
       where: { shiftId: numId },
@@ -232,10 +267,10 @@ export class ShiftService {
     });
   }
 
-  async assignEmployees(customerId: number | string, id: number | string, dto: AssignEmployeesToShiftDto) {
-    const numCustomerId = Number(customerId);
+  async assignEmployees(customerId: number | string | null, id: number | string, dto: AssignEmployeesToShiftDto, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(numCustomerId, numId, isSuperAdmin);
 
     if (dto.employeeIds && dto.employeeIds.length > 0) {
       await this.prisma.employee.updateMany({
@@ -257,13 +292,13 @@ export class ShiftService {
       });
     }
 
-    return this.findOne(numCustomerId, numId);
+    return this.findOne(numCustomerId, numId, isSuperAdmin);
   }
 
-  async delete(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async delete(customerId: number | string | null, id: number | string, isSuperAdmin = false) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    await this.findOne(numCustomerId, numId, isSuperAdmin);
 
     return this.prisma.shift.update({
       where: { id: numId },

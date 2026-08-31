@@ -20,6 +20,8 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('HRM - Shifts & Guidance')
 @ApiBearerAuth()
@@ -30,8 +32,15 @@ export class ShiftController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get shift overview and workforce allocation metrics' })
-  async getMetrics(@CurrentCustomer() customerId: string) {
-    return this.shiftService.getMetrics(customerId);
+  @ApiQuery({ name: 'customerId', required: false })
+  async getMetrics(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.shiftService.getMetrics(targetCustomerId, isSuperAdmin);
   }
 
   @Get()
@@ -39,69 +48,93 @@ export class ShiftController {
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'type', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
   async findAll(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
     @Query('status') status?: string,
     @Query('search') search?: string,
     @Query('type') type?: string,
   ) {
-    return this.shiftService.findAll(customerId, { status, search, type });
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.shiftService.findAll(targetCustomerId, { status, search, type }, isSuperAdmin);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get shift details, assigned employees, and shift guidance' })
+  @ApiQuery({ name: 'customerId', required: false })
   async findOne(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
+    @Query('customerId') customerIdQuery?: string,
   ) {
-    return this.shiftService.findOne(customerId, id);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.shiftService.findOne(targetCustomerId, id, isSuperAdmin);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create new shift with timing rules and guidance' })
   async create(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Body() dto: CreateShiftDto,
   ) {
-    return this.shiftService.create(customerId, dto);
+    const targetCustomerId = customerId || user?.customerId;
+    return this.shiftService.create(targetCustomerId, dto);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update shift timing and parameters' })
   async update(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
     @Body() dto: UpdateShiftDto,
   ) {
-    return this.shiftService.update(customerId, id, dto);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.update(targetCustomerId, id, dto, isSuperAdmin);
   }
 
   @Patch(':id/guidance')
   @ApiOperation({ summary: 'Update shift guidance rules (overtime, breaks, allowances)' })
   async updateGuidance(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
     @Body() dto: UpdateShiftGuidanceDto,
   ) {
-    return this.shiftService.updateGuidance(customerId, id, dto);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.updateGuidance(targetCustomerId, id, dto, isSuperAdmin);
   }
 
   @Post(':id/assign')
   @ApiOperation({ summary: 'Assign employees or entire department to shift' })
   async assignEmployees(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
     @Body() dto: AssignEmployeesToShiftDto,
   ) {
-    return this.shiftService.assignEmployees(customerId, id, dto);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.assignEmployees(targetCustomerId, id, dto, isSuperAdmin);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate shift' })
   async delete(
-    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
   ) {
-    return this.shiftService.delete(customerId, id);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.delete(targetCustomerId, id, isSuperAdmin);
   }
 }
