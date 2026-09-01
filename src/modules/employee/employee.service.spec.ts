@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EmployeeService } from './employee.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('EmployeeService — Customer Data Isolation', () => {
   let service: EmployeeService;
@@ -11,6 +11,7 @@ describe('EmployeeService — Customer Data Isolation', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       findFirst: jest.Mock;
+      findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
     };
@@ -30,6 +31,7 @@ describe('EmployeeService — Customer Data Isolation', () => {
         findMany: jest.fn(),
         count: jest.fn(),
         findFirst: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
         update: jest.fn(),
       },
@@ -225,6 +227,8 @@ describe('EmployeeService — Customer Data Isolation', () => {
       // Backend generates the code inside the transaction; mock the resolved value
       // findMany is called by getNextEmployeeCode to find existing QB-prefixed codes
       prisma.employee.findMany.mockResolvedValue([]); // no existing codes → generates QB0001
+      // findUnique is called by the duplicate guard — null means no existing employee for this user
+      prisma.employee.findUnique.mockResolvedValue(null);
       prisma.department.findFirst.mockResolvedValue({ id: 10, customerId: 1, name: 'Media' });
       prisma.designation.findFirst.mockResolvedValue({ id: 20, customerId: 1, name: 'Lead' });
       prisma.employee.create.mockResolvedValue({
@@ -256,6 +260,31 @@ describe('EmployeeService — Customer Data Isolation', () => {
         }),
       );
       expect(result.customerId).toBe(1);
+    });
+
+    it('Creating employee with email that already has an Employee record throws ConflictException (409)', async () => {
+      // findMany for getNextEmployeeCode
+      prisma.employee.findMany.mockResolvedValue([]);
+      // The duplicate guard: findUnique returns an existing employee for this user
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 99,
+        employeeCode: 'QB0001',
+        customerId: 1,
+      });
+
+      await expect(
+        service.create({
+          customerId: 1,
+          dto: {
+            firstName: 'Duplicate',
+            lastName: 'User',
+            email: 'existing@custA.com',
+          },
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      // employee.create must NEVER be called when user already has an Employee record
+      expect(prisma.employee.create).not.toHaveBeenCalled();
     });
   });
 
