@@ -8,6 +8,12 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
+import {
+  getBusinessDate,
+  getBusinessDayRange,
+  formatTimeInTimezone,
+  formatDurationHoursMinutes,
+} from '../../common/utils/timezone.util';
 
 export function calculateDistanceMeters(
   lat1: number,
@@ -265,13 +271,8 @@ export class AttendanceService {
       throw new BadRequestException('GPS accuracy must be a positive number.');
     }
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
     const now = new Date();
+    const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
     // Check if employee has approved remote work for today
     const approvedRemote = await this.prisma.remoteRequest.findFirst({
@@ -367,6 +368,7 @@ calculatedDistance: ${distanceMeters}`);
           employeeId: employee.id,
           date: { gte: todayStart, lte: todayEnd },
         },
+        orderBy: { id: 'desc' },
       });
 
       if (attendance && attendance.punchIn && !attendance.punchOut) {
@@ -412,12 +414,26 @@ calculatedDistance: ${distanceMeters}`);
         });
       }
 
+      console.log(`[ATTENDANCE]
+employeeId: ${employee.id}
+attendanceDate: ${dateStr}
+serverNowUTC: ${now.toISOString()}
+businessTime: ${formatTimeInTimezone(now)}
+punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
+
+      const punchInIso = attendance.punchIn ? attendance.punchIn.toISOString() : null;
+
       return {
         success: true,
         message: `Punch In successful${approvedRemote ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
         data: {
           attendanceId: attendance.id,
-          punchInAt: attendance.punchIn,
+          employeeId: employee.employeeCode || `EMP-${employee.id}`,
+          attendanceDate: dateStr,
+          punchInAt: punchInIso,
+          punchIn: punchInIso,
+          punchOutAt: null,
+          punchOut: null,
           status: attendanceStatus,
           office: {
             id: office.id,
@@ -448,13 +464,8 @@ calculatedDistance: ${distanceMeters}`);
     const office = await this.resolveOfficeForEmployee(employee);
     const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
     const now = new Date();
+    const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
     let distanceMeters = 0;
     const allowedRadius = office.radiusMeters || 200.0;
@@ -476,6 +487,7 @@ calculatedDistance: ${distanceMeters}`);
           employeeId: employee.id,
           date: { gte: todayStart, lte: todayEnd },
         },
+        orderBy: { id: 'desc' },
         include: {
           breaks: true,
         },
@@ -505,23 +517,29 @@ calculatedDistance: ${distanceMeters}`);
         );
       }
 
-      // Calculate total break duration in hours
-      const totalBreakMinutes = attendance.breaks.reduce(
-        (sum, b) => sum + (b.duration || 0),
-        0,
-      );
+      // Calculate total completed break duration in minutes and hours
+      const totalBreakMinutes = attendance.breaks
+        .filter((b) => b.breakEnd)
+        .reduce(
+          (sum, b) =>
+            sum +
+            (b.duration ||
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(b.breakEnd!).getTime() - new Date(b.breakStart).getTime()) /
+                    (1000 * 60),
+                ),
+              )),
+          0,
+        );
       const totalBreakHours = Math.round((totalBreakMinutes / 60) * 100) / 100;
 
-      // Calculate working hours
+      // Calculate working hours: Net = Gross elapsed - Total Break
       const totalElapsedMs = now.getTime() - new Date(attendance.punchIn).getTime();
-      const totalElapsedHours = Math.max(0, totalElapsedMs / (1000 * 60 * 60));
       const totalElapsedMinutes = Math.max(0, Math.round(totalElapsedMs / (1000 * 60)));
-
-      let actualWorkingHours = totalElapsedHours;
-      if (policy.breakType === 'UNPAID') {
-        actualWorkingHours = Math.max(0, totalElapsedHours - totalBreakHours);
-      }
-      actualWorkingHours = Math.round(actualWorkingHours * 100) / 100;
+      const netWorkingMinutes = Math.max(0, totalElapsedMinutes - totalBreakMinutes);
+      const actualWorkingHours = Math.round((netWorkingMinutes / 60) * 100) / 100;
 
       const minRequiredHours = policy.minWorkingHours || 8.0;
       const earlyGraceHours = (policy.earlyCheckoutGraceMinutes || 15) / 60;
@@ -538,7 +556,7 @@ calculatedDistance: ${distanceMeters}`);
         data: {
           punchOut: now,
           workingHours: actualWorkingHours,
-          workingMinutes: totalElapsedMinutes,
+          workingMinutes: netWorkingMinutes,
           breakDuration: totalBreakHours,
           status: finalStatus,
           locationOut: locationOutStr,
@@ -549,29 +567,46 @@ calculatedDistance: ${distanceMeters}`);
         },
       });
 
-      const hours = Math.floor(totalElapsedMinutes / 60);
-      const mins = totalElapsedMinutes % 60;
-      const workingDuration = `${hours}h ${mins}m`;
+      const workingDuration = formatDurationHoursMinutes(netWorkingMinutes);
+      const totalBreakFormatted = formatDurationHoursMinutes(totalBreakMinutes);
 
       console.log(`[ATTENDANCE]
 employeeId: ${employee.id}
 branchId: ${office.id}
 action: PUNCH_OUT
+attendanceDate: ${dateStr}
+serverNowUTC: ${now.toISOString()}
+businessTime: ${formatTimeInTimezone(now)}
+punchInAt: ${attendance.punchIn?.toISOString()}
+punchOutAtSaved: ${updated.punchOut?.toISOString()}
 distanceMeters: ${distanceMeters}
-workingMinutes: ${totalElapsedMinutes}
+workingMinutes: ${netWorkingMinutes}
+workingDuration: ${workingDuration}
+totalBreakMinutes: ${totalBreakMinutes}
+totalBreakDuration: ${totalBreakFormatted}
 biometricVerified: ${Boolean(dto.biometricVerified)}
 result: SUCCESS`);
+
+      const punchInIso = attendance.punchIn ? attendance.punchIn.toISOString() : null;
+      const punchOutIso = updated.punchOut ? updated.punchOut.toISOString() : null;
 
       return {
         success: true,
         message: `Punch Out successful. Total working duration: ${workingDuration} (${actualWorkingHours} hrs).`,
         data: {
           attendanceId: updated.id,
-          punchInAt: attendance.punchIn,
-          punchOutAt: updated.punchOut,
+          employeeId: employee.employeeCode || `EMP-${employee.id}`,
+          attendanceDate: dateStr,
+          punchInAt: punchInIso,
+          punchIn: punchInIso,
+          punchOutAt: punchOutIso,
+          punchOut: punchOutIso,
           workingDuration,
           workingHours: updated.workingHours,
-          workingMinutes: totalElapsedMinutes,
+          workingMinutes: netWorkingMinutes,
+          totalBreakMinutes,
+          breakDuration: totalBreakFormatted,
+          totalBreak: totalBreakFormatted,
           status: finalStatus,
           office: {
             id: office.id,
@@ -589,22 +624,19 @@ result: SUCCESS`);
         },
       };
     });
+
   }
 
   async getTodayAttendance(user: any, customerId: number | string | undefined) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange();
 
     const todayAtt = await this.prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
         date: { gte: todayStart, lte: todayEnd },
       },
+      orderBy: { id: 'desc' },
       include: {
         breaks: true,
       },
@@ -612,12 +644,33 @@ result: SUCCESS`);
 
     const isPunchedIn = Boolean(todayAtt?.punchIn && !todayAtt?.punchOut);
     const isPunchedOut = Boolean(todayAtt?.punchIn && todayAtt?.punchOut);
-    let workingMinutes = 0;
+    let grossMinutes = 0;
+    let netWorkingMinutes = 0;
+    let totalBreakMinutes = 0;
 
-    if (todayAtt?.punchIn) {
-      const endTime = todayAtt.punchOut ? new Date(todayAtt.punchOut) : new Date();
-      const elapsedMs = endTime.getTime() - new Date(todayAtt.punchIn).getTime();
-      workingMinutes = Math.max(0, Math.round(elapsedMs / (1000 * 60)));
+    if (todayAtt) {
+      totalBreakMinutes = todayAtt.breaks
+        .filter((b) => b.breakEnd)
+        .reduce(
+          (sum, b) =>
+            sum +
+            (b.duration ||
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(b.breakEnd!).getTime() - new Date(b.breakStart).getTime()) /
+                    (1000 * 60),
+                ),
+              )),
+          0,
+        );
+
+      if (todayAtt.punchIn) {
+        const endTime = todayAtt.punchOut ? new Date(todayAtt.punchOut) : new Date();
+        const elapsedMs = endTime.getTime() - new Date(todayAtt.punchIn).getTime();
+        grossMinutes = Math.max(0, Math.round(elapsedMs / (1000 * 60)));
+        netWorkingMinutes = Math.max(0, grossMinutes - totalBreakMinutes);
+      }
     }
 
     const currentStatus = isPunchedIn
@@ -629,12 +682,16 @@ result: SUCCESS`);
     return {
       success: true,
       data: {
-        date: new Date().toISOString().split('T')[0],
+        date: dateStr,
         status: currentStatus,
         punchInAt: todayAtt?.punchIn ? todayAtt.punchIn.toISOString() : null,
         punchOutAt: todayAtt?.punchOut ? todayAtt.punchOut.toISOString() : null,
-        workingMinutes,
-        workingHours: todayAtt?.workingHours || 0,
+        workingMinutes: netWorkingMinutes,
+        workingHours: Math.round((netWorkingMinutes / 60) * 100) / 100,
+        workingDuration: formatDurationHoursMinutes(netWorkingMinutes),
+        totalBreakMinutes,
+        breakDuration: formatDurationHoursMinutes(totalBreakMinutes),
+        totalBreak: formatDurationHoursMinutes(totalBreakMinutes),
         isPunchedIn,
         rawStatus: todayAtt?.status || 'NOT_MARKED',
       },
@@ -658,21 +715,16 @@ result: SUCCESS`);
     };
 
     if (query.date) {
-      const dStart = new Date(query.date);
-      dStart.setHours(0, 0, 0, 0);
-      const dEnd = new Date(query.date);
-      dEnd.setHours(23, 59, 59, 999);
+      const { start: dStart, end: dEnd } = getBusinessDayRange(query.date);
       whereClause.date = { gte: dStart, lte: dEnd };
     } else if (query.dateFrom || query.dateTo) {
       whereClause.date = {};
       if (query.dateFrom) {
-        const from = new Date(query.dateFrom);
-        from.setHours(0, 0, 0, 0);
+        const { start: from } = getBusinessDayRange(query.dateFrom);
         whereClause.date.gte = from;
       }
       if (query.dateTo) {
-        const to = new Date(query.dateTo);
-        to.setHours(23, 59, 59, 999);
+        const { end: to } = getBusinessDayRange(query.dateTo);
         whereClause.date.lte = to;
       }
     }
@@ -712,13 +764,8 @@ result: SUCCESS`);
       throw new BadRequestException('Employee breaks are disabled according to the active attendance policy.');
     }
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
     const now = new Date();
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
     return this.prisma.$transaction(async (tx) => {
       const attendance = await tx.attendance.findFirst({
@@ -726,6 +773,7 @@ result: SUCCESS`);
           employeeId: employee.id,
           date: { gte: todayStart, lte: todayEnd },
         },
+        orderBy: { id: 'desc' },
         include: {
           breaks: true,
         },
@@ -742,7 +790,7 @@ result: SUCCESS`);
       const activeBreak = attendance.breaks.find((b) => !b.breakEnd);
       if (activeBreak) {
         throw new BadRequestException(
-          `You are already on an active break started at ${activeBreak.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+          `You are already on an active break started at ${formatTimeInTimezone(activeBreak.breakStart)}.`,
         );
       }
 
@@ -762,7 +810,7 @@ result: SUCCESS`);
 
       return {
         success: true,
-        message: `Break started at ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+        message: `Break started at ${formatTimeInTimezone(now)}.`,
         data: newBreak,
       };
     });
@@ -772,13 +820,8 @@ result: SUCCESS`);
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
     const now = new Date();
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
     return this.prisma.$transaction(async (tx) => {
       const attendance = await tx.attendance.findFirst({
@@ -786,6 +829,7 @@ result: SUCCESS`);
           employeeId: employee.id,
           date: { gte: todayStart, lte: todayEnd },
         },
+        orderBy: { id: 'desc' },
         include: {
           breaks: true,
         },
@@ -837,18 +881,14 @@ result: SUCCESS`);
   async getMyAttendanceStatus(user: any, customerId: number | string | undefined) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange();
 
     const todayAtt = await this.prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
         date: { gte: todayStart, lte: todayEnd },
       },
+      orderBy: { id: 'desc' },
       include: {
         breaks: true,
       },
@@ -874,6 +914,48 @@ result: SUCCESS`);
     const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
     const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
     const policy = await this.getActiveAttendancePolicy(employee.customerId, office?.id);
+
+    const totalBreakMinutes =
+      todayAtt?.breaks
+        ?.filter((b: any) => b.breakEnd)
+        .reduce(
+          (sum: number, b: any) =>
+            sum +
+            (b.duration ||
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) /
+                    (1000 * 60),
+                ),
+              )),
+          0,
+        ) || 0;
+
+    let netWorkingMinutes = todayAtt?.workingMinutes || 0;
+    if (todayAtt?.punchIn && !todayAtt?.punchOut) {
+      const gross = Math.max(
+        0,
+        Math.round((Date.now() - new Date(todayAtt.punchIn).getTime()) / (1000 * 60)),
+      );
+      netWorkingMinutes = Math.max(0, gross - totalBreakMinutes);
+    } else if (
+      todayAtt?.punchIn &&
+      todayAtt?.punchOut &&
+      (!netWorkingMinutes || netWorkingMinutes === 0)
+    ) {
+      const gross = Math.max(
+        0,
+        Math.round(
+          (new Date(todayAtt.punchOut).getTime() - new Date(todayAtt.punchIn).getTime()) /
+            (1000 * 60),
+        ),
+      );
+      netWorkingMinutes = Math.max(0, gross - totalBreakMinutes);
+    }
+
+    const workingHoursVal = Math.round((netWorkingMinutes / 60) * 100) / 100;
+    const breakDurationHoursVal = Math.round((totalBreakMinutes / 60) * 100) / 100;
 
     return {
       employee: {
@@ -927,8 +1009,12 @@ result: SUCCESS`);
         activeBreakStart: activeBreak?.breakStart ? activeBreak.breakStart.toISOString() : null,
         punchInTime: todayAtt?.punchIn ? todayAtt.punchIn.toISOString() : null,
         punchOutTime: todayAtt?.punchOut ? todayAtt.punchOut.toISOString() : null,
-        workingHours: todayAtt?.workingHours || 0,
-        breakDuration: todayAtt?.breakDuration || 0,
+        workingMinutes: netWorkingMinutes,
+        workingHours: workingHoursVal,
+        workingDuration: formatDurationHoursMinutes(netWorkingMinutes),
+        totalBreakMinutes,
+        breakDuration: breakDurationHoursVal,
+        totalBreakDuration: formatDurationHoursMinutes(totalBreakMinutes),
         rawStatus: todayAtt?.status || 'NOT_MARKED',
       },
       todayAttendance: todayAtt,
@@ -980,12 +1066,7 @@ result: SUCCESS`);
 
   async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string) {
     const customerId = await this.resolveCustomerId(user, customerIdParam);
-
-    const targetDate = dateParam ? new Date(dateParam) : new Date();
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const { start: startOfDay, end: endOfDay } = getBusinessDayRange(dateParam);
 
     const [activeEmployees, offices, attendances, locations] = await Promise.all([
       this.prisma.employee.findMany({

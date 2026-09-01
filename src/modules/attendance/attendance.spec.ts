@@ -506,5 +506,80 @@ describe('AttendanceService (Punch In / Punch Out & Geofencing)', () => {
       expect(result.data.activeBreaks[0].breakStatus).toBe('ON_BREAK');
     });
   });
+
+  describe('Break & Working Duration Formatting & Calculation', () => {
+    it('formats minutes into Xh Ym correctly for all edge cases', () => {
+      const { formatDurationHoursMinutes } = require('../../common/utils/timezone.util');
+
+      expect(formatDurationHoursMinutes(0)).toBe('0h 0m');
+      expect(formatDurationHoursMinutes(1)).toBe('0h 1m');
+      expect(formatDurationHoursMinutes(30)).toBe('0h 30m');
+      expect(formatDurationHoursMinutes(59)).toBe('0h 59m');
+      expect(formatDurationHoursMinutes(60)).toBe('1h 0m');
+      expect(formatDurationHoursMinutes(61)).toBe('1h 1m');
+      expect(formatDurationHoursMinutes(90)).toBe('1h 30m');
+      expect(formatDurationHoursMinutes(119)).toBe('1h 59m');
+      expect(formatDurationHoursMinutes(120)).toBe('2h 0m');
+      expect(formatDurationHoursMinutes(125)).toBe('2h 5m');
+      expect(formatDurationHoursMinutes('90 min')).toBe('1h 30m');
+      expect(formatDurationHoursMinutes('1h 30m')).toBe('1h 30m');
+      expect(formatDurationHoursMinutes(null)).toBe('0h 0m');
+    });
+
+    it('calculates total break and net working duration accurately across multiple breaks', async () => {
+      const twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000); // 120 mins gross
+      const break1Start = new Date(Date.now() - 90 * 60 * 1000);
+      const break1End = new Date(Date.now() - 75 * 60 * 1000); // 15 mins
+      const break2Start = new Date(Date.now() - 60 * 60 * 1000);
+      const break2End = new Date(Date.now() - 30 * 60 * 1000); // 30 mins
+      // Total breaks = 45 mins (0h 45m). Net working = 120 - 45 = 75 mins (1h 15m)
+
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.attendancePolicy.findFirst.mockResolvedValue({
+        officeStartTime: '09:30',
+        officeEndTime: '18:30',
+        minWorkingHours: 8.0,
+        earlyCheckoutGraceMinutes: 15,
+        earlyCheckoutAction: 'HALF_DAY',
+        breakType: 'UNPAID',
+      });
+      prisma.branchGeofence.findMany.mockResolvedValue([mockEmployee.office]);
+
+      const existingAttendance = {
+        id: 100,
+        customerId: 1,
+        employeeId: mockEmployee.id,
+        punchIn: twoHoursAgo,
+        punchOut: null,
+        status: 'PRESENT',
+        breaks: [
+          { id: 1, breakStart: break1Start, breakEnd: break1End, duration: 15 },
+          { id: 2, breakStart: break2Start, breakEnd: break2End, duration: 30 },
+        ],
+      };
+
+      prisma.attendance.findFirst.mockResolvedValue(existingAttendance);
+      prisma.attendance.update.mockImplementation(({ data }) => ({
+        ...existingAttendance,
+        ...data,
+      }));
+
+      const result = await service.checkOut(
+        mockUser,
+        1,
+        {
+          latitude: 19.0330,
+          longitude: 73.0297,
+          accuracy: 5.0,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data.totalBreakMinutes).toBe(45);
+      expect(result.data.breakDuration).toBe('0h 45m');
+      expect(result.data.workingMinutes).toBe(75); // 120 gross - 45 break = 75
+      expect(result.data.workingDuration).toBe('1h 15m');
+    });
+  });
 });
 

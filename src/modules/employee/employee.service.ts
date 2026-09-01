@@ -9,6 +9,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { RoleType, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import {
+  getBusinessDate,
+  getBusinessDayRange,
+  formatTimeInTimezone,
+  formatDurationHoursMinutes,
+} from '../../common/utils/timezone.util';
 
 export interface FindAllEmployeesParams {
   customerId?: number | string;
@@ -536,10 +542,7 @@ export class EmployeeService {
     }
 
     const targetDate = dateFilter ? new Date(dateFilter) : new Date();
-    const todayStart = new Date(targetDate);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(targetDate);
-    todayEnd.setHours(23, 59, 59, 999);
+    const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(targetDate);
 
     const [employees, todayAttendances, todayLeaves] = await Promise.all([
       this.prisma.employee.findMany({
@@ -614,10 +617,10 @@ export class EmployeeService {
         oStat.onLeave++;
       } else if (att) {
         if (att.punchIn) {
-          punchInStr = att.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          punchInStr = formatTimeInTimezone(att.punchIn);
         }
         if (att.punchOut) {
-          punchOutStr = att.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          punchOutStr = formatTimeInTimezone(att.punchOut);
           status = 'CHECKED_OUT';
           checkedOutCount++;
           oStat.present++;
@@ -628,7 +631,7 @@ export class EmployeeService {
             status = 'ON_BREAK';
             onBreakCount++;
             oStat.onBreak++;
-            breakStartStr = activeBreak.breakStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            breakStartStr = formatTimeInTimezone(activeBreak.breakStart);
           } else {
             status = att.status === 'LATE' ? 'LATE' : (att.status === 'HALF_DAY' ? 'HALF_DAY' : 'PRESENT');
             if (att.status === 'LATE') lateCount++;
@@ -637,11 +640,46 @@ export class EmployeeService {
           }
         }
 
-        const totalBreakMins = att.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
+        const totalBreakMins = att.breaks.reduce((acc, b) => {
+          if (b.duration) return acc + b.duration;
+          if (b.breakEnd) {
+            return (
+              acc +
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60),
+                ),
+              )
+            );
+          }
+          return (
+            acc +
+            Math.max(
+              0,
+              Math.round((Date.now() - new Date(b.breakStart).getTime()) / (1000 * 60)),
+            )
+          );
+        }, 0);
         breakDurationMinutes = Math.round(totalBreakMins);
-        const hours = Math.floor(att.workingHours || 0);
-        const mins = Math.round(((att.workingHours || 0) - hours) * 60);
-        totalWorkingHours = `${hours}h ${mins}m`;
+
+        let netWorkingMinutes = att.workingMinutes || 0;
+        if (att.punchIn && !att.punchOut) {
+          const gross = Math.max(
+            0,
+            Math.round((Date.now() - new Date(att.punchIn).getTime()) / (1000 * 60)),
+          );
+          netWorkingMinutes = Math.max(0, gross - totalBreakMins);
+        } else if (att.punchIn && att.punchOut && (!netWorkingMinutes || netWorkingMinutes === 0)) {
+          const gross = Math.max(
+            0,
+            Math.round(
+              (new Date(att.punchOut).getTime() - new Date(att.punchIn).getTime()) / (1000 * 60),
+            ),
+          );
+          netWorkingMinutes = Math.max(0, gross - totalBreakMins);
+        }
+        totalWorkingHours = formatDurationHoursMinutes(netWorkingMinutes);
       } else {
         status = 'ABSENT';
         absentCount++;
@@ -658,11 +696,17 @@ export class EmployeeService {
         branch: officeName,
         office: officeName,
         status,
+        punchIn: att?.punchIn ? att.punchIn.toISOString() : null,
+        punchInAt: att?.punchIn ? att.punchIn.toISOString() : null,
         punchInTime: punchInStr,
+        punchOut: att?.punchOut ? att.punchOut.toISOString() : null,
+        punchOutAt: att?.punchOut ? att.punchOut.toISOString() : null,
         punchOutTime: punchOutStr,
         breakStartTime: breakStartStr,
-        breakDuration: `${breakDurationMinutes}m`,
+        breakDuration: formatDurationHoursMinutes(breakDurationMinutes),
+        totalBreakMinutes: breakDurationMinutes,
         totalWorkingHours,
+        workingMinutes: att?.workingMinutes || 0,
         location: att?.locationIn || 'Office GPS',
         leaveType: leave?.leaveType?.name || null,
         leaveReason: leave?.reason || null,
@@ -1300,11 +1344,7 @@ export class EmployeeService {
     }
 
     if (options?.date) {
-      const d = new Date(options.date);
-      const start = new Date(d);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(d);
-      end.setHours(23, 59, 59, 999);
+      const { start, end } = getBusinessDayRange(options.date);
       where.date = { gte: start, lte: end };
     }
 
@@ -1338,9 +1378,44 @@ export class EmployeeService {
     ]);
 
     const formatted = records.map((a) => {
-      const breakMins = a.breaks.reduce((acc, b) => acc + (b.duration || 0), 0);
-      const hours = Math.floor(a.workingHours || 0);
-      const mins = Math.round(((a.workingHours || 0) - hours) * 60);
+      const breakMins = a.breaks
+        .filter((b) => b.breakEnd)
+        .reduce(
+          (acc, b) =>
+            acc +
+            (b.duration ||
+              Math.max(
+                0,
+                Math.round(
+                  (new Date(b.breakEnd!).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60),
+                ),
+              )),
+          0,
+        );
+
+      let netWorkingMinutes = a.workingMinutes || 0;
+      if (a.punchIn && a.punchOut && (!netWorkingMinutes || netWorkingMinutes === 0)) {
+        const gross = Math.max(
+          0,
+          Math.round((new Date(a.punchOut).getTime() - new Date(a.punchIn).getTime()) / (1000 * 60)),
+        );
+        netWorkingMinutes = Math.max(0, gross - breakMins);
+      } else if (a.punchIn && !a.punchOut) {
+        const gross = Math.max(
+          0,
+          Math.round((Date.now() - new Date(a.punchIn).getTime()) / (1000 * 60)),
+        );
+        netWorkingMinutes = Math.max(0, gross - breakMins);
+      }
+
+      const punchInIso = a.punchIn ? a.punchIn.toISOString() : null;
+      const punchOutIso = a.punchOut ? a.punchOut.toISOString() : null;
+      const punchInFormatted = a.punchIn ? formatTimeInTimezone(a.punchIn) : '—';
+      const punchOutFormatted = a.punchOut
+        ? formatTimeInTimezone(a.punchOut)
+        : (a.punchIn ? 'Not Checked Out' : '—');
+      const workingDurationFormatted = formatDurationHoursMinutes(netWorkingMinutes);
+      const totalBreakFormatted = formatDurationHoursMinutes(breakMins);
 
       return {
         id: String(a.id),
@@ -1349,12 +1424,21 @@ export class EmployeeService {
         employeeId: a.employee?.employeeCode || 'EMP-001',
         branch: a.employee?.branch || 'Head Office',
         office: a.employee?.branch || 'Head Office',
-        date: a.date ? a.date.toISOString().split('T')[0] : '2026-08-21',
-        punchIn: a.punchIn ? a.punchIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
-        punchOut: a.punchOut ? a.punchOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (a.punchIn ? 'Not Checked Out' : '—'),
-        workingHours: `${hours}h ${mins}m`,
+        date: a.date ? getBusinessDate(a.date) : '—',
+        punchIn: punchInIso || '—',
+        punchInAt: punchInIso,
+        punchInFormatted,
+        checkIn: punchInIso || '—',
+        punchOut: punchOutIso || (a.punchIn ? 'Not Checked Out' : '—'),
+        punchOutAt: punchOutIso,
+        punchOutFormatted,
+        checkOut: punchOutIso || (a.punchIn ? 'Not Checked Out' : '—'),
+        workingHours: workingDurationFormatted,
+        workingMinutes: netWorkingMinutes,
         breaksCount: a.breaks.length,
-        totalBreak: `${Math.round(breakMins)} min`,
+        totalBreakMinutes: Math.round(breakMins),
+        totalBreak: totalBreakFormatted,
+        breakDuration: totalBreakFormatted,
         status: a.status,
         location: a.locationIn || 'Office GPS',
       };
