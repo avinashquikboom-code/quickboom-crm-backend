@@ -948,6 +948,25 @@ export class EmployeeService {
         });
       }
 
+      // ─────────────────────────────────────────────────────────────────────
+      // DUPLICATE GUARD: Check if this User already has an Employee record.
+      // Employee.userId is @unique — a second create() would throw P2002.
+      // We detect and reject it here with a clean 409 BEFORE calling create().
+      // ─────────────────────────────────────────────────────────────────────
+      const existingEmployeeForUser = await tx.employee.findUnique({
+        where: { userId: user.id },
+        select: { id: true, employeeCode: true, customerId: true },
+      });
+
+      if (existingEmployeeForUser) {
+        throw new ConflictException({
+          success: false,
+          message: 'This user is already registered as an employee',
+          error: 'EMPLOYEE_ALREADY_EXISTS',
+          existingEmployeeCode: existingEmployeeForUser.employeeCode,
+        });
+      }
+
       // Assign Employee mobile role
       let employeeRole = await tx.role.findFirst({
         where: {
@@ -1065,19 +1084,38 @@ export class EmployeeService {
         mobileLoginEnabled: dto.mobileLoginEnabled !== false,
       };
 
-      const createdEmployee = await tx.employee.create({
-        data: {
-          ...empData,
-          employeeCode: finalEmployeeCode,
-        },
-        include: {
-          department: true,
-          designation: true,
-          office: true,
-        },
-      });
+      // ─────────────────────────────────────────────────────────────────────
+      // Create the employee record. The P2002 catch below handles the rare
+      // race condition where two concurrent requests pass the duplicate guard
+      // but only one wins the DB unique constraint.
+      // ─────────────────────────────────────────────────────────────────────
+      try {
+        const createdEmployee = await tx.employee.create({
+          data: {
+            ...empData,
+            employeeCode: finalEmployeeCode,
+          },
+          include: {
+            department: true,
+            designation: true,
+            office: true,
+          },
+        });
 
-      return createdEmployee;
+        return createdEmployee;
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException({
+            success: false,
+            message: 'This user is already registered as an employee',
+            error: 'EMPLOYEE_ALREADY_EXISTS',
+          });
+        }
+        throw error;
+      }
     });
   }
 
@@ -1092,6 +1130,11 @@ export class EmployeeService {
       const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
 
       const updateData: any = {};
+      // ── NOTE: userId is intentionally EXCLUDED from updateData. ──
+      // Employee.userId is @unique and immutable after creation.
+      // Changing the linked user during edit is not supported.
+      // Attempting to update userId would cause P2002 if the new user
+      // already has an Employee record.
       if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
       if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
       if (dto.email !== undefined) updateData.email = dto.email;
@@ -1117,7 +1160,7 @@ export class EmployeeService {
       if (dto.mobileLoginEnabled !== undefined)
         updateData.mobileLoginEnabled = dto.mobileLoginEnabled;
 
-      // Handle user account updates (status & optional password)
+      // Handle user account updates (status & optional password) — never touch userId itself
       if (existing?.userId) {
         const userUpdate: any = {};
         if (dto.status !== undefined) {
