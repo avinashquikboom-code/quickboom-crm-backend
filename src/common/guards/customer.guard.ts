@@ -101,8 +101,9 @@ authorization: ALLOWED (ADMIN)`);
           where: {
             OR: [
               { users: { some: { id: user.id } } },
-              ...(user.email ? [{ email: user.email }, { users: { some: { email: user.email } } }] : []),
-              ...(user.phone ? [{ phone: user.phone }] : []),
+              { employees: { some: { userId: user.id } } },
+              ...(user.email ? [{ email: user.email }, { users: { some: { email: user.email } } }, { employees: { some: { email: user.email } } }] : []),
+              ...(user.phone ? [{ phone: user.phone }, { employees: { some: { phone: user.phone } } }] : []),
             ],
           },
           select: { id: true, name: true, domain: true, email: true, companyName: true, isActive: true, deletedAt: true },

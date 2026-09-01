@@ -22,11 +22,24 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers['authorization'];
-    const hasBearer = typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ');
+    const hasHeader = Boolean(authHeader);
+    const hasBearer = typeof authHeader === 'string' && authHeader.trim().toLowerCase().startsWith('bearer ');
+    const tokenVal = hasBearer ? authHeader.trim().substring(7).trim() : null;
+    const hasValidToken = Boolean(
+      tokenVal &&
+      tokenVal !== 'null' &&
+      tokenVal !== 'undefined' &&
+      tokenVal !== '[object Object]' &&
+      tokenVal.length > 0,
+    );
 
-    if (!hasBearer) {
+    this.logger.debug?.(
+      `[AUTH DEBUG]\nAuthorization header exists: ${hasHeader}\nToken exists: ${hasValidToken}`,
+    );
+
+    if (!hasBearer && hasHeader) {
       this.logger.warn(
-        `[JWT_AUTH] ${request.method} ${request.url} - ${authHeader ? 'Malformed Authorization header' : 'Missing Authorization header'}`,
+        `[JWT_AUTH] ${request.method} ${request.url} - Malformed Authorization header`,
       );
     }
 
@@ -38,8 +51,20 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (err || !user) {
       const failureReason = info?.message || err?.message || 'Token missing or invalid';
       if (request) {
+        const authHeader = request.headers?.['authorization'];
+        const hasHeader = Boolean(authHeader);
+        const hasBearer = typeof authHeader === 'string' && authHeader.trim().toLowerCase().startsWith('bearer ');
+        const tokenVal = hasBearer ? authHeader.trim().substring(7).trim() : null;
+        const hasValidToken = Boolean(
+          tokenVal &&
+          tokenVal !== 'null' &&
+          tokenVal !== 'undefined' &&
+          tokenVal !== '[object Object]' &&
+          tokenVal.length > 0,
+        );
+
         this.logger.warn(
-          `[JWT_AUTH_FAILURE] ${request.method} ${request.url} - Reason: ${failureReason}`,
+          `[AUTH DEBUG]\nAuthorization header exists: ${hasHeader}\nToken exists: ${hasValidToken}\n[JWT_AUTH_FAILURE] ${request.method} ${request.url} - Reason: ${failureReason}`,
         );
       }
       throw err || new UnauthorizedException('Invalid or expired authentication token');

@@ -32,6 +32,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
+        employee: true,
+        customer: true,
         userRoles: {
           include: {
             role: {
@@ -159,12 +161,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const primaryRoleRecord = user.userRoles?.[0]?.role;
     const roleId = payload.roleId || primaryRoleRecord?.id || (user.userRoles?.[0]?.roleId ?? null);
 
-    let customerId = user.customerId ?? (payload.customerId ? Number(payload.customerId) : null);
+    let customerId =
+      user.customerId ??
+      user.employee?.customerId ??
+      user.customer?.id ??
+      (payload.customerId ? Number(payload.customerId) : null);
+
     if (!customerId && !isSuperAdmin && this.prisma) {
       const cust = await this.prisma.customer.findFirst({
         where: {
           OR: [
             { users: { some: { id: user.id } } },
+            { employees: { some: { userId: user.id } } },
             ...(user.email ? [{ email: user.email }] : []),
             ...(user.phone ? [{ phone: user.phone }] : []),
           ],
@@ -195,6 +203,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       roleType: primaryRoleType,
       roles: Array.from(new Set([primaryRole, primaryRoleType, ...roles])),
       permissions: Array.from(permissionsMap.values()),
+      employee: user.employee || null,
+      customer: user.customer || null,
     };
   }
 }

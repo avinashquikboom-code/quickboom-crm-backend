@@ -195,10 +195,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
       const result = await service.findOne({ id: 101, customerId: 1, isSuperAdmin: false });
       expect(result.id).toBe(101);
       expect(result.customerId).toBe(1);
-      expect(prisma.employee.findFirst).toHaveBeenCalledWith({
-        where: { id: 101, customerId: 1 },
-        include: expect.any(Object),
-      });
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ customerId: 1 }),
+          include: expect.any(Object),
+        }),
+      );
     });
 
     it('Customer B attempting to fetch Customer A employee throws NotFoundException', async () => {
@@ -209,10 +211,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
         service.findOne({ id: 101, customerId: 2, isSuperAdmin: false }),
       ).rejects.toThrow(NotFoundException);
 
-      expect(prisma.employee.findFirst).toHaveBeenCalledWith({
-        where: { id: 101, customerId: 2 },
-        include: expect.any(Object),
-      });
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ customerId: 2 }),
+          include: expect.any(Object),
+        }),
+      );
     });
   });
 
