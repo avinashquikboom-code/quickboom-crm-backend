@@ -87,20 +87,42 @@ export class EmployeeService {
     }
 
     if (status && status !== 'ALL') where.status = status;
-    if (branch && branch !== 'ALL') where.branch = branch;
-    if (department && department !== 'ALL') where.department = { name: department };
-    if (designation && designation !== 'ALL') where.designation = { name: designation };
+    if (branch && branch !== 'ALL') {
+      where.OR = [
+        { branch: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } },
+        { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
+      ];
+    }
+    if (department && department !== 'ALL') {
+      where.department = { name: { equals: department, mode: 'insensitive' as Prisma.QueryMode } };
+    }
+    if (designation && designation !== 'ALL') {
+      where.designation = { name: { equals: designation, mode: 'insensitive' as Prisma.QueryMode } };
+    }
     if (employmentType && employmentType !== 'ALL') where.employmentType = employmentType;
 
     if (search && search.trim().length > 0) {
       const trimmedSearch = search.trim();
-      where.OR = [
-        { firstName: { contains: trimmedSearch, mode: 'insensitive' } },
-        { lastName: { contains: trimmedSearch, mode: 'insensitive' } },
-        { email: { contains: trimmedSearch, mode: 'insensitive' } },
-        { employeeCode: { contains: trimmedSearch, mode: 'insensitive' } },
-        { branch: { contains: trimmedSearch, mode: 'insensitive' } },
+      const searchConditions = [
+        { firstName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { lastName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { email: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { phone: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { employeeCode: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { branch: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+        { department: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
+        { designation: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
       ];
+
+      if (where.OR) {
+        where.AND = [
+          { OR: where.OR },
+          { OR: searchConditions },
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
     }
 
     // Determine target date window (midnight to 23:59:59)

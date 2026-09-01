@@ -41,6 +41,9 @@ export class TransformInterceptor<T>
             success: typeof data.success === 'boolean' ? data.success : true,
             message: data.message || 'Operation completed successfully',
             data: data.data,
+            counts: data.counts,
+            summary: data.summary,
+            balances: data.balances,
             pagination: data.pagination,
             meta: data.meta,
           };
