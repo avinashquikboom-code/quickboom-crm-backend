@@ -31,6 +31,10 @@ export class PunchAttendanceDto {
   @IsString()
   @IsOptional()
   address?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Whether device biometric authentication was verified' })
+  @IsOptional()
+  biometricVerified?: boolean;
 }
 
 export class QueryAttendanceHistoryDto {

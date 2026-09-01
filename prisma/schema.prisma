@@ -1070,11 +1070,13 @@ model Attendance {
   accuracy           Float?
   punchOutLatitude   Float?
   punchOutLongitude  Float?
-  punchOutAccuracy   Float?
-  officeId           Int?
-  employee           Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  office             BranchGeofence?   @relation(fields: [officeId], references: [id])
-  breaks             AttendanceBreak[]
+  punchOutAccuracy          Float?
+  officeId                  Int?
+  punchInBiometricVerified  Boolean?          @default(false)
+  punchOutBiometricVerified Boolean?          @default(false)
+  employee                  Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  office                    BranchGeofence?   @relation(fields: [officeId], references: [id])
+  breaks                    AttendanceBreak[]
 
   @@index([customerId])
   @@index([employeeId])

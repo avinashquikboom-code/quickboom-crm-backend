@@ -373,7 +373,7 @@ calculatedDistance: ${distanceMeters}`);
         throw new ConflictException({
           statusCode: 409,
           success: false,
-          message: 'You are already punched in',
+          message: "Today's punch in is already completed.",
         });
       }
 
@@ -390,6 +390,7 @@ calculatedDistance: ${distanceMeters}`);
             accuracy: dto.accuracy ?? null,
             distanceFromOffice: distanceMeters,
             locationIn: locationInStr,
+            punchInBiometricVerified: Boolean(dto.biometricVerified),
           },
         });
       } else {
@@ -406,6 +407,7 @@ calculatedDistance: ${distanceMeters}`);
             accuracy: dto.accuracy ?? null,
             distanceFromOffice: distanceMeters,
             locationIn: locationInStr,
+            punchInBiometricVerified: Boolean(dto.biometricVerified),
           },
         });
       }
@@ -415,7 +417,7 @@ calculatedDistance: ${distanceMeters}`);
         message: `Punch In successful${approvedRemote ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
         data: {
           attendanceId: attendance.id,
-          punchIn: attendance.punchIn,
+          punchInAt: attendance.punchIn,
           status: attendanceStatus,
           office: {
             id: office.id,
@@ -427,6 +429,7 @@ calculatedDistance: ${distanceMeters}`);
           distanceMeters,
           allowedRadiusMeters: allowedRadius,
           locationStatus: approvedRemote ? 'REMOTE' : 'INSIDE_RADIUS',
+          biometricVerified: Boolean(dto.biometricVerified),
         },
         status: attendanceStatus,
         office: {
@@ -482,7 +485,7 @@ calculatedDistance: ${distanceMeters}`);
         throw new NotFoundException({
           statusCode: 404,
           success: false,
-          message: 'No active punch-in found',
+          message: 'No active punch-in found for today.',
         });
       }
 
@@ -490,7 +493,7 @@ calculatedDistance: ${distanceMeters}`);
         throw new ConflictException({
           statusCode: 409,
           success: false,
-          message: 'Already punched out',
+          message: "Today's punch out is already completed.",
         });
       }
 
@@ -535,14 +538,20 @@ calculatedDistance: ${distanceMeters}`);
         data: {
           punchOut: now,
           workingHours: actualWorkingHours,
+          workingMinutes: totalElapsedMinutes,
           breakDuration: totalBreakHours,
           status: finalStatus,
           locationOut: locationOutStr,
           punchOutLatitude: dto.latitude ?? null,
           punchOutLongitude: dto.longitude ?? null,
           punchOutAccuracy: dto.accuracy ?? null,
+          punchOutBiometricVerified: Boolean(dto.biometricVerified),
         },
       });
+
+      const hours = Math.floor(totalElapsedMinutes / 60);
+      const mins = totalElapsedMinutes % 60;
+      const workingDuration = `${hours}h ${mins}m`;
 
       console.log(`[ATTENDANCE]
 employeeId: ${employee.id}
@@ -550,14 +559,26 @@ branchId: ${office.id}
 action: PUNCH_OUT
 distanceMeters: ${distanceMeters}
 workingMinutes: ${totalElapsedMinutes}
+biometricVerified: ${Boolean(dto.biometricVerified)}
 result: SUCCESS`);
 
       return {
         success: true,
-        message: `Punch Out successful. Total working hours: ${actualWorkingHours} hrs (${totalElapsedMinutes} mins).`,
+        message: `Punch Out successful. Total working duration: ${workingDuration} (${actualWorkingHours} hrs).`,
         data: {
-          ...updated,
+          attendanceId: updated.id,
+          punchInAt: attendance.punchIn,
+          punchOutAt: updated.punchOut,
+          workingDuration,
+          workingHours: updated.workingHours,
           workingMinutes: totalElapsedMinutes,
+          status: finalStatus,
+          office: {
+            id: office.id,
+            name: office.name,
+            city: office.city,
+          },
+          biometricVerified: Boolean(dto.biometricVerified),
         },
         office: {
           id: office.id,
