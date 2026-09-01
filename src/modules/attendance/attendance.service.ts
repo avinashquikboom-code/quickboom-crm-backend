@@ -87,6 +87,7 @@ export class AttendanceService {
   async resolveOfficeForEmployee(employee: any) {
     let selectedOffice: any = null;
 
+    // 1. Direct active office linked to employee
     if (employee.office && employee.office.isActive && employee.office.customerId === employee.customerId) {
       selectedOffice = employee.office;
     } else if (employee.officeId) {
@@ -98,6 +99,7 @@ export class AttendanceService {
       }
     }
 
+    // 2. Branch name match
     if (!selectedOffice && employee.branch) {
       const office = await this.prisma.branchGeofence.findFirst({
         where: {
@@ -109,6 +111,7 @@ export class AttendanceService {
       if (office) selectedOffice = office;
     }
 
+    // 3. Customer default active office
     if (!selectedOffice) {
       const defaultOffice = await this.prisma.branchGeofence.findFirst({
         where: { customerId: employee.customerId, isActive: true },
@@ -117,54 +120,65 @@ export class AttendanceService {
       if (defaultOffice) selectedOffice = defaultOffice;
     }
 
-    // Auto-provision default Head Office if active customer exists with no office yet
+    // 4. Any office for customer (if inactive)
     if (!selectedOffice) {
-      const customer = await this.prisma.customer.findUnique({
-        where: { id: employee.customerId },
+      const anyOffice = await this.prisma.branchGeofence.findFirst({
+        where: { customerId: employee.customerId },
+        orderBy: { id: 'asc' },
       });
-
-      if (customer && customer.isActive) {
-        selectedOffice = await this.prisma.branchGeofence.create({
-          data: {
-            customerId: customer.id,
-            name: 'Head Office',
-            city: 'Mumbai',
-            latitude: 19.0760,
-            longitude: 72.8777,
-            radiusMeters: 200.0,
-            isActive: true,
-          },
-        });
-        await this.prisma.employee.update({
-          where: { id: employee.id },
-          data: { officeId: selectedOffice.id, branch: selectedOffice.name },
-        });
-      }
+      if (anyOffice) selectedOffice = anyOffice;
     }
 
+    // If still no office found for this customer
     if (!selectedOffice) {
-      throw new BadRequestException(
-        'No active office location configured for your organization. Please contact Admin.',
+      throw new NotFoundException(
+        'Assigned office location is not configured for your organization. Please contact Admin.',
       );
     }
 
+    // Validate coordinates
     if (
-      isNaN(selectedOffice.latitude) ||
-      isNaN(selectedOffice.longitude) ||
-      selectedOffice.latitude < -90 ||
-      selectedOffice.latitude > 90 ||
-      selectedOffice.longitude < -180 ||
-      selectedOffice.longitude > 180
+      selectedOffice.latitude === null ||
+      selectedOffice.latitude === undefined ||
+      selectedOffice.longitude === null ||
+      selectedOffice.longitude === undefined ||
+      isNaN(Number(selectedOffice.latitude)) ||
+      isNaN(Number(selectedOffice.longitude))
     ) {
+      throw new BadRequestException(
+        `Assigned office location is not configured. Coordinates are missing for office "${selectedOffice.name}". Please contact Admin.`,
+      );
+    }
+
+    const lat = Number(selectedOffice.latitude);
+    const lng = Number(selectedOffice.longitude);
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       throw new BadRequestException(
         `Invalid GPS coordinates (${selectedOffice.latitude}, ${selectedOffice.longitude}) configured for office "${selectedOffice.name}". Coordinates must be valid latitude (-90 to 90) and longitude (-180 to 180). Please contact Admin.`,
       );
     }
 
-    if (!selectedOffice.radiusMeters || selectedOffice.radiusMeters <= 0) {
+    if (
+      selectedOffice.radiusMeters === null ||
+      selectedOffice.radiusMeters === undefined ||
+      isNaN(Number(selectedOffice.radiusMeters)) ||
+      Number(selectedOffice.radiusMeters) <= 0
+    ) {
       throw new BadRequestException(
         `Invalid attendance radius (${selectedOffice.radiusMeters}m) configured for office "${selectedOffice.name}". Radius must be greater than 0 meters. Please contact Admin.`,
       );
+    }
+
+    // Link officeId to employee if not already set
+    if (employee.officeId !== selectedOffice.id && employee.id) {
+      try {
+        await this.prisma.employee.update({
+          where: { id: employee.id },
+          data: { officeId: selectedOffice.id, branch: selectedOffice.name },
+        });
+      } catch (err: any) {
+        console.warn(`[RESOLVE_OFFICE] Could not auto-link office ${selectedOffice.id} to employee ${employee.id}:`, err?.message);
+      }
     }
 
     return selectedOffice;
@@ -283,19 +297,18 @@ export class AttendanceService {
       : 'OUTSIDE_RADIUS';
     let locationInStr = `${office.name} (${distanceMeters}m)`;
 
-    console.log(`[GEOFENCE_DEBUG]
-employeeId: ${employee.employeeCode || employee.id}
-customerId: ${employee.customerId}
+    console.log(`[ATTENDANCE GEOFENCE]
+employeeId: ${employee.id}
+employeeCode: ${employee.employeeCode || 'N/A'}
 assignedOfficeId: ${office.id}
 assignedOfficeName: ${office.name}
-officeLatitude: ${office.latitude}
-officeLongitude: ${office.longitude}
-employeeLatitude: ${dto.latitude}
-employeeLongitude: ${dto.longitude}
-gpsAccuracy: ${dto.accuracy ?? 'N/A'}
-allowedRadiusMeters: ${allowedRadius}
-calculatedDistanceMeters: ${distanceMeters}
-locationStatus: ${locationStatus}`);
+officeLat: ${office.latitude}
+officeLng: ${office.longitude}
+allowedRadius: ${allowedRadius}
+currentLat: ${dto.latitude}
+currentLng: ${dto.longitude}
+accuracy: ${dto.accuracy ?? 'N/A'}
+calculatedDistance: ${distanceMeters}`);
 
     // GEOFENCE VALIDATION
     if (!approvedRemote && distanceMeters > allowedRadius) {
@@ -308,6 +321,14 @@ locationStatus: ${locationStatus}`);
           allowedRadiusMeters: allowedRadius,
           locationStatus: 'OUTSIDE_RADIUS',
           officeName: office.name,
+          office: {
+            id: office.id,
+            name: office.name,
+            city: office.city,
+            latitude: Number(office.latitude),
+            longitude: Number(office.longitude),
+            radiusMeters: allowedRadius,
+          },
         },
       });
     }
