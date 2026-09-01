@@ -49,6 +49,7 @@ export class AttendanceService {
         office: true,
         department: true,
         designation: true,
+        shift: true,
       },
     });
 
@@ -57,7 +58,7 @@ export class AttendanceService {
       if (!isNaN(numCustomerId)) {
         employee = await this.prisma.employee.findFirst({
           where: { customerId: numCustomerId, status: 'ACTIVE' },
-          include: { office: true, department: true, designation: true },
+          include: { office: true, department: true, designation: true, shift: true },
         });
       }
     }
@@ -258,38 +259,35 @@ export class AttendanceService {
     });
 
     const distanceMeters = calculateDistanceMeters(
-      dto.latitude,
-      dto.longitude,
-      office.latitude,
-      office.longitude,
+      Number(dto.latitude),
+      Number(dto.longitude),
+      Number(office.latitude),
+      Number(office.longitude),
     );
-    const allowedRadius = office.radiusMeters || 200.0;
+    const allowedRadius = Number(office.radiusMeters) || 200.0;
+    const locationStatus = approvedRemote
+      ? 'REMOTE'
+      : distanceMeters <= allowedRadius
+      ? 'INSIDE_RADIUS'
+      : 'OUTSIDE_RADIUS';
     let locationInStr = `${office.name} (${distanceMeters}m)`;
+
+    console.log(`[GEOFENCE_DEBUG]
+employeeId: ${employee.employeeCode || employee.id}
+customerId: ${employee.customerId}
+officeId: ${office.id}
+officeName: ${office.name}
+officeLatitude: ${office.latitude}
+officeLongitude: ${office.longitude}
+officeRadius: ${allowedRadius}
+employeeLatitude: ${dto.latitude}
+employeeLongitude: ${dto.longitude}
+distanceMeters: ${distanceMeters}
+allowedRadiusMeters: ${allowedRadius}
+locationStatus: ${locationStatus}`);
 
     // GEOFENCE VALIDATION
     if (!approvedRemote && distanceMeters > allowedRadius) {
-      console.log(`[ATTENDANCE]
-employeeId: ${employee.id}
-branchId: ${office.id}
-action: PUNCH_IN
-distanceMeters: ${distanceMeters}
-allowedRadiusMeters: ${allowedRadius}
-result: REJECTED`);
-
-      console.log(`[ATTENDANCE_DEBUG]
-authenticatedUserId: ${user.id}
-employeeId: ${employee.id}
-customerId: ${employee.customerId}
-branchId: ${office.id}
-officeLatitude: ${office.latitude}
-officeLongitude: ${office.longitude}
-allowedRadiusMeters: ${allowedRadius}
-employeeLatitude: ${dto.latitude}
-employeeLongitude: ${dto.longitude}
-gpsAccuracy: ${dto.accuracy ?? 'N/A'}
-distanceMeters: ${distanceMeters}
-result: REJECTED`);
-
       throw new ForbiddenException({
         statusCode: 403,
         success: false,
@@ -297,32 +295,11 @@ result: REJECTED`);
         data: {
           distanceMeters,
           allowedRadiusMeters: allowedRadius,
+          locationStatus: 'OUTSIDE_RADIUS',
           officeName: office.name,
         },
       });
     }
-
-    console.log(`[ATTENDANCE]
-employeeId: ${employee.id}
-branchId: ${office.id}
-action: PUNCH_IN
-distanceMeters: ${distanceMeters}
-allowedRadiusMeters: ${allowedRadius}
-result: ALLOWED`);
-
-    console.log(`[ATTENDANCE_DEBUG]
-authenticatedUserId: ${user.id}
-employeeId: ${employee.id}
-customerId: ${employee.customerId}
-branchId: ${office.id}
-officeLatitude: ${office.latitude}
-officeLongitude: ${office.longitude}
-allowedRadiusMeters: ${allowedRadius}
-employeeLatitude: ${dto.latitude}
-employeeLongitude: ${dto.longitude}
-gpsAccuracy: ${dto.accuracy ?? 'N/A'}
-distanceMeters: ${distanceMeters}
-result: ALLOWED`);
 
     if (approvedRemote) {
       locationInStr = `Remote Work (${approvedRemote.reason || 'Approved Remote Duty'})`;
@@ -404,14 +381,20 @@ result: ALLOWED`);
       return {
         success: true,
         message: `Punch In successful${approvedRemote ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
-        data: attendance,
-        status: attendanceStatus,
-        office: {
-          id: office.id,
-          name: office.name,
-          city: office.city,
+        data: {
+          attendanceId: attendance.id,
+          punchIn: attendance.punchIn,
+          status: attendanceStatus,
+          office: {
+            id: office.id,
+            name: office.name,
+            city: office.city,
+            latitude: office.latitude,
+            longitude: office.longitude,
+          },
           distanceMeters,
-          allowedRadius,
+          allowedRadiusMeters: allowedRadius,
+          locationStatus: approvedRemote ? 'REMOTE' : 'INSIDE_RADIUS',
         },
       };
     });
@@ -810,8 +793,26 @@ result: SUCCESS`);
       },
     });
 
-    const isPunchedIn = Boolean(todayAtt?.punchIn && !todayAtt?.punchOut);
-    const activeBreak = todayAtt?.breaks.find((b) => !b.breakEnd);
+    const approvedRemote = await this.prisma.remoteRequest.findFirst({
+      where: {
+        employeeId: employee.id,
+        status: 'APPROVED',
+        fromDate: { lte: todayEnd },
+        toDate: { gte: todayStart },
+      },
+    });
+
+    let assignedShift = employee.shift;
+    if (!assignedShift) {
+      assignedShift = await this.prisma.shift.findFirst({
+        where: { customerId: employee.customerId, status: 'ACTIVE' },
+        orderBy: { id: 'asc' },
+      });
+    }
+
+    const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
+    const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
+    const policy = await this.getActiveAttendancePolicy(employee.customerId, office?.id);
 
     return {
       employee: {
@@ -829,6 +830,33 @@ result: SUCCESS`);
         latitude: office.latitude,
         longitude: office.longitude,
         radiusMeters: office.radiusMeters,
+      },
+      assignedShift: assignedShift
+        ? {
+            id: assignedShift.id,
+            name: assignedShift.name,
+            code: assignedShift.code,
+            startTime: assignedShift.startTime,
+            endTime: assignedShift.endTime,
+            durationHours: assignedShift.durationHours,
+            gracePeriodMinutes: assignedShift.gracePeriodMinutes,
+            breakDurationMinutes: assignedShift.breakDurationMinutes,
+          }
+        : null,
+      approvedRemote: approvedRemote
+        ? {
+            id: approvedRemote.id,
+            status: approvedRemote.status,
+            reason: approvedRemote.reason || 'Approved Remote Duty',
+            fromDate: approvedRemote.fromDate ? approvedRemote.fromDate.toISOString() : null,
+            toDate: approvedRemote.toDate ? approvedRemote.toDate.toISOString() : null,
+          }
+        : null,
+      policy: {
+        officeStartTime: policy.officeStartTime || '09:30',
+        officeEndTime: policy.officeEndTime || '18:30',
+        gracePeriodMinutes: policy.gracePeriodMinutes || 15,
+        minWorkingHours: policy.minWorkingHours || 8.0,
       },
       status: {
         isPunchedIn,
