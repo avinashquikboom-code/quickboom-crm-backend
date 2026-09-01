@@ -1378,6 +1378,26 @@ export class EmployeeService {
     ]);
 
     const formatted = records.map((a) => {
+      const breakSessions = a.breaks.map((b, idx) => {
+        const bStartIso = b.breakStart ? b.breakStart.toISOString() : null;
+        const bEndIso = b.breakEnd ? b.breakEnd.toISOString() : null;
+        const bDuration = b.duration || (b.breakEnd
+          ? Math.max(0, Math.round((new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60)))
+          : Math.max(0, Math.round((Date.now() - new Date(b.breakStart).getTime()) / (1000 * 60))));
+
+        return {
+          id: b.id,
+          sessionNumber: idx + 1,
+          breakStart: bStartIso,
+          breakEnd: bEndIso,
+          breakStartFormatted: b.breakStart ? formatTimeInTimezone(b.breakStart) : '—',
+          breakEndFormatted: b.breakEnd ? formatTimeInTimezone(b.breakEnd) : (b.breakStart ? 'Active Break' : '—'),
+          durationMinutes: bDuration,
+          durationFormatted: formatDurationHoursMinutes(bDuration),
+          isOngoing: !b.breakEnd,
+        };
+      });
+
       const breakMins = a.breaks
         .filter((b) => b.breakEnd)
         .reduce(
@@ -1393,19 +1413,22 @@ export class EmployeeService {
           0,
         );
 
-      let netWorkingMinutes = a.workingMinutes || 0;
-      if (a.punchIn && a.punchOut && (!netWorkingMinutes || netWorkingMinutes === 0)) {
-        const gross = Math.max(
+      let grossWorkingMinutes = 0;
+      if (a.punchIn && a.punchOut) {
+        grossWorkingMinutes = Math.max(
           0,
           Math.round((new Date(a.punchOut).getTime() - new Date(a.punchIn).getTime()) / (1000 * 60)),
         );
-        netWorkingMinutes = Math.max(0, gross - breakMins);
       } else if (a.punchIn && !a.punchOut) {
-        const gross = Math.max(
+        grossWorkingMinutes = Math.max(
           0,
           Math.round((Date.now() - new Date(a.punchIn).getTime()) / (1000 * 60)),
         );
-        netWorkingMinutes = Math.max(0, gross - breakMins);
+      }
+
+      let netWorkingMinutes = a.workingMinutes || 0;
+      if (!netWorkingMinutes || netWorkingMinutes === 0) {
+        netWorkingMinutes = Math.max(0, grossWorkingMinutes - breakMins);
       }
 
       const punchInIso = a.punchIn ? a.punchIn.toISOString() : null;
@@ -1413,32 +1436,40 @@ export class EmployeeService {
       const punchInFormatted = a.punchIn ? formatTimeInTimezone(a.punchIn) : '—';
       const punchOutFormatted = a.punchOut
         ? formatTimeInTimezone(a.punchOut)
-        : (a.punchIn ? 'Not Checked Out' : '—');
-      const workingDurationFormatted = formatDurationHoursMinutes(netWorkingMinutes);
+        : (a.punchIn ? '—' : '—');
+      const grossWorkingFormatted = formatDurationHoursMinutes(grossWorkingMinutes);
+      const netWorkingFormatted = formatDurationHoursMinutes(netWorkingMinutes);
       const totalBreakFormatted = formatDurationHoursMinutes(breakMins);
 
       return {
         id: String(a.id),
         customerId: a.customerId,
-        employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Employee',
-        employeeId: a.employee?.employeeCode || 'EMP-001',
+        employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
+        employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
         branch: a.employee?.branch || 'Head Office',
         office: a.employee?.branch || 'Head Office',
+        attendanceDate: a.date ? getBusinessDate(a.date) : '—',
         date: a.date ? getBusinessDate(a.date) : '—',
-        punchIn: punchInIso || '—',
         punchInAt: punchInIso,
+        punchIn: punchInFormatted,
+        punchInTime: punchInFormatted,
         punchInFormatted,
-        checkIn: punchInIso || '—',
-        punchOut: punchOutIso || (a.punchIn ? 'Not Checked Out' : '—'),
+        checkIn: punchInFormatted,
         punchOutAt: punchOutIso,
+        punchOut: punchOutFormatted,
+        punchOutTime: punchOutFormatted,
         punchOutFormatted,
-        checkOut: punchOutIso || (a.punchIn ? 'Not Checked Out' : '—'),
-        workingHours: workingDurationFormatted,
-        workingMinutes: netWorkingMinutes,
-        breaksCount: a.breaks.length,
+        checkOut: punchOutFormatted,
         totalBreakMinutes: Math.round(breakMins),
         totalBreak: totalBreakFormatted,
         breakDuration: totalBreakFormatted,
+        breaksCount: a.breaks.length,
+        breakSessions,
+        grossWorkingMinutes,
+        grossWorkingHours: grossWorkingFormatted,
+        workingMinutes: netWorkingMinutes,
+        workingHours: netWorkingFormatted,
+        netWorkingHours: netWorkingFormatted,
         status: a.status,
         location: a.locationIn || 'Office GPS',
       };
