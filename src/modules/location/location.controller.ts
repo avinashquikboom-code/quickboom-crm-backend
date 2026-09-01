@@ -26,9 +26,7 @@ export class LocationController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const targetCustomerId = customerId || user?.customerId || 1;
-    const employeeId = user?.employee?.id || user?.id || 1;
-    return this.locationService.recordLocationUpdate(targetCustomerId, employeeId, dto);
+    return this.locationService.recordLocationUpdate(user, customerId, dto);
   }
 
   // Admin Panel API: GET /api/v1/admin/location/live
