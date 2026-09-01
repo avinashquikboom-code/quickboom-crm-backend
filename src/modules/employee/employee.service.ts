@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
-import { RoleType } from '@prisma/client';
+import { RoleType, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 export interface FindAllEmployeesParams {
@@ -284,19 +284,20 @@ export class EmployeeService {
 
   async findOne(params: EmployeeFindOneParams) {
     const { id, customerId, isSuperAdmin } = params;
-    const numId = Number(id);
-    if (isNaN(numId)) {
-      throw new BadRequestException('Invalid employee ID');
+    if (!id || String(id).trim() === '') {
+      throw new BadRequestException('Employee ID is required');
     }
 
-    const where: any = { id: numId };
+    const idStr = String(id).trim();
+    const numId = Number(idStr);
+    const isNumeric = !isNaN(numId) && String(numId) === idStr && numId > 0;
 
+    let numCustomerId: number | undefined;
     if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
+      numCustomerId = Number(customerId);
       if (isNaN(numCustomerId)) {
         throw new BadRequestException('Invalid customerId provided');
       }
-      where.customerId = numCustomerId;
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for employee access');
     }
@@ -305,6 +306,17 @@ export class EmployeeService {
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
+
+    const where: Prisma.EmployeeWhereInput = {
+      ...(numCustomerId ? { customerId: numCustomerId } : {}),
+      OR: [
+        ...(isNumeric ? [{ id: numId }] : []),
+        { employeeCode: { equals: idStr, mode: 'insensitive' as Prisma.QueryMode } },
+        ...(isNumeric ? [{ employeeCode: { equals: `EMP-${idStr.padStart(3, '0')}`, mode: 'insensitive' as Prisma.QueryMode } }] : []),
+        ...(isNumeric ? [{ employeeCode: { equals: `EMP${idStr.padStart(3, '0')}`, mode: 'insensitive' as Prisma.QueryMode } }] : []),
+        ...(isNumeric ? [{ userId: numId }] : []),
+      ],
+    };
 
     const employee = await this.prisma.employee.findFirst({
       where,
@@ -329,7 +341,11 @@ export class EmployeeService {
     });
 
     if (!employee) {
-      throw new NotFoundException(`Employee with ID ${id} not found`);
+      throw new NotFoundException({
+        success: false,
+        message: `Employee with identifier '${id}' not found`,
+        error: 'EMPLOYEE_NOT_FOUND',
+      });
     }
 
     // Today's attendance
@@ -399,11 +415,11 @@ export class EmployeeService {
       office: employee.office?.name || employee.branch || 'Head Office',
       departmentId: employee.departmentId,
       designationId: employee.designationId,
-      department: employee.department?.name || 'Media & Production',
-      departmentName: employee.department?.name || 'Media & Production',
+      department: employee.department?.name || 'General',
+      departmentName: employee.department?.name || 'General',
       departmentObj: employee.department,
-      designation: employee.designation?.name || 'Specialist',
-      designationName: employee.designation?.name || 'Specialist',
+      designation: employee.designation?.name || 'Staff',
+      designationName: employee.designation?.name || 'Staff',
       designationObj: employee.designation,
       status: employee.status,
       mobileLoginEnabled: employee.mobileLoginEnabled !== false,
@@ -778,22 +794,32 @@ export class EmployeeService {
       // Department resolution
       let department: any = null;
       if (dto.departmentId) {
+        const numDeptId = Number(dto.departmentId);
         department = await tx.department.findFirst({
-          where: { id: Number(dto.departmentId), customerId: numCustomerId },
+          where: { id: numDeptId, customerId: numCustomerId },
         });
+        if (!department && dto.departmentName) {
+          department = await tx.department.findFirst({
+            where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          });
+        }
         if (!department) {
-          throw new BadRequestException(`Department #${dto.departmentId} not found`);
+          throw new NotFoundException({
+            success: false,
+            message: `Department #${dto.departmentId} not found`,
+            error: 'DEPARTMENT_NOT_FOUND',
+          });
         }
       } else if (dto.departmentName) {
         department = await tx.department.findFirst({
-          where: { customerId: numCustomerId, name: dto.departmentName },
+          where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!department) {
           department = await tx.department.create({
             data: {
               customerId: numCustomerId,
               name: dto.departmentName,
-              code: (dto.departmentName || 'MED').substring(0, 4).toUpperCase(),
+              code: (dto.departmentName || 'DEPT').substring(0, 5).toUpperCase(),
             },
           });
         }
@@ -1082,25 +1108,34 @@ export class EmployeeService {
         }
       }
 
-      if (dto.departmentId !== undefined && dto.departmentId !== null) {
+      if (dto.departmentId !== undefined && dto.departmentId !== null && String(dto.departmentId).trim() !== '') {
         const numDeptId = Number(dto.departmentId);
-        const dept = await tx.department.findFirst({
+        let dept = await tx.department.findFirst({
           where: { id: numDeptId, customerId: targetCustId },
         });
+        if (!dept && dto.departmentName) {
+          dept = await tx.department.findFirst({
+            where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          });
+        }
         if (!dept) {
-          throw new BadRequestException(`Department #${numDeptId} not found`);
+          throw new NotFoundException({
+            success: false,
+            message: `Department #${numDeptId} not found`,
+            error: 'DEPARTMENT_NOT_FOUND',
+          });
         }
         updateData.departmentId = dept.id;
       } else if (dto.departmentName) {
         let dept = await tx.department.findFirst({
-          where: { customerId: targetCustId, name: dto.departmentName },
+          where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!dept) {
           dept = await tx.department.create({
             data: {
               customerId: targetCustId,
               name: dto.departmentName,
-              code: dto.departmentName.substring(0, 4).toUpperCase(),
+              code: dto.departmentName.substring(0, 5).toUpperCase(),
             },
           });
         }

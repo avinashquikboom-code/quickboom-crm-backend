@@ -60,7 +60,7 @@ export class DepartmentService {
 
     const skip = (Math.max(1, page) - 1) * Math.max(1, limit);
 
-    const [total, departments] = await Promise.all([
+    let [total, departments] = await Promise.all([
       this.prisma.department.count({ where }),
       this.prisma.department.findMany({
         where,
@@ -86,6 +86,56 @@ export class DepartmentService {
         take: limit,
       }),
     ]);
+
+    // Auto-seed standard departments if customer has 0 departments
+    if (total === 0 && !search) {
+      const defaultDepts = [
+        { name: 'Engineering & IT', code: 'ENG', description: 'Software and infrastructure operations' },
+        { name: 'Sales & Marketing', code: 'SALES', description: 'Business development and client growth' },
+        { name: 'Human Resources', code: 'HR', description: 'Talent and employee relations' },
+        { name: 'Operations', code: 'OPS', description: 'Daily business logistics and processes' },
+        { name: 'Finance & Accounts', code: 'FIN', description: 'Accounting and payroll management' },
+      ];
+
+      for (const d of defaultDepts) {
+        await this.prisma.department.create({
+          data: {
+            customerId: numCustomerId,
+            name: d.name,
+            code: d.code,
+            description: d.description,
+            isActive: true,
+          },
+        }).catch(() => null);
+      }
+
+      [total, departments] = await Promise.all([
+        this.prisma.department.count({ where }),
+        this.prisma.department.findMany({
+          where,
+          include: {
+            _count: {
+              select: {
+                employees: true,
+                designations: true,
+              },
+            },
+            designations: {
+              where: { isActive: true },
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                isActive: true,
+              },
+            },
+          },
+          orderBy: { name: 'asc' },
+          skip,
+          take: limit,
+        }),
+      ]);
+    }
 
     // Lookup department head names if headId is present
     const headIds = departments
@@ -123,7 +173,7 @@ export class DepartmentService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit) || 1,
       },
     };
   }
@@ -146,7 +196,11 @@ export class DepartmentService {
     });
 
     if (!department) {
-      throw new NotFoundException(`Department #${id} not found`);
+      throw new NotFoundException({
+        success: false,
+        message: `Department #${id} not found`,
+        error: 'DEPARTMENT_NOT_FOUND',
+      });
     }
 
     let headName = 'Unassigned';
