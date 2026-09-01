@@ -38,8 +38,11 @@ export class AttendanceService {
       throw new ForbiddenException('Authenticated user context required');
     }
 
+    const targetCustomerId = user?.customerId || (customerId ? Number(customerId) : undefined);
+
     let employee = await this.prisma.employee.findFirst({
       where: {
+        ...(targetCustomerId ? { customerId: targetCustomerId } : {}),
         OR: [
           { userId: user.id },
           { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -53,14 +56,21 @@ export class AttendanceService {
       },
     });
 
-    if (!employee && customerId) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId)) {
-        employee = await this.prisma.employee.findFirst({
-          where: { customerId: numCustomerId, status: 'ACTIVE' },
-          include: { office: true, department: true, designation: true, shift: true },
-        });
-      }
+    if (!employee && user.id) {
+      employee = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+        include: {
+          office: true,
+          department: true,
+          designation: true,
+          shift: true,
+        },
+      });
     }
 
     if (!employee) {
@@ -77,13 +87,13 @@ export class AttendanceService {
   async resolveOfficeForEmployee(employee: any) {
     let selectedOffice: any = null;
 
-    if (employee.office && employee.office.isActive) {
+    if (employee.office && employee.office.isActive && employee.office.customerId === employee.customerId) {
       selectedOffice = employee.office;
     } else if (employee.officeId) {
-      const office = await this.prisma.branchGeofence.findUnique({
-        where: { id: employee.officeId },
+      const office = await this.prisma.branchGeofence.findFirst({
+        where: { id: employee.officeId, customerId: employee.customerId, isActive: true },
       });
-      if (office && office.isActive) {
+      if (office) {
         selectedOffice = office;
       }
     }
@@ -160,23 +170,23 @@ export class AttendanceService {
     return selectedOffice;
   }
 
-  private async getActiveAttendancePolicy(customerId: number, officeId?: number | null) {
-    if (officeId) {
-      const officePolicy = await this.prisma.attendancePolicy.findFirst({
-        where: { customerId, officeId, isActive: true },
-      });
-      if (officePolicy) return officePolicy;
-    }
-
-    const customerPolicy = await this.prisma.attendancePolicy.findFirst({
-      where: { customerId, officeId: null, isActive: true },
+  private async getActiveAttendancePolicy(customerId: number, officeId?: number) {
+    const policy = await this.prisma.attendancePolicy.findFirst({
+      where: {
+        customerId,
+        isActive: true,
+        ...(officeId ? { OR: [{ officeId }, { officeId: null }] } : {}),
+      },
+      orderBy: { officeId: 'desc' },
     });
-    if (customerPolicy) return customerPolicy;
+
+    if (policy) return policy;
 
     return {
       name: 'Standard Attendance Policy',
       officeStartTime: '09:30',
       officeEndTime: '18:30',
+      halfDayStartTime: '14:00',
       workingDaysPerWeek: 5,
       workingHoursPerDay: 8.0,
       punchInRequired: true,
@@ -186,7 +196,6 @@ export class AttendanceService {
       lateArrivalThresholdMins: 30,
       lateRuleAction: 'MARK_LATE',
       punchOutRequired: true,
-      minWorkingHours: 8.0,
       earlyCheckoutGraceMinutes: 15,
       earlyCheckoutThresholdMins: 30,
       earlyCheckoutAction: 'MARK_EARLY',
@@ -197,6 +206,8 @@ export class AttendanceService {
       earlyCheckoutDeductionPct: 25.0,
       breakExcessDeductionPct: 100.0,
       minWorkingHoursForHalfDay: 4.0,
+      halfDayThresholdHours: 4.5,
+      minWorkingHours: 8.0,
       breakAllowed: true,
       breakRequired: false,
       maxBreakDurationMins: 60,
@@ -275,15 +286,15 @@ export class AttendanceService {
     console.log(`[GEOFENCE_DEBUG]
 employeeId: ${employee.employeeCode || employee.id}
 customerId: ${employee.customerId}
-officeId: ${office.id}
-officeName: ${office.name}
+assignedOfficeId: ${office.id}
+assignedOfficeName: ${office.name}
 officeLatitude: ${office.latitude}
 officeLongitude: ${office.longitude}
-officeRadius: ${allowedRadius}
 employeeLatitude: ${dto.latitude}
 employeeLongitude: ${dto.longitude}
-distanceMeters: ${distanceMeters}
+gpsAccuracy: ${dto.accuracy ?? 'N/A'}
 allowedRadiusMeters: ${allowedRadius}
+calculatedDistanceMeters: ${distanceMeters}
 locationStatus: ${locationStatus}`);
 
     // GEOFENCE VALIDATION
