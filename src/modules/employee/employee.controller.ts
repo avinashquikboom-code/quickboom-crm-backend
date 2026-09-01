@@ -84,7 +84,7 @@ export class EmployeeController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'QB';
+    const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
   }
 

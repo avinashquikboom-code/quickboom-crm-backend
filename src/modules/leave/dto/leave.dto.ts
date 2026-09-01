@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
 
 export class CreateLeaveDto {
-  @ApiProperty({ example: 1, description: 'Employee ID' })
+  @ApiPropertyOptional({ example: 1, description: 'Employee ID (optional if authenticated as employee)' })
   @IsNumber()
-  @IsNotEmpty()
-  employeeId: number;
+  @IsOptional()
+  employeeId?: number;
 
   @ApiPropertyOptional({ example: 1, description: 'Leave Type ID' })
   @IsOptional()

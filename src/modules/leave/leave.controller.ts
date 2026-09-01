@@ -101,12 +101,26 @@ export class LeaveController {
       throw new ForbiddenException('User does not belong to any customer');
     }
 
-    return this.leaveService.getLeaveRequests(targetCustomerId, {
+    return this.leaveService.getLeaveRequests(user, targetCustomerId, {
       status,
       search,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 100,
     });
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Alias for getLeaveRequests' })
+  async getLeavesAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.getLeaveRequests(user, customerId, customerIdQuery, status, search, page, limit);
   }
 
   @Get('requests/:id')
@@ -132,7 +146,18 @@ export class LeaveController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.leaveService.createLeave(targetCustomerId, dto);
+    return this.leaveService.createLeave(user, targetCustomerId, dto);
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Alias for createLeave' })
+  async createLeaveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: CreateLeaveDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    return this.createLeave(user, customerId, dto, customerIdQuery);
   }
 
   @Patch('requests/:id/approve')
@@ -148,6 +173,17 @@ export class LeaveController {
     return this.leaveService.approveLeave(user, targetCustomerId, id);
   }
 
+  @Patch(':id/approve')
+  @ApiOperation({ summary: 'Alias for approveLeave' })
+  async approveLeaveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    return this.approveLeave(user, customerId, id, customerIdQuery);
+  }
+
   @Patch('requests/:id/reject')
   @ApiOperation({ summary: 'Reject a leave application with reason' })
   async rejectLeave(
@@ -160,6 +196,42 @@ export class LeaveController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.leaveService.rejectLeave(user, targetCustomerId, id, dto);
+  }
+
+  @Patch(':id/reject')
+  @ApiOperation({ summary: 'Alias for rejectLeave' })
+  async rejectLeaveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RejectLeaveDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    return this.rejectLeave(user, customerId, id, dto, customerIdQuery);
+  }
+
+  @Patch('requests/:id/cancel')
+  @ApiOperation({ summary: 'Cancel an approved or pending leave application' })
+  async cancelLeave(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.cancelLeave(user, targetCustomerId, id);
+  }
+
+  @Patch(':id/cancel')
+  @ApiOperation({ summary: 'Alias for cancelLeave' })
+  async cancelLeaveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    return this.cancelLeave(user, customerId, id, customerIdQuery);
   }
 
   // =========================================================
@@ -188,7 +260,7 @@ export class LeaveController {
       throw new ForbiddenException('User does not belong to any customer');
     }
 
-    return this.leaveService.getLeaveBalances(targetCustomerId, {
+    return this.leaveService.getLeaveBalances(user, targetCustomerId, {
       search,
       officeId,
       departmentId,

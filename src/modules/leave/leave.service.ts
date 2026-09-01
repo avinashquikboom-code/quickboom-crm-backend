@@ -208,6 +208,7 @@ export class LeaveService {
   // 2. LEAVE REQUESTS MANAGEMENT
   // ==========================================
   async getLeaveRequests(
+    user?: any,
     customerId?: number | string,
     query?: {
       status?: string;
@@ -224,6 +225,16 @@ export class LeaveService {
     const where: any = {
       customerId: numCustomerId,
     };
+
+    // If caller is an Employee (mobile app), scope strictly to their own employee record
+    if (user && user.role === 'EMPLOYEE') {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: { userId: user.id, customerId: numCustomerId },
+      }));
+      if (emp) {
+        where.employeeId = emp.id;
+      }
+    }
 
     if (query?.status && query.status !== 'ALL') {
       where.status = query.status.toUpperCase() as RequestStatus;
@@ -258,52 +269,56 @@ export class LeaveService {
       }),
       this.prisma.leaveRequest.count({ where }),
       this.prisma.leaveRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.PENDING },
+        where: { ...where, status: RequestStatus.PENDING },
       }),
       this.prisma.leaveRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.APPROVED },
+        where: { ...where, status: RequestStatus.APPROVED },
       }),
       this.prisma.leaveRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.REJECTED },
+        where: { ...where, status: RequestStatus.REJECTED },
       }),
     ]);
 
+    const formatted = items.map((l) => ({
+      id: l.id,
+      customerId: l.customerId,
+      employeeId: l.employeeId,
+      employeeCode: l.employee?.employeeCode || `EMP-${l.employeeId}`,
+      employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}`.trim() : 'Employee',
+      employee: l.employee
+        ? {
+            id: l.employee.id,
+            employeeCode: l.employee.employeeCode,
+            name: `${l.employee.firstName} ${l.employee.lastName}`.trim(),
+            email: l.employee.email,
+            phone: l.employee.phone,
+            department: l.employee.department?.name || 'General',
+            designation: l.employee.designation?.name || 'Staff',
+            office: l.employee.office?.name || l.employee.branch || 'Head Office',
+            officeCity: l.employee.office?.city || '',
+          }
+        : null,
+      department: l.employee?.department?.name || 'General',
+      office: l.employee?.office?.name || l.employee?.branch || 'Head Office',
+      leaveTypeId: l.leaveTypeId,
+      leaveType: l.leaveType?.name || 'Casual Leave',
+      fromDate: l.fromDate ? l.fromDate.toISOString().split('T')[0] : '',
+      toDate: l.toDate ? l.toDate.toISOString().split('T')[0] : '',
+      days: l.days || 1,
+      totalDays: l.days || 1,
+      reason: l.reason || 'Personal Leave',
+      attachmentUrl: l.attachmentUrl,
+      status: l.status,
+      rejectionReason: l.rejectionReason,
+      appliedOn: l.createdAt ? l.createdAt.toISOString().split('T')[0] : '',
+      createdAt: l.createdAt,
+      updatedAt: l.updatedAt,
+    }));
+
     return {
-      data: items.map((l) => ({
-        id: l.id,
-        customerId: l.customerId,
-        employeeId: l.employeeId,
-        employeeCode: l.employee?.employeeCode || `EMP-${l.employeeId}`,
-        employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}`.trim() : 'Employee',
-        employee: l.employee
-          ? {
-              id: l.employee.id,
-              employeeCode: l.employee.employeeCode,
-              name: `${l.employee.firstName} ${l.employee.lastName}`.trim(),
-              email: l.employee.email,
-              phone: l.employee.phone,
-              department: l.employee.department?.name || 'General',
-              designation: l.employee.designation?.name || 'Staff',
-              office: l.employee.office?.name || l.employee.branch || 'Head Office',
-              officeCity: l.employee.office?.city || '',
-            }
-          : null,
-        department: l.employee?.department?.name || 'General',
-        office: l.employee?.office?.name || l.employee?.branch || 'Head Office',
-        leaveTypeId: l.leaveTypeId,
-        leaveType: l.leaveType?.name || 'Casual Leave',
-        fromDate: l.fromDate ? l.fromDate.toISOString().split('T')[0] : '',
-        toDate: l.toDate ? l.toDate.toISOString().split('T')[0] : '',
-        days: l.days || 1,
-        totalDays: l.days || 1,
-        reason: l.reason || 'Personal Leave',
-        attachmentUrl: l.attachmentUrl,
-        status: l.status,
-        rejectionReason: l.rejectionReason,
-        appliedOn: l.createdAt ? l.createdAt.toISOString().split('T')[0] : '',
-        createdAt: l.createdAt,
-        updatedAt: l.updatedAt,
-      })),
+      success: true,
+      data: formatted,
+      items: formatted,
       counts: {
         all: total,
         pending: pendingCount,
@@ -382,38 +397,173 @@ export class LeaveService {
     };
   }
 
-  async approveLeave(user: any, customerId: number | string | undefined, id: number) {
+  async createLeave(user: any, customerId: number | string | undefined, dto: CreateLeaveDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const leave = await this.prisma.leaveRequest.findFirst({
-      where: { id, customerId: numCustomerId },
-      include: { employee: true, leaveType: true },
+
+    // 1. Resolve target employeeId
+    let employeeId: number | null = null;
+    if (dto.employeeId !== undefined && dto.employeeId !== null && !isNaN(Number(dto.employeeId))) {
+      employeeId = Number(dto.employeeId);
+    }
+    if (!employeeId) {
+      if (user?.employee?.id) {
+        employeeId = user.employee.id;
+      } else if (user?.id) {
+        const emp = await this.prisma.employee.findFirst({
+          where: { userId: user.id, customerId: numCustomerId },
+        });
+        if (emp) {
+          employeeId = emp.id;
+        }
+      }
+    }
+
+    if (!employeeId) {
+      throw new BadRequestException('Valid employeeId is required');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, customerId: numCustomerId },
     });
-
-    if (!leave) {
-      throw new NotFoundException(`Leave request #${id} not found`);
+    if (!employee) {
+      throw new NotFoundException(`Employee #${employeeId} not found`);
     }
 
-    if (leave.status === RequestStatus.APPROVED) {
-      throw new BadRequestException('Leave request is already approved');
+    // 2. Resolve Leave Type
+    let leaveTypeId = dto.leaveTypeId;
+    let leaveType: any = null;
+    if (leaveTypeId) {
+      leaveType = await this.prisma.leaveType.findFirst({
+        where: { id: Number(leaveTypeId), customerId: numCustomerId },
+      });
+      if (!leaveType) {
+        throw new NotFoundException(`Leave type #${leaveTypeId} not found`);
+      }
+    } else {
+      const typeName = dto.leaveTypeName || 'Casual Leave';
+      leaveType = await this.prisma.leaveType.findFirst({
+        where: { customerId: numCustomerId, name: { equals: typeName, mode: 'insensitive' } },
+      });
+      if (!leaveType) {
+        leaveType = await this.prisma.leaveType.create({
+          data: {
+            customerId: numCustomerId,
+            name: typeName,
+            code: typeName.substring(0, 3).toUpperCase(),
+            daysAllowedPerYear: 12,
+          },
+        });
+      }
+      leaveTypeId = leaveType.id;
     }
 
-    if (leave.status === RequestStatus.REJECTED) {
-      throw new BadRequestException(`Cannot approve request that is currently ${leave.status}`);
+    // 3. Parse and validate dates
+    const fromDate = new Date(dto.fromDate);
+    const toDate = new Date(dto.toDate);
+    if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      throw new BadRequestException('Invalid fromDate or toDate provided');
+    }
+    if (fromDate > toDate) {
+      throw new BadRequestException('fromDate cannot be after toDate');
     }
 
-    // Atomic transaction for leave approval + balance recalculation
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const appReq = await tx.leaveRequest.update({
-        where: { id },
-        data: {
-          status: RequestStatus.APPROVED,
-          approvedById: user?.id || null,
-          rejectionReason: null,
+    // 4. Calculate totalDays
+    let days = dto.days;
+    if (!days || isNaN(days) || days <= 0) {
+      const diffMs = toDate.getTime() - fromDate.getTime();
+      days = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1);
+    }
+
+    const currentYear = fromDate.getFullYear();
+    const isUnlimited = leaveType.code === 'UL' || leaveType.name.toLowerCase().includes('unpaid');
+
+    // 5. Pre-check available balance before submission (Available = Allocated - Used/Approved)
+    if (!isUnlimited) {
+      const existingBalance = await this.prisma.employeeLeaveBalance.findFirst({
+        where: {
+          employeeId,
+          leaveTypeId: leaveType.id,
+          year: currentYear,
         },
       });
 
-      // Recalculate employee leave balance
-      const currentYear = new Date().getFullYear();
+      const allocated = existingBalance ? existingBalance.allocatedDays : leaveType.daysAllowedPerYear;
+      const used = existingBalance ? existingBalance.usedDays : 0.0;
+      const available = Math.max(0, allocated - used);
+
+      if (available < days) {
+        throw new BadRequestException(
+          `Insufficient ${leaveType.name} balance. Available: ${available} day(s), Requested: ${days} day(s).`,
+        );
+      }
+    }
+
+    // 6. Create leave application with status = PENDING (DO NOT DEDUCT BALANCE)
+    const created = await this.prisma.leaveRequest.create({
+      data: {
+        customerId: numCustomerId,
+        employeeId,
+        leaveTypeId: leaveType.id,
+        fromDate,
+        toDate,
+        days: Math.round(days),
+        reason: dto.reason?.trim() || null,
+        status: RequestStatus.PENDING,
+      },
+      include: {
+        employee: true,
+        leaveType: true,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Leave application submitted successfully with status PENDING',
+      data: {
+        id: created.id,
+        employeeId: created.employeeId,
+        leaveTypeId: created.leaveTypeId,
+        leaveType: created.leaveType?.name,
+        fromDate: created.fromDate.toISOString().split('T')[0],
+        toDate: created.toDate.toISOString().split('T')[0],
+        days: created.days,
+        totalDays: created.days,
+        status: created.status,
+        reason: created.reason,
+        createdAt: created.createdAt,
+      },
+    };
+  }
+
+  async approveLeave(user: any, customerId: number | string | undefined, id: number) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+
+    // Atomic transaction for leave approval + balance deduction
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Fetch leave application inside transaction
+      const leave = await tx.leaveRequest.findFirst({
+        where: { id, customerId: numCustomerId },
+        include: { employee: true, leaveType: true },
+      });
+
+      if (!leave) {
+        throw new NotFoundException(`Leave request #${id} not found`);
+      }
+
+      // 2. Prevent double deduction: only PENDING leaves can be approved
+      if (leave.status === RequestStatus.APPROVED) {
+        throw new BadRequestException('Leave request is already approved. Balance was already deducted.');
+      }
+
+      if (leave.status !== RequestStatus.PENDING) {
+        throw new BadRequestException(`Cannot approve request with status: ${leave.status}. Only PENDING leaves can be approved.`);
+      }
+
+      const currentYear = leave.fromDate.getFullYear();
+      const requestedDays = Number(leave.days || 1);
+      const isUnlimited = leave.leaveType?.code === 'UL' || leave.leaveType?.name.toLowerCase().includes('unpaid');
+
+      // 3. Fetch employee leave balance for that leave type
       let balance = await tx.employeeLeaveBalance.findFirst({
         where: {
           employeeId: leave.employeeId,
@@ -422,31 +572,56 @@ export class LeaveService {
         },
       });
 
+      const defaultAllocated = leave.leaveType?.daysAllowedPerYear || 12.0;
+      const allocated = balance ? balance.allocatedDays : defaultAllocated;
+      const currentUsed = balance ? balance.usedDays : 0.0;
+      const available = isUnlimited ? 999 : Math.max(0, allocated - currentUsed);
+
+      // 4. Verify sufficient balance
+      if (!isUnlimited && available < requestedDays) {
+        throw new BadRequestException(
+          `Insufficient ${leave.leaveType?.name || 'leave'} balance to approve this request. Available: ${available} day(s), Requested: ${requestedDays} day(s).`,
+        );
+      }
+
+      // 5. Deduct requestedDays from balance (Single deduction)
+      const newUsed = currentUsed + requestedDays;
+      const newRemaining = Math.max(0, allocated - newUsed);
+
       if (!balance) {
-        const defaultAllocated = leave.leaveType?.daysAllowedPerYear || 12.0;
         balance = await tx.employeeLeaveBalance.create({
           data: {
             customerId: numCustomerId,
             employeeId: leave.employeeId,
             leaveTypeId: leave.leaveTypeId,
             year: currentYear,
-            allocatedDays: defaultAllocated,
-            usedDays: Number(leave.days || 1),
-            remainingDays: Math.max(0, defaultAllocated - Number(leave.days || 1)),
+            allocatedDays: allocated,
+            usedDays: newUsed,
+            remainingDays: newRemaining,
           },
         });
       } else {
-        const newUsed = balance.usedDays + Number(leave.days || 1);
-        await tx.employeeLeaveBalance.update({
+        balance = await tx.employeeLeaveBalance.update({
           where: { id: balance.id },
           data: {
             usedDays: newUsed,
-            remainingDays: Math.max(0, balance.allocatedDays - newUsed),
+            remainingDays: newRemaining,
           },
         });
       }
 
-      // Check if leave covers today, and update today's attendance record
+      // 6. Update leave status to APPROVED
+      const updatedLeave = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: RequestStatus.APPROVED,
+          approvedById: user?.id || null,
+          rejectionReason: null,
+        },
+        include: { employee: true, leaveType: true },
+      });
+
+      // 7. Check if leave covers today, and update today's attendance record
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayEnd = new Date();
@@ -468,14 +643,19 @@ export class LeaveService {
         }
       }
 
-      return appReq;
+      return {
+        success: true,
+        message: `Leave request for ${leave.employee ? leave.employee.firstName : 'employee'} approved successfully.`,
+        data: updatedLeave,
+        balance: {
+          leaveTypeId: leave.leaveTypeId,
+          leaveType: leave.leaveType?.name,
+          allocated: balance.allocatedDays,
+          used: balance.usedDays,
+          remaining: balance.remainingDays,
+        },
+      };
     });
-
-    return {
-      success: true,
-      message: `Leave request for ${leave.employee ? leave.employee.firstName : 'employee'} approved successfully.`,
-      data: updated,
-    };
   }
 
   async rejectLeave(
@@ -485,81 +665,100 @@ export class LeaveService {
     dto?: RejectLeaveDto,
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const leave = await this.prisma.leaveRequest.findFirst({
-      where: { id, customerId: numCustomerId },
-      include: { employee: true },
+
+    return this.prisma.$transaction(async (tx) => {
+      const leave = await tx.leaveRequest.findFirst({
+        where: { id, customerId: numCustomerId },
+        include: { employee: true },
+      });
+
+      if (!leave) {
+        throw new NotFoundException(`Leave request #${id} not found`);
+      }
+
+      if (leave.status === RequestStatus.REJECTED) {
+        throw new BadRequestException('Leave request is already rejected');
+      }
+
+      if (leave.status !== RequestStatus.PENDING) {
+        throw new BadRequestException(`Cannot reject request with status: ${leave.status}. Only PENDING requests can be rejected.`);
+      }
+
+      // Update status to REJECTED (NO BALANCE DEDUCTION)
+      const updated = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: RequestStatus.REJECTED,
+          rejectionReason: dto?.rejectionReason?.trim() || 'Declined by Administrator / HR',
+          approvedById: user?.id || null,
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Leave request rejected successfully. No balance was deducted.',
+        data: updated,
+      };
     });
-
-    if (!leave) {
-      throw new NotFoundException(`Leave request #${id} not found`);
-    }
-
-    if (leave.status === RequestStatus.REJECTED) {
-      throw new BadRequestException('Leave request is already rejected');
-    }
-
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id },
-      data: {
-        status: RequestStatus.REJECTED,
-        rejectionReason: dto?.rejectionReason?.trim() || 'Declined by Administrator / HR',
-        approvedById: user?.id || null,
-      },
-    });
-
-    return {
-      success: true,
-      message: `Leave request rejected.`,
-      data: updated,
-    };
   }
 
-  async createLeave(customerId: number | string | undefined, dto: CreateLeaveDto) {
+  async cancelLeave(user: any, customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    let leaveTypeId = dto.leaveTypeId;
-    if (!leaveTypeId) {
-      let typeName = dto.leaveTypeName || 'Casual Leave';
-      let type = await this.prisma.leaveType.findFirst({
-        where: { customerId: numCustomerId, name: { equals: typeName, mode: 'insensitive' } },
+    return this.prisma.$transaction(async (tx) => {
+      const leave = await tx.leaveRequest.findFirst({
+        where: { id, customerId: numCustomerId },
+        include: { employee: true, leaveType: true },
       });
-      if (!type) {
-        type = await this.prisma.leaveType.create({
-          data: {
-            customerId: numCustomerId,
-            name: typeName,
-            code: typeName.substring(0, 3).toUpperCase(),
-            daysAllowedPerYear: 12,
+
+      if (!leave) {
+        throw new NotFoundException(`Leave request #${id} not found`);
+      }
+
+      if (leave.status === RequestStatus.REJECTED) {
+        throw new BadRequestException('Leave request is already rejected or cancelled');
+      }
+
+      // If leave was APPROVED, restore the deducted leave balance
+      if (leave.status === RequestStatus.APPROVED) {
+        const currentYear = leave.fromDate.getFullYear();
+        const balance = await tx.employeeLeaveBalance.findFirst({
+          where: {
+            employeeId: leave.employeeId,
+            leaveTypeId: leave.leaveTypeId,
+            year: currentYear,
           },
         });
+
+        if (balance) {
+          const requestedDays = Number(leave.days || 1);
+          const restoredUsed = Math.max(0, balance.usedDays - requestedDays);
+          const restoredRemaining = Math.min(balance.allocatedDays, balance.allocatedDays - restoredUsed);
+
+          await tx.employeeLeaveBalance.update({
+            where: { id: balance.id },
+            data: {
+              usedDays: restoredUsed,
+              remainingDays: restoredRemaining,
+            },
+          });
+        }
       }
-      leaveTypeId = type.id;
-    }
 
-    const fromDate = new Date(dto.fromDate);
-    const toDate = new Date(dto.toDate);
+      const updated = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: RequestStatus.REJECTED,
+          rejectionReason: 'Cancelled by Administrator / Employee',
+          approvedById: user?.id || null,
+        },
+      });
 
-    let days = dto.days;
-    if (!days || isNaN(days)) {
-      const diffMs = toDate.getTime() - fromDate.getTime();
-      days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1);
-    }
-
-    return this.prisma.leaveRequest.create({
-      data: {
-        customerId: numCustomerId,
-        employeeId: Number(dto.employeeId),
-        leaveTypeId,
-        fromDate,
-        toDate,
-        days,
-        reason: dto.reason?.trim() || null,
-        status: RequestStatus.PENDING,
-      },
-      include: {
-        employee: true,
-        leaveType: true,
-      },
+      return {
+        success: true,
+        message: 'Leave request cancelled successfully. Any deducted balance has been restored.',
+        data: updated,
+      };
     });
   }
 
@@ -567,6 +766,7 @@ export class LeaveService {
   // 3. EMPLOYEE-WISE LEAVE BALANCES & AUDIT
   // ==========================================
   async getLeaveBalances(
+    user?: any,
     customerId?: number | string,
     query?: {
       search?: string;
@@ -612,7 +812,39 @@ export class LeaveService {
       });
     }
 
-    // 2. Fetch employees matching filter
+    // 2. If caller is an Employee (mobile app), return their individual balance list directly
+    if (user && user.role === 'EMPLOYEE') {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: { userId: user.id, customerId: numCustomerId },
+      }));
+
+      if (emp) {
+        const empBalances = await this.getEmployeeBalanceDetails(numCustomerId, emp.id);
+        const list = empBalances.balances.map((b: any) => ({
+          id: b.leaveTypeId,
+          leaveTypeId: b.leaveTypeId,
+          leaveType: b.leaveTypeName,
+          name: b.leaveTypeName,
+          code: b.code,
+          totalAllowed: b.allocated,
+          total: b.allocated,
+          allocated: b.allocated,
+          used: b.used,
+          taken: b.used,
+          remaining: b.remaining,
+          balance: b.remaining,
+          isUnlimited: b.isUnlimited,
+        }));
+
+        return {
+          success: true,
+          data: list,
+          balances: list,
+        };
+      }
+    }
+
+    // 3. Admin: Fetch all employees matching filter
     const whereEmp: any = {
       customerId: numCustomerId,
       status: 'ACTIVE',

@@ -392,10 +392,10 @@ export class AuthService {
         throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (userRole === 'EMPLOYEE') {
-      if (user.employee && user.employee.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Employee account is inactive.');
+      if (!user.employee || user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is no longer active.');
       }
-      if (user.employee && user.employee.mobileLoginEnabled === false) {
+      if (user.employee.mobileLoginEnabled === false) {
         throw new UnauthorizedException('Mobile login is disabled for this employee.');
       }
       if (user.customer && !user.customer.isActive) {
@@ -461,6 +461,12 @@ export class AuthService {
       if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
+      if (!user.employee || user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is no longer active.');
+      }
+      if (user.employee.mobileLoginEnabled === false) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your company account is suspended.');
       }
@@ -511,13 +517,18 @@ export class AuthService {
       roleId,
     );
 
-    // Auto-generate employee record ONLY if the authenticated user is an Employee
     let emp: any = null;
     let employeeData: any = null;
     if (userRole === 'EMPLOYEE') {
-      emp = await this.ensureEmployee(user);
-      const targetNumericId = emp?.id || user.id;
-      const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      if (!user.employee || user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is no longer active.');
+      }
+      if (user.employee.mobileLoginEnabled === false) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
+      emp = user.employee;
+      const targetNumericId = emp.id || user.id;
+      const qbCode = emp.employeeCode || this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -532,7 +543,7 @@ export class AuthService {
         department: emp.department?.name || 'General',
         designation: emp.designation?.name || 'Staff',
         status: emp.status || 'ACTIVE',
-        mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+        mobileLoginEnabled: emp.mobileLoginEnabled !== false,
         joiningDate: emp.joiningDate || user.createdAt,
       };
     }
@@ -700,6 +711,35 @@ export class AuthService {
 
     if (!user || !user.isActive || user.deletedAt) {
       throw new UnauthorizedException('User account inactive or missing');
+    }
+
+    const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
+    const isEmployeeRoleCheck =
+      payloadRole === 'EMPLOYEE' ||
+      payload.roleType === RoleType.CUSTOM ||
+      Boolean((user as any).employee) ||
+      (user as any).userRoles?.some((ur: any) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.SALES_EXECUTIVE ||
+          type === RoleType.SALES_MANAGER ||
+          type === RoleType.SUPPORT_AGENT ||
+          name.includes('EMPLOYEE') ||
+          name.includes('STAFF')
+        );
+      });
+
+    if (payloadRole === 'EMPLOYEE' || isEmployeeRoleCheck) {
+      if (!(user as any).employee || (user as any).employee.status !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
+        if (existingToken) {
+          await this.prisma.refreshToken.update({
+            where: { id: existingToken.id },
+            data: { isRevoked: true },
+          }).catch(() => null);
+        }
+        throw new UnauthorizedException('Employee account is no longer active');
+      }
     }
 
     if (existingToken) {

@@ -225,8 +225,8 @@ describe('EmployeeService — Customer Data Isolation', () => {
   describe('create (Ownership Enforcement)', () => {
     it('Customer A creating employee always receives a system-generated employeeCode', async () => {
       // Backend generates the code inside the transaction; mock the resolved value
-      // findMany is called by getNextEmployeeCode to find existing QB-prefixed codes
-      prisma.employee.findMany.mockResolvedValue([]); // no existing codes → generates QB0001
+      // findMany is called by getNextEmployeeCode to find existing EMP-prefixed codes
+      prisma.employee.findMany.mockResolvedValue([]); // no existing codes → generates EMP-001
       // findUnique is called by the duplicate guard — null means no existing employee for this user
       prisma.employee.findUnique.mockResolvedValue(null);
       prisma.department.findFirst.mockResolvedValue({ id: 10, customerId: 1, name: 'Media' });
@@ -234,7 +234,7 @@ describe('EmployeeService — Customer Data Isolation', () => {
       prisma.employee.create.mockResolvedValue({
         id: 105,
         customerId: 1,
-        employeeCode: 'QB0001',  // backend-generated code
+        employeeCode: 'EMP-001',  // backend-generated code
         firstName: 'New',
         lastName: 'Emp',
         email: 'new@custA.com',
@@ -250,12 +250,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
         },
       });
 
-      // Verify the employee was created with the correct tenant and a QB-prefixed code
+      // Verify the employee was created with the correct tenant and an EMP-prefixed code
       expect(prisma.employee.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             customerId: 1,
-            employeeCode: expect.stringMatching(/^QB\d{4,}$/),
+            employeeCode: expect.stringMatching(/^EMP-\d{3,}$/),
           }),
         }),
       );
@@ -268,7 +268,7 @@ describe('EmployeeService — Customer Data Isolation', () => {
       // The duplicate guard: findUnique returns an existing employee for this user
       prisma.employee.findUnique.mockResolvedValue({
         id: 99,
-        employeeCode: 'QB0001',
+        employeeCode: 'EMP-001',
         customerId: 1,
       });
 

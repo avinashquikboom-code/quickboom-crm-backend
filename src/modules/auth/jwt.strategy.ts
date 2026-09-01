@@ -55,6 +55,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User account inactive or missing');
     }
 
+    const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
+    const tokenIsEmployee = payloadRole === 'EMPLOYEE' || payload.roleType === RoleType.CUSTOM;
+
+    if (tokenIsEmployee) {
+      if (!user.employee || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false) {
+        this.logger.warn(`[JWT_STRATEGY] Employee record for user ${userId} is missing or inactive`);
+        throw new UnauthorizedException('Employee account is no longer active');
+      }
+    }
+
     const roles: string[] = (user.userRoles || [])
       .map((ur) => ur.role?.type || ur.role?.name)
       .filter(Boolean);
