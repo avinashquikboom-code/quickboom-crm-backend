@@ -89,6 +89,14 @@ export class AuthController {
   }
 
   @Public()
+  @Post('refresh-tokens')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Alias for refresh token' })
+  async refreshTokensAlias(@Body() dto: RefreshTokenDto) {
+    return this.authService.refreshToken(dto);
+  }
+
+  @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset OTP via email' })

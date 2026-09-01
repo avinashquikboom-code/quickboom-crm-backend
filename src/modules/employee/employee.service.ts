@@ -1461,16 +1461,16 @@ export class EmployeeService {
 
       // 5. User safety check & deletion/deactivation
       if (userId) {
-        // Check if user is attached to other entities (e.g. is Admin, owns customer, leads, deals, tickets)
+        // Check if user is attached to other entities (e.g. is Admin, leads, deals, tickets)
         const isSharedOrAdmin = await tx.user.findFirst({
           where: {
             id: userId,
             OR: [
               { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
-              { customer: { isNot: null } },
               { assignedLeads: { some: {} } },
               { createdLeads: { some: {} } },
               { assignedDeals: { some: {} } },
+              { assignedContacts: { some: {} } },
               { assignedTickets: { some: {} } },
               { createdTickets: { some: {} } },
               { assignedTasks: { some: {} } },
