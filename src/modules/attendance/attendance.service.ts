@@ -837,7 +837,9 @@ result: SUCCESS`);
       employee: {
         id: employee.id,
         employeeCode: employee.employeeCode,
-        name: `${employee.firstName} ${employee.lastName}`,
+        name: [employee.firstName, employee.lastName].filter(Boolean).join(' ').trim() || employee.email?.split('@')[0] || 'Employee',
+        firstName: employee.firstName,
+        lastName: employee.lastName || '',
         email: employee.email,
         department: employee.department?.name || 'General',
         designation: employee.designation?.name || 'Staff',
