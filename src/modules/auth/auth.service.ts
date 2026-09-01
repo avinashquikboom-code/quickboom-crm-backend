@@ -266,7 +266,12 @@ export class AuthService {
       },
     });
 
+    const isEmployeeApp = ['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes((appType || '').trim().toUpperCase());
+
     if (!user || user.deletedAt) {
+      if (isEmployeeApp) {
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
+      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -276,7 +281,14 @@ export class AuthService {
     }
 
     if (!user.isActive) {
+      if (isEmployeeApp) {
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
+      }
       throw new UnauthorizedException('Your account has been deactivated');
+    }
+
+    if (isEmployeeApp && (!user.employee || user.employee.status !== 'ACTIVE')) {
+      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
     }
 
     // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
@@ -462,7 +474,7 @@ export class AuthService {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
       if (!user.employee || user.employee.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Employee account is no longer active.');
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
       }
       if (user.employee.mobileLoginEnabled === false) {
         throw new UnauthorizedException('Mobile login is disabled for this employee.');
@@ -710,7 +722,7 @@ export class AuthService {
       }));
 
     if (!user || !user.isActive || user.deletedAt) {
-      throw new UnauthorizedException('User account inactive or missing');
+      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
     }
 
     const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
@@ -738,7 +750,7 @@ export class AuthService {
             data: { isRevoked: true },
           }).catch(() => null);
         }
-        throw new UnauthorizedException('Employee account is no longer active');
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
       }
     }
 

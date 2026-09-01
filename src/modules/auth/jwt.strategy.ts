@@ -52,7 +52,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!user || !user.isActive || user.deletedAt) {
       this.logger.warn(`[JWT_STRATEGY] User ${userId} is inactive, deleted, or missing`);
-      throw new UnauthorizedException('User account inactive or missing');
+      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
     }
 
     const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
@@ -61,7 +61,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (tokenIsEmployee) {
       if (!user.employee || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false) {
         this.logger.warn(`[JWT_STRATEGY] Employee record for user ${userId} is missing or inactive`);
-        throw new UnauthorizedException('Employee account is no longer active');
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
       }
     }
 

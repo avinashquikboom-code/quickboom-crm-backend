@@ -1339,39 +1339,109 @@ export class EmployeeService {
     const { id, customerId, isSuperAdmin } = params;
     const existing = await this.findOne({ id, customerId, isSuperAdmin });
 
-    const numId = Number(id);
+    const numId = Number(existing.id);
     const userId = existing?.userId ? Number(existing.userId) : null;
+    const empCustomerId = Number(existing.customerId);
 
     return this.prisma.$transaction(async (tx) => {
-      // 1. Invalidate authentication sessions and tokens for linked user
+      // 1. Invalidate/delete all active authentication sessions, refresh tokens, and device tokens for linked user
       if (userId) {
-        // Delete all active refresh tokens for the user
         await tx.refreshToken.deleteMany({
           where: { userId },
-        }).catch(() => null);
+        });
 
-        // Delete all active login sessions
         await tx.session.deleteMany({
           where: { userId },
-        }).catch(() => null);
+        });
 
-        // Delete device push notification tokens
         await tx.userDeviceToken.deleteMany({
           where: { userId },
-        }).catch(() => null);
-
-        // Deactivate user account so login and JWT validation immediately reject
-        await tx.user.update({
-          where: { id: userId },
-          data: { isActive: false },
-        }).catch(() => null);
+        });
       }
 
-      // 2. Record deletion in AuditLog to permanently reserve the employeeCode
+      // 2. Unlink or delete all foreign key relations referencing this employee
+      await tx.task.updateMany({
+        where: { employeeId: numId },
+        data: { employeeId: null },
+      });
+
+      await tx.work.updateMany({
+        where: { assignedToId: numId },
+        data: { assignedToId: null },
+      });
+
+      await tx.work.updateMany({
+        where: { editorId: numId },
+        data: { editorId: null },
+      });
+
+      await tx.workTask.updateMany({
+        where: { assignedToId: numId },
+        data: { assignedToId: null },
+      });
+
+      await tx.teamMember.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.visit.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.monthlySchedule.updateMany({
+        where: { assignedEmployeeId: numId },
+        data: { assignedEmployeeId: null },
+      });
+
+      await tx.employeeLocation.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.employeeClaim.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.employeeLoan.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.remoteRequest.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.salarySlip.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.salaryStructure.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.payrollItem.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.leaveAdjustmentHistory.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.employeeLeaveBalance.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.leaveRequest.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      await tx.attendance.deleteMany({
+        where: { employeeId: numId },
+      });
+
+      // 3. Record deletion in AuditLog to permanently reserve the employeeCode in audit history
       if (tx.auditLog) {
         await tx.auditLog.create({
           data: {
-            customerId: existing.customerId,
+            customerId: empCustomerId,
             userId: userId,
             action: 'EMPLOYEE_DELETED',
             module: 'EMPLOYEE',
@@ -1384,17 +1454,48 @@ export class EmployeeService {
         }).catch(() => null);
       }
 
-      // 3. Delete employee record (or soft-deactivate if relational constraints require)
-      try {
-        return await tx.employee.delete({
-          where: { id: numId },
+      // 4. Delete the Employee record completely from the database
+      await tx.employee.delete({
+        where: { id: numId },
+      });
+
+      // 5. User safety check & deletion/deactivation
+      if (userId) {
+        // Check if user is attached to other entities (e.g. is Admin, owns customer, leads, deals, tickets)
+        const isSharedOrAdmin = await tx.user.findFirst({
+          where: {
+            id: userId,
+            OR: [
+              { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
+              { customer: { isNot: null } },
+              { assignedLeads: { some: {} } },
+              { createdLeads: { some: {} } },
+              { assignedDeals: { some: {} } },
+              { assignedTickets: { some: {} } },
+              { createdTickets: { some: {} } },
+              { assignedTasks: { some: {} } },
+              { createdTasks: { some: {} } },
+            ],
+          },
         });
-      } catch {
-        return await tx.employee.update({
-          where: { id: numId },
-          data: { status: 'INACTIVE', mobileLoginEnabled: false },
-        });
+
+        if (!isSharedOrAdmin) {
+          // Exclusively employee user -> delete user roles & user record
+          await tx.userRole.deleteMany({ where: { userId } });
+          await tx.user.delete({ where: { id: userId } });
+        } else {
+          // Shared / Admin user -> permanently deactivate and mark deletedAt
+          await tx.user.update({
+            where: { id: userId },
+            data: { isActive: false, deletedAt: new Date() },
+          });
+        }
       }
+
+      return {
+        success: true,
+        message: 'Employee deleted successfully',
+      };
     });
   }
 
