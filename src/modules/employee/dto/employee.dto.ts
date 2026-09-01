@@ -2,14 +2,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateEmployeeDto {
-  @ApiPropertyOptional({ example: 'QB0001', description: 'Auto-generated if not provided' })
-  @IsString()
-  @IsOptional()
-  employeeCode?: string;
-
-  @ApiPropertyOptional({ example: true, description: 'Force auto-generation of Employee ID' })
-  @IsOptional()
-  autoGenerateCode?: boolean;
+  // employeeCode is intentionally NOT accepted from the client.
+  // The backend always generates the next sequential QB-prefixed ID
+  // inside a database transaction (concurrency-safe).
 
   @ApiProperty({ example: 'Rahul' })
   @IsString()
@@ -122,13 +117,8 @@ export class CreateEmployeeDto {
 }
 
 export class UpdateEmployeeDto {
-  @ApiPropertyOptional({ example: 'QB0001', description: 'Read-only, ignored if sent on update' })
-  @IsOptional()
-  employeeCode?: string;
-
-  @ApiPropertyOptional({ description: 'Ignored on update' })
-  @IsOptional()
-  autoGenerateCode?: boolean;
+  // employeeCode and autoGenerateCode are intentionally ignored on update.
+  // Employee ID is immutable after creation.
 
   @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
   @IsOptional()

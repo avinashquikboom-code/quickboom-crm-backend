@@ -221,13 +221,16 @@ describe('EmployeeService — Customer Data Isolation', () => {
   });
 
   describe('create (Ownership Enforcement)', () => {
-    it('Customer A creating employee sets customerId: 1', async () => {
+    it('Customer A creating employee always receives a system-generated employeeCode', async () => {
+      // Backend generates the code inside the transaction; mock the resolved value
+      // findMany is called by getNextEmployeeCode to find existing QB-prefixed codes
+      prisma.employee.findMany.mockResolvedValue([]); // no existing codes → generates QB0001
       prisma.department.findFirst.mockResolvedValue({ id: 10, customerId: 1, name: 'Media' });
       prisma.designation.findFirst.mockResolvedValue({ id: 20, customerId: 1, name: 'Lead' });
       prisma.employee.create.mockResolvedValue({
         id: 105,
         customerId: 1,
-        employeeCode: 'EMP-105',
+        employeeCode: 'QB0001',  // backend-generated code
         firstName: 'New',
         lastName: 'Emp',
         email: 'new@custA.com',
@@ -236,18 +239,19 @@ describe('EmployeeService — Customer Data Isolation', () => {
       const result = await service.create({
         customerId: 1,
         dto: {
-          employeeCode: 'EMP-105',
+          // employeeCode intentionally NOT provided — backend always generates it
           firstName: 'New',
           lastName: 'Emp',
           email: 'new@custA.com',
         },
       });
 
+      // Verify the employee was created with the correct tenant and a QB-prefixed code
       expect(prisma.employee.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             customerId: 1,
-            employeeCode: 'EMP-105',
+            employeeCode: expect.stringMatching(/^QB\d{4,}$/),
           }),
         }),
       );
