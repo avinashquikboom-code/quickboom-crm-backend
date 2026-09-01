@@ -110,7 +110,10 @@ export class EmployeeService {
     const endOfDay = new Date(targetDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const [items, total] = await Promise.all([
+    const baseCountWhere = { ...where };
+    delete baseCountWhere.status;
+
+    const [items, total, activeCount, inactiveCount] = await Promise.all([
       this.prisma.employee.findMany({
         where,
         skip,
@@ -141,6 +144,8 @@ export class EmployeeService {
         },
       }),
       this.prisma.employee.count({ where }),
+      this.prisma.employee.count({ where: { ...baseCountWhere, status: 'ACTIVE' } }),
+      this.prisma.employee.count({ where: { ...baseCountWhere, status: 'INACTIVE' } }),
     ]);
 
     const formatted = items.map((e) => {
@@ -271,8 +276,15 @@ export class EmployeeService {
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
+      success: true,
       items: finalItems,
       data: finalItems,
+      employees: finalItems,
+      counts: {
+        total,
+        active: activeCount,
+        inactive: inactiveCount,
+      },
       pagination: {
         page,
         pageSize: limit,
