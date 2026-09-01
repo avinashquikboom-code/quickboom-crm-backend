@@ -240,8 +240,32 @@ describe('API Authentication & Authorization Spec (GET /api/v1/employees/:id)', 
     });
   });
 
-  describe('3. GET /api/v1/employees/3 Controller & RBAC Behavior', () => {
-    it('RETURNS 200 OK when authenticated user requests employee details within own tenant', async () => {
+  describe('3. GET /api/v1/employees & GET /api/v1/employees/:id Controller & RBAC Behavior', () => {
+    it('RETURNS 200 OK when authenticated user calls GET /employees within own tenant', async () => {
+      const mockResult = {
+        items: [
+          { id: 1, employeeCode: 'EMP-001', firstName: 'Alice', customerId: 1 },
+          { id: 2, employeeCode: 'EMP-002', firstName: 'Bob', customerId: 1 },
+        ],
+        data: [],
+        pagination: { page: 1, pageSize: 20, total: 2, totalPages: 1 },
+      };
+
+      (employeeService.findAll as jest.Mock).mockResolvedValue(mockResult);
+
+      const user = { id: 1, customerId: 1, role: 'COMPANY_ADMIN', roles: ['COMPANY_ADMIN'] };
+      const result = await employeeController.findAll(user, 1);
+
+      expect(result).toEqual(mockResult);
+      expect(employeeService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 1,
+          isSuperAdmin: false,
+        }),
+      );
+    });
+
+    it('RETURNS 200 OK when authenticated user requests single employee details within own tenant', async () => {
       const mockEmployee = {
         id: 3,
         employeeCode: 'EMP-003',
@@ -268,6 +292,10 @@ describe('API Authentication & Authorization Spec (GET /api/v1/employees/:id)', 
       const user = { id: 99, customerId: null, role: 'EMPLOYEE', roles: ['EMPLOYEE'] };
 
       await expect(employeeController.findOne('3', user, undefined)).rejects.toThrow(
+        ForbiddenException,
+      );
+
+      await expect(employeeController.findAll(user, undefined)).rejects.toThrow(
         ForbiddenException,
       );
     });
