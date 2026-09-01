@@ -23,7 +23,7 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @ApiTags('Offices')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('offices')
+@Controller(['offices', 'admin/offices'])
 export class OfficeController {
   constructor(private readonly officeService: OfficeService) {}
 
@@ -104,6 +104,20 @@ export class OfficeController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.officeService.update(targetCustomerId, id, dto);
+  }
+
+  @Patch(':id/status')
+  @ApiOperation({ summary: 'Activate or deactivate office location' })
+  async toggleStatus(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isActive') isActive: boolean,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.officeService.toggleStatus(targetCustomerId, id, Boolean(isActive));
   }
 
   @Delete(':id')

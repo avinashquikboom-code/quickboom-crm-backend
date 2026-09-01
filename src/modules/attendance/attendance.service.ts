@@ -396,6 +396,14 @@ locationStatus: ${locationStatus}`);
           allowedRadiusMeters: allowedRadius,
           locationStatus: approvedRemote ? 'REMOTE' : 'INSIDE_RADIUS',
         },
+        status: attendanceStatus,
+        office: {
+          id: office.id,
+          name: office.name,
+          city: office.city,
+          distanceMeters,
+          allowedRadius,
+        },
       };
     });
   }

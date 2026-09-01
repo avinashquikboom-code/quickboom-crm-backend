@@ -908,7 +908,12 @@ model BranchGeofence {
   id                 Int                @id @default(autoincrement())
   customerId         Int
   name               String
+  code               String?
+  address            String?
   city               String?
+  state              String?
+  country            String?            @default("India")
+  postalCode         String?
   latitude           Float
   longitude          Float
   radiusMeters       Float              @default(200.0)
