@@ -205,6 +205,57 @@ export class LeaveService {
   }
 
   // ==========================================
+  // 0. LEAVE TYPES
+  // ==========================================
+  async getLeaveTypes(customerId: number | string | undefined) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    let leaveTypes = await this.prisma.leaveType.findMany({
+      where: { customerId: numCustomerId, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+
+    if (leaveTypes.length === 0) {
+      const defaultTypes = [
+        { name: 'Casual Leave', code: 'CL', daysAllowedPerYear: 12 },
+        { name: 'Sick Leave', code: 'SL', daysAllowedPerYear: 8 },
+        { name: 'Paid Leave', code: 'PL', daysAllowedPerYear: 15 },
+        { name: 'Unpaid Leave', code: 'UL', daysAllowedPerYear: 0 },
+      ];
+
+      for (const dt of defaultTypes) {
+        await this.prisma.leaveType.upsert({
+          where: { customerId_code: { customerId: numCustomerId, code: dt.code } },
+          update: {},
+          create: {
+            customerId: numCustomerId,
+            name: dt.name,
+            code: dt.code,
+            daysAllowedPerYear: dt.daysAllowedPerYear,
+          },
+        });
+      }
+
+      leaveTypes = await this.prisma.leaveType.findMany({
+        where: { customerId: numCustomerId, isActive: true },
+        orderBy: { id: 'asc' },
+      });
+    }
+
+    return {
+      success: true,
+      data: leaveTypes.map((lt) => ({
+        id: lt.id,
+        leaveTypeId: lt.id,
+        name: lt.name,
+        code: lt.code,
+        daysAllowedPerYear: lt.daysAllowedPerYear,
+        isCarryForward: lt.isCarryForward,
+        isActive: lt.isActive,
+      })),
+    };
+  }
+
+  // ==========================================
   // 2. LEAVE REQUESTS MANAGEMENT
   // ==========================================
   async getLeaveRequests(
@@ -227,7 +278,8 @@ export class LeaveService {
     };
 
     // If caller is an Employee (mobile app), scope strictly to their own employee record
-    if (user && user.role === 'EMPLOYEE') {
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
+    if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
         where: { userId: user.id, customerId: numCustomerId },
       }));
@@ -400,20 +452,32 @@ export class LeaveService {
   async createLeave(user: any, customerId: number | string | undefined, dto: CreateLeaveDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    // 1. Resolve target employeeId
+    // 1. Resolve target employeeId with strict employee security isolation
     let employeeId: number | null = null;
-    if (dto.employeeId !== undefined && dto.employeeId !== null && !isNaN(Number(dto.employeeId))) {
-      employeeId = Number(dto.employeeId);
-    }
-    if (!employeeId) {
-      if (user?.employee?.id) {
-        employeeId = user.employee.id;
-      } else if (user?.id) {
-        const emp = await this.prisma.employee.findFirst({
-          where: { userId: user.id, customerId: numCustomerId },
-        });
-        if (emp) {
-          employeeId = emp.id;
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
+
+    if (isEmpUser) {
+      const selfEmp = user.employee || (await this.prisma.employee.findFirst({
+        where: { userId: user.id, customerId: numCustomerId },
+      }));
+      if (!selfEmp) {
+        throw new ForbiddenException('Authenticated employee profile not found');
+      }
+      employeeId = selfEmp.id;
+    } else {
+      if (dto.employeeId !== undefined && dto.employeeId !== null && !isNaN(Number(dto.employeeId))) {
+        employeeId = Number(dto.employeeId);
+      }
+      if (!employeeId) {
+        if (user?.employee?.id) {
+          employeeId = user.employee.id;
+        } else if (user?.id) {
+          const emp = await this.prisma.employee.findFirst({
+            where: { userId: user.id, customerId: numCustomerId },
+          });
+          if (emp) {
+            employeeId = emp.id;
+          }
         }
       }
     }
@@ -463,18 +527,22 @@ export class LeaveService {
     if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       throw new BadRequestException('Invalid fromDate or toDate provided');
     }
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
     if (fromDate > toDate) {
       throw new BadRequestException('fromDate cannot be after toDate');
     }
 
-    // 4. Calculate totalDays
-    let days = dto.days;
-    if (!days || isNaN(days) || days <= 0) {
-      const diffMs = toDate.getTime() - fromDate.getTime();
-      days = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1);
-    }
+    // 4. Calculate totalDays (inclusive difference)
+    const fromStart = new Date(dto.fromDate);
+    fromStart.setHours(0, 0, 0, 0);
+    const toStart = new Date(dto.toDate);
+    toStart.setHours(0, 0, 0, 0);
 
-    const currentYear = fromDate.getFullYear();
+    const calculatedDays = Math.max(1, Math.round((toStart.getTime() - fromStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    const days = dto.days && dto.days > 0 ? Number(dto.days) : calculatedDays;
+
+    const currentYear = fromStart.getFullYear();
     const isUnlimited = leaveType.code === 'UL' || leaveType.name.toLowerCase().includes('unpaid');
 
     // 5. Pre-check available balance before submission (Available = Allocated - Used/Approved)
@@ -813,7 +881,8 @@ export class LeaveService {
     }
 
     // 2. If caller is an Employee (mobile app), return their individual balance list directly
-    if (user && user.role === 'EMPLOYEE') {
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
+    if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
         where: { userId: user.id, customerId: numCustomerId },
       }));
@@ -823,14 +892,15 @@ export class LeaveService {
         const list = empBalances.balances.map((b: any) => ({
           id: b.leaveTypeId,
           leaveTypeId: b.leaveTypeId,
-          leaveType: b.leaveTypeName,
-          name: b.leaveTypeName,
+          leaveType: b.leaveTypeName || b.name,
+          name: b.leaveTypeName || b.name,
           code: b.code,
           totalAllowed: b.allocated,
           total: b.allocated,
           allocated: b.allocated,
           used: b.used,
           taken: b.used,
+          pending: b.pending || 0,
           remaining: b.remaining,
           balance: b.remaining,
           isUnlimited: b.isUnlimited,
@@ -1005,7 +1075,7 @@ export class LeaveService {
         },
         leaveRequests: {
           where: {
-            status: RequestStatus.APPROVED,
+            status: { in: [RequestStatus.APPROVED, RequestStatus.PENDING] },
             fromDate: {
               gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
               lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
@@ -1033,31 +1103,45 @@ export class LeaveService {
 
     let totalAllocated = 0;
     let totalUsed = 0;
+    let totalPending = 0;
     let totalRemaining = 0;
 
     const balances = leaveTypes.map((lt) => {
       const stored = employee.leaveBalances.find((b) => b.leaveTypeId === lt.id);
-      const used = employee.leaveRequests
-        .filter((r) => r.leaveTypeId === lt.id)
+      const approvedUsed = employee.leaveRequests
+        .filter((r) => r.leaveTypeId === lt.id && r.status === RequestStatus.APPROVED)
+        .reduce((sum, r) => sum + (r.days || 1), 0);
+      const pending = employee.leaveRequests
+        .filter((r) => r.leaveTypeId === lt.id && r.status === RequestStatus.PENDING)
         .reduce((sum, r) => sum + (r.days || 1), 0);
 
       const isUnlimited = lt.code === 'UL' || lt.name.toLowerCase().includes('unpaid');
       const allocated = stored ? stored.allocatedDays : lt.daysAllowedPerYear;
+      const used = stored ? stored.usedDays : approvedUsed;
       const remaining = isUnlimited ? 999 : Math.max(0, allocated - used);
 
       if (!isUnlimited) {
         totalAllocated += allocated;
         totalUsed += used;
+        totalPending += pending;
         totalRemaining += remaining;
       }
 
       return {
+        id: lt.id,
         leaveTypeId: lt.id,
+        leaveType: lt.name,
+        name: lt.name,
         leaveTypeName: lt.name,
         code: lt.code,
         allocated,
+        totalAllowed: allocated,
+        total: allocated,
         used,
+        taken: used,
+        pending,
         remaining,
+        balance: remaining,
         isUnlimited,
       };
     });

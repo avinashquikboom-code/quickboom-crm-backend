@@ -39,6 +39,32 @@ export class LeaveController {
   constructor(private readonly leaveService: LeaveService) {}
 
   // =========================================================
+  // 0. LEAVE TYPES
+  // =========================================================
+  @Get('types')
+  @ApiOperation({ summary: 'Get all configured active leave types' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getLeaveTypes(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.getLeaveTypes(targetCustomerId);
+  }
+
+  @Get('leave-types')
+  @ApiOperation({ summary: 'Alias for getLeaveTypes' })
+  async getLeaveTypesAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    return this.getLeaveTypes(user, customerId, customerIdQuery);
+  }
+
+  // =========================================================
   // 1. TODAY'S WORKFORCE AVAILABILITY
   // =========================================================
   @Get('availability')
