@@ -80,6 +80,49 @@ export class WorkController {
     );
   }
 
+  @Get('permissions/overrides/employees')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all employees with their module access overrides' })
+  async getEmployeesWithOverrides(
+    @CurrentCustomer() customerId: string,
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.getEmployeesWithOverrides(Number(custId));
+  }
+
+  @Get('permissions/overrides/employee/:employeeId')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get module access overrides for a specific employee' })
+  async getEmployeeOverrides(
+    @CurrentCustomer() customerId: string,
+    @Param('employeeId') employeeId: string,
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.getEmployeeOverrides(Number(custId), Number(employeeId));
+  }
+
+  @Put('permissions/overrides/employee/:employeeId')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update module access overrides for a specific employee' })
+  async updateEmployeeOverrides(
+    @CurrentCustomer() customerId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() body: { overrides: Record<string, any> },
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.updateEmployeeOverrides(
+      Number(custId),
+      Number(employeeId),
+      body.overrides || {},
+    );
+  }
+
   @Get('my-permissions')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

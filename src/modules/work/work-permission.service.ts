@@ -1,38 +1,58 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkAccessRequestStatus } from '@prisma/client';
+import { WorkAccessRequestStatus, AccessOverrideType } from '@prisma/client';
 
 export interface WorkModuleMeta {
   key: string;
   name: string;
   description: string;
   icon: string;
+  isRoleSpecific: boolean;
 }
 
+export const COMMON_MODULES: { key: string; name: string }[] = [
+  { key: 'dashboard', name: 'Dashboard' },
+  { key: 'attendance', name: 'Attendance' },
+  { key: 'leave', name: 'Leave & Requests' },
+  { key: 'calendar', name: 'Calendar' },
+  { key: 'profile', name: 'Profile' },
+];
+
 export const STANDARD_WORK_MODULES: WorkModuleMeta[] = [
+  {
+    key: 'leads',
+    name: 'Leads & CRM',
+    description: 'Leads pipeline, follow-ups, quotes, proposals, and customer acquisition.',
+    icon: 'team',
+    isRoleSpecific: true,
+  },
   {
     key: 'video_edit',
     name: 'Video Edit',
     description: 'Video post-production, timeline cuts, transitions, and audio sync.',
     icon: 'video_camera',
+    isRoleSpecific: true,
   },
   {
     key: 'post_design',
     name: 'Post Design',
     description: 'Social media post graphic creation, branding assets, and creatives.',
     icon: 'image',
+    isRoleSpecific: true,
   },
   {
     key: 'story_design',
     name: 'Story Design',
     description: 'Vertical social story designs, interactive stickers, and highlights.',
     icon: 'layout',
+    isRoleSpecific: true,
   },
   {
     key: 'reel_shoot',
     name: 'Reel Shoot',
     description: 'On-site camera shooting, footage capture, reel & short video shoots.',
     icon: 'camera',
+    isRoleSpecific: true,
   },
 ];
 
@@ -44,10 +64,16 @@ export const DEFAULT_ROLE_WORK_MAPPINGS: Record<string, string[]> = {
   'GRAPHIC_DESIGNER': ['post_design', 'story_design'],
   'Photographer': ['reel_shoot'],
   'PHOTOGRAPHER': ['reel_shoot'],
-  'Admin': ['video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'Super Admin': ['video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'ADMIN': ['video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'SUPER_ADMIN': ['video_edit', 'post_design', 'story_design', 'reel_shoot'],
+  'Telecaller': ['leads'],
+  'TELECALLER': ['leads'],
+  'Sales Executive': ['leads'],
+  'SALES_EXECUTIVE': ['leads'],
+  'Sales': ['leads'],
+  'SALES': ['leads'],
+  'Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
+  'Super Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
+  'ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
+  'SUPER_ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
 };
 
 @Injectable()
@@ -58,6 +84,10 @@ export class WorkPermissionService {
 
   getWorkModules(): WorkModuleMeta[] {
     return STANDARD_WORK_MODULES;
+  }
+
+  getCommonModules() {
+    return COMMON_MODULES;
   }
 
   normalizeRoleKey(roleName?: string | null): string {
@@ -75,12 +105,18 @@ export class WorkPermissionService {
       return DEFAULT_ROLE_WORK_MAPPINGS[upper];
     }
     // Partial match checks
-    if (trimmed.toLowerCase().includes('video edit')) return ['video_edit'];
-    if (trimmed.toLowerCase().includes('graphic') || trimmed.toLowerCase().includes('designer')) return ['post_design', 'story_design'];
-    if (trimmed.toLowerCase().includes('photo') || trimmed.toLowerCase().includes('shoot')) return ['reel_shoot'];
-    if (trimmed.toLowerCase().includes('admin')) return ['video_edit', 'post_design', 'story_design', 'reel_shoot'];
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('video edit')) return ['video_edit'];
+    if (lower.includes('graphic') || lower.includes('designer')) return ['post_design', 'story_design'];
+    if (lower.includes('photo') || lower.includes('shoot')) return ['reel_shoot'];
+    if (lower.includes('telecall') || lower.includes('sales') || lower.includes('lead')) return ['leads'];
+    if (lower.includes('admin')) return ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'];
     return [];
   }
+
+  // ===========================================================================
+  // ROLE PERMISSIONS
+  // ===========================================================================
 
   async getRoleWorkPermissions(customerId: number) {
     const custId = Number(customerId);
@@ -105,6 +141,8 @@ export class WorkPermissionService {
       'Video Editor',
       'Graphic Designer',
       'Photographer',
+      'Telecaller',
+      'Sales Executive',
       'Admin',
     ]);
 
@@ -148,6 +186,7 @@ export class WorkPermissionService {
       customerId: custId,
       roles: result,
       availableModules: STANDARD_WORK_MODULES,
+      commonModules: COMMON_MODULES,
     };
   }
 
@@ -191,6 +230,198 @@ export class WorkPermissionService {
     };
   }
 
+  // ===========================================================================
+  // EMPLOYEE SPECIFIC OVERRIDES
+  // ===========================================================================
+
+  async getEmployeesWithOverrides(customerId: number) {
+    const custId = Number(customerId);
+
+    const employees = await this.prisma.employee.findMany({
+      where: { customerId: custId },
+      include: {
+        designation: true,
+        user: {
+          include: {
+            userRoles: {
+              include: { role: true },
+            },
+          },
+        },
+        employeeModuleOverrides: true,
+      },
+      orderBy: { firstName: 'asc' },
+    });
+
+    return employees.map((emp: any) => {
+      const roleCandidate =
+        emp.designation?.name ||
+        (emp.user?.userRoles && emp.user.userRoles.length > 0
+          ? emp.user.userRoles[0].role.name
+          : emp.user?.designation || emp.user?.role) ||
+        'Employee';
+      const normalizedRole = this.normalizeRoleKey(roleCandidate);
+      const defaultRolePerms = this.getDefaultPermissionsForRole(normalizedRole);
+
+      const overridesMap: Record<string, AccessOverrideType> = {};
+      if (emp.employeeModuleOverrides) {
+        emp.employeeModuleOverrides.forEach((ov: any) => {
+          overridesMap[ov.moduleKey] = ov.override;
+        });
+      }
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        email: emp.email,
+        role: normalizedRole,
+        defaultRolePermissions: defaultRolePerms,
+        overrides: overridesMap,
+      };
+    });
+  }
+
+  async getEmployeeOverrides(customerId: number, employeeId: number) {
+    const custId = Number(customerId);
+    const empId = Number(employeeId);
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: empId, customerId: custId },
+      include: {
+        designation: true,
+        user: {
+          include: {
+            userRoles: {
+              include: { role: true },
+            },
+          },
+        },
+        employeeModuleOverrides: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee #${empId} not found`);
+    }
+
+    const roleCandidate =
+      employee.designation?.name ||
+      ((employee as any).user?.userRoles && (employee as any).user.userRoles.length > 0
+        ? (employee as any).user.userRoles[0].role.name
+        : (employee as any).user?.designation || (employee as any).user?.role) ||
+      'Employee';
+    const normalizedRole = this.normalizeRoleKey(roleCandidate);
+
+    // Get base role permissions
+    const dbRolePerms = await this.prisma.roleWorkPermission.findMany({
+      where: { customerId: custId, roleName: normalizedRole },
+    });
+
+    const rolePermMap: Record<string, boolean> = {};
+    if (dbRolePerms.length > 0) {
+      dbRolePerms.forEach((p) => {
+        rolePermMap[p.workModule] = p.isEnabled;
+      });
+    } else {
+      const defaults = this.getDefaultPermissionsForRole(normalizedRole);
+      STANDARD_WORK_MODULES.forEach((m) => {
+        rolePermMap[m.key] = defaults.includes(m.key);
+      });
+    }
+
+    const overrideMap: Record<string, AccessOverrideType> = {};
+    if (employee.employeeModuleOverrides) {
+      employee.employeeModuleOverrides.forEach((ov) => {
+        overrideMap[ov.moduleKey] = ov.override;
+      });
+    }
+
+    const modules = STANDARD_WORK_MODULES.map((mod) => {
+      const roleAccess = Boolean(rolePermMap[mod.key]);
+      const override = overrideMap[mod.key] || AccessOverrideType.DEFAULT;
+      let effective = roleAccess;
+      if (override === AccessOverrideType.ALLOW) effective = true;
+      if (override === AccessOverrideType.DENY) effective = false;
+
+      return {
+        moduleKey: mod.key,
+        moduleName: mod.name,
+        roleAccess,
+        override,
+        effective,
+      };
+    });
+
+    return {
+      employeeId: employee.id,
+      employeeCode: employee.employeeCode,
+      name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
+      role: normalizedRole,
+      modules,
+    };
+  }
+
+  async updateEmployeeOverrides(
+    customerId: number,
+    employeeId: number,
+    overrides: Record<string, AccessOverrideType | 'DEFAULT' | 'ALLOW' | 'DENY'>,
+  ) {
+    const custId = Number(customerId);
+    const empId = Number(employeeId);
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: empId, customerId: custId },
+    });
+    if (!employee) {
+      throw new NotFoundException(`Employee #${empId} not found`);
+    }
+
+    const ops = Object.entries(overrides).map(async ([moduleKey, overrideVal]) => {
+      const enumVal = overrideVal as AccessOverrideType;
+      if (enumVal === AccessOverrideType.DEFAULT) {
+        // If set to DEFAULT, delete override record to cleanly inherit role setting
+        return this.prisma.employeeModuleOverride.deleteMany({
+          where: { customerId: custId, employeeId: empId, moduleKey },
+        });
+      }
+
+      return this.prisma.employeeModuleOverride.upsert({
+        where: {
+          customerId_employeeId_moduleKey: {
+            customerId: custId,
+            employeeId: empId,
+            moduleKey,
+          },
+        },
+        create: {
+          customerId: custId,
+          employeeId: empId,
+          moduleKey,
+          override: enumVal,
+        },
+        update: {
+          override: enumVal,
+          updatedAt: new Date(),
+        },
+      });
+    });
+
+    await Promise.all(ops);
+
+    return {
+      success: true,
+      message: `Employee #${empId} access overrides updated`,
+      employeeId: empId,
+      overrides,
+    };
+  }
+
+  // ===========================================================================
+  // EFFECTIVE PERMISSIONS RESOLUTION
+  // ===========================================================================
+
   async getEmployeeEffectivePermissions(
     customerId: number,
     identifier: { employeeId?: number; userId?: number; email?: string },
@@ -211,6 +442,7 @@ export class WorkPermissionService {
               },
             },
           },
+          employeeModuleOverrides: true,
         },
       });
     } else if (identifier.userId) {
@@ -225,6 +457,7 @@ export class WorkPermissionService {
               },
             },
           },
+          employeeModuleOverrides: true,
         },
       });
     } else if (identifier.email) {
@@ -239,26 +472,35 @@ export class WorkPermissionService {
               },
             },
           },
+          employeeModuleOverrides: true,
         },
       });
     }
 
     if (!employee) {
       // Fallback if user is customer admin
+      const allModules = STANDARD_WORK_MODULES.map((m) => m.key);
+      const effectiveMap: Record<string, boolean> = {};
+      STANDARD_WORK_MODULES.forEach((m) => {
+        effectiveMap[m.key] = true;
+      });
+
       return {
         employeeId: null,
         employeeCode: null,
         role: 'Admin',
-        workPermissions: STANDARD_WORK_MODULES.map((m) => m.key),
+        workPermissions: allModules,
+        effectivePermissions: effectiveMap,
+        commonModules: COMMON_MODULES.map((m) => m.key),
       };
     }
 
     // Determine primary role name from designation or user roles
     const roleCandidate =
       employee.designation?.name ||
-      (employee.user?.userRoles && employee.user.userRoles.length > 0
-        ? employee.user.userRoles[0].role.name
-        : employee.user?.role) ||
+      ((employee as any).user?.userRoles && (employee as any).user.userRoles.length > 0
+        ? (employee as any).user.userRoles[0].role.name
+        : (employee as any).user?.designation || (employee as any).user?.role) ||
       'Employee';
 
     const normalizedRole = this.normalizeRoleKey(roleCandidate);
@@ -297,6 +539,23 @@ export class WorkPermissionService {
 
     approvedRequests.forEach((req) => activePermissions.add(req.workModule));
 
+    // 4. Apply Employee-specific Overrides (ALLOW / DENY / DEFAULT)
+    if (employee.employeeModuleOverrides && employee.employeeModuleOverrides.length > 0) {
+      for (const ov of employee.employeeModuleOverrides) {
+        if (ov.override === AccessOverrideType.ALLOW) {
+          activePermissions.add(ov.moduleKey);
+        } else if (ov.override === AccessOverrideType.DENY) {
+          activePermissions.delete(ov.moduleKey);
+        }
+      }
+    }
+
+    // Build effective boolean map for fast lookups
+    const effectiveMap: Record<string, boolean> = {};
+    STANDARD_WORK_MODULES.forEach((m) => {
+      effectiveMap[m.key] = activePermissions.has(m.key);
+    });
+
     return {
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
@@ -304,8 +563,14 @@ export class WorkPermissionService {
       lastName: employee.lastName,
       role: normalizedRole,
       workPermissions: Array.from(activePermissions),
+      effectivePermissions: effectiveMap,
+      commonModules: COMMON_MODULES.map((m) => m.key),
     };
   }
+
+  // ===========================================================================
+  // ACCESS REQUESTS
+  // ===========================================================================
 
   async createAccessRequest(
     customerId: number,
@@ -465,7 +730,7 @@ export class WorkPermissionService {
     const effective = await this.getEmployeeEffectivePermissions(customerId, { employeeId });
     if (!effective.workPermissions.includes(workModule)) {
       throw new ForbiddenException(
-        `Forbidden: You do not have permission to access the '${workModule}' work module. Submit an Access Request to Admin to get access.`,
+        `Forbidden: You do not have permission to access the '${workModule}' module. Submit an Access Request to Admin to get access.`,
       );
     }
     return true;

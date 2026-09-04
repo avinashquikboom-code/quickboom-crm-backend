@@ -84,6 +84,7 @@ model Customer {
   socialMediaHandlers      SocialMediaHandler[]
   roleWorkPermissions      RoleWorkPermission[]
   workAccessRequests       WorkAccessRequest[]
+  employeeModuleOverrides  EmployeeModuleOverride[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1041,6 +1042,7 @@ model Employee {
   workTasks                WorkTask[]
   assignedMonthlySchedules MonthlySchedule[]
   workAccessRequests       WorkAccessRequest[]
+  employeeModuleOverrides  EmployeeModuleOverride[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -2382,4 +2384,27 @@ model WorkAccessRequest {
   @@index([employeeId])
   @@index([status])
   @@map("work_access_requests")
+}
+
+enum AccessOverrideType {
+  DEFAULT
+  ALLOW
+  DENY
+}
+
+model EmployeeModuleOverride {
+  id          Int                 @id @default(autoincrement())
+  customerId  Int
+  employeeId  Int
+  moduleKey   String
+  override    AccessOverrideType  @default(DEFAULT)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  customer    Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, moduleKey])
+  @@index([customerId])
+  @@index([employeeId])
+  @@map("employee_module_overrides")
 }
