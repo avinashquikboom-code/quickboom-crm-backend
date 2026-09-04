@@ -10,6 +10,94 @@ import PDFDocument = require('pdfkit');
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async reconcileCustomerInvoices(customerId: number): Promise<void> {
+    if (!customerId || isNaN(customerId) || customerId <= 0) return;
+    try {
+      // Find all successful or paid paymentHistory records for this customer
+      const successfulPayments = await this.prisma.paymentHistory.findMany({
+        where: {
+          customerId,
+          status: { in: ['SUCCESS', 'PAID'] },
+        },
+        include: {
+          subscription: {
+            include: { plan: true },
+          },
+          customer: true,
+        },
+      });
+
+      if (!successfulPayments.length) return;
+
+      // Find existing invoices for this customer
+      const existingInvoices = await this.prisma.invoice.findMany({
+        where: { customerId, deletedAt: null },
+      });
+
+      for (const p of successfulPayments) {
+        const expectedInvoiceNo = p.orderNumber?.startsWith('INV-')
+          ? p.orderNumber
+          : (p.invoiceUrl?.startsWith('INV-')
+              ? p.invoiceUrl
+              : (p.orderNumber
+                  ? p.orderNumber.replace('#QB-', 'INV-2026-')
+                  : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`));
+
+        // Check if matching invoice already exists
+        const exists = existingInvoices.some((inv) =>
+          inv.invoiceNo === expectedInvoiceNo ||
+          (p.orderNumber && inv.invoiceNo === p.orderNumber) ||
+          (p.orderNumber && inv.notes && inv.notes.includes(p.orderNumber)) ||
+          (inv.notes && inv.notes.includes(`Order: ${p.id}`)) ||
+          (inv.notes && inv.notes.includes('Subscription payment for') && Math.abs(inv.totalAmount - Number(p.totalAmount || 0)) < 1)
+        );
+
+        if (!exists) {
+          // Find or create primary contact for the customer
+          let contact = await this.prisma.contact.findFirst({
+            where: { customerId, deletedAt: null },
+          });
+          if (!contact) {
+            contact = await this.prisma.contact.create({
+              data: {
+                customerId,
+                firstName: p.customer?.companyName || p.customer?.name || 'Customer',
+                lastName: 'Billing',
+                email: p.customer?.email || `billing-${customerId}@quikboom.com`,
+                phone: p.customer?.phone || 'N/A',
+              },
+            });
+          }
+
+          const baseAmount = Number(p.amount) || Math.round((Number(p.totalAmount || 0) / 1.18) * 100) / 100;
+          const taxAmount = Number(p.taxAmount) || Math.round((Number(p.totalAmount || 0) - baseAmount) * 100) / 100;
+          const totalAmount = Number(p.totalAmount) || Math.round((baseAmount + taxAmount) * 100) / 100;
+          const planName = p.planName || p.subscription?.plan?.name || 'CRM Subscription Plan';
+          const cycle = p.billingCycle || p.subscription?.billingCycle || 'MONTHLY';
+          const method = p.paymentMethod || 'RAZORPAY';
+
+          await this.prisma.invoice.create({
+            data: {
+              customerId,
+              contactId: contact.id,
+              invoiceNo: expectedInvoiceNo,
+              status: InvoiceStatus.PAID,
+              issueDate: p.createdAt,
+              dueDate: p.createdAt,
+              subTotal: baseAmount,
+              taxAmount: taxAmount,
+              discount: 0,
+              totalAmount: totalAmount,
+              notes: `Subscription payment for ${planName} (${cycle} billing). Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('[RECONCILE_INVOICES_ERROR]', err?.message || err);
+    }
+  }
+
   async findAll(
     customerId: number | string,
     query: { status?: InvoiceStatus | string; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
@@ -23,6 +111,8 @@ export class InvoiceService {
 
     if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
+      // Auto-reconcile invoices for this customer
+      await this.reconcileCustomerInvoices(numCustomerId);
     } else if (!isSuperAdmin) {
       throw new UnauthorizedException('Customer context is required');
     }
@@ -75,6 +165,7 @@ export class InvoiceService {
           include: {
             contact: true,
             customer: true,
+            items: true,
           },
         }),
         this.prisma.invoice.count({ where }),
@@ -136,6 +227,7 @@ export class InvoiceService {
         notes: inv.notes,
         contact: inv.contact,
         customer: inv.customer,
+        items: inv.items || [],
       };
     });
 
@@ -164,6 +256,10 @@ export class InvoiceService {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
     const numCustomerId = Number(customerId);
     const rawId = String(id || '').trim();
+
+    if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
+      await this.reconcileCustomerInvoices(numCustomerId);
+    }
 
     let invoice: any = null;
 
@@ -234,29 +330,52 @@ export class InvoiceService {
       }
     }
 
-    return invoice;
+    const contactFullName = invoice.contact
+      ? `${invoice.contact.firstName || ''} ${invoice.contact.lastName || ''}`.trim()
+      : '';
+    const clientDisplayName = contactFullName || invoice.customer?.companyName || invoice.customer?.name || 'General Client';
+
+    return {
+      ...invoice,
+      invoiceNumber: invoice.invoiceNo,
+      clientName: clientDisplayName,
+      customerName: invoice.customer?.name || 'General Client',
+      companyName: invoice.customer?.companyName || invoice.customer?.name || 'General Client',
+    };
   }
 
   async create(customerId: number | string, dto: CreateInvoiceDto, user?: any) {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
-    let numCustomerId = Number(customerId);
+    let numCustomerId = Number(dto.customerId || customerId);
 
     if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
-      if (isSuperAdmin && dto.contactId) {
+      if (dto.contactId) {
         const contact = await this.prisma.contact.findUnique({
           where: { id: Number(dto.contactId) },
         });
         if (contact?.customerId) {
           numCustomerId = contact.customerId;
-        } else {
-          throw new BadRequestException('Valid customer context or customer-linked contact is required to create an invoice.');
         }
-      } else {
-        throw new UnauthorizedException('Customer context is required to create an invoice.');
       }
     }
 
-    // Verify contact belongs to the customer if contactId is provided
+    if (!numCustomerId || Number.isNaN(numCustomerId) || numCustomerId <= 0) {
+      if (!isSuperAdmin) {
+        throw new UnauthorizedException('Customer context is required to create an invoice.');
+      } else {
+        throw new BadRequestException('Valid customer context or customer-linked contact is required to create an invoice.');
+      }
+    }
+
+    // Role-based check: if normal customer, cannot create invoice for another customer
+    if (!isSuperAdmin && user?.role === 'CUSTOMER') {
+      const authCustId = Number(customerId || user?.customerId);
+      if (authCustId && numCustomerId !== authCustId) {
+        throw new ForbiddenException('Cannot create invoice for another customer');
+      }
+    }
+
+    // Find contact or auto-create a primary contact for this customer
     let contactId: number | null = null;
     if (dto.contactId) {
       const contact = await this.prisma.contact.findFirst({
@@ -270,21 +389,51 @@ export class InvoiceService {
       }
     }
 
+    if (!contactId) {
+      let contact = await this.prisma.contact.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+      });
+      if (!contact) {
+        const customer = await this.prisma.customer.findUnique({ where: { id: numCustomerId } });
+        contact = await this.prisma.contact.create({
+          data: {
+            customerId: numCustomerId,
+            firstName: customer?.companyName || customer?.name || 'Customer',
+            lastName: 'Billing',
+            email: customer?.email || `billing-${numCustomerId}@quikboom.com`,
+            phone: customer?.phone || 'N/A',
+          },
+        });
+      }
+      contactId = contact.id;
+    }
+
+    const totalAmount = Number(dto.totalAmount) || 0;
+    const subTotal = Number(dto.subTotal) || Math.round((totalAmount / 1.18) * 100) / 100;
+    const taxAmount = Number(dto.taxAmount) || Math.round((totalAmount - subTotal) * 100) / 100;
+    const now = new Date();
+    const issueDate = dto.issueDate ? new Date(dto.issueDate) : now;
+    const dueDate = dto.dueDate ? new Date(dto.dueDate) : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const invoiceNo = dto.invoiceNo || `INV-${issueDate.getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const status = dto.status || InvoiceStatus.PENDING;
+
     return this.prisma.invoice.create({
       data: {
         customerId: numCustomerId,
         contactId: contactId,
-        invoiceNo: dto.invoiceNo,
-        issueDate: new Date(dto.issueDate),
-        dueDate: new Date(dto.dueDate),
-        subTotal: Number(dto.subTotal) || 0,
-        taxAmount: Number(dto.taxAmount) || 0,
-        totalAmount: Number(dto.totalAmount) || 0,
+        invoiceNo,
+        issueDate,
+        dueDate,
+        subTotal,
+        taxAmount,
+        totalAmount,
         notes: dto.notes,
-        status: InvoiceStatus.DRAFT,
+        status,
       },
       include: {
         contact: true,
+        customer: true,
+        items: true,
       },
     });
   }

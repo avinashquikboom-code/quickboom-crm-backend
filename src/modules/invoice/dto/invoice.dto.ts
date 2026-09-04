@@ -3,34 +3,48 @@ import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from
 import { InvoiceStatus } from '@prisma/client';
 
 export class CreateInvoiceDto {
-  @ApiProperty({ example: 'INV-2026-001' })
+  @ApiPropertyOptional({ example: 'INV-2026-001' })
   @IsString()
-  @IsNotEmpty()
-  invoiceNo: string;
+  @IsOptional()
+  invoiceNo?: string;
 
-  @ApiProperty({ example: 1 })
-  @IsNotEmpty()
-  contactId: number | string;
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  customerId?: number | string;
 
-  @ApiProperty({ example: '2026-08-21T00:00:00.000Z' })
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  contactId?: number | string;
+
+  @ApiPropertyOptional({ example: '2026-08-21T00:00:00.000Z' })
   @IsDateString()
-  issueDate: string;
+  @IsOptional()
+  issueDate?: string;
 
-  @ApiProperty({ example: '2026-09-21T00:00:00.000Z' })
+  @ApiPropertyOptional({ example: '2026-09-21T00:00:00.000Z' })
   @IsDateString()
-  dueDate: string;
+  @IsOptional()
+  dueDate?: string;
 
-  @ApiProperty({ example: 45000 })
+  @ApiPropertyOptional({ example: 45000 })
   @IsNumber()
-  subTotal: number;
+  @IsOptional()
+  subTotal?: number;
 
-  @ApiProperty({ example: 8100 })
+  @ApiPropertyOptional({ example: 8100 })
   @IsNumber()
-  taxAmount: number;
+  @IsOptional()
+  taxAmount?: number;
 
   @ApiProperty({ example: 53100 })
   @IsNumber()
+  @IsNotEmpty()
   totalAmount: number;
+
+  @ApiPropertyOptional({ enum: InvoiceStatus, example: InvoiceStatus.PENDING })
+  @IsEnum(InvoiceStatus)
+  @IsOptional()
+  status?: InvoiceStatus;
 
   @ApiPropertyOptional({ example: 'Monthly SSM Retainer Invoice' })
   @IsString()

@@ -370,6 +370,54 @@ export class SubscriptionService {
       }),
     ]);
 
+    // Ensure paid payments have matching invoices in DB
+    if (invoices.length === 0 && payments.some((p) => p.status === 'SUCCESS' || p.status === 'PAID')) {
+      for (const p of payments) {
+        if (p.status === 'SUCCESS' || p.status === 'PAID') {
+          let contact = await this.prisma.contact.findFirst({
+            where: { customerId: numCustomerId, deletedAt: null },
+          });
+          if (!contact) {
+            contact = await this.prisma.contact.create({
+              data: {
+                customerId: numCustomerId,
+                firstName: customer?.companyName || customer?.name || 'Customer',
+                lastName: 'Billing',
+                email: customer?.email || `billing-${numCustomerId}@quikboom.com`,
+                phone: customer?.phone || 'N/A',
+              },
+            });
+          }
+          const invNo = p.orderNumber?.startsWith('INV-')
+            ? p.orderNumber
+            : (p.invoiceUrl?.startsWith('INV-')
+                ? p.invoiceUrl
+                : (p.orderNumber
+                    ? p.orderNumber.replace('#QB-', 'INV-2026-')
+                    : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`));
+          const baseAmt = Number(p.amount) || Math.round((Number(p.totalAmount || 0) / 1.18) * 100) / 100;
+          const taxAmt = Number(p.taxAmount) || Math.round((Number(p.totalAmount || 0) - baseAmt) * 100) / 100;
+          const totAmt = Number(p.totalAmount) || Math.round((baseAmt + taxAmt) * 100) / 100;
+          const newInv = await this.prisma.invoice.create({
+            data: {
+              customerId: numCustomerId,
+              contactId: contact.id,
+              invoiceNo: invNo,
+              status: InvoiceStatus.PAID,
+              issueDate: p.createdAt,
+              dueDate: p.createdAt,
+              subTotal: baseAmt,
+              taxAmount: taxAmt,
+              discount: 0,
+              totalAmount: totAmt,
+              notes: `Subscription payment for ${p.planName || 'CRM Plan'}. Total Paid: ₹${totAmt}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+            },
+          });
+          invoices.push(newInv);
+        }
+      }
+    }
+
     const combinedOrders: any[] = [];
 
     // Map standard / package payments
@@ -398,7 +446,13 @@ export class SubscriptionService {
         ? Number(p.subscription?.plan?.yearlyPrice || 0)
         : Number(p.subscription?.plan?.monthlyPrice || 0);
       const isAdvance = (p.billingCycle as any) === 'ADVANCE' || (planPrice > 0 && Number(p.amount) < planPrice);
-      const matchingInvoice = invoices.find((inv) => inv.id === p.id || inv.status === 'PAID');
+      const matchingInvoice = invoices.find((inv) =>
+        (inv.invoiceNo && p.orderNumber && inv.invoiceNo === p.orderNumber) ||
+        (p.invoiceUrl && inv.invoiceNo === p.invoiceUrl) ||
+        (inv.notes && p.orderNumber && inv.notes.includes(p.orderNumber)) ||
+        (inv.notes && inv.notes.includes(`Order: ${p.id}`)) ||
+        (inv.notes && inv.notes.includes('Subscription payment for') && Math.abs(inv.totalAmount - totalAmount) < 1)
+      ) || (isPaid && invoices.length > 0 ? invoices[0] : null);
 
       // Installments structure
       const installments: any[] = [];
