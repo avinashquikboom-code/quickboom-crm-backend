@@ -53,8 +53,8 @@ export class DataCaptureService {
    * Search and extract verified business prospects via Google Places API (New) - Text Search
    */
   async extractPlaces(
-    customerId: string | number,
-    userId: string | number,
+    customerId: string | number | undefined,
+    userOrUserId: any,
     dto: ExtractPlacesDto,
   ): Promise<{
     jobId: string;
@@ -64,14 +64,98 @@ export class DataCaptureService {
     captured: number;
     googleApiRequests: number;
     places: CapturedPlace[];
+    records: any[];
     message: string;
   }> {
-    const numCustomerId = Number(customerId);
-    const numUserId = Number(userId) || 1;
+    const user = typeof userOrUserId === 'object' && userOrUserId !== null ? userOrUserId : undefined;
+    const directUserId = typeof userOrUserId === 'number' || typeof userOrUserId === 'string' ? userOrUserId : user?.id;
+
+    // 1. Resolve Effective Customer ID (Tenant Isolation & SuperAdmin Fallback)
+    let effectiveCustomerId: number | undefined;
+    const directCustomerNum = Number(customerId);
+    if (!isNaN(directCustomerNum) && directCustomerNum > 0) {
+      effectiveCustomerId = directCustomerNum;
+    } else if (dto.customerId && !isNaN(Number(dto.customerId)) && Number(dto.customerId) > 0) {
+      effectiveCustomerId = Number(dto.customerId);
+    } else if (dto.tenantId && !isNaN(Number(dto.tenantId)) && Number(dto.tenantId) > 0) {
+      effectiveCustomerId = Number(dto.tenantId);
+    } else if (dto.companyId && !isNaN(Number(dto.companyId)) && Number(dto.companyId) > 0) {
+      effectiveCustomerId = Number(dto.companyId);
+    } else if (user?.customerId && !isNaN(Number(user.customerId)) && Number(user.customerId) > 0) {
+      effectiveCustomerId = Number(user.customerId);
+    }
+
+    if (!effectiveCustomerId || effectiveCustomerId <= 0) {
+      const activeCustomer = await this.prisma.customer.findFirst({
+        where: { deletedAt: null, isActive: true },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      });
+      effectiveCustomerId = activeCustomer ? activeCustomer.id : 1;
+    }
+
+    const effectiveUserId =
+      Number(directUserId) && !isNaN(Number(directUserId)) && Number(directUserId) > 0
+        ? Number(directUserId)
+        : 1;
+
+    // 2. Resolve and Normalize Extraction Input (keyword, location, query, category, city)
+    let keyword = (dto.keyword || dto.category || dto.search || '').trim();
+    let location = (dto.location || dto.city || '').trim();
+
+    const rawQuery = (dto.query || '').trim();
+    if (rawQuery) {
+      if (!keyword && !location) {
+        const inMatch = rawQuery.match(/^(.+?)\s+in\s+(.+)$/i);
+        if (inMatch) {
+          keyword = inMatch[1].trim();
+          location = inMatch[2].trim();
+        } else {
+          keyword = rawQuery;
+        }
+      } else if (!keyword) {
+        keyword = rawQuery;
+      } else if (!location && rawQuery.toLowerCase().includes(' in ')) {
+        const parts = rawQuery.split(/\s+in\s+/i);
+        if (parts.length > 1) {
+          location = parts.slice(1).join(' in ').trim();
+        }
+      }
+    }
+
+    if (location && dto.state && !location.toLowerCase().includes(dto.state.toLowerCase())) {
+      location = `${location}, ${dto.state.trim()}`;
+    }
+    if (location && dto.country && !location.toLowerCase().includes(dto.country.toLowerCase())) {
+      location = `${location}, ${dto.country.trim()}`;
+    }
+
+    if (!keyword && !location) {
+      throw new BadRequestException(
+        'Search keyword (or business category) and location are required for place extraction.',
+      );
+    }
+    if (!keyword) {
+      keyword = 'Businesses';
+    }
+    if (!location) {
+      location = 'Vadodara';
+    }
+
+    // 3. Verify Available Quota
+    const requestedResults = Math.min(Math.max(dto.maxResults || dto.limit || 20, 1), 60);
+    const usage = await this.getUsageSummary(effectiveCustomerId);
+    if (usage.quotaRemaining <= 0) {
+      throw new BadRequestException(
+        `API Quota Exceeded: Your monthly extraction allowance (${usage.quotaLimit} places) has been fully consumed. Available quota: 0.`,
+      );
+    }
+    const maxAllowed = Math.min(requestedResults, usage.quotaRemaining);
+
+    // 4. Extract Places via Google Places API (New) or realistic fallback
     const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
     const apiKey = mapsConfig.apiKey;
-    const requestedResults = Math.min(Math.max(dto.maxResults || 20, 1), 60);
-    const textQuery = `${dto.keyword.trim()} in ${dto.location.trim()}`;
+    const textQuery = `${keyword} in ${location}`;
     const jobId = `job-${randomUUID().slice(0, 8)}`;
 
     let allPlaces: CapturedPlace[] = [];
@@ -82,8 +166,8 @@ export class DataCaptureService {
       try {
         let fetchMore = true;
 
-        while (fetchMore && allPlaces.length < requestedResults) {
-          const pageSize = Math.min(requestedResults - allPlaces.length, 20);
+        while (fetchMore && allPlaces.length < maxAllowed) {
+          const pageSize = Math.min(maxAllowed - allPlaces.length, 20);
           googleApiRequests++;
 
           const requestBody: any = {
@@ -121,7 +205,7 @@ export class DataCaptureService {
               provider: 'GOOGLE_PLACES',
               googlePlaceId: p.id,
               businessName: p.displayName.text,
-              category: p.primaryTypeDisplayName?.text || p.primaryType || dto.keyword,
+              category: p.primaryTypeDisplayName?.text || p.primaryType || keyword,
               address: p.formattedAddress || 'N/A',
               phone: p.internationalPhoneNumber || p.nationalPhoneNumber || 'N/A',
               website: p.websiteUri || undefined,
@@ -134,14 +218,14 @@ export class DataCaptureService {
               source: 'GOOGLE_PLACES',
               status: 'CAPTURED',
               capturedAt: new Date(),
-              customerId: String(customerId),
-              capturedBy: String(userId),
+              customerId: String(effectiveCustomerId),
+              capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
               rawData: p,
             };
 
             allPlaces.push(placeRecord);
-            if (allPlaces.length >= requestedResults) {
+            if (allPlaces.length >= maxAllowed) {
               fetchMore = false;
               break;
             }
@@ -156,11 +240,11 @@ export class DataCaptureService {
           `[Google Places API] Failed to extract places via live API: ${err.message}. Falling back to sandbox places generator.`,
         );
         allPlaces = this.generateSandboxPlaces(
-          dto.keyword,
-          dto.location,
-          requestedResults,
-          String(customerId),
-          String(userId),
+          keyword,
+          location,
+          maxAllowed,
+          String(effectiveCustomerId),
+          String(effectiveUserId),
           jobId,
         );
         googleApiRequests = 1;
@@ -170,64 +254,128 @@ export class DataCaptureService {
         `[Google Places API] No production API key configured. Generating realistic verified sandbox places for "${textQuery}"`,
       );
       allPlaces = this.generateSandboxPlaces(
-        dto.keyword,
-        dto.location,
-        requestedResults,
-        String(customerId),
-        String(userId),
+        keyword,
+        location,
+        maxAllowed,
+        String(effectiveCustomerId),
+        String(effectiveUserId),
         jobId,
       );
       googleApiRequests = 1;
     }
 
-    // Persist to PostgreSQL database
-    try {
-      await this.prisma.dataCaptureJob.create({
-        data: {
-          jobId,
-          customerId: numCustomerId,
-          userId: numUserId,
-          keyword: dto.keyword,
-          location: dto.location,
-          requestedResults,
-          capturedResults: allPlaces.length,
-          googleApiRequests,
-          places: {
-            create: allPlaces.map((p) => ({
-              customerId: numCustomerId,
-              googlePlaceId: p.googlePlaceId,
-              businessName: p.businessName,
-              category: p.category,
-              address: p.address,
-              phone: p.phone,
-              email: p.email,
-              website: p.website,
-              rating: p.rating,
-              reviewCount: p.reviewCount,
-              latitude: p.latitude,
-              longitude: p.longitude,
-              googleMapsUrl: p.googleMapsUrl,
-              businessStatus: p.businessStatus || 'OPERATIONAL',
-              source: p.source || 'GOOGLE_PLACES',
-              status: 'CAPTURED',
-              rawData: p.rawData ? JSON.parse(JSON.stringify(p.rawData)) : undefined,
-            })),
-          },
+    // 5. Duplicate Detection Before Insertion
+    const existingPlaceIds = new Set<string>();
+    const candidatePlaceIds = allPlaces
+      .map((p) => p.googlePlaceId)
+      .filter((id): id is string => Boolean(id));
+
+    if (candidatePlaceIds.length > 0) {
+      const existingPlaces = await this.prisma.dataCapturePlace.findMany({
+        where: {
+          customerId: effectiveCustomerId,
+          deletedAt: null,
+          googlePlaceId: { in: candidatePlaceIds },
         },
+        select: { googlePlaceId: true },
       });
-    } catch (e: any) {
-      this.logger.error(`Failed to persist DataCaptureJob: ${e.message}`);
+      for (const ep of existingPlaces) {
+        if (ep.googlePlaceId) existingPlaceIds.add(ep.googlePlaceId);
+      }
+
+      const existingLeads = await this.prisma.lead.findMany({
+        where: {
+          customerId: effectiveCustomerId,
+          deletedAt: null,
+          googlePlaceId: { in: candidatePlaceIds },
+        },
+        select: { googlePlaceId: true },
+      });
+      for (const el of existingLeads) {
+        if (el.googlePlaceId) existingPlaceIds.add(el.googlePlaceId);
+      }
     }
+
+    const placesToCreate = allPlaces.map((p) => {
+      const isDuplicate = Boolean(p.googlePlaceId && existingPlaceIds.has(p.googlePlaceId));
+      return {
+        customerId: effectiveCustomerId,
+        googlePlaceId: p.googlePlaceId,
+        businessName: p.businessName,
+        category: p.category,
+        address: p.address,
+        phone: p.phone,
+        email: p.email,
+        website: p.website,
+        rating: p.rating,
+        reviewCount: p.reviewCount,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        googleMapsUrl: p.googleMapsUrl,
+        businessStatus: p.businessStatus || 'OPERATIONAL',
+        source: p.source || 'GOOGLE_PLACES',
+        status: isDuplicate ? 'DUPLICATE' : 'CAPTURED',
+        notes: isDuplicate ? 'Identified as duplicate of existing business prospect or lead' : undefined,
+        rawData: p.rawData ? JSON.parse(JSON.stringify(p.rawData)) : undefined,
+      };
+    });
+
+    // 6. Persist Job and Places to PostgreSQL
+    const createdJob = await this.prisma.dataCaptureJob.create({
+      data: {
+        jobId,
+        customerId: effectiveCustomerId,
+        userId: effectiveUserId,
+        keyword,
+        location,
+        requestedResults: maxAllowed,
+        capturedResults: allPlaces.length,
+        googleApiRequests,
+        places: {
+          create: placesToCreate,
+        },
+      },
+      include: {
+        places: true,
+      },
+    });
+
+    const mappedPlaces: CapturedPlace[] = createdJob.places.map((p) => ({
+      id: p.id,
+      provider: p.source || 'GOOGLE_PLACES',
+      googlePlaceId: p.googlePlaceId || undefined,
+      businessName: p.businessName,
+      category: p.category || undefined,
+      address: p.address || undefined,
+      phone: p.phone || undefined,
+      email: p.email || undefined,
+      website: p.website || undefined,
+      rating: p.rating || undefined,
+      reviewCount: p.reviewCount || undefined,
+      latitude: p.latitude || undefined,
+      longitude: p.longitude || undefined,
+      googleMapsUrl: p.googleMapsUrl || undefined,
+      businessStatus: p.businessStatus || 'OPERATIONAL',
+      source: p.source || 'GOOGLE_PLACES',
+      status: p.status || 'CAPTURED',
+      isImported: p.isImported,
+      capturedAt: p.createdAt,
+      customerId: String(p.customerId),
+      capturedBy: String(effectiveUserId),
+      extractionJobId: p.jobId || undefined,
+      notes: p.notes || undefined,
+    }));
 
     return {
       jobId,
-      keyword: dto.keyword,
-      location: dto.location,
-      requested: requestedResults,
-      captured: allPlaces.length,
+      keyword,
+      location,
+      requested: maxAllowed,
+      captured: mappedPlaces.length,
       googleApiRequests,
-      places: allPlaces,
-      message: `Extracted ${allPlaces.length} business prospects from Google Places API (New) for "${textQuery}".`,
+      places: mappedPlaces,
+      records: mappedPlaces,
+      message: `Extracted ${mappedPlaces.length} business prospects from Google Places API for "${textQuery}".`,
     };
   }
 

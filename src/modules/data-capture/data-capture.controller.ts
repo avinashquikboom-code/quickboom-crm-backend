@@ -73,10 +73,10 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Extract places from Google Places API' })
   async extractPlaces(
     @CurrentCustomer() customerId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Body() dto: ExtractPlacesDto,
   ) {
-    return this.dataCaptureService.extractPlaces(customerId, userId, dto);
+    return this.dataCaptureService.extractPlaces(customerId, user, dto);
   }
 
   /**

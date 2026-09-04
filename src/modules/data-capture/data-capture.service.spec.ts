@@ -3,6 +3,7 @@ import { DataCaptureService } from './data-capture.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { BadRequestException } from '@nestjs/common';
 
 describe('DataCaptureService', () => {
   let service: DataCaptureService;
@@ -34,7 +35,7 @@ describe('DataCaptureService', () => {
       findMany: jest.fn().mockResolvedValue([]),
     },
     customer: {
-      findFirst: jest.fn().mockResolvedValue({ id: 1, name: 'QuikBoom Enterprise' }),
+      findFirst: jest.fn().mockResolvedValue({ id: 1, name: 'QuikBoom Enterprise', isActive: true }),
     },
   };
 
@@ -97,14 +98,14 @@ describe('DataCaptureService', () => {
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
-          deletedAt: null,
+          AND: [{ deletedAt: null }],
         },
       });
 
       expect(mockPrisma.dataCapturePlace.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            deletedAt: null,
+            AND: [{ deletedAt: null }],
           },
           skip: 0,
           take: 20,
@@ -144,16 +145,20 @@ describe('DataCaptureService', () => {
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
-          customerId: 5,
-          deletedAt: null,
+          AND: [
+            { deletedAt: null },
+            { customerId: 5 },
+          ],
         },
       });
 
       expect(mockPrisma.dataCapturePlace.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            customerId: 5,
-            deletedAt: null,
+            AND: [
+              { deletedAt: null },
+              { customerId: 5 },
+            ],
           },
           skip: 10,
           take: 10,
@@ -178,10 +183,12 @@ describe('DataCaptureService', () => {
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
-          customerId: 1,
-          deletedAt: null,
-          status: 'VALIDATED',
-          source: 'GOOGLE_PLACES',
+          AND: [
+            { deletedAt: null },
+            { customerId: 1 },
+            { status: 'VALIDATED' },
+            { source: 'GOOGLE_PLACES' },
+          ],
         },
       });
     });
@@ -199,6 +206,119 @@ describe('DataCaptureService', () => {
       expect(result.totalLeadsCaptured).toBe(25);
       expect(result.totalGoogleApiCalls).toBe(8);
       expect(result.quotaRemaining).toBe(975);
+    });
+  });
+
+  describe('extractPlaces', () => {
+    it('extracts places with keyword and location and persists to database', async () => {
+      mockPrisma.dataCaptureJob.count.mockResolvedValue(0);
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(0);
+      mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
+      mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
+      mockPrisma.lead.findMany.mockResolvedValue([]);
+      mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
+        ...args.data,
+        places: args.data.places.create.map((p: any, idx: number) => ({
+          ...p,
+          id: idx + 1,
+          createdAt: new Date(),
+        })),
+      }));
+
+      const res = await service.extractPlaces(
+        '1',
+        { id: 1, role: 'SUPER_ADMIN' },
+        { keyword: 'Gyms', location: 'Vadodara', maxResults: 20 },
+      );
+
+      expect(res.jobId).toBeDefined();
+      expect(res.keyword).toBe('Gyms');
+      expect(res.location).toBe('Vadodara');
+      expect(res.captured).toBeGreaterThan(0);
+      expect(mockPrisma.dataCaptureJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            customerId: 1,
+            userId: 1,
+            keyword: 'Gyms',
+            location: 'Vadodara',
+          }),
+        }),
+      );
+    });
+
+    it('normalizes query into keyword and location when query is passed', async () => {
+      mockPrisma.dataCaptureJob.count.mockResolvedValue(0);
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(0);
+      mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
+      mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
+      mockPrisma.lead.findMany.mockResolvedValue([]);
+      mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
+        ...args.data,
+        places: args.data.places.create.map((p: any, idx: number) => ({
+          ...p,
+          id: idx + 1,
+          createdAt: new Date(),
+        })),
+      }));
+
+      const res = await service.extractPlaces(
+        '1',
+        { id: 1 },
+        { query: 'Clinics in Mumbai', limit: 10 },
+      );
+
+      expect(res.keyword).toBe('Clinics');
+      expect(res.location).toBe('Mumbai');
+      expect(res.requested).toBe(10);
+    });
+
+    it('resolves fallback customerId when customerId is undefined for SuperAdmin', async () => {
+      mockPrisma.dataCaptureJob.count.mockResolvedValue(0);
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(0);
+      mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
+      mockPrisma.customer.findFirst.mockResolvedValue({ id: 2, name: 'Active Customer', isActive: true });
+      mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
+      mockPrisma.lead.findMany.mockResolvedValue([]);
+      mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
+        ...args.data,
+        places: args.data.places.create.map((p: any, idx: number) => ({
+          ...p,
+          id: idx + 1,
+          createdAt: new Date(),
+        })),
+      }));
+
+      const res = await service.extractPlaces(
+        undefined,
+        { id: 1, role: 'SUPER_ADMIN' },
+        { keyword: 'Dentists', location: 'Pune' },
+      );
+
+      expect(mockPrisma.dataCaptureJob.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            customerId: 2,
+            userId: 1,
+          }),
+        }),
+      );
+    });
+
+    it('throws BadRequestException when quota is exhausted', async () => {
+      mockPrisma.dataCaptureJob.count.mockResolvedValue(50);
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(1000); // 1000 places = quota reached
+      mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 50 } });
+
+      await expect(
+        service.extractPlaces(1, 1, { keyword: 'Gyms', location: 'Vadodara' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException when both keyword and location are missing', async () => {
+      await expect(
+        service.extractPlaces(1, 1, {}),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

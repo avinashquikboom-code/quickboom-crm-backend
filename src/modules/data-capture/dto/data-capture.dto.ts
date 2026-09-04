@@ -13,13 +13,42 @@ import {
 import { Type } from 'class-transformer';
 
 export class ExtractPlacesDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Keyword is required (e.g. Gyms, Clinics, Restaurants)' })
-  keyword: string;
+  keyword?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Location is required (e.g. Vadodara, Mumbai, Pune)' })
-  location: string;
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  radius?: number;
 
   @IsOptional()
   @IsNumber()
@@ -27,6 +56,26 @@ export class ExtractPlacesDto {
   @Max(60)
   @Type(() => Number)
   maxResults?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(60)
+  @Type(() => Number)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  customerId?: number | string;
+
+  @IsOptional()
+  tenantId?: number | string;
+
+  @IsOptional()
+  companyId?: number | string;
 }
 
 export class ImportToLeadsDto {
