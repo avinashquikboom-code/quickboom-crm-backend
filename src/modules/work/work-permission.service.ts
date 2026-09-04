@@ -345,12 +345,18 @@ export class WorkPermissionService {
       if (override === AccessOverrideType.ALLOW) effective = true;
       if (override === AccessOverrideType.DENY) effective = false;
 
+      const source =
+        override !== AccessOverrideType.DEFAULT
+          ? `Employee Override (${override})`
+          : `Inherited from Role (${roleAccess ? 'ALLOW' : 'DENY'})`;
+
       return {
         moduleKey: mod.key,
         moduleName: mod.name,
         roleAccess,
         override,
         effective,
+        source,
       };
     });
 
@@ -674,15 +680,36 @@ export class WorkPermissionService {
       throw new NotFoundException(`Access request #${reqId} not found`);
     }
 
-    const updated = await this.prisma.workAccessRequest.update({
-      where: { id: reqId },
-      data: {
-        status: WorkAccessRequestStatus.APPROVED,
-        approvedById: adminUserId ? Number(adminUserId) : null,
-        reviewedAt: new Date(),
-        updatedAt: new Date(),
-      },
-    });
+    const [updated] = await Promise.all([
+      this.prisma.workAccessRequest.update({
+        where: { id: reqId },
+        data: {
+          status: WorkAccessRequestStatus.APPROVED,
+          approvedById: adminUserId ? Number(adminUserId) : null,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }),
+      this.prisma.employeeModuleOverride.upsert({
+        where: {
+          customerId_employeeId_moduleKey: {
+            customerId: custId,
+            employeeId: request.employeeId,
+            moduleKey: request.workModule,
+          },
+        },
+        create: {
+          customerId: custId,
+          employeeId: request.employeeId,
+          moduleKey: request.workModule,
+          override: AccessOverrideType.ALLOW,
+        },
+        update: {
+          override: AccessOverrideType.ALLOW,
+          updatedAt: new Date(),
+        },
+      }),
+    ]);
 
     return {
       success: true,
