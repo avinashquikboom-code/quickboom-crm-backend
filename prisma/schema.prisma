@@ -1043,6 +1043,7 @@ model Employee {
   assignedMonthlySchedules MonthlySchedule[]
   workAccessRequests       WorkAccessRequest[]
   employeeModuleOverrides  EmployeeModuleOverride[]
+  ledTeams                 Team[]                   @relation("TeamLeader")
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1620,10 +1621,12 @@ model Team {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  leader      Employee?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
   members     TeamMember[]
   works       Work[]
 
   @@index([customerId])
+  @@index([leaderId])
 }
 
 model TeamMember {
