@@ -45,6 +45,8 @@ export class TransformInterceptor<T>
             summary: data.summary,
             balances: data.balances,
             pagination: data.pagination,
+            total: data.total ?? data.pagination?.total,
+            totalPages: data.totalPages ?? data.pagination?.totalPages,
             meta: data.meta,
           };
         }

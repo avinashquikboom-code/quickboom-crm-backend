@@ -250,17 +250,15 @@ export class DataCaptureService {
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       const skip = (page - 1) * limit;
 
-      // Build tenant-scoped where clause:
-      // - SUPER_ADMIN, no explicit customerId => see ALL records (no filter)
+      // Build tenant-scoped where clause with isolated AND conditions:
+      // - SUPER_ADMIN, no explicit customerId => see ALL records (no customer filter)
       // - SUPER_ADMIN, explicit customerId   => scoped to that customer
       // - Normal user                        => strictly scoped to their customerId
-      const where: any = {
-        deletedAt: null,
-      };
+      const andConditions: any[] = [{ deletedAt: null }];
 
       if (isSuperAdmin) {
         if (hasExplicitCustomer) {
-          where.customerId = numCustomerId;
+          andConditions.push({ customerId: numCustomerId });
         }
         // else: SUPER_ADMIN — no customerId filter, full platform view
       } else {
@@ -268,39 +266,53 @@ export class DataCaptureService {
         if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
           throw new UnauthorizedException('User is not associated with any customer account');
         }
-        where.customerId = effectiveCustomerId;
+        andConditions.push({ customerId: effectiveCustomerId });
       }
 
       if (query.search && query.search.trim()) {
         const search = query.search.trim();
-        where.OR = [
-          { businessName: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { address: { contains: search, mode: 'insensitive' } },
-          { category: { contains: search, mode: 'insensitive' } },
-          { googlePlaceId: { contains: search, mode: 'insensitive' } },
-        ];
+        andConditions.push({
+          OR: [
+            { businessName: { contains: search, mode: 'insensitive' } },
+            { phone: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+            { address: { contains: search, mode: 'insensitive' } },
+            { category: { contains: search, mode: 'insensitive' } },
+            { googlePlaceId: { contains: search, mode: 'insensitive' } },
+          ],
+        });
       }
 
       const status = query.status?.trim();
       if (status && status.toUpperCase() !== 'ALL') {
-        where.status = status.toUpperCase();
+        const upperStatus = status.toUpperCase();
+        if (upperStatus === 'LEAD_CREATED') {
+          andConditions.push({
+            OR: [
+              { status: 'LEAD_CREATED' },
+              { isImported: true },
+            ],
+          });
+        } else {
+          andConditions.push({ status: upperStatus });
+        }
       }
 
       const source = query.source?.trim();
       if (source && source.toUpperCase() !== 'ALL') {
-        where.source = source.toUpperCase();
+        andConditions.push({ source: source.toUpperCase() });
       }
 
       const category = query.category?.trim();
       if (category && category.toUpperCase() !== 'ALL') {
-        where.category = { contains: category, mode: 'insensitive' };
+        andConditions.push({ category: { contains: category, mode: 'insensitive' } });
       }
 
       if (query.jobId && query.jobId.trim() && query.jobId.toUpperCase() !== 'ALL') {
-        where.jobId = query.jobId.trim();
+        andConditions.push({ jobId: query.jobId.trim() });
       }
+
+      const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
       const sortField = query.sortBy || 'createdAt';
       const sortOrder = (query.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
@@ -365,6 +377,8 @@ export class DataCaptureService {
           total,
           totalPages,
         },
+        total,
+        totalPages,
       };
     } catch (error: any) {
       this.logger.error(
