@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "PayrollItem" ADD COLUMN     "loanDeduction" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+ADD COLUMN     "reimbursement" DOUBLE PRECISION NOT NULL DEFAULT 0.0;

@@ -106,3 +106,97 @@ export function formatDurationHoursMinutes(minutes: number | string | null | und
   const mins = totalMins % 60;
   return `${hours}h ${mins}m`;
 }
+
+/**
+ * Parses time string (e.g. '09:00 AM', '06:00 PM', '09:30', '18:30') into minutes from midnight (0-1439).
+ */
+export function parseTimeToMinutes(timeStr?: string | null): number {
+  if (!timeStr || typeof timeStr !== 'string') return 0;
+  const trimmed = timeStr.trim();
+  const match12 = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (match12) {
+    let hours = parseInt(match12[1], 10);
+    const mins = parseInt(match12[2], 10);
+    const ampm = match12[3].toUpperCase();
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + mins;
+  }
+  const match24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    const hours = parseInt(match24[1], 10);
+    const mins = parseInt(match24[2], 10);
+    return hours * 60 + mins;
+  }
+  return 0;
+}
+
+/**
+ * Returns current minutes from midnight in the specified timezone (default Asia/Kolkata).
+ */
+export function getCurrentTimeMinutesInTimezone(
+  date: Date = new Date(),
+  timeZone: string = BUSINESS_TIMEZONE,
+): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  let hour = 0;
+  let min = 0;
+  for (const part of parts) {
+    if (part.type === 'hour') hour = parseInt(part.value, 10);
+    if (part.type === 'minute') min = parseInt(part.value, 10);
+  }
+  if (hour === 24) hour = 0;
+  return hour * 60 + min;
+}
+
+/**
+ * Evaluates whether an approved Remote Work request is actively in effect right now
+ * (based on authoritative server time in Asia/Kolkata and start/end time window).
+ */
+export function isRemoteWorkActiveNow(
+  remoteRequest: {
+    status?: string | null;
+    fromDate: Date | string;
+    toDate: Date | string;
+    startTime?: string | null;
+    endTime?: string | null;
+  } | null | undefined,
+  nowDate: Date = new Date(),
+  timeZone: string = BUSINESS_TIMEZONE,
+): boolean {
+  if (!remoteRequest || remoteRequest.status !== 'APPROVED') {
+    return false;
+  }
+
+  const currentDateStr = getBusinessDate(nowDate, timeZone);
+  const fromDateStr = getBusinessDate(
+    typeof remoteRequest.fromDate === 'string' ? new Date(remoteRequest.fromDate) : remoteRequest.fromDate,
+    timeZone,
+  );
+  const toDateStr = getBusinessDate(
+    typeof remoteRequest.toDate === 'string' ? new Date(remoteRequest.toDate) : remoteRequest.toDate,
+    timeZone,
+  );
+
+  if (currentDateStr < fromDateStr || currentDateStr > toDateStr) {
+    return false;
+  }
+
+  const startMins = parseTimeToMinutes(remoteRequest.startTime || '09:00 AM');
+  const endMins = parseTimeToMinutes(remoteRequest.endTime || '06:00 PM');
+  const currentMins = getCurrentTimeMinutesInTimezone(nowDate, timeZone);
+
+  if (endMins >= startMins) {
+    return currentMins >= startMins && currentMins <= endMins;
+  } else {
+    // Window crosses midnight
+    return currentMins >= startMins || currentMins <= endMins;
+  }
+}
+

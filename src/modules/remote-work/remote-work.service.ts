@@ -12,6 +12,11 @@ import {
   RemoteRequestQueryDto,
 } from './dto/remote-work.dto';
 import { RequestStatus } from '@prisma/client';
+import {
+  isRemoteWorkActiveNow,
+  getBusinessDayRange,
+  getBusinessDate,
+} from '../../common/utils/timezone.util';
 
 @Injectable()
 export class RemoteWorkService {
@@ -198,6 +203,8 @@ export class RemoteWorkService {
         remoteWorkDate: dateDisplay,
         fromDate: fromStr,
         toDate: toStr,
+        startTime: r.startTime || '09:00 AM',
+        endTime: r.endTime || '06:00 PM',
         days: r.days || 1,
         duration: `${r.days || 1} ${r.days === 1 ? 'Day' : 'Days'}`,
         reason: r.reason || 'Remote Work / Work From Home',
@@ -286,6 +293,8 @@ export class RemoteWorkService {
       remoteWorkDate: dateDisplay,
       fromDate: fromStr,
       toDate: toStr,
+      startTime: r.startTime || '09:00 AM',
+      endTime: r.endTime || '06:00 PM',
       days: r.days || 1,
       duration: `${r.days || 1} ${r.days === 1 ? 'Day' : 'Days'}`,
       reason: r.reason || 'Remote Work / Work From Home',
@@ -298,6 +307,67 @@ export class RemoteWorkService {
       rejectedAt: r.rejectedAt ? r.rejectedAt.toISOString() : null,
       appliedOn: r.createdAt.toISOString().split('T')[0],
       createdAt: r.createdAt.toISOString(),
+    };
+  }
+
+  async getCurrentRemoteWorkStatus(user: any, customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        ...(numCustomerId ? { customerId: numCustomerId } : {}),
+        OR: [
+          { userId: user?.id },
+          { email: { equals: user?.email?.trim().toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    if (!employee) {
+      return {
+        isRemoteWorkActive: false,
+        status: 'NONE',
+        message: 'No employee profile found',
+        data: null,
+      };
+    }
+
+    const now = new Date();
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(now);
+
+    const approvedRemote = await this.prisma.remoteRequest.findFirst({
+      where: {
+        employeeId: employee.id,
+        customerId: employee.customerId,
+        status: RequestStatus.APPROVED,
+        fromDate: { lte: todayEnd },
+        toDate: { gte: todayStart },
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    const isRemoteWorkActive = isRemoteWorkActiveNow(approvedRemote, now);
+
+    return {
+      isRemoteWorkActive,
+      status: approvedRemote ? approvedRemote.status : 'NONE',
+      fromDate: approvedRemote ? approvedRemote.fromDate.toISOString().split('T')[0] : null,
+      toDate: approvedRemote ? approvedRemote.toDate.toISOString().split('T')[0] : null,
+      startTime: approvedRemote?.startTime || '09:00 AM',
+      endTime: approvedRemote?.endTime || '06:00 PM',
+      reason: approvedRemote?.reason || null,
+      data: approvedRemote
+        ? {
+            id: approvedRemote.id,
+            fromDate: approvedRemote.fromDate.toISOString().split('T')[0],
+            toDate: approvedRemote.toDate.toISOString().split('T')[0],
+            startTime: approvedRemote.startTime || '09:00 AM',
+            endTime: approvedRemote.endTime || '06:00 PM',
+            reason: approvedRemote.reason,
+            status: approvedRemote.status,
+            isRemoteWorkActive,
+          }
+        : null,
     };
   }
 
@@ -314,8 +384,16 @@ export class RemoteWorkService {
       throw new NotFoundException(`Remote work request #${id} not found.`);
     }
 
-    if (r.status !== RequestStatus.PENDING) {
-      throw new BadRequestException(`Cannot approve request that is already ${r.status}.`);
+    if (r.status === RequestStatus.APPROVED) {
+      return {
+        success: true,
+        message: `Remote work request is already approved for ${r.employee?.firstName || 'Employee'}.`,
+        data: r,
+      };
+    }
+
+    if (r.status === RequestStatus.REJECTED) {
+      throw new BadRequestException('Cannot approve a rejected request. Please submit a new request.');
     }
 
     const approverName = user?.firstName
@@ -358,6 +436,14 @@ export class RemoteWorkService {
       throw new NotFoundException(`Remote work request #${id} not found.`);
     }
 
+    if (r.status === RequestStatus.REJECTED) {
+      return {
+        success: true,
+        message: `Remote work request is already rejected.`,
+        data: r,
+      };
+    }
+
     if (r.status !== RequestStatus.PENDING) {
       throw new BadRequestException(`Cannot reject request that is already ${r.status}.`);
     }
@@ -393,12 +479,26 @@ export class RemoteWorkService {
   async create(user: any, customerId: number | string | undefined, dto: CreateRemoteRequestDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: Number(dto.employeeId), customerId: numCustomerId, status: 'ACTIVE' },
-    });
+    let employee = null;
+    if (dto.employeeId) {
+      employee = await this.prisma.employee.findFirst({
+        where: { id: Number(dto.employeeId), customerId: numCustomerId, status: 'ACTIVE' },
+      });
+    } else if (user) {
+      employee = await this.prisma.employee.findFirst({
+        where: {
+          ...(numCustomerId ? { customerId: numCustomerId } : {}),
+          OR: [
+            { userId: user.id },
+            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+          status: 'ACTIVE',
+        },
+      });
+    }
 
     if (!employee) {
-      throw new NotFoundException(`Active employee #${dto.employeeId} not found.`);
+      throw new NotFoundException(`Active employee profile not found.`);
     }
 
     const fromDate = new Date(dto.fromDate);
@@ -440,6 +540,8 @@ export class RemoteWorkService {
         employeeId: employee.id,
         fromDate,
         toDate,
+        startTime: dto.startTime || '09:00 AM',
+        endTime: dto.endTime || '06:00 PM',
         days: dto.days || diffDays,
         reason: dto.reason?.trim() || 'Work From Home',
         attachmentUrl: dto.attachmentUrl,

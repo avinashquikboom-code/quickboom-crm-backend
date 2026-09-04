@@ -256,13 +256,19 @@ export class ClaimService {
 
   async approve(customerId: any, id: string | number, dto: ApproveClaimDto, reviewer?: any) {
     const cid = this.resolveCustomerId(customerId);
-    await this.findOne(cid, id);
+    const existing = await this.findOne(cid, id);
+
+    if (existing.status === ClaimStatus.APPROVED || existing.status === ClaimStatus.PAID) {
+      return existing;
+    }
+
+    const approvedAmount = dto.approvedAmount !== undefined && dto.approvedAmount !== null ? dto.approvedAmount : existing.amount;
 
     return this.prisma.employeeClaim.update({
       where: { id: Number(id) },
       data: {
         status: ClaimStatus.APPROVED,
-        approvedAmount: dto.approvedAmount,
+        approvedAmount,
         reviewedById: reviewer?.id || null,
         reviewedByName: reviewer ? `${reviewer.firstName || ''} ${reviewer.lastName || ''}`.trim() : 'HR Administrator',
         reviewedAt: new Date(),
@@ -272,13 +278,17 @@ export class ClaimService {
 
   async reject(customerId: any, id: string | number, dto: RejectClaimDto, reviewer?: any) {
     const cid = this.resolveCustomerId(customerId);
-    await this.findOne(cid, id);
+    const existing = await this.findOne(cid, id);
+
+    if (existing.status === ClaimStatus.REJECTED) {
+      return existing;
+    }
 
     return this.prisma.employeeClaim.update({
       where: { id: Number(id) },
       data: {
         status: ClaimStatus.REJECTED,
-        rejectionReason: dto.rejectionReason,
+        rejectionReason: dto.rejectionReason || 'Declined by Administrator / HR',
         reviewedById: reviewer?.id || null,
         reviewedByName: reviewer ? `${reviewer.firstName || ''} ${reviewer.lastName || ''}`.trim() : 'HR Administrator',
         reviewedAt: new Date(),

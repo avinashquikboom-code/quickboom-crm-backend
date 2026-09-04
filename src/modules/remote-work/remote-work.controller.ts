@@ -48,6 +48,15 @@ export class RemoteWorkController {
     return this.remoteWorkService.getTodayRemoteWorkers(customerId);
   }
 
+  @Get('current')
+  @ApiOperation({ summary: 'Get current remote work authorization status for authenticated employee' })
+  async getCurrentStatus(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    return this.remoteWorkService.getCurrentRemoteWorkStatus(user, customerId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single remote work request details' })
   async findOne(

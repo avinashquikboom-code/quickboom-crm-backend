@@ -1369,6 +1369,8 @@ model RemoteRequest {
   employeeId      Int
   fromDate        DateTime
   toDate          DateTime
+  startTime       String?       @default("09:00 AM")
+  endTime         String?       @default("06:00 PM")
   days            Int           @default(1)
   reason          String?
   attachmentUrl   String?
@@ -1546,11 +1548,13 @@ model PayrollItem {
   commission       Float        @default(0.0)
   overtime         Float        @default(0.0)
   otherEarnings    Float        @default(0.0)
+  reimbursement    Float        @default(0.0)
   pf               Float        @default(0.0)
   esi              Float        @default(0.0)
   professionalTax  Float        @default(0.0)
   tds              Float        @default(0.0)
   otherDeductions  Float        @default(0.0)
+  loanDeduction    Float        @default(0.0)
   grossSalary      Float
   totalDeductions  Float
   netSalary        Float

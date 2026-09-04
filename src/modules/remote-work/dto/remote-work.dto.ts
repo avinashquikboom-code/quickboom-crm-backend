@@ -11,10 +11,10 @@ import {
 import { RequestStatus } from '@prisma/client';
 
 export class CreateRemoteRequestDto {
-  @ApiProperty({ example: 1, description: 'Employee ID' })
+  @ApiPropertyOptional({ example: 1, description: 'Employee ID (optional for employee self-service)' })
   @IsInt()
-  @IsNotEmpty()
-  employeeId: number;
+  @IsOptional()
+  employeeId?: number;
 
   @ApiProperty({ example: '2026-08-25', description: 'Start Date (YYYY-MM-DD)' })
   @IsDateString()
@@ -25,6 +25,16 @@ export class CreateRemoteRequestDto {
   @IsDateString()
   @IsNotEmpty()
   toDate: string;
+
+  @ApiPropertyOptional({ example: '09:00 AM', description: 'Start Time (e.g. 09:00 AM)' })
+  @IsString()
+  @IsOptional()
+  startTime?: string;
+
+  @ApiPropertyOptional({ example: '06:00 PM', description: 'End Time (e.g. 06:00 PM)' })
+  @IsString()
+  @IsOptional()
+  endTime?: string;
 
   @ApiPropertyOptional({ example: 1, description: 'Total Days' })
   @IsInt()

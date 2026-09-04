@@ -13,6 +13,7 @@ import {
   getBusinessDayRange,
   formatTimeInTimezone,
   formatDurationHoursMinutes,
+  isRemoteWorkActiveNow,
 } from '../../common/utils/timezone.util';
 
 export function calculateDistanceMeters(
@@ -274,7 +275,7 @@ export class AttendanceService {
     const now = new Date();
     const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
-    // Check if employee has approved remote work for today
+    // Check if employee has approved remote work for today and active within start/end time window
     const approvedRemote = await this.prisma.remoteRequest.findFirst({
       where: {
         employeeId: employee.id,
@@ -284,6 +285,8 @@ export class AttendanceService {
       },
     });
 
+    const isRemoteActive = isRemoteWorkActiveNow(approvedRemote, now);
+
     const distanceMeters = calculateDistanceMeters(
       Number(dto.latitude),
       Number(dto.longitude),
@@ -291,12 +294,15 @@ export class AttendanceService {
       Number(office.longitude),
     );
     const allowedRadius = Number(office.radiusMeters) || 200.0;
-    const locationStatus = approvedRemote
+    const locationStatus = isRemoteActive
       ? 'REMOTE'
       : distanceMeters <= allowedRadius
       ? 'INSIDE_RADIUS'
       : 'OUTSIDE_RADIUS';
-    let locationInStr = `${office.name} (${distanceMeters}m)`;
+    const workMode = isRemoteActive ? 'REMOTE' : 'OFFICE';
+    let locationInStr = isRemoteActive
+      ? `Remote Work (${approvedRemote?.reason || 'Approved Remote Duty'})`
+      : `${office.name} (${distanceMeters}m)`;
 
     console.log(`[ATTENDANCE GEOFENCE]
 employeeId: ${employee.id}
@@ -309,10 +315,11 @@ allowedRadius: ${allowedRadius}
 currentLat: ${dto.latitude}
 currentLng: ${dto.longitude}
 accuracy: ${dto.accuracy ?? 'N/A'}
-calculatedDistance: ${distanceMeters}`);
+calculatedDistance: ${distanceMeters}
+isRemoteActive: ${isRemoteActive}`);
 
-    // GEOFENCE VALIDATION
-    if (!approvedRemote && distanceMeters > allowedRadius) {
+    // GEOFENCE VALIDATION: Strict backend validation when remote work is not active
+    if (!isRemoteActive && distanceMeters > allowedRadius) {
       throw new ForbiddenException({
         statusCode: 403,
         success: false,
@@ -321,6 +328,7 @@ calculatedDistance: ${distanceMeters}`);
           distanceMeters,
           allowedRadiusMeters: allowedRadius,
           locationStatus: 'OUTSIDE_RADIUS',
+          workMode: 'OFFICE',
           officeName: office.name,
           office: {
             id: office.id,
@@ -332,10 +340,6 @@ calculatedDistance: ${distanceMeters}`);
           },
         },
       });
-    }
-
-    if (approvedRemote) {
-      locationInStr = `Remote Work (${approvedRemote.reason || 'Approved Remote Duty'})`;
     }
 
     // Determine status based on Policy
@@ -386,6 +390,8 @@ calculatedDistance: ${distanceMeters}`);
             punchIn: now,
             punchOut: null,
             status: attendanceStatus,
+            workMode,
+            locationStatus,
             officeId: office.id,
             latitude: dto.latitude,
             longitude: dto.longitude,
@@ -403,6 +409,8 @@ calculatedDistance: ${distanceMeters}`);
             date: now,
             punchIn: now,
             status: attendanceStatus,
+            workMode,
+            locationStatus,
             officeId: office.id,
             latitude: dto.latitude,
             longitude: dto.longitude,
@@ -419,13 +427,14 @@ employeeId: ${employee.id}
 attendanceDate: ${dateStr}
 serverNowUTC: ${now.toISOString()}
 businessTime: ${formatTimeInTimezone(now)}
+workMode: ${workMode}
 punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
 
       const punchInIso = attendance.punchIn ? attendance.punchIn.toISOString() : null;
 
       return {
         success: true,
-        message: `Punch In successful${approvedRemote ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
+        message: `Punch In successful${isRemoteActive ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
         data: {
           attendanceId: attendance.id,
           employeeId: employee.employeeCode || `EMP-${employee.id}`,
@@ -435,6 +444,7 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           punchOutAt: null,
           punchOut: null,
           status: attendanceStatus,
+          workMode,
           office: {
             id: office.id,
             name: office.name,
@@ -444,7 +454,7 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           },
           distanceMeters,
           allowedRadiusMeters: allowedRadius,
-          locationStatus: approvedRemote ? 'REMOTE' : 'INSIDE_RADIUS',
+          locationStatus,
           biometricVerified: Boolean(dto.biometricVerified),
         },
         status: attendanceStatus,
@@ -467,9 +477,22 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
     const now = new Date();
     const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(now);
 
+    // Check if employee has approved remote work for today and active within start/end time window
+    const approvedRemote = await this.prisma.remoteRequest.findFirst({
+      where: {
+        employeeId: employee.id,
+        status: 'APPROVED',
+        fromDate: { lte: todayEnd },
+        toDate: { gte: todayStart },
+      },
+    });
+    const isRemoteActive = isRemoteWorkActiveNow(approvedRemote, now);
+
     let distanceMeters = 0;
     const allowedRadius = office.radiusMeters || 200.0;
-    let locationOutStr = `${office.name}`;
+    let locationOutStr = isRemoteActive
+      ? `Remote Work (${approvedRemote?.reason || 'Approved Remote Duty'})`
+      : `${office.name}`;
 
     if (dto.latitude !== undefined && dto.longitude !== undefined && !isNaN(dto.latitude) && !isNaN(dto.longitude)) {
       distanceMeters = calculateDistanceMeters(
@@ -478,7 +501,9 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         office.latitude,
         office.longitude,
       );
-      locationOutStr = `${office.name} (${distanceMeters}m)`;
+      if (!isRemoteActive) {
+        locationOutStr = `${office.name} (${distanceMeters}m)`;
+      }
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -957,6 +982,9 @@ result: SUCCESS`);
     const workingHoursVal = Math.round((netWorkingMinutes / 60) * 100) / 100;
     const breakDurationHoursVal = Math.round((totalBreakMinutes / 60) * 100) / 100;
 
+    const now = new Date();
+    const isRemoteActive = isRemoteWorkActiveNow(approvedRemote, now);
+
     return {
       employee: {
         id: employee.id,
@@ -988,13 +1016,18 @@ result: SUCCESS`);
             breakDurationMinutes: assignedShift.breakDurationMinutes,
           }
         : null,
+      isRemoteWorkActive: isRemoteActive,
+      workMode: isRemoteActive ? 'REMOTE' : 'OFFICE',
       approvedRemote: approvedRemote
         ? {
             id: approvedRemote.id,
             status: approvedRemote.status,
             reason: approvedRemote.reason || 'Approved Remote Duty',
-            fromDate: approvedRemote.fromDate ? approvedRemote.fromDate.toISOString() : null,
-            toDate: approvedRemote.toDate ? approvedRemote.toDate.toISOString() : null,
+            fromDate: approvedRemote.fromDate ? approvedRemote.fromDate.toISOString().split('T')[0] : null,
+            toDate: approvedRemote.toDate ? approvedRemote.toDate.toISOString().split('T')[0] : null,
+            startTime: approvedRemote.startTime || '09:00 AM',
+            endTime: approvedRemote.endTime || '06:00 PM',
+            isCurrentlyActive: isRemoteActive,
           }
         : null,
       policy: {

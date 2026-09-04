@@ -199,6 +199,30 @@ export class PayrollController {
     return this.payrollService.deleteSalaryStructure(customerId, id);
   }
 
+  @Get('policy')
+  @ApiOperation({ summary: 'Get payroll policy' })
+  async getPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.getPayrollPolicy(customerId);
+  }
+
+  @Post('policy')
+  @ApiOperation({ summary: 'Save or update payroll policy' })
+  async savePolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.savePayrollPolicy(customerId, body);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get payroll run details by ID' })
   async findOne(

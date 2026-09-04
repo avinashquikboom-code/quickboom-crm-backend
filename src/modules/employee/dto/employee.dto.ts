@@ -47,6 +47,10 @@ export class CreateEmployeeDto {
   @IsOptional()
   officeId?: number;
 
+  @ApiPropertyOptional({ example: 1, description: 'Master Shift ID' })
+  @IsOptional()
+  shiftId?: number;
+
   @ApiPropertyOptional({ example: 'Head Office' })
   @IsString()
   @IsOptional()
@@ -161,6 +165,10 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional({ example: 1, description: 'Master Office / Branch ID for attendance geo-fence' })
   @IsOptional()
   officeId?: number;
+
+  @ApiPropertyOptional({ example: 1, description: 'Master Shift ID' })
+  @IsOptional()
+  shiftId?: number;
 
   @ApiPropertyOptional({ example: 'Head Office' })
   @IsString()

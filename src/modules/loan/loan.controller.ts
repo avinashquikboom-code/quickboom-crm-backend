@@ -39,6 +39,7 @@ export class LoanController {
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'search', required: false })
   async findAll(
+    @CurrentUser() user: any,
     @CurrentCustomer() customerId: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -47,6 +48,7 @@ export class LoanController {
     @Query('search') search?: string,
   ) {
     return this.loanService.findAll(customerId, {
+      user,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
       status,
@@ -63,8 +65,12 @@ export class LoanController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new employee loan request' })
-  async create(@CurrentCustomer() customerId: any, @Body() dto: CreateLoanDto) {
-    return this.loanService.create(customerId, dto);
+  async create(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Body() dto: CreateLoanDto,
+  ) {
+    return this.loanService.create(customerId, dto, user);
   }
 
   @Patch(':id')

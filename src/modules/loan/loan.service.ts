@@ -45,7 +45,7 @@ export class LoanService {
 
   async findAll(
     customerId: any,
-    query?: { status?: LoanStatus; employeeId?: number; search?: string; page?: number; limit?: number },
+    query?: { user?: any; status?: LoanStatus; employeeId?: number; search?: string; page?: number; limit?: number },
   ) {
     const cid = this.resolveCustomerId(customerId);
     const page = Math.max(Number(query?.page) || 1, 1);
@@ -54,17 +54,32 @@ export class LoanService {
 
     const where: any = { customerId: cid };
 
-    if (query?.status) {
-      where.status = query.status;
+    // If calling user is an Employee role, auto-scope to their own employee ID
+    if (query?.user && (String(query.user.role).toUpperCase() === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          customerId: cid,
+          OR: [
+            { userId: query.user.id },
+            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        where.employeeId = emp.id;
+      }
+    } else if (query?.employeeId) {
+      where.employeeId = Number(query.employeeId);
     }
 
-    if (query?.employeeId) {
-      where.employeeId = query.employeeId;
+    if (query?.status) {
+      where.status = query.status;
     }
 
     if (query?.search && query.search.trim()) {
       const q = query.search.trim();
       where.OR = [
+        { reason: { contains: q, mode: 'insensitive' } },
         { employee: { firstName: { contains: q, mode: 'insensitive' } } },
         { employee: { lastName: { contains: q, mode: 'insensitive' } } },
         { employee: { employeeCode: { contains: q, mode: 'insensitive' } } },
@@ -154,14 +169,35 @@ export class LoanService {
     };
   }
 
-  async create(customerId: any, dto: CreateLoanDto) {
+  async create(customerId: any, dto: CreateLoanDto, user?: any) {
     const cid = this.resolveCustomerId(customerId);
+    let employeeId = dto.employeeId;
+
+    if (!employeeId && user) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          customerId: cid,
+          OR: [
+            { userId: user.id },
+            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        employeeId = emp.id;
+      }
+    }
+
+    if (!employeeId) {
+      throw new BadRequestException('Employee ID is required to submit a loan request');
+    }
+
     const employee = await this.prisma.employee.findFirst({
-      where: { id: dto.employeeId, customerId: cid },
+      where: { id: employeeId, customerId: cid },
     });
 
     if (!employee) {
-      throw new NotFoundException(`Employee with ID #${dto.employeeId} not found`);
+      throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
     const termMonths = dto.termMonths || 12;
@@ -170,7 +206,7 @@ export class LoanService {
     return this.prisma.employeeLoan.create({
       data: {
         customerId: cid,
-        employeeId: dto.employeeId,
+        employeeId,
         loanAmount: dto.loanAmount,
         reason: dto.reason,
         termMonths,
@@ -215,19 +251,25 @@ export class LoanService {
     const cid = this.resolveCustomerId(customerId);
     const existing = await this.findOne(cid, id);
 
+    // Idempotency: If already ACTIVE or APPROVED, do not overwrite remaining balance or repeat deduction
+    if (existing.status === LoanStatus.ACTIVE || existing.status === LoanStatus.APPROVED) {
+      return existing;
+    }
+
+    const approvedAmount = dto.approvedAmount || existing.loanAmount;
     const termMonths = dto.termMonths || existing.termMonths || 12;
-    const monthlyEmi = dto.monthlyEmi || Math.round((dto.approvedAmount / termMonths) * 100) / 100;
+    const monthlyEmi = dto.monthlyEmi || Math.round((approvedAmount / termMonths) * 100) / 100;
     const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
 
     return this.prisma.employeeLoan.update({
       where: { id: Number(id) },
       data: {
         status: LoanStatus.ACTIVE,
-        approvedAmount: dto.approvedAmount,
+        approvedAmount,
         termMonths,
         monthlyEmi,
         startDate,
-        remainingBalance: dto.approvedAmount,
+        remainingBalance: approvedAmount,
         approvedById: reviewer?.id || null,
         approvedByName: reviewer ? `${reviewer.firstName || ''} ${reviewer.lastName || ''}`.trim() : 'HR Administrator',
         notes: dto.notes || existing.notes,
@@ -237,7 +279,11 @@ export class LoanService {
 
   async reject(customerId: any, id: string | number, dto: RejectLoanDto, reviewer?: any) {
     const cid = this.resolveCustomerId(customerId);
-    await this.findOne(cid, id);
+    const existing = await this.findOne(cid, id);
+
+    if (existing.status === LoanStatus.REJECTED) {
+      return existing;
+    }
 
     return this.prisma.employeeLoan.update({
       where: { id: Number(id) },

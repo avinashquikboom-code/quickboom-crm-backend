@@ -145,6 +145,7 @@ export class EmployeeService {
           department: true,
           designation: true,
           office: true,
+          shift: true,
           attendances: {
             where: {
               date: { gte: startOfDay, lte: endOfDay },
@@ -244,6 +245,20 @@ export class EmployeeService {
         designationObj: e.designation,
         officeId: e.officeId || null,
         officeObj: e.office,
+        shiftId: e.shiftId || null,
+        shift: e.shift?.name || null,
+        shiftName: e.shift?.name || null,
+        shiftObj: e.shift
+          ? {
+              id: e.shift.id,
+              name: e.shift.name,
+              code: e.shift.code,
+              startTime: e.shift.startTime,
+              endTime: e.shift.endTime,
+              durationHours: e.shift.durationHours,
+              status: e.shift.status,
+            }
+          : null,
         branch: e.office?.name || e.branch || 'Head Office',
         office: e.office?.name || e.branch || 'Head Office',
         status: e.status,
@@ -364,6 +379,7 @@ export class EmployeeService {
         department: true,
         designation: true,
         office: true,
+        shift: true,
         attendances: {
           orderBy: { date: 'desc' },
           take: 30,
@@ -453,6 +469,23 @@ export class EmployeeService {
       phone: employee.phone || '+91 98765 43210',
       officeId: employee.officeId || null,
       officeObj: employee.office,
+      shiftId: employee.shiftId || null,
+      shift: employee.shift?.name || null,
+      shiftName: employee.shift?.name || null,
+      shiftObj: employee.shift
+        ? {
+            id: employee.shift.id,
+            name: employee.shift.name,
+            code: employee.shift.code,
+            startTime: employee.shift.startTime,
+            endTime: employee.shift.endTime,
+            durationHours: employee.shift.durationHours,
+            gracePeriodMinutes: employee.shift.gracePeriodMinutes,
+            breakDurationMinutes: employee.shift.breakDurationMinutes,
+            isNightShift: employee.shift.isNightShift,
+            status: employee.shift.status,
+          }
+        : null,
       branch: employee.office?.name || employee.branch || 'Head Office',
       office: employee.office?.name || employee.branch || 'Head Office',
       departmentId: employee.departmentId,
@@ -1119,6 +1152,22 @@ export class EmployeeService {
         }
       }
 
+      // Shift resolution & validation
+      let shiftId: number | null = null;
+      if (dto.shiftId) {
+        const numShiftId = Number(dto.shiftId);
+        const shift = await tx.shift.findFirst({
+          where: { id: numShiftId, customerId: numCustomerId },
+        });
+        if (!shift) {
+          throw new BadRequestException(`Shift #${numShiftId} not found or does not belong to this customer`);
+        }
+        if (shift.status !== 'ACTIVE') {
+          throw new BadRequestException(`Shift '${shift.name}' is inactive and cannot be assigned`);
+        }
+        shiftId = shift.id;
+      }
+
       const empData: any = {
         customerId: numCustomerId,
         userId: user.id,
@@ -1127,6 +1176,7 @@ export class EmployeeService {
         email: normalizedEmail,
         phone: dto.phone,
         officeId,
+        shiftId,
         branch: branchName,
         departmentId: department.id,
         designationId: designation.id,
@@ -1161,6 +1211,7 @@ export class EmployeeService {
             department: true,
             designation: true,
             office: true,
+            shift: true,
           },
         });
 
@@ -1345,6 +1396,24 @@ export class EmployeeService {
         }
       }
 
+      if (dto.shiftId !== undefined) {
+        if (dto.shiftId === null || dto.shiftId === 0 || String(dto.shiftId).trim() === '') {
+          updateData.shiftId = null;
+        } else {
+          const numShiftId = Number(dto.shiftId);
+          const shift = await tx.shift.findFirst({
+            where: { id: numShiftId, customerId: targetCustId },
+          });
+          if (!shift) {
+            throw new BadRequestException(`Shift #${numShiftId} not found or does not belong to this customer`);
+          }
+          if (shift.status !== 'ACTIVE') {
+            throw new BadRequestException(`Shift '${shift.name}' is inactive and cannot be assigned`);
+          }
+          updateData.shiftId = shift.id;
+        }
+      }
+
       return tx.employee.update({
         where: { id: numId },
         data: updateData,
@@ -1352,6 +1421,7 @@ export class EmployeeService {
           department: true,
           designation: true,
           office: true,
+          shift: true,
         },
       });
     });
@@ -1571,13 +1641,19 @@ export class EmployeeService {
     return requests.map((r) => ({
       id: String(r.id),
       customerId: r.customerId,
-      employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName}` : 'Employee',
+      employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName || ''}`.trim() : 'Employee',
       employeeId: r.employee?.employeeCode || 'EMP-001',
       requestType: 'WORK_FROM_HOME',
-      date: r.fromDate ? r.fromDate.toISOString().split('T')[0] : '2026-08-21',
+      date: r.fromDate ? r.fromDate.toISOString().split('T')[0] : '',
+      fromDate: r.fromDate ? r.fromDate.toISOString().split('T')[0] : '',
+      toDate: r.toDate ? r.toDate.toISOString().split('T')[0] : '',
+      startTime: r.startTime || '09:00 AM',
+      endTime: r.endTime || '06:00 PM',
+      days: r.days || 1,
       reason: r.reason || 'Remote work request',
       status: r.status,
-      appliedOn: r.createdAt ? r.createdAt.toISOString().split('T')[0] : '2026-08-15',
+      appliedOn: r.createdAt ? r.createdAt.toISOString().split('T')[0] : '',
+      createdAt: r.createdAt ? r.createdAt.toISOString() : null,
     }));
   }
 
