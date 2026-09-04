@@ -21,7 +21,6 @@ export class TeamService {
       employeeCode: true,
       firstName: true,
       lastName: true,
-      name: true,
       email: true,
       phone: true,
       gender: true,
@@ -43,19 +42,42 @@ export class TeamService {
     };
   }
 
-  async findAll(customerId: number | string, query?: TeamQueryDto) {
-    const numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid Customer ID is required');
-    }
+  private formatEmployee(emp: any) {
+    if (!emp) return null;
+    return {
+      ...emp,
+      name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.firstName || 'Staff',
+    };
+  }
 
+  private formatTeam(team: any) {
+    if (!team) return null;
+    return {
+      ...team,
+      status: team.isActive ? 'ACTIVE' : 'INACTIVE',
+      leader: this.formatEmployee(team.leader),
+      members: (team.members || []).map((m: any) => ({
+        ...m,
+        employee: this.formatEmployee(m.employee),
+      })),
+      memberCount: team.members?.length || 0,
+    };
+  }
+
+  async findAll(customerId?: number | string, query?: TeamQueryDto) {
     const page = Math.max(Number(query?.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      customerId: numCustomerId,
-    };
+    const where: any = {};
+
+    if (customerId !== undefined && customerId !== null && String(customerId).trim() !== '') {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId) || numCustomerId <= 0) {
+        throw new BadRequestException('Invalid customer ID provided');
+      }
+      where.customerId = numCustomerId;
+    }
 
     if (query?.status === 'ACTIVE') {
       where.isActive = true;
@@ -73,7 +95,6 @@ export class TeamService {
             OR: [
               { firstName: { contains: search, mode: 'insensitive' } },
               { lastName: { contains: search, mode: 'insensitive' } },
-              { name: { contains: search, mode: 'insensitive' } },
               { employeeCode: { contains: search, mode: 'insensitive' } },
             ],
           },
@@ -85,7 +106,6 @@ export class TeamService {
                 OR: [
                   { firstName: { contains: search, mode: 'insensitive' } },
                   { lastName: { contains: search, mode: 'insensitive' } },
-                  { name: { contains: search, mode: 'insensitive' } },
                   { employeeCode: { contains: search, mode: 'insensitive' } },
                 ],
               },
@@ -124,12 +144,7 @@ export class TeamService {
       this.prisma.team.count({ where }),
     ]);
 
-    const items = rawItems.map((team) => ({
-      ...team,
-      status: team.isActive ? 'ACTIVE' : 'INACTIVE',
-      memberCount: team.members?.length || 0,
-    }));
-
+    const items = rawItems.map((t) => this.formatTeam(t));
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
@@ -150,19 +165,22 @@ export class TeamService {
     };
   }
 
-  async findOne(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
+  async findOne(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException('Valid Team ID is required');
+    }
 
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid Customer ID is required');
+    const where: any = { id: numId };
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
     }
 
     const team = await this.prisma.team.findFirst({
-      where: {
-        id: numId,
-        customerId: numCustomerId,
-      },
+      where,
       include: {
         leader: {
           select: this.employeeSelect,
@@ -189,20 +207,16 @@ export class TeamService {
     });
 
     if (!team) {
-      throw new NotFoundException(`Team with ID ${id} not found in your organization`);
+      throw new NotFoundException(`Team with ID ${id} not found`);
     }
 
-    return {
-      ...team,
-      status: team.isActive ? 'ACTIVE' : 'INACTIVE',
-      memberCount: team.members?.length || 0,
-    };
+    return this.formatTeam(team);
   }
 
-  async create(customerId: number | string, dto: CreateTeamDto) {
+  async create(customerId: number | string | undefined, dto: CreateTeamDto) {
     const numCustomerId = Number(customerId);
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid Customer ID is required');
+      throw new BadRequestException('Valid Customer ID is required to create a team');
     }
 
     // 1. Validate Leader if supplied
@@ -234,7 +248,7 @@ export class TeamService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
           customerId: numCustomerId,
@@ -266,25 +280,32 @@ export class TeamService {
         },
       });
     });
+
+    return this.formatTeam(created);
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateTeamDto) {
-    const numCustomerId = Number(customerId);
+  async update(customerId: number | string | undefined, id: number | string, dto: UpdateTeamDto) {
     const numId = Number(id);
+    const where: any = { id: numId };
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
 
     // 1. Verify Team existence
-    const existing = await this.prisma.team.findFirst({
-      where: { id: numId, customerId: numCustomerId },
-    });
-
+    const existing = await this.prisma.team.findFirst({ where });
     if (!existing) {
       throw new NotFoundException(`Team with ID ${id} not found in your organization`);
     }
 
+    const targetCustomerId = existing.customerId;
+
     // 2. Validate Leader if changing
     if (dto.leaderId !== undefined && dto.leaderId !== null) {
       const leader = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.leaderId), customerId: numCustomerId },
+        where: { id: Number(dto.leaderId), customerId: targetCustomerId },
       });
       if (!leader) {
         throw new BadRequestException('Designated team leader does not exist or belong to your organization');
@@ -299,7 +320,7 @@ export class TeamService {
         const validEmployees = await this.prisma.employee.findMany({
           where: {
             id: { in: uniqueMemberIds },
-            customerId: numCustomerId,
+            customerId: targetCustomerId,
           },
           select: { id: true },
         });
@@ -310,7 +331,7 @@ export class TeamService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updateData: any = {};
       if (dto.name !== undefined) updateData.name = dto.name.trim();
       if (dto.description !== undefined) updateData.description = dto.description?.trim() || null;
@@ -353,16 +374,21 @@ export class TeamService {
         },
       });
     });
+
+    return this.formatTeam(updated);
   }
 
-  async remove(customerId: number | string, id: number | string, permanent = false) {
-    const numCustomerId = Number(customerId);
+  async remove(customerId: number | string | undefined, id: number | string, permanent = false) {
     const numId = Number(id);
+    const where: any = { id: numId };
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
 
-    const team = await this.prisma.team.findFirst({
-      where: { id: numId, customerId: numCustomerId },
-    });
-
+    const team = await this.prisma.team.findFirst({ where });
     if (!team) {
       throw new NotFoundException(`Team with ID ${id} not found in your organization`);
     }
@@ -382,26 +408,31 @@ export class TeamService {
     return { success: true, message: `Team "${team.name}" deactivated successfully` };
   }
 
-  async addMember(customerId: number | string, teamId: number | string, dto: AddTeamMemberDto) {
-    const numCustomerId = Number(customerId);
+  async addMember(customerId: number | string | undefined, teamId: number | string, dto: AddTeamMemberDto) {
     const numTeamId = Number(teamId);
     const numEmployeeId = Number(dto.employeeId);
 
-    const team = await this.prisma.team.findFirst({
-      where: { id: numTeamId, customerId: numCustomerId },
-    });
+    const where: any = { id: numTeamId };
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
+
+    const team = await this.prisma.team.findFirst({ where });
     if (!team) {
       throw new NotFoundException(`Team with ID ${teamId} not found in your organization`);
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: numEmployeeId, customerId: numCustomerId },
+      where: { id: numEmployeeId, customerId: team.customerId },
     });
     if (!employee) {
       throw new BadRequestException('Employee does not exist or belong to your organization');
     }
 
-    return this.prisma.teamMember.upsert({
+    const member = await this.prisma.teamMember.upsert({
       where: {
         teamId_employeeId: {
           teamId: numTeamId,
@@ -420,16 +451,26 @@ export class TeamService {
         },
       },
     });
+
+    return {
+      ...member,
+      employee: this.formatEmployee(member.employee),
+    };
   }
 
-  async removeMember(customerId: number | string, teamId: number | string, employeeId: number | string) {
-    const numCustomerId = Number(customerId);
+  async removeMember(customerId: number | string | undefined, teamId: number | string, employeeId: number | string) {
     const numTeamId = Number(teamId);
     const numEmployeeId = Number(employeeId);
 
-    const team = await this.prisma.team.findFirst({
-      where: { id: numTeamId, customerId: numCustomerId },
-    });
+    const where: any = { id: numTeamId };
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
+
+    const team = await this.prisma.team.findFirst({ where });
     if (!team) {
       throw new NotFoundException(`Team with ID ${teamId} not found in your organization`);
     }

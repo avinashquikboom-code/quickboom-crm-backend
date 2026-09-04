@@ -32,15 +32,21 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 export class TeamController {
   constructor(private readonly teamService: TeamService) {}
 
-  private resolveTargetCustomerId(user: any, customerId: any, queryCustomerId?: any): number {
+  private resolveTargetCustomerId(user: any, customerId: any, queryCustomerId?: any): number | undefined {
     const isSuperAdmin = isUserSuperAdmin(user);
     const target = isSuperAdmin
       ? queryCustomerId || customerId || user?.customerId
       : user?.customerId || customerId;
 
+    if (target === undefined || target === null || target === '') {
+      if (isSuperAdmin) return undefined;
+      throw new ForbiddenException('User does not belong to any customer account');
+    }
+
     const num = Number(target);
     if (isNaN(num) || num <= 0) {
-      throw new ForbiddenException('User does not belong to any customer account');
+      if (isSuperAdmin) return undefined;
+      throw new ForbiddenException('Invalid customer context');
     }
     return num;
   }
