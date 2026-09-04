@@ -19,6 +19,7 @@ export interface LeadLimitPeriodInfo {
   limit: number;
   used: number;
   remaining: number;
+  isExhausted: boolean;
 }
 
 export interface EmployeeLeadLimitResponse {
@@ -311,8 +312,8 @@ export class LeadLimitService {
     // If caller is super-admin or customer-admin with no linked employee record
     if (!employeeId) {
       return {
-        daily: { limit: 9999, used: 0, remaining: 9999 },
-        monthly: { limit: 99999, used: 0, remaining: 99999 },
+        daily: { limit: 9999, used: 0, remaining: 9999, isExhausted: false },
+        monthly: { limit: 99999, used: 0, remaining: 99999, isExhausted: false },
         hasLeadsPermission: true,
         roleName: user?.role || 'Admin',
         isCustom: false,
@@ -339,11 +340,13 @@ export class LeadLimitService {
         limit: limitInfo.effectiveDailyLimit,
         used: usage.usedToday,
         remaining: remainingDaily,
+        isExhausted: remainingDaily <= 0,
       },
       monthly: {
         limit: limitInfo.effectiveMonthlyLimit,
         used: usage.usedThisMonth,
         remaining: remainingMonthly,
+        isExhausted: remainingMonthly <= 0,
       },
       hasLeadsPermission,
       roleName: limitInfo.normalizedRole,
