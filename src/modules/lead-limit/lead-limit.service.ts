@@ -27,6 +27,7 @@ export interface EmployeeLeadLimitResponse {
   hasLeadsPermission: boolean;
   roleName?: string;
   isCustom?: boolean;
+  source?: 'EMPLOYEE_OVERRIDE' | 'ROLE_DEFAULT';
 }
 
 const DEFAULT_ROLE_LIMITS: Record<string, { daily: number; monthly: number }> = {
@@ -84,15 +85,26 @@ export class LeadLimitService {
 
     designations.forEach((d) => roleNames.add(d.name.trim()));
     customRoles.forEach((r) => roleNames.add(r.name.trim()));
+    dbRoleLimits.forEach((l) => roleNames.add(l.roleName.trim()));
 
     const dbLimitMap = new Map<string, (typeof dbRoleLimits)[0]>();
-    dbRoleLimits.forEach((l) => dbLimitMap.set(l.roleName.trim().toLowerCase(), l));
+    dbRoleLimits.forEach((l) => {
+      const key = l.roleName.trim().toLowerCase();
+      dbLimitMap.set(key, l);
+      dbLimitMap.set(key.replace(/_/g, ' '), l);
+      dbLimitMap.set(key.replace(/\s+/g, '_'), l);
+    });
 
     return Array.from(roleNames).map((roleName) => {
-      const match = dbLimitMap.get(roleName.toLowerCase());
+      const key = roleName.trim().toLowerCase();
+      const match =
+        dbLimitMap.get(key) ||
+        dbLimitMap.get(key.replace(/_/g, ' ')) ||
+        dbLimitMap.get(key.replace(/\s+/g, '_'));
       const defaultVal =
         DEFAULT_ROLE_LIMITS[roleName] ||
-        DEFAULT_ROLE_LIMITS[roleName.toUpperCase()] || { daily: 10, monthly: 200 };
+        DEFAULT_ROLE_LIMITS[roleName.toUpperCase()] ||
+        DEFAULT_ROLE_LIMITS[roleName.replace(/_/g, ' ')] || { daily: 10, monthly: 200 };
 
       return {
         id: match?.id ?? null,
@@ -168,20 +180,30 @@ export class LeadLimitService {
 
     const normalizedRole = this.workPermissionService.normalizeRoleKey(roleCandidate);
 
+    const candidateVariants = [
+      normalizedRole,
+      roleCandidate,
+      normalizedRole.replace(/_/g, ' '),
+      normalizedRole.replace(/\s+/g, '_'),
+    ];
+
     // 1. Fetch role configuration from DB if present
     const roleConfig = await this.prisma.roleLeadLimit.findFirst({
       where: {
         customerId: custId,
-        roleName: {
-          equals: normalizedRole,
-          mode: 'insensitive',
-        },
+        OR: candidateVariants.map((v) => ({
+          roleName: {
+            equals: v,
+            mode: 'insensitive',
+          },
+        })),
       },
     });
 
     const defaultRoleLimit =
       DEFAULT_ROLE_LIMITS[normalizedRole] ||
-      DEFAULT_ROLE_LIMITS[normalizedRole.toUpperCase()] || { daily: 10, monthly: 200 };
+      DEFAULT_ROLE_LIMITS[normalizedRole.toUpperCase()] ||
+      DEFAULT_ROLE_LIMITS[normalizedRole.replace(/_/g, ' ')] || { daily: 10, monthly: 200 };
 
     const roleDaily = roleConfig ? roleConfig.dailyLimit : defaultRoleLimit.daily;
     const roleMonthly = roleConfig ? roleConfig.monthlyLimit : defaultRoleLimit.monthly;
@@ -272,12 +294,16 @@ export class LeadLimitService {
     const custId = Number(customerId);
 
     // Find employee record
-    let employeeId = user.employee?.id;
-    let employee = user.employee;
+    let employeeId =
+      typeof user === 'number'
+        ? user
+        : user?.employeeId || user?.employee?.id;
+    let employee = user?.employee;
+    const userId = typeof user === 'number' ? undefined : user?.id;
 
-    if (!employeeId) {
+    if (!employeeId && userId) {
       employee = await this.prisma.employee.findFirst({
-        where: { customerId: custId, userId: user.id },
+        where: { customerId: custId, userId },
       });
       if (employee) employeeId = employee.id;
     }
@@ -288,8 +314,9 @@ export class LeadLimitService {
         daily: { limit: 9999, used: 0, remaining: 9999 },
         monthly: { limit: 99999, used: 0, remaining: 99999 },
         hasLeadsPermission: true,
-        roleName: user.role || 'Admin',
+        roleName: user?.role || 'Admin',
         isCustom: false,
+        source: 'ROLE_DEFAULT',
       };
     }
 
@@ -302,7 +329,7 @@ export class LeadLimitService {
 
     // Resolve effective limit & usage
     const limitInfo = await this.getEffectiveLimitForEmployee(custId, employeeId);
-    const usage = await this.getEmployeeUsage(custId, employeeId, user.id);
+    const usage = await this.getEmployeeUsage(custId, employeeId, userId);
 
     const remainingDaily = Math.max(0, limitInfo.effectiveDailyLimit - usage.usedToday);
     const remainingMonthly = Math.max(0, limitInfo.effectiveMonthlyLimit - usage.usedThisMonth);
@@ -321,6 +348,7 @@ export class LeadLimitService {
       hasLeadsPermission,
       roleName: limitInfo.normalizedRole,
       isCustom: limitInfo.isCustom,
+      source: limitInfo.isCustom ? 'EMPLOYEE_OVERRIDE' : 'ROLE_DEFAULT',
     };
   }
 
