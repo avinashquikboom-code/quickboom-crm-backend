@@ -18,18 +18,26 @@ import { LeadStatus } from '@prisma/client';
 export class LeadRepository {
   constructor(private prisma: PrismaService) {}
 
-  async create(customerId: number | string, createdById: number | string, dto: CreateLeadDto) {
+  async create(
+    customerId: number | string,
+    createdById: number | string,
+    dto: CreateLeadDto,
+    employeeId?: number | null,
+    prismaClient?: any,
+  ) {
+    const client = prismaClient || this.prisma;
     const numCustomerId = Number(customerId);
     const numCreatedById = Number(createdById);
     const status = dto.status || LeadStatus.NEW;
     const { notes, ...leadData } = dto;
-    const lead = await this.prisma.lead.create({
+    const lead = await client.lead.create({
       data: {
         ...leadData,
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         status,
         customerId: numCustomerId,
         createdById: numCreatedById,
+        employeeId: employeeId ? Number(employeeId) : undefined,
       },
       include: {
         assignedTo: {
@@ -42,7 +50,7 @@ export class LeadRepository {
     });
 
     if (notes) {
-      await this.prisma.leadNote.create({
+      await client.leadNote.create({
         data: {
           leadId: lead.id,
           userId: numCreatedById,
@@ -52,7 +60,7 @@ export class LeadRepository {
     }
 
     // Record initial status history
-    await this.prisma.leadStatusHistory.create({
+    await client.leadStatusHistory.create({
       data: {
         leadId: lead.id,
         fromStatus: null,

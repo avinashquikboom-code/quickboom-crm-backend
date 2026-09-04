@@ -41,10 +41,10 @@ export class LeadController {
   @ApiOperation({ summary: 'Create a new CRM lead' })
   async create(
     @CurrentCustomer() customerId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Body() dto: CreateLeadDto,
   ) {
-    return this.leadService.createLead(customerId, userId, dto);
+    return this.leadService.createLead(customerId, user, dto);
   }
 
   @Post('check-duplicate')

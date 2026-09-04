@@ -85,6 +85,8 @@ model Customer {
   roleWorkPermissions      RoleWorkPermission[]
   workAccessRequests       WorkAccessRequest[]
   employeeModuleOverrides  EmployeeModuleOverride[]
+  roleLeadLimits           RoleLeadLimit[]
+  employeeLeadLimits       EmployeeLeadLimit[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -360,6 +362,8 @@ model Lead {
   assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employeeId           Int?
+  employee             Employee?              @relation("EmployeeLeads", fields: [employeeId], references: [id])
   timeline             LeadActivityTimeline[]
   notes                LeadNote[]
   reminders            LeadReminder[]
@@ -370,6 +374,7 @@ model Lead {
   @@index([customerId])
   @@index([status])
   @@index([assignedToId])
+  @@index([employeeId])
   @@index([googlePlaceId])
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
@@ -1044,6 +1049,8 @@ model Employee {
   workAccessRequests       WorkAccessRequest[]
   employeeModuleOverrides  EmployeeModuleOverride[]
   ledTeams                 Team[]                   @relation("TeamLeader")
+  leadLimit                EmployeeLeadLimit?
+  leads                    Lead[]                   @relation("EmployeeLeads")
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -2414,4 +2421,38 @@ model EmployeeModuleOverride {
   @@index([customerId])
   @@index([employeeId])
   @@map("employee_module_overrides")
+}
+
+model RoleLeadLimit {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  roleName     String
+  dailyLimit   Int       @default(10)
+  monthlyLimit Int       @default(200)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, roleName])
+  @@index([customerId])
+  @@index([roleName])
+  @@map("role_lead_limits")
+}
+
+model EmployeeLeadLimit {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  employeeId   Int       @unique
+  dailyLimit   Int?
+  monthlyLimit Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId])
+  @@index([customerId])
+  @@index([employeeId])
+  @@map("employee_lead_limits")
 }

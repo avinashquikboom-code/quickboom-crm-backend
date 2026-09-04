@@ -51,6 +51,39 @@ export function getBusinessDayRange(
 }
 
 /**
+ * Returns UTC start and end Date objects corresponding to the 1st of the month at 00:00:00.000
+ * and the last day of the month at 23:59:59.999 in Asia/Kolkata (+05:30).
+ */
+export function getBusinessMonthRange(
+  dateInput?: string | Date,
+  timeZone: string = BUSINESS_TIMEZONE,
+): { start: Date; end: Date; yearMonth: string } {
+  let dateObj: Date;
+  if (dateInput instanceof Date) {
+    dateObj = dateInput;
+  } else if (typeof dateInput === 'string' && dateInput.trim()) {
+    const parsed = new Date(dateInput);
+    dateObj = isNaN(parsed.getTime()) ? new Date() : parsed;
+  } else {
+    dateObj = new Date();
+  }
+
+  const dateStr = getBusinessDate(dateObj, timeZone);
+  const [yearStr, monthStr] = dateStr.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+
+  const startStr = `${yearStr}-${monthStr}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const endStr = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
+
+  const start = new Date(`${startStr}T00:00:00.000+05:30`);
+  const end = new Date(`${endStr}T23:59:59.999+05:30`);
+
+  return { start, end, yearMonth: `${yearStr}-${monthStr}` };
+}
+
+/**
  * Format a Date object as 'hh:mm A' in Asia/Kolkata (e.g. '07:14 PM').
  */
 export function formatTimeInTimezone(

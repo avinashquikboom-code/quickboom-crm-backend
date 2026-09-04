@@ -15,12 +15,16 @@ import {
   UpdateLeadStatusDto,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { LeadLimitService } from '../lead-limit/lead-limit.service';
 
 @Injectable()
 export class LeadService {
   constructor(
     private readonly leadRepository: LeadRepository,
+    private readonly prisma: PrismaService,
     private readonly planAccessService?: PlanAccessService,
+    private readonly leadLimitService?: LeadLimitService,
   ) {}
 
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
@@ -31,11 +35,24 @@ export class LeadService {
     return this.leadRepository.convertLead(customerId, leadId, userId, dto);
   }
 
-  async createLead(customerId: number | string, userId: number | string, dto: CreateLeadDto) {
+  async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
     if (this.planAccessService) {
       await this.planAccessService.checkLeadLimit(customerId);
     }
-    const lead = await this.leadRepository.create(customerId, userId, dto);
+
+    const user = typeof userOrId === 'object' ? userOrId : { id: userOrId };
+    const userId = Number(user.id);
+
+    // Concurrency-safe atomic check and lead creation within a transaction
+    const lead = await this.prisma.$transaction(async (tx) => {
+      let employeeId: number | null = null;
+      if (this.leadLimitService) {
+        const limitRes = await this.leadLimitService.validateAndConsumeLeadLimit(tx, customerId, user);
+        employeeId = limitRes.employeeId;
+      }
+      return this.leadRepository.create(customerId, userId, dto, employeeId, tx);
+    });
+
     await this.leadRepository.logTimeline(
       lead.id,
       'LEAD_CREATED',

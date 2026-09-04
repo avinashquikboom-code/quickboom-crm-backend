@@ -94,7 +94,7 @@ export class MobileScheduleController {
     const rolePerms = await this.prisma.roleWorkPermission.findMany({
       where: {
         customerId: numCustomerId || employee.customerId,
-        roleName: employee.role || 'Employee',
+        roleName: (employee as any).role || 'Employee',
         isEnabled: true,
       },
     });

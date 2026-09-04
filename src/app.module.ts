@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LeadModule } from './modules/lead/lead.module';
+import { LeadLimitModule } from './modules/lead-limit/lead-limit.module';
 import { ContactModule } from './modules/contact/contact.module';
 import { DealModule } from './modules/deal/deal.module';
 import { TaskModule } from './modules/task/task.module';
@@ -73,6 +74,7 @@ import { AppController } from './app.controller';
     NotificationModule,
     AuditLogModule,
     LeadModule,
+    LeadLimitModule,
     CompanyModule,
     ContactModule,
     DealModule,
