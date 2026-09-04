@@ -98,6 +98,24 @@ export class InvoiceService {
     }
   }
 
+  async reconcileAllCustomerInvoices(): Promise<void> {
+    try {
+      const customersWithPayments = await this.prisma.paymentHistory.findMany({
+        where: { status: { in: ['SUCCESS', 'PAID'] } },
+        select: { customerId: true },
+        distinct: ['customerId'],
+      });
+
+      for (const row of customersWithPayments) {
+        if (row.customerId) {
+          await this.reconcileCustomerInvoices(row.customerId);
+        }
+      }
+    } catch (err: any) {
+      console.error('[RECONCILE_ALL_INVOICES_ERROR]', err?.message || err);
+    }
+  }
+
   async findAll(
     customerId: number | string,
     query: { status?: InvoiceStatus | string; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
@@ -115,6 +133,9 @@ export class InvoiceService {
       await this.reconcileCustomerInvoices(numCustomerId);
     } else if (!isSuperAdmin) {
       throw new UnauthorizedException('Customer context is required');
+    } else {
+      // Platform-wide Super Admin view: auto-reconcile across all active customers with payments
+      await this.reconcileAllCustomerInvoices();
     }
 
     const page = Math.max(Number(query.page) || 1, 1);
@@ -123,14 +144,20 @@ export class InvoiceService {
 
     if (query.status && (query.status as string) !== 'ALL') {
       const rawStatus = (query.status as string).trim().toUpperCase();
-      if (rawStatus === 'PENDING' || rawStatus === 'UNPAID') {
+      if (rawStatus === 'OVERDUE') {
+        where.OR = [
+          { status: InvoiceStatus.OVERDUE },
+          {
+            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.SENT, InvoiceStatus.DRAFT] },
+            dueDate: { lt: new Date() },
+          },
+        ];
+      } else if (rawStatus === 'PENDING' || rawStatus === 'UNPAID') {
         where.status = {
           in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT],
         };
       } else if (Object.values(InvoiceStatus).includes(rawStatus as InvoiceStatus)) {
         where.status = rawStatus as InvoiceStatus;
-      } else {
-        where.status = query.status;
       }
     }
 
@@ -140,6 +167,7 @@ export class InvoiceService {
         { invoiceNo: { contains: q, mode: 'insensitive' } },
         { contact: { firstName: { contains: q, mode: 'insensitive' } } },
         { contact: { lastName: { contains: q, mode: 'insensitive' } } },
+        { contact: { email: { contains: q, mode: 'insensitive' } } },
         { customer: { name: { contains: q, mode: 'insensitive' } } },
         { customer: { companyName: { contains: q, mode: 'insensitive' } } },
         { notes: { contains: q, mode: 'insensitive' } },
@@ -155,8 +183,17 @@ export class InvoiceService {
     let items: any[] = [];
     let total = 0;
 
+    const summaryBaseWhere = numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0
+      ? { customerId: numCustomerId, deletedAt: null }
+      : { deletedAt: null };
+
+    let totalInvoicesCount = 0;
+    let paidInvoicesCount = 0;
+    let pendingInvoicesCount = 0;
+    let overdueInvoicesCount = 0;
+
     try {
-      [items, total] = await Promise.all([
+      [items, total, totalInvoicesCount, paidInvoicesCount, pendingInvoicesCount, overdueInvoicesCount] = await Promise.all([
         this.prisma.invoice.findMany({
           where,
           skip,
@@ -169,6 +206,31 @@ export class InvoiceService {
           },
         }),
         this.prisma.invoice.count({ where }),
+        this.prisma.invoice.count({ where: summaryBaseWhere }),
+        this.prisma.invoice.count({
+          where: {
+            ...summaryBaseWhere,
+            status: InvoiceStatus.PAID,
+          },
+        }),
+        this.prisma.invoice.count({
+          where: {
+            ...summaryBaseWhere,
+            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
+          },
+        }),
+        this.prisma.invoice.count({
+          where: {
+            ...summaryBaseWhere,
+            OR: [
+              { status: InvoiceStatus.OVERDUE },
+              {
+                status: { in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
+                dueDate: { lt: new Date() },
+              },
+            ],
+          },
+        }),
       ]);
     } catch (err: any) {
       console.error('[INVOICE_ERROR]', {
@@ -236,6 +298,19 @@ export class InvoiceService {
     return {
       data: formatted,
       items: formatted,
+      summary: {
+        totalInvoices: totalInvoicesCount,
+        paidInvoices: paidInvoicesCount,
+        pendingPayments: pendingInvoicesCount,
+        pendingInvoices: pendingInvoicesCount,
+        overdueInvoices: overdueInvoicesCount,
+      },
+      counts: {
+        total: totalInvoicesCount,
+        paid: paidInvoicesCount,
+        pending: pendingInvoicesCount,
+        overdue: overdueInvoicesCount,
+      },
       pagination: {
         page,
         pageSize: limit,

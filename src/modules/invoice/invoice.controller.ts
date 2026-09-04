@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
 
 @ApiTags('Invoices & Payments')
@@ -45,15 +46,20 @@ export class InvoiceController {
     @Query('customerId') queryCustomerId?: string,
     @Query('clientId') queryClientId?: string,
   ) {
-    const targetCustomerId = queryCustomerId || queryClientId || customerId;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const explicitCustomer = queryCustomerId || queryClientId;
+    // For SUPER_ADMIN without explicit customer query, do not restrict to any customer (show all platform invoices).
+    // For normal customer or tenant admin, scope to their customerId.
+    const targetCustomerId = explicitCustomer || (isSuperAdmin ? undefined : customerId);
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
 
     console.log('[INVOICE_DEBUG]', {
       userId: user?.id,
       role: user?.role,
-      customerId: user?.customerId || targetCustomerId,
-      companyId: user?.companyId || targetCustomerId,
+      isSuperAdmin,
+      explicitCustomer,
+      targetCustomerId: targetCustomerId || 'ALL_PLATFORM',
       page: pageNum,
       limit: limitNum,
       status,
@@ -75,6 +81,7 @@ export class InvoiceController {
       status: 200,
       count: response?.data?.length || response?.items?.length || 0,
       total: response?.pagination?.total || response?.meta?.total || 0,
+      summary: response?.summary,
     });
 
     return response;
