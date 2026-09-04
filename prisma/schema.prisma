@@ -82,6 +82,8 @@ model Customer {
   trendingContents         TrendingContent[]
   marketingBanners         MarketingBanner[]
   socialMediaHandlers      SocialMediaHandler[]
+  roleWorkPermissions      RoleWorkPermission[]
+  workAccessRequests       WorkAccessRequest[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1038,6 +1040,7 @@ model Employee {
   editedWorks              Work[]                   @relation("AssignedEditorWorks")
   workTasks                WorkTask[]
   assignedMonthlySchedules MonthlySchedule[]
+  workAccessRequests       WorkAccessRequest[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -2336,4 +2339,47 @@ model SocialMediaHandler {
   @@index([status])
   @@index([deletedAt])
   @@map("social_media_handlers")
+}
+
+enum WorkAccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model RoleWorkPermission {
+  id          Int       @id @default(autoincrement())
+  customerId  Int
+  roleName    String
+  workModule  String
+  isEnabled   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, roleName, workModule])
+  @@index([customerId])
+  @@index([roleName])
+  @@map("role_work_permissions")
+}
+
+model WorkAccessRequest {
+  id              Int                     @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  workModule      String
+  status          WorkAccessRequestStatus @default(PENDING)
+  reason          String?
+  rejectionReason String?
+  approvedById    Int?
+  reviewedAt      DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee        Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("work_access_requests")
 }

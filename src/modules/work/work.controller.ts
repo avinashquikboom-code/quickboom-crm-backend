@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Put,
   Post,
   Query,
   Req,
@@ -13,17 +14,209 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
+import { WorkPermissionService } from './work-permission.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
-import { WorkStatus, WorkType, TaskStatus } from '@prisma/client';
+import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+function mapWorkTypeToModule(workType?: WorkType | string): string {
+  if (!workType) return 'video_edit';
+  const wt = String(workType).toUpperCase();
+  if (wt.includes('VIDEO') || wt.includes('EDIT')) return 'video_edit';
+  if (wt.includes('POST') || wt.includes('GRAPHIC')) return 'post_design';
+  if (wt.includes('STORY')) return 'story_design';
+  if (wt.includes('REEL') || wt.includes('SHOOT')) return 'reel_shoot';
+  return 'video_edit';
+}
+
 @ApiTags('Work & SSM Management')
 @Controller('works')
 export class WorkController {
-  constructor(private readonly workService: WorkService) {}
+  constructor(
+    private readonly workService: WorkService,
+    private readonly workPermissionService: WorkPermissionService,
+  ) {}
+
+  // ==========================================
+  // WORK MODULE PERMISSIONS & ACCESS REQUESTS
+  // ==========================================
+
+  @Get('permissions/modules')
+  @ApiOperation({ summary: 'Get list of standard work modules' })
+  getWorkModules() {
+    return this.workPermissionService.getWorkModules();
+  }
+
+  @Get('permissions/roles')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all role work module permissions for current customer' })
+  async getRoleWorkPermissions(
+    @CurrentCustomer() customerId: string,
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.getRoleWorkPermissions(Number(custId));
+  }
+
+  @Put('permissions/roles/:roleName')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update work module permissions for a specific role' })
+  async updateRoleWorkPermissions(
+    @CurrentCustomer() customerId: string,
+    @Param('roleName') roleName: string,
+    @Body() body: { permissions: Record<string, boolean> },
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.updateRoleWorkPermissions(
+      Number(custId),
+      roleName,
+      body.permissions || {},
+    );
+  }
+
+  @Get('my-permissions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get effective work module permissions for authenticated employee' })
+  async getMyPermissions(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: string,
+    @Req() req: any,
+  ) {
+    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
+    const employeeId = user?.employeeId || user?.employee?.id;
+    const userId = user?.id || user?.sub;
+
+    return this.workPermissionService.getEmployeeEffectivePermissions(Number(custId), {
+      employeeId: employeeId ? Number(employeeId) : undefined,
+      userId: userId ? Number(userId) : undefined,
+      email: user?.email,
+    });
+  }
+
+  @Post('access-requests')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Employee submit access request for a work module' })
+  async submitAccessRequest(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: string,
+    @Body() body: { workModule: string; reason?: string },
+    @Req() req: any,
+  ) {
+    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
+    const employeeId = user?.employeeId || user?.employee?.id;
+
+    // Resolve employee id if not directly in user token
+    let resolvedEmployeeId = employeeId ? Number(employeeId) : null;
+    if (!resolvedEmployeeId) {
+      const perms = await this.workPermissionService.getEmployeeEffectivePermissions(
+        Number(custId),
+        { userId: user?.id, email: user?.email },
+      );
+      resolvedEmployeeId = perms.employeeId;
+    }
+
+    if (!resolvedEmployeeId) {
+      throw new ForbiddenException('Only employees can submit work module access requests');
+    }
+
+    return this.workPermissionService.createAccessRequest(
+      Number(custId),
+      resolvedEmployeeId,
+      body.workModule,
+      body.reason,
+    );
+  }
+
+  @Get('my-access-requests')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Employee view their own access requests' })
+  async getMyAccessRequests(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: string,
+    @Req() req: any,
+  ) {
+    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
+    const employeeId = user?.employeeId || user?.employee?.id;
+
+    let resolvedEmployeeId = employeeId ? Number(employeeId) : null;
+    if (!resolvedEmployeeId) {
+      const perms = await this.workPermissionService.getEmployeeEffectivePermissions(
+        Number(custId),
+        { userId: user?.id, email: user?.email },
+      );
+      resolvedEmployeeId = perms.employeeId;
+    }
+
+    if (!resolvedEmployeeId) {
+      return [];
+    }
+
+    return this.workPermissionService.getMyAccessRequests(Number(custId), resolvedEmployeeId);
+  }
+
+  @Get('access-requests')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin view all employee work module access requests' })
+  async getAllAccessRequests(
+    @CurrentCustomer() customerId: string,
+    @Req() req: any,
+    @Query('status') status?: WorkAccessRequestStatus,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.getAllAccessRequests(Number(custId), status);
+  }
+
+  @Patch('access-requests/:id/approve')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin approve an employee work module access request' })
+  async approveAccessRequest(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.approveAccessRequest(
+      Number(custId),
+      Number(id),
+      user?.id,
+    );
+  }
+
+  @Patch('access-requests/:id/reject')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin reject an employee work module access request' })
+  async rejectAccessRequest(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const custId = customerId || req?.user?.customerId || req?.customerId;
+    return this.workPermissionService.rejectAccessRequest(
+      Number(custId),
+      Number(id),
+      body?.reason,
+      user?.id,
+    );
+  }
+
+  // ==========================================
+  // STANDARD WORK ENDPOINTS
+  // ==========================================
 
   @Get()
   @UseGuards(JwtAuthGuard, CustomerGuard)
@@ -250,7 +443,17 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Query('customerId') customerIdQuery: string,
     @Body() dto: SubmitWorkDto,
     @CurrentUser() user: any,
+    @Req() req: any,
   ) {
+    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    const work = await this.workService.findOne(custId, id);
+    if (work) {
+      const moduleKey = mapWorkTypeToModule(work.workType);
+      const employeeId = user?.employeeId || user?.employee?.id;
+      if (employeeId) {
+        await this.workPermissionService.checkPermission(Number(custId), Number(employeeId), moduleKey);
+      }
+    }
     return this.workService.submitWork(customerIdQuery, id, dto, user?.id);
   }
 
