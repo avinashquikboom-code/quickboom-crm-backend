@@ -347,6 +347,42 @@ export class WorkController {
     );
   }
 
+  @Get('employee/calendar')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get calendar scheduled activities for authenticated employee' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  async getEmployeeCalendar(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
+  ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!employeeId) {
+      return [];
+    }
+
+    return this.workService.getEmployeeCalendar(employeeId, {
+      date: date || startDate,
+      dateFrom: startDate || dateFrom,
+      dateTo: endDate || dateTo,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+      status,
+    });
+  }
+
   @Get('calendar')
   @Get('customer/calendar')
   @Get('admin/calendar')
@@ -379,6 +415,24 @@ export class WorkController {
     const authCustId = req?.user?.customerId;
     const userRole = req?.user?.role || (Array.isArray(req?.user?.roles) ? req?.user?.roles.join(',') : 'UNKNOWN');
     const requestedCustomerCode = req?.query?.customerId || headerCustId || req?.customerExternalId || 'NONE';
+
+    // If caller is an employee and not filtering for a specific client, route to employee calendar
+    const isEmployeeRole = userRole.toUpperCase() === 'EMPLOYEE' ||
+      (Array.isArray(req?.user?.roles) && req?.user?.roles.some((r: string) => r.toUpperCase().includes('EMPLOYEE'))) ||
+      req?.user?.employee != null;
+    if (isEmployeeRole && !req?.query?.customerId && !headerCustId) {
+      const resolvedEmpId = employeeId ? Number(employeeId) : await this.workService.resolveEmployeeIdForUser(req?.user);
+      if (resolvedEmpId) {
+        return this.workService.getEmployeeCalendar(resolvedEmpId, {
+          date: date || startDate,
+          dateFrom: dateFrom || startDate,
+          dateTo: dateTo || endDate,
+          month: month ? parseInt(month, 10) : undefined,
+          year: year ? parseInt(year, 10) : undefined,
+          status,
+        });
+      }
+    }
 
     // Strict customer isolation: Normal customer users are bound to their authenticated customerId
     const effectiveCustomerId = (authCustId && Number(authCustId) > 0)

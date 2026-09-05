@@ -60,6 +60,7 @@ export class AttendanceService {
         department: true,
         designation: true,
         shift: true,
+        user: { select: { avatar: true } },
       },
     });
 
@@ -76,6 +77,7 @@ export class AttendanceService {
           department: true,
           designation: true,
           shift: true,
+          user: { select: { avatar: true } },
         },
       });
     }
@@ -993,6 +995,8 @@ result: SUCCESS`);
         firstName: employee.firstName,
         lastName: employee.lastName || '',
         email: employee.email,
+        profilePhoto: employee.user?.avatar || null,
+        avatar: employee.user?.avatar || null,
         department: employee.department?.name || 'General',
         designation: employee.designation?.name || 'Staff',
       },

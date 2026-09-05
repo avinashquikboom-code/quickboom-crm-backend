@@ -1844,6 +1844,7 @@ export class EmployeeService {
         designation: true,
         office: true,
         shift: true,
+        user: { select: { avatar: true } },
         customer: {
           select: {
             id: true,
@@ -1868,6 +1869,7 @@ export class EmployeeService {
             designation: true,
             office: true,
             shift: true,
+            user: { select: { avatar: true } },
             customer: true,
           },
         });
@@ -1898,6 +1900,8 @@ export class EmployeeService {
       name: `${employee.firstName} ${employee.lastName}`.trim(),
       email: employee.email,
       phone: employee.phone || '',
+      profilePhoto: employee.user?.avatar || null,
+      avatar: employee.user?.avatar || null,
       gender: employee.gender || '',
       dob: employee.dob ? employee.dob.toISOString().split('T')[0] : '',
       joiningDate: employee.joiningDate ? employee.joiningDate.toISOString().split('T')[0] : '',

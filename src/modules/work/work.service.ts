@@ -954,7 +954,7 @@ returnedSchedules: 0`);
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, address: true, city: true, state: true } },
         team: { select: { name: true } },
         assignedTo: { select: { id: true, firstName: true, lastName: true } },
         editor: { select: { id: true, firstName: true, lastName: true } },
@@ -1081,6 +1081,7 @@ returnedSchedules: 0`);
         type: isLocked ? 'LOCKED' : w.workType,
         activityType: isLocked ? 'LOCKED' : w.workType,
         status: isLocked ? 'LOCKED' : w.status,
+        location: [w.customer?.address, w.customer?.city, w.customer?.state].filter(Boolean).join(', ') || null,
         canReschedule,
         canRequestRework,
         reworkActionLabel,
@@ -1165,6 +1166,210 @@ status: ${item.status}`);
       `[API_PERFORMANCE] GET /works/calendar customerId=${scopedCustomerId} DB duration=${duration}ms total=${duration}ms`,
     );
     return result;
+  }
+
+  /**
+   * Get scheduled calendar events assigned to a specific employee.
+   * Strictly filters by:
+   * - assignedToId === employeeId, OR
+   * - editorId === employeeId, OR
+   * - tasks have assignedToId === employeeId
+   */
+  async getEmployeeCalendar(
+    employeeId: number,
+    query: {
+      date?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      month?: number;
+      year?: number;
+      status?: WorkStatus;
+    } = {},
+  ) {
+    const startTime = Date.now();
+    const numEmployeeId = Number(employeeId);
+    const where: any = {
+      OR: [
+        { assignedToId: numEmployeeId },
+        { editorId: numEmployeeId },
+        { tasks: { some: { assignedToId: numEmployeeId } } },
+      ],
+      status: { not: WorkStatus.CANCELLED },
+    };
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    let targetDateStr: string | undefined;
+    let targetYear: number | undefined;
+    let targetMonth: number | undefined;
+    let targetDay: number | undefined;
+
+    if (query.date) {
+      targetDateStr = query.date.trim();
+      const parts = targetDateStr.split('-').map(Number);
+      if (parts.length === 3 && !parts.some(isNaN)) {
+        const [y, m, day] = parts;
+        targetYear = y;
+        targetMonth = m;
+        targetDay = day;
+        const startWindow = new Date(Date.UTC(y, m - 1, day - 1, 0, 0, 0, 0));
+        const endWindow = new Date(Date.UTC(y, m - 1, day + 1, 23, 59, 59, 999));
+        where.scheduledDate = { gte: startWindow, lte: endWindow };
+      } else {
+        const d = new Date(query.date);
+        if (!isNaN(d.getTime())) {
+          targetYear = d.getFullYear();
+          targetMonth = d.getMonth() + 1;
+          targetDay = d.getDate();
+          const startWindow = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+          const endWindow = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+          where.scheduledDate = { gte: startWindow, lte: endWindow };
+        }
+      }
+    } else if (query.month && query.year) {
+      const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 1, 0, 0, 0, 0));
+      const endOfMonth = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59, 999));
+      where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
+    } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
+      where.scheduledDate = {};
+      const from = query.dateFrom || (query as any).startDate;
+      const to = query.dateTo || (query as any).endDate;
+      if (from) where.scheduledDate.gte = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setHours(23, 59, 59, 999);
+        where.scheduledDate.lte = toDate;
+      }
+    }
+
+    const items = await this.prisma.work.findMany({
+      where,
+      orderBy: { scheduledDate: 'asc' },
+      include: {
+        customer: { select: { id: true, name: true, address: true, city: true, state: true } },
+        team: { select: { name: true } },
+        assignedTo: { select: { id: true, firstName: true, lastName: true } },
+        editor: { select: { id: true, firstName: true, lastName: true } },
+        entitlement: { select: { serviceName: true } },
+        subscription: {
+          select: {
+            id: true,
+            plan: { select: { name: true } },
+          },
+        },
+        tasks: {
+          select: { id: true, title: true, status: true, assignedToId: true },
+        },
+      },
+    });
+
+    const filteredItems = (targetYear && targetMonth && targetDay)
+      ? items.filter((w) => {
+          if (!w.scheduledDate) return false;
+          const raw = w.scheduledDate;
+          const str = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString() : String(raw));
+          const datePart = str.includes('T') ? str.split('T')[0] : str.split(' ')[0];
+          const [y, m, d] = datePart.split('-').map(Number);
+          if (y === targetYear && m === targetMonth && d === targetDay) return true;
+
+          const dateObj = new Date(w.scheduledDate);
+          if (isNaN(dateObj.getTime())) return false;
+          const isUtcMatch =
+            dateObj.getUTCFullYear() === targetYear &&
+            dateObj.getUTCMonth() + 1 === targetMonth &&
+            dateObj.getUTCDate() === targetDay;
+          const isLocalMatch =
+            dateObj.getFullYear() === targetYear &&
+            dateObj.getMonth() + 1 === targetMonth &&
+            dateObj.getDate() === targetDay;
+          return isUtcMatch || isLocalMatch;
+        })
+      : items;
+
+    const result = filteredItems.map((w) => {
+      const purchaseRef = w.subscriptionId
+        ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
+        : (w.subscription?.id ? `PUR-${String(w.subscription.id).padStart(3, '0')}` : `PUR-${String(w.customerId).padStart(3, '0')}`);
+      const startTime = w.scheduledTime || '10:00 AM';
+      const endTime = '11:00 AM';
+      const prodName = w.entitlement?.serviceName || w.title || w.workType;
+      const planName = w.subscription?.plan?.name || 'Active Plan';
+
+      const schedDateVal = w.scheduledDate
+        ? (w.scheduledDate instanceof Date
+            ? w.scheduledDate.toISOString().split('T')[0]
+            : String(w.scheduledDate).split('T')[0])
+        : null;
+
+      const customerLocation = [w.customer?.address, w.customer?.city, w.customer?.state]
+        .filter(Boolean)
+        .join(', ') || null;
+
+      return {
+        id: String(w.id),
+        activityId: String(w.id),
+        customerId: String(w.customerId),
+        customerName: w.customer?.name || 'Customer',
+        purchaseId: purchaseRef,
+        productName: prodName,
+        serviceName: prodName,
+        planName: planName,
+        title: w.title,
+        scheduledDate: schedDateVal,
+        scheduledAt: w.scheduledDate,
+        scheduledTime: startTime,
+        date: w.scheduledDate,
+        scheduleDate: w.scheduledDate,
+        time: startTime,
+        startTime: startTime,
+        endTime: endTime,
+        type: w.workType,
+        activityType: w.workType,
+        status: w.status,
+        location: customerLocation,
+        canReschedule: false,
+        canRequestRework: false,
+        reworkActionLabel: null,
+        isLocked: false,
+        lockMessage: null,
+        assignedToId: w.assignedToId,
+        assignedEmployee: w.assignedTo
+          ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
+          : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Staff'),
+        assignedToName: w.assignedTo
+          ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
+          : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Staff'),
+        editorId: w.editorId,
+        editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
+        team: w.team?.name || 'Creative Team',
+        notes: w.description || w.notes || `${w.title} deliverable`,
+        outputUrl: w.outputUrl,
+        feedback: w.feedback,
+        revisionCount: w.revisionCount,
+      };
+    });
+
+    this.logger.log(`[EMPLOYEE_CALENDAR] employeeId: ${employeeId} count: ${result.length} durationMs: ${Date.now() - startTime}`);
+    return result;
+  }
+
+  /**
+   * Resolve employee record ID for a user by user ID or email.
+   */
+  async resolveEmployeeIdForUser(user: any): Promise<number | null> {
+    if (!user) return null;
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        OR: [
+          { userId: user.id },
+          { email: { equals: user.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
+    });
+    return employee?.id ?? null;
   }
 
   /**
