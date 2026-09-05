@@ -137,17 +137,28 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       !isSuperAdmin &&
       !isCustomerAdmin &&
       !isCompanyAdmin &&
-      user.userRoles?.some((ur) => {
-        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
-        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
-        return (
-          type === RoleType.SALES_EXECUTIVE ||
-          type === RoleType.SALES_MANAGER ||
-          type === RoleType.SUPPORT_AGENT ||
-          name.includes('EMPLOYEE') ||
-          name.includes('STAFF')
-        );
-      });
+      Boolean(
+        tokenIsEmployee ||
+        (user.employee && user.employee.status === 'ACTIVE') ||
+        user.userRoles?.some((ur) => {
+          const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+          const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+          return (
+            type === RoleType.SALES_EXECUTIVE ||
+            type === RoleType.SALES_MANAGER ||
+            type === RoleType.SUPPORT_AGENT ||
+            name.includes('EMPLOYEE') ||
+            name.includes('STAFF') ||
+            name.includes('PHOTOGRAPHER') ||
+            name.includes('EDITOR') ||
+            name.includes('DESIGNER')
+          );
+        })
+      );
+
+    if (isEmployee && !roles.includes('EMPLOYEE')) {
+      roles.push('EMPLOYEE');
+    }
 
     let primaryRole: string;
     let primaryRoleType: string;

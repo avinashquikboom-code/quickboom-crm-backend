@@ -895,6 +895,44 @@ export class EmployeeService {
     return { nextEmployeeId: candidateCode, prefix: cleanPrefix };
   }
 
+  /**
+   * Resolves the default enterprise customer workspace ID for global Super Admin operations.
+   * Auto-heals root customer (ID: 1) if inactive or deleted, or falls back to first active customer.
+   */
+  async resolveDefaultCustomerId(): Promise<number> {
+    const rootCustomer = await this.prisma.customer.findUnique({
+      where: { id: 1 },
+    });
+    if (rootCustomer) {
+      if (!rootCustomer.isActive || rootCustomer.deletedAt) {
+        await this.prisma.customer.update({
+          where: { id: 1 },
+          data: { isActive: true, deletedAt: null },
+        });
+      }
+      return rootCustomer.id;
+    }
+
+    const firstActive = await this.prisma.customer.findFirst({
+      where: { deletedAt: null, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    if (firstActive) {
+      return firstActive.id;
+    }
+
+    const defaultOrg = await this.prisma.customer.create({
+      data: {
+        name: 'QuikBoom Enterprise',
+        companyName: 'QuikBoom Enterprise Workspace',
+        email: 'admin@quickboom.com',
+        isActive: true,
+        customerType: 'ENTERPRISE',
+      },
+    });
+    return defaultOrg.id;
+  }
+
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
@@ -1009,7 +1047,8 @@ export class EmployeeService {
 
       // User account password hashing
       const normalizedEmail = dto.email.trim().toLowerCase();
-      const rawPassword = dto.password?.trim() || 'Password@123';
+      const hasExplicitPassword = Boolean(dto.password && dto.password.trim().length > 0);
+      const rawPassword = hasExplicitPassword ? dto.password!.trim() : 'Password@123';
       const passwordHash = await bcrypt.hash(rawPassword, 10);
 
       // Find or create linked User account
@@ -1040,7 +1079,7 @@ export class EmployeeService {
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
           isVerified: true,
           deletedAt: null,
-          passwordHash,
+          ...(hasExplicitPassword ? { passwordHash } : {}),
         };
         user = await tx.user.update({
           where: { id: user.id },

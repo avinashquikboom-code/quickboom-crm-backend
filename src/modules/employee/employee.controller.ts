@@ -224,7 +224,11 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || user?.customerId) : user?.customerId;
+
+    if (!targetCustomerId && isSuperAdmin) {
+      targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
+    }
 
     if (!targetCustomerId) {
       throw new BadRequestException('customerId is required to create an employee');

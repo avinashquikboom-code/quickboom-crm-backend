@@ -781,15 +781,32 @@ export class AuthService {
       }
     }
 
+    // Align user.customerId with employee.customerId if employee is present and user.customerId is missing or unaligned
+    if (user.employee?.customerId && (!user.customerId || user.customerId !== user.employee.customerId)) {
+      user.customerId = user.employee.customerId;
+      if (!user.customer || user.customer.id !== user.employee.customerId) {
+        user.customer = await this.prisma.customer.findUnique({
+          where: { id: user.employee.customerId },
+        });
+      }
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { customerId: user.employee.customerId },
+      }).catch(() => null);
+    }
+
     // Auto-heal Root Customer 1 (system default organization) if inactive or soft-deleted
-    if (user.customer && user.customer.id === 1 && (!user.customer.isActive || user.customer.deletedAt)) {
+    const targetCust = user.customer || (user.employee?.customerId === 1 ? await this.prisma.customer.findUnique({ where: { id: 1 } }) : null);
+    if (targetCust && targetCust.id === 1 && (!targetCust.isActive || targetCust.deletedAt)) {
       try {
         await this.prisma.customer.update({
           where: { id: 1 },
           data: { isActive: true, deletedAt: null },
         });
-        user.customer.isActive = true;
-        user.customer.deletedAt = null;
+        if (user.customer) {
+          user.customer.isActive = true;
+          user.customer.deletedAt = null;
+        }
       } catch (err) {
         this.logger.warn(`Failed to auto-heal Root Customer 1: ${err.message}`);
       }

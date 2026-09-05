@@ -16,6 +16,13 @@ export function isUserSuperAdmin(user: any): boolean {
       return normalized === 'SUPERADMIN' || r === RoleType.SUPER_ADMIN;
     });
   }
+  if (Array.isArray(user.userRoles)) {
+    return user.userRoles.some((ur: any) => {
+      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
+    });
+  }
   return false;
 }
 
