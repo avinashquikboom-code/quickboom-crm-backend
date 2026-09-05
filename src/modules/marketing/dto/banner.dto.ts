@@ -31,6 +31,12 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   imageUrl?: string;
 
+  @ApiPropertyOptional({ example: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/banner.jpg', description: 'Banner image URL (alias for imageUrl)' })
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
+  image?: string;
+
   @ApiPropertyOptional({ example: 'marketing/banners/1724783921-xyz123-banner.jpg' })
   @IsString()
   @IsOptional()

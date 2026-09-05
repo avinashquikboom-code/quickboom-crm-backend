@@ -199,6 +199,22 @@ describe('Marketing Module - Banner Service & Controller', () => {
       expect(result.imagePublicId).toBe('marketing/banners/promo_banner.png');
     });
 
+    it('creates a new marketing banner when image is supplied as alias for imageUrl', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        title: 'Image Alias Banner',
+        subtitle: 'From direct image property',
+        image: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/alias.jpg',
+        ctaText: 'Claim Offer',
+        priority: 75,
+      };
+
+      const result = await service.create(dto as any, user);
+
+      expect(result).toBeDefined();
+      expect(result.imageUrl).toContain('alias.jpg');
+    });
+
     it('rejects creation if neither image file nor imageUrl is provided', async () => {
       const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
       const dto = {

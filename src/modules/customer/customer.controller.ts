@@ -225,8 +225,13 @@ export class CustomerController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Deactivate / soft-delete customer' })
-  async remove(@Param('id') id: string) {
-    return this.customerService.remove(id);
+  @ApiOperation({ summary: 'Deactivate / delete customer with customer-specific cascade delete for invoices & billing' })
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Query('hard') hard?: string,
+  ) {
+    const isHard = hard === 'true' || hard === '1';
+    return this.customerService.remove(id, user, isHard);
   }
 }

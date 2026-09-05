@@ -16,6 +16,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class CustomerService {
@@ -780,9 +781,15 @@ export class CustomerService {
   }
 
   /**
-   * Soft-delete / deactivate customer
+   * Delete / deactivate customer with customer-specific cascade delete for invoices & billing
+   * Guaranteed:
+   * - Only target customer's related invoices & billing/payment records are deleted.
+   * - Other customers' data is completely untouched.
+   * - Global plan/master data is untouched.
+   * - Operation is atomic within a database transaction.
+   * - Tenant isolation is enforced (non-super-admin can only delete their own customer).
    */
-  async remove(id: number | string) {
+  async remove(id: number | string, user?: any, hardDelete = false) {
     const numericId = this.parseCustomerId(id);
     const existing = await this.prisma.customer.findUnique({
       where: { id: numericId },
@@ -792,15 +799,86 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
-    const archived = await this.prisma.customer.update({
-      where: { id: numericId },
-      data: {
-        isActive: false,
-        deletedAt: new Date(),
-      },
+    // Tenant Isolation Check
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== numericId) {
+        throw new ForbiddenException('You do not have permission to delete this customer.');
+      }
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Delete subscription installments belonging exclusively to this customer
+      await tx.subscriptionInstallment.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 2. Delete invoice items belonging to this customer's invoices
+      await tx.invoiceItem.deleteMany({
+        where: { invoice: { customerId: numericId } },
+      });
+
+      // 3. Delete invoices belonging exclusively to this customer
+      await tx.invoice.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 4. Delete payment history belonging exclusively to this customer
+      await tx.paymentHistory.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 5. Delete custom plan orders belonging exclusively to this customer
+      await tx.customPlanOrder.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 6. Delete monthly schedules belonging exclusively to this customer
+      await tx.monthlySchedule.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 7. Delete customer subscriptions belonging exclusively to this customer
+      await tx.customerSubscription.deleteMany({
+        where: { customerId: numericId },
+      });
+
+      // 8. Invalidate all active sessions & refresh tokens for customer's users
+      await tx.refreshToken.deleteMany({
+        where: { user: { customerId: numericId } },
+      });
+      await tx.session.deleteMany({
+        where: { user: { customerId: numericId } },
+      });
+
+      // 9. Deactivate users associated with this customer so they cannot log in
+      await tx.user.updateMany({
+        where: { customerId: numericId },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+        },
+      });
+
+      // 10. Either hard-delete or soft-delete customer
+      if (hardDelete) {
+        return tx.customer.delete({
+          where: { id: numericId },
+        });
+      }
+
+      return tx.customer.update({
+        where: { id: numericId },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+        },
+      });
     });
 
-    return this.serializeBigInt(archived);
+    this.logger.log(`[CUSTOMER_DELETE_CASCADE] Customer #${numericId} deleted. Hard: ${hardDelete}. Invoices & billing purged.`);
+
+    return this.serializeBigInt(result);
   }
 
   /**

@@ -189,7 +189,7 @@ model PaymentHistory {
   updatedAt      DateTime                  @updatedAt
   deletedAt      DateTime?
   customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id])
+  subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   installments   SubscriptionInstallment[]
 
   @@index([customerId])
@@ -1878,8 +1878,8 @@ model SubscriptionInstallment {
   deletedAt         DateTime?
   customer          Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
   subscription      CustomerSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  paymentHistory    PaymentHistory?      @relation(fields: [paymentHistoryId], references: [id])
-  invoice           Invoice?             @relation(fields: [invoiceId], references: [id])
+  paymentHistory    PaymentHistory?      @relation(fields: [paymentHistoryId], references: [id], onDelete: SetNull)
+  invoice           Invoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([subscriptionId])

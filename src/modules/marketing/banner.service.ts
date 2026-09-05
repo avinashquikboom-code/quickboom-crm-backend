@@ -53,7 +53,7 @@ export class BannerService {
     user: { id: number; customerId?: number | null; role?: string },
     file?: Express.Multer.File,
   ) {
-    let imageUrl = dto.imageUrl?.trim();
+    let imageUrl = (dto.imageUrl || dto.image)?.trim();
     let imagePublicId = dto.imagePublicId?.trim() || null;
 
     if (file) {
@@ -251,7 +251,8 @@ export class BannerService {
   ) {
     const existing = await this.findOne(id, user);
 
-    let imageUrl = dto.imageUrl !== undefined ? dto.imageUrl.trim() : undefined;
+    const rawImageUrl = dto.imageUrl !== undefined ? dto.imageUrl : dto.image;
+    let imageUrl = rawImageUrl !== undefined ? rawImageUrl.trim() : undefined;
     let imagePublicId = dto.imagePublicId !== undefined ? dto.imagePublicId.trim() : undefined;
 
     if (file) {
