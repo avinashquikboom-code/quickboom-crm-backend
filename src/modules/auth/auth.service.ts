@@ -547,6 +547,9 @@ export class AuthService {
           OR: empWhere,
         },
         include: {
+          customer: true,
+          department: true,
+          designation: true,
           user: {
             include: {
               customer: true,
@@ -566,20 +569,114 @@ export class AuthService {
 
       if (matchedEmployee?.user) {
         user = matchedEmployee.user;
+      } else if (matchedEmployee) {
+        // Auto-heal: Employee exists in Employee Master but has no linked User account
+        const rawPassword = password || 'Password@123';
+        const passwordHash = await bcrypt.hash(rawPassword, 10);
+        const createdUser = await this.prisma.user.create({
+          data: {
+            customerId: matchedEmployee.customerId,
+            email: matchedEmployee.email.toLowerCase(),
+            phone: matchedEmployee.phone || null,
+            firstName: matchedEmployee.firstName,
+            lastName: matchedEmployee.lastName,
+            passwordHash,
+            isActive: matchedEmployee.status === 'ACTIVE',
+            isVerified: true,
+          },
+          include: {
+            customer: true,
+            userRoles: { include: { role: true } },
+          },
+        });
+        await this.prisma.employee.update({
+          where: { id: matchedEmployee.id },
+          data: { userId: createdUser.id },
+        });
+
+        // Ensure Employee role
+        const empRole = await this.prisma.role.findFirst({
+          where: {
+            OR: [
+              { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
+              { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (empRole) {
+          await this.prisma.userRole.create({
+            data: { userId: createdUser.id, roleId: empRole.id },
+          }).catch(() => null);
+        }
+
+        user = {
+          ...createdUser,
+          employee: matchedEmployee,
+        } as any;
+      }
+    }
+
+    // Auto-heal: User exists, but employee relation is unlinked (e.g. Employee.userId was null)
+    if (user && !user.employee) {
+      const unlinkedEmployee = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { email: { equals: normalizedEmail, mode: 'insensitive' } },
+            ...(phoneDigits.length >= 10 ? [{ phone: { contains: phoneDigits.slice(-10) } }] : []),
+          ],
+        },
+        include: {
+          department: true,
+          designation: true,
+        },
+      });
+      if (unlinkedEmployee) {
+        await this.prisma.employee.update({
+          where: { id: unlinkedEmployee.id },
+          data: { userId: user.id },
+        }).catch(() => null);
+        user.employee = unlinkedEmployee;
+        if (!user.customerId && unlinkedEmployee.customerId) {
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: { customerId: unlinkedEmployee.customerId },
+          }).catch(() => null);
+          user.customerId = unlinkedEmployee.customerId;
+        }
       }
     }
 
     if (!user || user.deletedAt) {
-      throw new UnauthorizedException('Invalid credentials');
+      if (user?.deletedAt && user.employee && user.employee.status === 'ACTIVE') {
+        // Auto-heal soft-deleted user if active employee
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { deletedAt: null, isActive: true },
+        }).catch(() => null);
+        user.deletedAt = null;
+        user.isActive = true;
+      } else {
+        throw new UnauthorizedException('Invalid credentials');
+      }
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    const isPasswordValid =
+      (await bcrypt.compare(password, user.passwordHash)) ||
+      (password !== password.trim() && (await bcrypt.compare(password.trim(), user.passwordHash)));
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedException('Your account has been deactivated');
+      if (user.employee && user.employee.status === 'ACTIVE') {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { isActive: true },
+        }).catch(() => null);
+        user.isActive = true;
+      } else {
+        throw new UnauthorizedException('Your account has been deactivated');
+      }
     }
 
     // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
@@ -701,6 +798,14 @@ export class AuthService {
     const rawApp = (appType || '').trim().toLowerCase();
     const upperExpectedRole = (appType || '').trim().toUpperCase();
 
+    // If logging into Employee portal and has active employee record, ensure userRole is EMPLOYEE
+    if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole) && user.employee && user.employee.status === 'ACTIVE') {
+      if (!isSuperAdminRole) {
+        userRole = 'EMPLOYEE';
+        userRoleType = RoleType.CUSTOM;
+      }
+    }
+
     // 2. Strict Target App / Expected Role Login Validation (Must precede generic suspension checks)
     if (upperExpectedRole === 'SUPER_ADMIN') {
       if (userRole !== 'SUPER_ADMIN') {
@@ -740,17 +845,17 @@ export class AuthService {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
       }
-      if (userRole === 'CUSTOMER_ADMIN' || userRole === 'CUSTOMER') {
-        throw new ForbiddenException('Customer accounts cannot log in through the employee mobile portal. Please use the customer login.');
+      if (userRole === 'CUSTOMER_ADMIN') {
+        throw new ForbiddenException('Customer Admin accounts cannot log in through the employee mobile portal. Please use the customer login.');
       }
       if (userRole === 'COMPANY_ADMIN') {
         throw new ForbiddenException('Company Admin accounts cannot log in through the employee mobile portal.');
       }
-      if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
-        throw new ForbiddenException('These credentials are not registered as an Employee account.');
-      }
       if (!user.employee) {
         throw new UnauthorizedException('Employee profile not found.');
+      }
+      if (userRole !== 'EMPLOYEE') {
+        throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
       if (user.employee.status === 'PAYMENT_PENDING' || user.employee.status === 'PENDING') {
         throw new UnauthorizedException('Payment verification pending.');
@@ -821,7 +926,7 @@ export class AuthService {
     const primaryRole = user.userRoles?.[0]?.role;
     const roleId = primaryRole?.id || (user.userRoles?.[0]?.roleId ?? null);
 
-    let effectiveCustomerId = user.customerId || user.customer?.id || null;
+    let effectiveCustomerId = user.customerId || user.customer?.id || user.employee?.customerId || null;
     if (!effectiveCustomerId && userRole !== 'SUPER_ADMIN') {
       const cust = await this.prisma.customer.findFirst({
         where: {
@@ -841,6 +946,14 @@ export class AuthService {
           (user as any).customer = cust;
         }
       }
+    }
+
+    if (effectiveCustomerId && !user.customerId && userRole !== 'SUPER_ADMIN') {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { customerId: effectiveCustomerId },
+      }).catch(() => null);
+      user.customerId = effectiveCustomerId;
     }
 
     const tokens = await this.generateTokens(

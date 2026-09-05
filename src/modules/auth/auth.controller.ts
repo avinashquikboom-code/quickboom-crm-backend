@@ -82,6 +82,14 @@ export class AuthController {
   }
 
   @Public()
+  @Post('login/employee')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Employee mobile application login alias' })
+  async loginEmployee(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'EMPLOYEE');
+  }
+
+  @Public()
   @Post('mobile/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mobile application login alias' })

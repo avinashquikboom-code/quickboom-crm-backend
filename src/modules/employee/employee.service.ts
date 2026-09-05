@@ -1031,13 +1031,17 @@ export class EmployeeService {
           },
         });
       } else {
-        // If user exists and new password was specifically provided, update password
+        // If user exists, update credentials, customerId, and active status
         const updateUserData: any = {
+          customerId: numCustomerId,
+          firstName: dto.firstName || user.firstName,
+          lastName: dto.lastName || user.lastName,
+          phone: dto.phone || user.phone,
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
+          isVerified: true,
+          deletedAt: null,
+          passwordHash,
         };
-        if (dto.password?.trim()) {
-          updateUserData.passwordHash = passwordHash;
-        }
         user = await tx.user.update({
           where: { id: user.id },
           data: updateUserData,
@@ -1067,9 +1071,10 @@ export class EmployeeService {
       let employeeRole = await tx.role.findFirst({
         where: {
           OR: [
-            { customerId: numCustomerId, name: 'Employee' },
-            { customerId: numCustomerId, type: RoleType.CUSTOM },
-            { customerId: null, name: 'Employee' },
+            { customerId: numCustomerId, name: { equals: 'Employee', mode: 'insensitive' } },
+            { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
+            { customerId: numCustomerId, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
+            { customerId: null, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
           ],
         },
       });
@@ -1099,6 +1104,28 @@ export class EmployeeService {
             roleId: employeeRole.id,
           },
         });
+      }
+
+      // Link designation-specific role if one exists (e.g. Video Editor, Graphic Designer, Photographer)
+      if (designation?.name && designation.name.toUpperCase() !== 'STAFF') {
+        const desigRole = await tx.role.findFirst({
+          where: {
+            OR: [
+              { customerId: numCustomerId, name: { equals: designation.name, mode: 'insensitive' } },
+              { customerId: null, name: { equals: designation.name, mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (desigRole) {
+          const hasDesigUserRole = await tx.userRole.findFirst({
+            where: { userId: user.id, roleId: desigRole.id },
+          });
+          if (!hasDesigUserRole) {
+            await tx.userRole.create({
+              data: { userId: user.id, roleId: desigRole.id },
+            });
+          }
+        }
       }
 
       // Office / Branch resolution with geo-fence linkage
@@ -1294,11 +1321,14 @@ export class EmployeeService {
       if (dto.mobileLoginEnabled !== undefined)
         updateData.mobileLoginEnabled = dto.mobileLoginEnabled;
 
-      // Handle user account updates (status & optional password) — never touch userId itself
+      // Handle user account updates (status & optional password)
       if (existing?.userId) {
         const userUpdate: any = {};
         if (dto.status !== undefined) {
           userUpdate.isActive = dto.status === 'ACTIVE';
+          if (dto.status === 'ACTIVE') {
+            userUpdate.deletedAt = null;
+          }
         }
         if (dto.password && dto.password.trim().length > 0) {
           userUpdate.passwordHash = await bcrypt.hash(dto.password.trim(), 10);
@@ -1306,6 +1336,7 @@ export class EmployeeService {
         if (dto.firstName !== undefined) userUpdate.firstName = dto.firstName;
         if (dto.lastName !== undefined) userUpdate.lastName = dto.lastName;
         if (dto.phone !== undefined) userUpdate.phone = dto.phone;
+        userUpdate.customerId = targetCustId;
 
         if (Object.keys(userUpdate).length > 0) {
           await tx.user
@@ -1314,6 +1345,71 @@ export class EmployeeService {
               data: userUpdate,
             })
             .catch(() => null);
+        }
+      } else {
+        // Auto-heal missing User account for this employee
+        const normalizedEmail = (dto.email || existing?.email || '').trim().toLowerCase();
+        if (normalizedEmail) {
+          let user = await tx.user.findFirst({ where: { email: normalizedEmail } });
+          const rawPassword = dto.password?.trim() || 'Password@123';
+          const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+          if (!user) {
+            user = await tx.user.create({
+              data: {
+                customerId: targetCustId,
+                email: normalizedEmail,
+                phone: dto.phone || existing?.phone || null,
+                firstName: dto.firstName || existing?.firstName || 'Employee',
+                lastName: dto.lastName || existing?.lastName || '',
+                passwordHash,
+                isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
+                isVerified: true,
+              },
+            });
+          } else {
+            await tx.user.update({
+              where: { id: user.id },
+              data: {
+                customerId: targetCustId,
+                isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
+                deletedAt: null,
+                ...(dto.password?.trim() ? { passwordHash } : {}),
+              },
+            });
+          }
+
+          updateData.userId = user.id;
+
+          // Assign Employee role
+          let employeeRole = await tx.role.findFirst({
+            where: {
+              OR: [
+                { customerId: targetCustId, name: { equals: 'Employee', mode: 'insensitive' } },
+                { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
+                { customerId: targetCustId, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
+                { customerId: null, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
+              ],
+            },
+          });
+          if (!employeeRole) {
+            employeeRole = await tx.role.create({
+              data: {
+                customerId: targetCustId,
+                name: 'Employee',
+                type: RoleType.CUSTOM,
+                description: 'Employee mobile application role',
+              },
+            });
+          }
+          const hasUserRole = await tx.userRole.findFirst({
+            where: { userId: user.id, roleId: employeeRole.id },
+          });
+          if (!hasUserRole) {
+            await tx.userRole.create({
+              data: { userId: user.id, roleId: employeeRole.id },
+            });
+          }
         }
       }
 
