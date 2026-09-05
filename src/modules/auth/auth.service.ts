@@ -241,15 +241,29 @@ export class AuthService {
 
     const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
+    const phoneDigits = rawInput.replace(/\D/g, '');
 
-    const user = await this.prisma.user.findFirst({
+    const phoneConditions: any[] = [
+      { phone: rawInput },
+      { employee: { phone: rawInput } },
+    ];
+    if (phoneDigits.length >= 10) {
+      const last10 = phoneDigits.slice(-10);
+      phoneConditions.push(
+        { phone: { endsWith: last10 } },
+        { phone: { contains: last10 } },
+        { employee: { phone: { endsWith: last10 } } },
+        { employee: { phone: { contains: last10 } } },
+      );
+    }
+
+    let user = await this.prisma.user.findFirst({
       where: {
         OR: [
-          { email: normalizedEmail },
-          { phone: rawInput },
-          { employee: { employeeCode: rawInput } },
-          { employee: { email: normalizedEmail } },
-          { employee: { phone: rawInput } },
+          { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
+          { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
+          ...phoneConditions,
         ],
       },
       include: {
@@ -266,12 +280,48 @@ export class AuthService {
       },
     });
 
-    const isEmployeeApp = ['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes((appType || '').trim().toUpperCase());
+    if (!user) {
+      const empWhere: any[] = [
+        { employeeCode: { equals: rawInput, mode: 'insensitive' } },
+        { email: { equals: normalizedEmail, mode: 'insensitive' } },
+        { phone: rawInput },
+      ];
+      if (phoneDigits.length >= 10) {
+        const last10 = phoneDigits.slice(-10);
+        empWhere.push(
+          { phone: { endsWith: last10 } },
+          { phone: { contains: last10 } },
+        );
+      }
+
+      const matchedEmployee = await this.prisma.employee.findFirst({
+        where: {
+          OR: empWhere,
+        },
+        include: {
+          user: {
+            include: {
+              customer: true,
+              employee: {
+                include: {
+                  department: true,
+                  designation: true,
+                },
+              },
+              userRoles: {
+                include: { role: true },
+              },
+            },
+          },
+        },
+      });
+
+      if (matchedEmployee?.user) {
+        user = matchedEmployee.user;
+      }
+    }
 
     if (!user || user.deletedAt) {
-      if (isEmployeeApp) {
-        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
-      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -281,14 +331,7 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      if (isEmployeeApp) {
-        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
-      }
       throw new UnauthorizedException('Your account has been deactivated');
-    }
-
-    if (isEmployeeApp && (!user.employee || user.employee.status !== 'ACTIVE')) {
-      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
     }
 
     // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
@@ -393,39 +436,24 @@ export class AuthService {
       }
     }
 
-    // 2. Company suspension and account status verification
-    if (userRole === 'SUPER_ADMIN') {
-      // Platform Super Admin is never blocked by tenant/customer suspension status
-    } else if (userRole === 'COMPANY_ADMIN') {
-      if (!user.isActive) {
-        throw new UnauthorizedException('Company admin account is inactive.');
-      }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
-      }
-    } else if (userRole === 'EMPLOYEE') {
-      if (!user.employee || user.employee.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Employee account is no longer active.');
-      }
-      if (user.employee.mobileLoginEnabled === false) {
-        throw new UnauthorizedException('Mobile login is disabled for this employee.');
-      }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your company account is suspended.');
-      }
-    } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
-      if (!user.isActive) {
-        throw new UnauthorizedException('Your customer account has been deactivated.');
-      }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
+    // Auto-heal Root Customer 1 (system default organization) if inactive or soft-deleted
+    if (user.customer && user.customer.id === 1 && (!user.customer.isActive || user.customer.deletedAt)) {
+      try {
+        await this.prisma.customer.update({
+          where: { id: 1 },
+          data: { isActive: true, deletedAt: null },
+        });
+        user.customer.isActive = true;
+        user.customer.deletedAt = null;
+      } catch (err) {
+        this.logger.warn(`Failed to auto-heal Root Customer 1: ${err.message}`);
       }
     }
 
     const rawApp = (appType || '').trim().toLowerCase();
-
-    // 3. Strict Target App / Expected Role Login Validation
     const upperExpectedRole = (appType || '').trim().toUpperCase();
+
+    // 2. Strict Target App / Expected Role Login Validation (Must precede generic suspension checks)
     if (upperExpectedRole === 'SUPER_ADMIN') {
       if (userRole !== 'SUPER_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Super Admin account.');
@@ -460,7 +488,7 @@ export class AuthService {
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
-    } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE'].includes(upperExpectedRole)) {
+    } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole)) {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
       }
@@ -486,6 +514,35 @@ export class AuthService {
       const allowedRoles = ['CUSTOMER', 'CUSTOMER_ADMIN', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
       if (!allowedRoles.includes(userRole)) {
         throw new ForbiddenException('This account cannot access the mobile application.');
+      }
+    }
+
+    // 3. General Company suspension and account status verification
+    if (userRole === 'SUPER_ADMIN') {
+      // Platform Super Admin is never blocked by tenant/customer suspension status
+    } else if (userRole === 'COMPANY_ADMIN') {
+      if (!user.isActive) {
+        throw new UnauthorizedException('Company admin account is inactive.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (userRole === 'EMPLOYEE') {
+      if (!user.employee || user.employee.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Employee account is no longer active.');
+      }
+      if (user.employee.mobileLoginEnabled === false) {
+        throw new UnauthorizedException('Mobile login is disabled for this employee.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your company account is suspended.');
+      }
+    } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
+      if (!user.isActive) {
+        throw new UnauthorizedException('Your customer account has been deactivated.');
+      }
+      if (user.customer && !user.customer.isActive) {
+        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
       }
     }
 

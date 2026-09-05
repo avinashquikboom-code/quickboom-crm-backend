@@ -718,7 +718,13 @@ export class CustomerService {
    */
   async update(id: number | string, dto: UpdateCustomerDto) {
     const numericId = this.parseCustomerId(id);
-    await this.findOne(numericId);
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
 
     const updated = await this.prisma.customer.update({
       where: { id: numericId },
@@ -740,6 +746,7 @@ export class CustomerService {
         department: dto.department,
         notes: dto.notes,
         isActive: dto.isActive !== undefined ? dto.isActive : undefined,
+        deletedAt: dto.isActive === true ? null : undefined,
         userLimit: dto.userLimit,
         leadLimit: dto.leadLimit,
       },
@@ -749,11 +756,41 @@ export class CustomerService {
   }
 
   /**
+   * Restore / reactivate soft-deleted customer
+   */
+  async restore(id: number | string) {
+    const numericId = this.parseCustomerId(id);
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    const restored = await this.prisma.customer.update({
+      where: { id: numericId },
+      data: {
+        isActive: true,
+        deletedAt: null,
+      },
+    });
+
+    return this.serializeBigInt(restored);
+  }
+
+  /**
    * Soft-delete / deactivate customer
    */
   async remove(id: number | string) {
     const numericId = this.parseCustomerId(id);
-    await this.findOne(numericId);
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
 
     const archived = await this.prisma.customer.update({
       where: { id: numericId },

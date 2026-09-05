@@ -218,6 +218,12 @@ export class CustomerController {
     return this.customerService.update(id, dto);
   }
 
+  @Post(':id/restore')
+  @ApiOperation({ summary: 'Restore / reactivate customer' })
+  async restore(@Param('id') id: string) {
+    return this.customerService.restore(id);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate / soft-delete customer' })
   async remove(@Param('id') id: string) {
