@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateEmployeeDto {
   // employeeCode is intentionally NOT accepted from the client.
@@ -60,6 +60,16 @@ export class CreateEmployeeDto {
   @IsString()
   @IsOptional()
   branch?: string;
+
+  @ApiPropertyOptional({ enum: ['COMPANY', 'FREELANCER'], example: 'COMPANY' })
+  @IsOptional()
+  @IsEnum(['COMPANY', 'FREELANCER'], { message: 'employeeType must be either COMPANY or FREELANCER' })
+  employeeType?: 'COMPANY' | 'FREELANCER';
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsString()
+  @IsOptional()
+  city?: string;
 
   @ApiPropertyOptional({ example: 'FULL_TIME' })
   @IsString()
@@ -236,4 +246,14 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   managerId?: number;
+
+  @ApiPropertyOptional({ enum: ['COMPANY', 'FREELANCER'], example: 'COMPANY' })
+  @IsOptional()
+  @IsEnum(['COMPANY', 'FREELANCER'], { message: 'employeeType must be either COMPANY or FREELANCER' })
+  employeeType?: 'COMPANY' | 'FREELANCER';
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsString()
+  @IsOptional()
+  city?: string;
 }

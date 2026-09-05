@@ -1011,6 +1011,8 @@ model Employee {
   designationId            Int?
   managerId                Int?
   employmentType           String                   @default("FULL_TIME")
+  employeeType             EmployeeType             @default(COMPANY)
+  city                     String?
   branch                   String                   @default("Head Office")
   address                  String?
   emergencyContact         String?
@@ -1887,6 +1889,11 @@ model SubscriptionInstallment {
   @@index([dueDate])
   @@index([bufferEndDate])
   @@map("subscription_installments")
+}
+
+enum EmployeeType {
+  COMPANY
+  FREELANCER
 }
 
 enum RoleType {

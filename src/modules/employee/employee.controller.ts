@@ -233,6 +233,7 @@ export class EmployeeController {
     return this.employeeService.create({
       customerId: targetCustomerId,
       dto,
+      bypassUserLimit: true,
     });
   }
 

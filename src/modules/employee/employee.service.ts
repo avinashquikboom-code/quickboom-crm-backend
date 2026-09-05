@@ -40,6 +40,7 @@ export interface EmployeeFindOneParams {
 export interface CreateEmployeeParams {
   customerId: number | string;
   dto: CreateEmployeeDto;
+  bypassUserLimit?: boolean;
 }
 
 export interface UpdateEmployeeParams {
@@ -901,7 +902,7 @@ export class EmployeeService {
       throw new BadRequestException('Valid customerId is required');
     }
 
-    if (this.planAccessService) {
+    if (this.planAccessService && !params.bypassUserLimit) {
       await this.planAccessService.checkUserLimit(numCustomerId);
     }
 
@@ -1181,6 +1182,8 @@ export class EmployeeService {
         departmentId: department.id,
         designationId: designation.id,
         employmentType: dto.employmentType || 'FULL_TIME',
+        employeeType: dto.employeeType || 'COMPANY',
+        city: dto.city || null,
         gender: dto.gender || null,
         dob: dto.dob ? new Date(dto.dob) : null,
         joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : new Date(),
@@ -1271,6 +1274,8 @@ export class EmployeeService {
       if (dto.branch !== undefined) updateData.branch = dto.branch;
       if (dto.status !== undefined) updateData.status = dto.status;
       if (dto.employmentType !== undefined) updateData.employmentType = dto.employmentType;
+      if (dto.employeeType !== undefined) updateData.employeeType = dto.employeeType;
+      if (dto.city !== undefined) updateData.city = dto.city;
       if (dto.gender !== undefined) updateData.gender = dto.gender;
       if (dto.dob !== undefined) updateData.dob = dto.dob ? new Date(dto.dob) : null;
       if (dto.joiningDate !== undefined)

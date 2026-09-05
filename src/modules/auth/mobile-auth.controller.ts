@@ -1,7 +1,7 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { LoginDto, SendOtpDto, VerifyMobileOtpDto } from './dto/auth.dto';
+import { LoginDto, RegisterEmployeeDto, SendOtpDto, VerifyMobileOtpDto } from './dto/auth.dto';
 import { SetMetadata } from '@nestjs/common';
 
 export const Public = () => SetMetadata('isPublic', true);
@@ -10,6 +10,15 @@ export const Public = () => SetMetadata('isPublic', true);
 @Controller('mobile/auth')
 export class MobileAuthController {
   constructor(private readonly authService: AuthService) {}
+
+  // ✅ EMPLOYEE REGISTRATION
+  @Public()
+  @Post('register/employee')
+  @ApiOperation({ summary: 'Register a new Employee (Company or Freelancer)' })
+  @ApiResponse({ status: 201, description: 'Employee registered successfully' })
+  async registerEmployee(@Body() dto: RegisterEmployeeDto) {
+    return this.authService.registerEmployee(dto);
+  }
 
   // ✅ SEND OTP (MSG91)
   @Public()

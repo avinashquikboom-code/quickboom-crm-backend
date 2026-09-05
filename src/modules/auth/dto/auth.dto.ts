@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'admin@quikboom.com' })
@@ -59,6 +59,77 @@ export class RegisterCustomerDto {
   @IsOptional()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
+}
+
+export class RegisterEmployeeDto {
+  @ApiProperty({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsNotEmpty({ message: 'Full name is required' })
+  fullName: string;
+
+  @ApiPropertyOptional({ example: 'Rahul' })
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Sharma' })
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @ApiProperty({ example: 'Mumbai' })
+  @IsString()
+  @IsNotEmpty({ message: 'City is required' })
+  city: string;
+
+  @ApiPropertyOptional({ example: '+919876543210' })
+  @IsString()
+  @IsOptional()
+  mobile?: string;
+
+  @ApiPropertyOptional({ example: '+919876543210' })
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @ApiProperty({ example: 'rahul.sharma@example.com' })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email address is required' })
+  email: string;
+
+  @ApiProperty({ example: 'Password123!' })
+  @IsString()
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  password: string;
+
+  @ApiPropertyOptional({ example: 'Password123!' })
+  @IsString()
+  @IsOptional()
+  confirmPassword?: string;
+
+  @ApiProperty({ enum: ['COMPANY', 'FREELANCER'], example: 'COMPANY' })
+  @IsNotEmpty({ message: 'Please select employee type.' })
+  @IsEnum(['COMPANY', 'FREELANCER'], { message: 'employeeType must be either COMPANY or FREELANCER' })
+  employeeType: 'COMPANY' | 'FREELANCER';
+
+  @ApiPropertyOptional({ example: 'REF2026' })
+  @IsString()
+  @IsOptional()
+  referralCode?: string;
+
+  @ApiPropertyOptional({ example: 'Acme Media' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  planId?: number;
+
+  @ApiPropertyOptional({ example: 'OFFLINE' })
+  @IsString()
+  @IsOptional()
+  paymentMethod?: string;
 }
 
 export class RefreshTokenDto {

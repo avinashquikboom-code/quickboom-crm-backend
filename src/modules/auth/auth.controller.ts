@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import {
   LoginDto,
   RegisterCustomerDto,
+  RegisterEmployeeDto,
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
@@ -24,7 +25,7 @@ export class AuthController {
   @Public()
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Send 6-digit OTP to Indian mobile number via MSG91' })
+  @ApiOperation({ summary: 'Send 6-digit OTP code to mobile number via SMS' })
   @ApiResponse({ status: 200, description: 'OTP sent successfully' })
   async sendOtp(@Body() dto: SendOtpDto) {
     return this.authService.sendOtp(dto);
@@ -45,6 +46,14 @@ export class AuthController {
   @ApiResponse({ status: 210, description: 'Customer created successfully' })
   async register(@Body() dto: RegisterCustomerDto) {
     return this.authService.registerCustomer(dto);
+  }
+
+  @Public()
+  @Post('register/employee')
+  @ApiOperation({ summary: 'Register a new Employee (Company or Freelancer)' })
+  @ApiResponse({ status: 201, description: 'Employee created successfully' })
+  async registerEmployee(@Body() dto: RegisterEmployeeDto) {
+    return this.authService.registerEmployee(dto);
   }
 
   @Public()

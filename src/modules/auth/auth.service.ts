@@ -14,13 +14,14 @@ import * as crypto from 'crypto';
 import {
   LoginDto,
   RegisterCustomerDto,
+  RegisterEmployeeDto,
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   SendOtpDto,
   VerifyMobileOtpDto,
 } from './dto/auth.dto';
-import { RoleType } from '@prisma/client';
+import { EmployeeType, RoleType } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
 
@@ -217,6 +218,253 @@ export class AuthService {
       refreshToken: tokens.refreshToken,
       customerId: createdResult.user.customerId,
       userId: createdResult.user.id,
+    };
+  }
+
+  async registerEmployee(dto: RegisterEmployeeDto) {
+    const normalizedEmail = (dto.email || '').trim().toLowerCase();
+    const normalizedPhone = (dto.mobile || dto.phone || '').trim();
+    const normalizedCity = (dto.city || '').trim();
+
+    if (!normalizedEmail) {
+      throw new BadRequestException('Email address is required');
+    }
+    if (!normalizedCity) {
+      throw new BadRequestException('City is required');
+    }
+    if (!dto.employeeType || !['COMPANY', 'FREELANCER'].includes(dto.employeeType)) {
+      throw new BadRequestException('Please select employee type.');
+    }
+    if (!dto.password || dto.password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+    if (dto.confirmPassword && dto.password !== dto.confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const fullName = (dto.fullName || '').trim();
+    if (!fullName) {
+      throw new BadRequestException('Full name is required');
+    }
+
+    let firstName = dto.firstName?.trim() || '';
+    let lastName = dto.lastName?.trim() || '';
+    if (!firstName || !lastName) {
+      const parts = fullName.split(/\s+/);
+      firstName = parts[0] || 'Employee';
+      lastName = parts.slice(1).join(' ') || 'User';
+    }
+
+    this.logger.log(
+      `[EMPLOYEE_REGISTRATION_REQUEST] Registering employee email=${normalizedEmail} type=${dto.employeeType} city=${normalizedCity}`,
+    );
+
+    // Check duplicate email or phone in users and employees
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+          { employee: { email: normalizedEmail } },
+          ...(normalizedPhone ? [{ employee: { phone: normalizedPhone } }] : []),
+        ],
+      },
+    });
+    if (existingUser) {
+      if (existingUser.email === normalizedEmail) {
+        throw new ConflictException('Email is already registered. Please login instead.');
+      }
+      if (normalizedPhone && existingUser.phone === normalizedPhone) {
+        throw new ConflictException('Phone number is already registered. Please login instead.');
+      }
+      throw new ConflictException('An account with these details already exists.');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    let createdResult: any;
+    try {
+      createdResult = await this.prisma.$transaction(async (tx) => {
+        // 1. Resolve Customer/Tenant Isolation:
+        let targetCustomerId: number;
+        if (dto.employeeType === 'FREELANCER') {
+          // Freelancer is isolated in their own customer workspace
+          const freelancerCustomer = await tx.customer.create({
+            data: {
+              name: `${fullName} (Freelancer)`,
+              companyName: `${fullName} Freelance Services`,
+              email: normalizedEmail,
+              phone: normalizedPhone || null,
+              city: normalizedCity,
+              isActive: true,
+              source: 'EMPLOYEE_FREELANCER_REGISTRATION',
+              customerType: 'INDIVIDUAL',
+            },
+          });
+          targetCustomerId = freelancerCustomer.id;
+        } else {
+          // COMPANY employee
+          if (dto.companyName?.trim()) {
+            const matchedCompany = await tx.customer.findFirst({
+              where: {
+                OR: [
+                  { name: { equals: dto.companyName.trim(), mode: 'insensitive' } },
+                  { companyName: { equals: dto.companyName.trim(), mode: 'insensitive' } },
+                ],
+              },
+            });
+            if (matchedCompany) {
+              targetCustomerId = matchedCompany.id;
+            } else {
+              const newCompany = await tx.customer.create({
+                data: {
+                  name: dto.companyName.trim(),
+                  companyName: dto.companyName.trim(),
+                  email: normalizedEmail,
+                  phone: normalizedPhone || null,
+                  city: normalizedCity,
+                  isActive: true,
+                  source: 'EMPLOYEE_COMPANY_REGISTRATION',
+                  customerType: 'ENTERPRISE',
+                },
+              });
+              targetCustomerId = newCompany.id;
+            }
+          } else {
+            const defaultCust =
+              (await tx.customer.findUnique({ where: { id: 1 } })) ||
+              (await tx.customer.findFirst({ where: { isActive: true } }));
+            if (!defaultCust) {
+              const root = await tx.customer.create({
+                data: {
+                  name: 'Default Workspace',
+                  companyName: 'Default Workspace',
+                  email: 'admin@quikboom.com',
+                  isActive: true,
+                  customerType: 'ENTERPRISE',
+                },
+              });
+              targetCustomerId = root.id;
+            } else {
+              targetCustomerId = defaultCust.id;
+            }
+          }
+        }
+
+        // 2. Create User account (isVerified: true, isActive: true)
+        const user = await tx.user.create({
+          data: {
+            customerId: targetCustomerId,
+            email: normalizedEmail,
+            phone: normalizedPhone || null,
+            passwordHash: hashedPassword,
+            firstName,
+            lastName,
+            isActive: true,
+            isVerified: true,
+          },
+        });
+
+        // 3. Auto-generate sequential employeeCode (e.g. QB-EMP-001)
+        const count = await tx.employee.count({ where: { customerId: targetCustomerId } });
+        const paddedNum = String(count + 1).padStart(3, '0');
+        const employeeCode = `QB-EMP-${paddedNum}`;
+
+        // 4. Create Employee record
+        const employee = await tx.employee.create({
+          data: {
+            customerId: targetCustomerId,
+            userId: user.id,
+            employeeCode,
+            firstName,
+            lastName,
+            email: normalizedEmail,
+            phone: normalizedPhone || null,
+            city: normalizedCity,
+            employeeType: dto.employeeType as EmployeeType,
+            employmentType: dto.employeeType === 'FREELANCER' ? 'CONTRACT' : 'FULL_TIME',
+            status: 'ACTIVE',
+            mobileLoginEnabled: true,
+          },
+        });
+
+        // 5. Ensure employee role exists and assign it
+        let employeeRole = await tx.role.findFirst({
+          where: {
+            customerId: targetCustomerId,
+            name: { in: ['Employee', 'EMPLOYEE', 'Staff'] },
+          },
+        });
+        if (!employeeRole) {
+          employeeRole = await tx.role.create({
+            data: {
+              customerId: targetCustomerId,
+              name: 'Employee',
+              type: RoleType.CUSTOM,
+              description: 'Employee member role',
+            },
+          });
+        }
+
+        await tx.userRole.create({
+          data: {
+            userId: user.id,
+            roleId: employeeRole.id,
+          },
+        });
+
+        // 6. Handle Plan selection if requested
+        if (dto.planId) {
+          const plan = await tx.plan.findUnique({ where: { id: Number(dto.planId) } });
+          if (plan) {
+            await tx.customerSubscription.create({
+              data: {
+                customerId: targetCustomerId,
+                planId: plan.id,
+                startDate: new Date(),
+                endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                status: dto.paymentMethod === 'ONLINE' ? 'ACTIVE' : 'PENDING',
+              },
+            });
+          }
+        }
+
+        return { user, employee, customerId: targetCustomerId };
+      });
+    } catch (err: any) {
+      this.logger.error(`[EMPLOYEE_REGISTRATION_FAILED] Error registering employee: ${err?.message}`, err?.stack);
+      if (err instanceof PrismaService && (err as any).code === 'P2002') {
+        throw new ConflictException('Email or phone number is already registered.');
+      }
+      throw err;
+    }
+
+    const tokens = await this.generateTokens(
+      createdResult.user.id,
+      createdResult.user.customerId,
+      createdResult.user.email,
+      'EMPLOYEE',
+      RoleType.CUSTOM,
+    );
+
+    return {
+      success: true,
+      message: 'Employee registered successfully',
+      user: {
+        id: createdResult.user.id,
+        email: createdResult.user.email,
+        firstName: createdResult.user.firstName,
+        lastName: createdResult.user.lastName,
+        role: 'EMPLOYEE',
+        employeeId: createdResult.employee.id,
+        employeeCode: createdResult.employee.employeeCode,
+        employeeType: createdResult.employee.employeeType,
+        city: createdResult.employee.city,
+        customerId: createdResult.customerId,
+      },
+      tokens,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     };
   }
 
@@ -501,7 +749,16 @@ export class AuthService {
       if (userRole !== 'EMPLOYEE' || isEmployeeRole === false) {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
       }
-      if (!user.employee || user.employee.status !== 'ACTIVE') {
+      if (!user.employee) {
+        throw new UnauthorizedException('Employee profile not found.');
+      }
+      if (user.employee.status === 'PAYMENT_PENDING' || user.employee.status === 'PENDING') {
+        throw new UnauthorizedException('Payment verification pending.');
+      }
+      if (user.employee.status === 'PAYMENT_REJECTED') {
+        throw new UnauthorizedException('Payment verification rejected. Please contact administrator.');
+      }
+      if (user.employee.status !== 'ACTIVE') {
         throw new UnauthorizedException('Employee account is inactive or no longer exists.');
       }
       if (user.employee.mobileLoginEnabled === false) {
@@ -528,7 +785,16 @@ export class AuthService {
         throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (userRole === 'EMPLOYEE') {
-      if (!user.employee || user.employee.status !== 'ACTIVE') {
+      if (!user.employee) {
+        throw new UnauthorizedException('Employee profile not found.');
+      }
+      if (user.employee.status === 'PAYMENT_PENDING' || user.employee.status === 'PENDING') {
+        throw new UnauthorizedException('Payment verification pending.');
+      }
+      if (user.employee.status === 'PAYMENT_REJECTED') {
+        throw new UnauthorizedException('Payment verification rejected. Please contact administrator.');
+      }
+      if (user.employee.status !== 'ACTIVE') {
         throw new UnauthorizedException('Employee account is no longer active.');
       }
       if (user.employee.mobileLoginEnabled === false) {
@@ -834,7 +1100,8 @@ export class AuthService {
     const isEmployeeRole = !isSuperAdminRole && !isCustomerAdminRole && !isCompanyAdminRole && isEmployeeRoleCheck;
 
     if (isEmployeeRole) {
-      if (!(user as any).employee || (user as any).employee.status !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
+      const empStatus = (user as any).employee?.status || 'ACTIVE';
+      if (!(user as any).employee || empStatus !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
         if (existingToken) {
           await this.prisma.refreshToken.update({
             where: { id: existingToken.id },
