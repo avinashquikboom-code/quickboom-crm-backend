@@ -779,43 +779,7 @@ export class AuthService {
       }));
 
     if (!user || !user.isActive || user.deletedAt) {
-      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
-    }
-
-    const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
-    const isEmployeeRoleCheck =
-      payloadRole === 'EMPLOYEE' ||
-      payload.roleType === RoleType.CUSTOM ||
-      Boolean((user as any).employee) ||
-      (user as any).userRoles?.some((ur: any) => {
-        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
-        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
-        return (
-          type === RoleType.SALES_EXECUTIVE ||
-          type === RoleType.SALES_MANAGER ||
-          type === RoleType.SUPPORT_AGENT ||
-          name.includes('EMPLOYEE') ||
-          name.includes('STAFF')
-        );
-      });
-
-    if (payloadRole === 'EMPLOYEE' || isEmployeeRoleCheck) {
-      if (!(user as any).employee || (user as any).employee.status !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
-        if (existingToken) {
-          await this.prisma.refreshToken.update({
-            where: { id: existingToken.id },
-            data: { isRevoked: true },
-          }).catch(() => null);
-        }
-        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
-      }
-    }
-
-    if (existingToken) {
-      await this.prisma.refreshToken.update({
-        where: { id: existingToken.id },
-        data: { isRevoked: true },
-      });
+      throw new UnauthorizedException('Account is inactive, suspended, or does not exist.');
     }
 
     const isSuperAdminRole = (user as any).userRoles?.some((ur: any) => {
@@ -850,22 +814,43 @@ export class AuthService {
         );
       });
 
-    const isEmployeeRole =
-      !isSuperAdminRole &&
-      !isCustomerAdminRole &&
-      !isCompanyAdminRole &&
-      (Boolean((user as any).employee) ||
-        (user as any).userRoles?.some((ur: any) => {
-          const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
-          const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
-          return (
-            type === RoleType.SALES_EXECUTIVE ||
-            type === RoleType.SALES_MANAGER ||
-            type === RoleType.SUPPORT_AGENT ||
-            name.includes('EMPLOYEE') ||
-            name.includes('STAFF')
-          );
-        }));
+    const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
+    const isEmployeeRoleCheck =
+      payloadRole === 'EMPLOYEE' ||
+      payload.roleType === RoleType.CUSTOM ||
+      Boolean((user as any).employee) ||
+      (user as any).userRoles?.some((ur: any) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.SALES_EXECUTIVE ||
+          type === RoleType.SALES_MANAGER ||
+          type === RoleType.SUPPORT_AGENT ||
+          name.includes('EMPLOYEE') ||
+          name.includes('STAFF')
+        );
+      });
+
+    const isEmployeeRole = !isSuperAdminRole && !isCustomerAdminRole && !isCompanyAdminRole && isEmployeeRoleCheck;
+
+    if (isEmployeeRole) {
+      if (!(user as any).employee || (user as any).employee.status !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
+        if (existingToken) {
+          await this.prisma.refreshToken.update({
+            where: { id: existingToken.id },
+            data: { isRevoked: true },
+          }).catch(() => null);
+        }
+        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
+      }
+    }
+
+    if (existingToken) {
+      await this.prisma.refreshToken.update({
+        where: { id: existingToken.id },
+        data: { isRevoked: true },
+      });
+    }
 
     let resolvedRole: string;
     let resolvedRoleType: string;
@@ -1371,6 +1356,8 @@ export class AuthService {
       sub: userId,
       customerId,
       email,
+      role: resolvedRole,
+      roleType: resolvedRoleType,
       jti: `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
 
