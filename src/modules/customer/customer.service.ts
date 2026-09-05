@@ -16,7 +16,8 @@ import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
+import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 
 @Injectable()
 export class CustomerService {
@@ -882,7 +883,385 @@ export class CustomerService {
   }
 
   /**
+   * Get live summary of customer data that would be reset
+   */
+  async getResetSummary(id: number | string, user?: any) {
+    const numericId = this.parseCustomerId(id);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        email: true,
+        isActive: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    // Tenant Isolation Check
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== numericId) {
+        throw new ForbiddenException('You do not have permission to view data for this customer.');
+      }
+    }
+
+    const [
+      leadsCount,
+      contactsCount,
+      companiesCount,
+      dealsCount,
+      tasksCount,
+      visitsCount,
+      quotationsCount,
+      invoicesCount,
+      paymentsCount,
+      installmentsCount,
+      dataCapturePlacesCount,
+      dataCaptureJobsCount,
+      worksCount,
+      ticketsCount,
+      notificationsCount,
+      attendancesCount,
+      breaksCount,
+      leavesCount,
+      remotesCount,
+      locationsCount,
+      payrollsCount,
+      slipsCount,
+      // Protected Master data
+      employeesCount,
+      departmentsCount,
+      designationsCount,
+      usersCount,
+      subscriptionsCount,
+    ] = await Promise.all([
+      this.prisma.lead.count({ where: { customerId: numericId } }),
+      this.prisma.contact.count({ where: { customerId: numericId } }),
+      this.prisma.company.count({ where: { customerId: numericId } }),
+      this.prisma.deal.count({ where: { customerId: numericId } }),
+      this.prisma.task.count({ where: { customerId: numericId } }),
+      this.prisma.visit.count({ where: { customerId: numericId } }),
+      this.prisma.quotation.count({ where: { customerId: numericId } }),
+      this.prisma.invoice.count({ where: { customerId: numericId } }),
+      this.prisma.paymentHistory.count({ where: { customerId: numericId } }),
+      this.prisma.subscriptionInstallment.count({ where: { customerId: numericId } }),
+      this.prisma.dataCapturePlace.count({ where: { customerId: numericId } }),
+      this.prisma.dataCaptureJob.count({ where: { customerId: numericId } }),
+      this.prisma.work.count({ where: { customerId: numericId } }),
+      this.prisma.supportTicket.count({ where: { customerId: numericId } }),
+      this.prisma.notification.count({ where: { customerId: numericId } }),
+      this.prisma.attendance.count({ where: { customerId: numericId } }),
+      this.prisma.attendanceBreak.count({ where: { attendance: { customerId: numericId } } }),
+      this.prisma.leaveRequest.count({ where: { customerId: numericId } }),
+      this.prisma.remoteRequest.count({ where: { customerId: numericId } }),
+      this.prisma.employeeLocation.count({ where: { customerId: numericId } }),
+      this.prisma.payroll.count({ where: { customerId: numericId } }),
+      this.prisma.salarySlip.count({ where: { customerId: numericId } }),
+      // Protected
+      this.prisma.employee.count({ where: { customerId: numericId } }),
+      this.prisma.department.count({ where: { customerId: numericId } }),
+      this.prisma.designation.count({ where: { customerId: numericId } }),
+      this.prisma.user.count({ where: { customerId: numericId } }),
+      this.prisma.customerSubscription.count({ where: { customerId: numericId } }),
+    ]);
+
+    const totalRecordsToReset =
+      leadsCount +
+      contactsCount +
+      companiesCount +
+      dealsCount +
+      tasksCount +
+      visitsCount +
+      quotationsCount +
+      invoicesCount +
+      paymentsCount +
+      installmentsCount +
+      dataCapturePlacesCount +
+      dataCaptureJobsCount +
+      worksCount +
+      ticketsCount +
+      notificationsCount +
+      attendancesCount +
+      breaksCount +
+      leavesCount +
+      remotesCount +
+      locationsCount +
+      payrollsCount +
+      slipsCount;
+
+    return {
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        companyName: customer.companyName,
+        displayName: customer.companyName || customer.name,
+      },
+      summary: {
+        crm: {
+          leads: leadsCount,
+          contacts: contactsCount,
+          companies: companiesCount,
+          deals: dealsCount,
+          tasks: tasksCount,
+          visits: visitsCount,
+          quotations: quotationsCount,
+          total: leadsCount + contactsCount + companiesCount + dealsCount + tasksCount + visitsCount + quotationsCount,
+        },
+        billing: {
+          invoices: invoicesCount,
+          payments: paymentsCount,
+          installments: installmentsCount,
+          total: invoicesCount + paymentsCount + installmentsCount,
+        },
+        dataCapture: {
+          places: dataCapturePlacesCount,
+          jobs: dataCaptureJobsCount,
+          total: dataCapturePlacesCount + dataCaptureJobsCount,
+        },
+        operations: {
+          works: worksCount,
+          tickets: ticketsCount,
+          notifications: notificationsCount,
+          attendances: attendancesCount,
+          breaks: breaksCount,
+          leaves: leavesCount,
+          remotes: remotesCount,
+          locations: locationsCount,
+          payrolls: payrollsCount,
+          salarySlips: slipsCount,
+          total: worksCount + ticketsCount + notificationsCount + attendancesCount + breaksCount + leavesCount + remotesCount + locationsCount + payrollsCount + slipsCount,
+        },
+        totalRecords: totalRecordsToReset,
+      },
+      masterDataPreserved: {
+        employees: employeesCount,
+        departments: departmentsCount,
+        designations: designationsCount,
+        users: usersCount,
+        subscriptions: subscriptionsCount,
+        accountRemains: true,
+      },
+    };
+  }
+
+  /**
+   * Reset all customer business and transactional data within a Prisma transaction
+   * - Scoped exclusively to the target customerId
+   * - Enforces tenant isolation (Super Admin or authorized tenant admin)
+   * - Requires typing exact customer name or company name for confirmation
+   * - Preserves customer account, login accounts, and master configuration
+   */
+  async resetCustomerData(id: number | string, user?: any, dto?: ResetCustomerDataDto) {
+    const numericId = this.parseCustomerId(id);
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    // 1. Tenant Isolation & Authorization Check
+    if (user && !isUserSuperAdmin(user)) {
+      if (!isUserAdminOrStaff(user)) {
+        throw new ForbiddenException('Only administrators can perform customer data resets.');
+      }
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== numericId) {
+        throw new ForbiddenException('Cross-tenant data reset forbidden. You can only reset your own organization.');
+      }
+    }
+
+    // 2. Strong Confirmation Check
+    const confirmation = (dto?.confirmation || '').trim().toLowerCase();
+    const primaryName = existing.name.trim().toLowerCase();
+    const compName = (existing.companyName || '').trim().toLowerCase();
+    const allowed = [primaryName, 'reset all data'];
+    if (compName) allowed.push(compName);
+
+    if (!allowed.includes(confirmation)) {
+      const displayName = existing.companyName || existing.name;
+      throw new BadRequestException(
+        `Confirmation mismatch. You must type "${displayName}" to confirm customer data reset.`,
+      );
+    }
+
+    const preserveSubs = dto?.preserveSubscriptions !== false;
+    const preserveInvoices = dto?.preserveInvoices === true;
+
+    // 3. Atomic Prisma Transaction with Foreign Key Order
+    const resetResult = await this.prisma.$transaction(async (tx) => {
+      // Step A: Dependent child tables without direct customerId
+      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadNote.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadReminder.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numericId } } });
+      await tx.taskReview.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.taskProof.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.taskHistory.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numericId } } });
+      await tx.workTask.deleteMany({ where: { work: { customerId: numericId } } });
+      await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numericId } } });
+      await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numericId } } });
+
+      // Step B: Billing items & invoices (if not preserved)
+      let deletedInvoices = 0;
+      let deletedPayments = 0;
+      let deletedInstallments = 0;
+      if (!preserveInvoices) {
+        await tx.invoiceItem.deleteMany({ where: { invoice: { customerId: numericId } } });
+        const invRes = await tx.invoice.deleteMany({ where: { customerId: numericId } });
+        const payRes = await tx.paymentHistory.deleteMany({ where: { customerId: numericId } });
+        const instRes = await tx.subscriptionInstallment.deleteMany({ where: { customerId: numericId } });
+        await tx.customPlanOrder.deleteMany({ where: { customerId: numericId } });
+        await tx.monthlySchedule.deleteMany({ where: { customerId: numericId } });
+        deletedInvoices = invRes.count;
+        deletedPayments = payRes.count;
+        deletedInstallments = instRes.count;
+      }
+
+      // Step C: CRM parent tables
+      const quotations = await tx.quotation.deleteMany({ where: { customerId: numericId } });
+      const tasks = await tx.task.deleteMany({ where: { customerId: numericId } });
+      const deals = await tx.deal.deleteMany({ where: { customerId: numericId } });
+      const visits = await tx.visit.deleteMany({ where: { customerId: numericId } });
+      const leads = await tx.lead.deleteMany({ where: { customerId: numericId } });
+      const contacts = await tx.contact.deleteMany({ where: { customerId: numericId } });
+      const companies = await tx.company.deleteMany({ where: { customerId: numericId } });
+
+      // Step D: Data Capture
+      const dcPlaces = await tx.dataCapturePlace.deleteMany({ where: { customerId: numericId } });
+      const dcJobs = await tx.dataCaptureJob.deleteMany({ where: { customerId: numericId } });
+
+      // Step E: Operations & HR Transactional
+      const works = await tx.work.deleteMany({ where: { customerId: numericId } });
+      const tickets = await tx.supportTicket.deleteMany({ where: { customerId: numericId } });
+      const notifications = await tx.notification.deleteMany({ where: { customerId: numericId } });
+      const locations = await tx.employeeLocation.deleteMany({ where: { customerId: numericId } });
+      const attendances = await tx.attendance.deleteMany({ where: { customerId: numericId } });
+      const leaves = await tx.leaveRequest.deleteMany({ where: { customerId: numericId } });
+      const remotes = await tx.remoteRequest.deleteMany({ where: { customerId: numericId } });
+      const slips = await tx.salarySlip.deleteMany({ where: { customerId: numericId } });
+      const payrollItems = await tx.payrollItem.deleteMany({ where: { customerId: numericId } });
+      const payrolls = await tx.payroll.deleteMany({ where: { customerId: numericId } });
+      await tx.employeeClaim.deleteMany({ where: { customerId: numericId } });
+      await tx.employeeLoan.deleteMany({ where: { customerId: numericId } });
+
+      // Step F: Subscription assignments (if explicitly requested to reset)
+      if (!preserveSubs) {
+        await tx.customerSubscription.deleteMany({ where: { customerId: numericId } });
+      }
+
+      const totalDeleted =
+        deletedInvoices +
+        deletedPayments +
+        deletedInstallments +
+        quotations.count +
+        tasks.count +
+        deals.count +
+        visits.count +
+        leads.count +
+        contacts.count +
+        companies.count +
+        dcPlaces.count +
+        dcJobs.count +
+        works.count +
+        tickets.count +
+        notifications.count +
+        locations.count +
+        attendances.count +
+        leaves.count +
+        remotes.count +
+        slips.count +
+        payrollItems.count +
+        payrolls.count;
+
+      // Step G: Reset storage usage
+      await tx.customer.update({
+        where: { id: numericId },
+        data: {
+          storageUsed: 0,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Step H: Audit Log
+      const auditDetails = {
+        action: 'CUSTOMER_DATA_RESET',
+        scope: 'CUSTOMER_SCOPED',
+        customerId: numericId,
+        customerName: existing.name,
+        companyName: existing.companyName,
+        performedBy: user?.email || user?.id || 'Admin',
+        performedByRole: user?.role || 'SUPER_ADMIN',
+        reason: dto?.reason || 'Customer-scoped data reset initiated by Admin',
+        deletedCounts: {
+          leads: leads.count,
+          contacts: contacts.count,
+          companies: companies.count,
+          deals: deals.count,
+          tasks: tasks.count,
+          visits: visits.count,
+          quotations: quotations.count,
+          invoices: deletedInvoices,
+          payments: deletedPayments,
+          installments: deletedInstallments,
+          dataCapturePlaces: dcPlaces.count,
+          dataCaptureJobs: dcJobs.count,
+          works: works.count,
+          tickets: tickets.count,
+          notifications: notifications.count,
+          attendances: attendances.count,
+          leaves: leaves.count,
+          remotes: remotes.count,
+          locations: locations.count,
+          payrolls: payrolls.count,
+        },
+        totalDeleted,
+        timestamp: new Date().toISOString(),
+        status: 'SUCCESS',
+      };
+
+      await tx.auditLog.create({
+        data: {
+          customerId: numericId,
+          userId: user?.id && !isNaN(Number(user.id)) ? Number(user.id) : null,
+          action: 'CUSTOMER_DATA_RESET',
+          module: 'CUSTOMER_MANAGEMENT',
+          details: auditDetails,
+        },
+      });
+
+      return auditDetails;
+    });
+
+    this.logger.log(
+      `[CUSTOMER_DATA_RESET] Successfully reset data for Customer #${numericId} (${existing.name}). Total deleted records: ${resetResult.totalDeleted}. Customer account preserved.`,
+    );
+
+    return {
+      success: true,
+      message: `Customer data for "${existing.companyName || existing.name}" has been successfully reset. All ${resetResult.totalDeleted} business records were deleted. Customer account and master records remain intact.`,
+      deletedCounts: resetResult.deletedCounts,
+      totalDeleted: resetResult.totalDeleted,
+      customer: {
+        id: existing.id,
+        name: existing.name,
+        companyName: existing.companyName,
+        isActive: existing.isActive,
+      },
+    };
+  }
+
+  /**
    * Get plan details for customer
+
    */
   async getCustomerPlan(id: number | string) {
     const numericId = this.parseCustomerId(id);

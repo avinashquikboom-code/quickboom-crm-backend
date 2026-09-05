@@ -16,6 +16,7 @@ import {
   UpdateCustomerDto,
   UpdateCustomerProfileDto,
 } from './dto/customer.dto';
+import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkService } from '../work/work.service';
@@ -234,4 +235,34 @@ export class CustomerController {
     const isHard = hard === 'true' || hard === '1';
     return this.customerService.remove(id, user, isHard);
   }
+
+  @Get([':id/reset-summary', 'admin/customers/:id/reset-summary'])
+  @ApiOperation({ summary: 'Get summary of customer data that would be affected by reset' })
+  async getResetSummary(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.customerService.getResetSummary(id, user);
+  }
+
+  @Post([':id/reset-data', 'admin/customers/:id/reset-data'])
+  @ApiOperation({ summary: 'Reset all customer transactional data while preserving customer account & master records' })
+  async resetCustomerData(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: ResetCustomerDataDto,
+  ) {
+    return this.customerService.resetCustomerData(id, user, dto);
+  }
+
+  @Delete([':id/data', 'admin/customers/:id/data'])
+  @ApiOperation({ summary: 'Reset all customer transactional data (DELETE alias)' })
+  async deleteCustomerData(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: ResetCustomerDataDto,
+  ) {
+    return this.customerService.resetCustomerData(id, user, dto);
+  }
 }
+
