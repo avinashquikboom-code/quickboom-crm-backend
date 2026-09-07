@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -684,49 +685,67 @@ export class CustomerService {
    * Create new Customer organization
    */
   async create(dto: CreateCustomerDto) {
-    const customer = await this.prisma.customer.create({
-      data: {
-        name: dto.name,
-        companyName: dto.companyName || dto.name,
-        domain: dto.domain,
-        email: dto.email,
-        phone: dto.phone,
-        alternatePhone: dto.alternatePhone,
-        address: dto.address,
-        city: dto.city,
-        state: dto.state,
-        country: dto.country || 'India',
-        pincode: dto.pincode,
-        customerType: dto.customerType || 'ENTERPRISE',
-        industry: dto.industry,
-        source: dto.source || 'DIRECT',
-        assignedEmployee: dto.assignedEmployee,
-        department: dto.department,
-        notes: dto.notes,
-        userLimit: dto.userLimit || 15,
-        leadLimit: dto.leadLimit || 1000,
-      },
-    });
+    const normalizedEmail = dto.email?.trim().toLowerCase();
+    if (normalizedEmail) {
+      const existing = await this.prisma.customer.findFirst({
+        where: { email: normalizedEmail, deletedAt: null },
+      });
+      if (existing) {
+        throw new ConflictException({
+          success: false,
+          message: 'A customer with this email is already registered.',
+          error: 'CUSTOMER_ALREADY_EXISTS',
+        });
+      }
+    }
 
-    // Automatically provision initial subscription plan if plans exist
-    const defaultPlan = await this.prisma.plan.findFirst({
-      where: { deletedAt: null },
-      orderBy: { id: 'asc' },
-    });
-
-    if (defaultPlan) {
-      await this.prisma.customerSubscription.create({
+    const customer = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.customer.create({
         data: {
-          customerId: customer.id,
-          planId: defaultPlan.id,
-          status: 'ACTIVE',
-          billingCycle: 'MONTHLY',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-          autoRenew: true,
+          name: dto.name,
+          companyName: dto.companyName || dto.name,
+          domain: dto.domain,
+          email: normalizedEmail || null,
+          phone: dto.phone,
+          alternatePhone: dto.alternatePhone,
+          address: dto.address,
+          city: dto.city,
+          state: dto.state,
+          country: dto.country || 'India',
+          pincode: dto.pincode,
+          customerType: dto.customerType || 'ENTERPRISE',
+          industry: dto.industry,
+          source: dto.source || 'DIRECT',
+          assignedEmployee: dto.assignedEmployee,
+          department: dto.department,
+          notes: dto.notes,
+          userLimit: dto.userLimit || 15,
+          leadLimit: dto.leadLimit || 1000,
         },
       });
-    }
+
+      // Automatically provision initial subscription plan if plans exist
+      const defaultPlan = await tx.plan.findFirst({
+        where: { deletedAt: null },
+        orderBy: { id: 'asc' },
+      });
+
+      if (defaultPlan) {
+        await tx.customerSubscription.create({
+          data: {
+            customerId: created.id,
+            planId: defaultPlan.id,
+            status: 'ACTIVE',
+            billingCycle: 'MONTHLY',
+            startDate: new Date(),
+            endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+            autoRenew: true,
+          },
+        });
+      }
+
+      return created;
+    });
 
     return this.serializeBigInt(customer);
   }

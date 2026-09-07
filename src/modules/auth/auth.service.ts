@@ -66,16 +66,23 @@ export class AuthService {
         customer: true,
       },
     });
-    
+
+    const existingCustomer = await this.prisma.customer.findFirst({
+      where: {
+        email: normalizedEmail,
+        deletedAt: null,
+      },
+    });
 
     const hasActiveCustomer = existingUser?.customer && !existingUser.customer.deletedAt;
-    if (existingUser && hasActiveCustomer) {
-      if (existingUser.email === normalizedEmail) {
+    if ((existingUser && hasActiveCustomer) || existingCustomer) {
+      if (existingUser?.email === normalizedEmail || existingCustomer?.email === normalizedEmail) {
         throw new ConflictException('Email is already registered');
       }
-      if (normalizedPhone && existingUser.phone === normalizedPhone) {
+      if (normalizedPhone && existingUser?.phone === normalizedPhone) {
         throw new ConflictException('Phone number is already registered');
       }
+      throw new ConflictException('Email is already registered');
     }
 
     // Determine first and last name from fullName or explicit fields
@@ -296,11 +303,19 @@ export class AuthService {
         ],
       },
     });
-    if (existingUser) {
-      if (existingUser.email === normalizedEmail) {
+    const existingEmp = await this.prisma.employee.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+        ],
+      },
+    });
+    if (existingUser || existingEmp) {
+      if (existingUser?.email === normalizedEmail || existingEmp?.email === normalizedEmail) {
         throw new ConflictException('Email is already registered. Please login instead.');
       }
-      if (normalizedPhone && existingUser.phone === normalizedPhone) {
+      if (normalizedPhone && (existingUser?.phone === normalizedPhone || existingEmp?.phone === normalizedPhone)) {
         throw new ConflictException('Phone number is already registered. Please login instead.');
       }
       throw new ConflictException('An account with these details already exists.');
@@ -597,48 +612,74 @@ export class AuthService {
         user = matchedEmployee.user;
       } else if (matchedEmployee) {
         // Auto-heal: Employee exists in Employee Master but has no linked User account
-        const rawPassword = password || 'Password@123';
-        const passwordHash = await bcrypt.hash(rawPassword, 10);
-        const createdUser = await this.prisma.user.create({
-          data: {
-            customerId: matchedEmployee.customerId,
-            email: matchedEmployee.email.toLowerCase(),
-            phone: matchedEmployee.phone || null,
-            firstName: matchedEmployee.firstName,
-            lastName: matchedEmployee.lastName,
-            passwordHash,
-            isActive: matchedEmployee.status === 'ACTIVE',
-            isVerified: true,
-          },
+        const existingUserForEmp = await this.prisma.user.findUnique({
+          where: { email: matchedEmployee.email.toLowerCase() },
           include: {
             customer: true,
             userRoles: { include: { role: true } },
           },
         });
-        await this.prisma.employee.update({
-          where: { id: matchedEmployee.id },
-          data: { userId: createdUser.id },
-        });
 
-        // Ensure Employee role
-        const empRole = await this.prisma.role.findFirst({
-          where: {
-            OR: [
-              { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
-              { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
-            ],
-          },
-        });
-        if (empRole) {
-          await this.prisma.userRole.create({
-            data: { userId: createdUser.id, roleId: empRole.id },
-          }).catch(() => null);
+        if (existingUserForEmp) {
+          await this.prisma.employee.update({
+            where: { id: matchedEmployee.id },
+            data: { userId: existingUserForEmp.id },
+          });
+          if (!existingUserForEmp.customerId && matchedEmployee.customerId) {
+            await this.prisma.user.update({
+              where: { id: existingUserForEmp.id },
+              data: { customerId: matchedEmployee.customerId },
+            });
+            existingUserForEmp.customerId = matchedEmployee.customerId;
+          }
+          user = {
+            ...existingUserForEmp,
+            employee: matchedEmployee,
+          } as any;
+        } else {
+          const rawPassword = password || 'Password@123';
+          const passwordHash = await bcrypt.hash(rawPassword, 10);
+          const createdUser = await this.prisma.user.create({
+            data: {
+              customerId: matchedEmployee.customerId,
+              email: matchedEmployee.email.toLowerCase(),
+              phone: matchedEmployee.phone || null,
+              firstName: matchedEmployee.firstName,
+              lastName: matchedEmployee.lastName,
+              passwordHash,
+              isActive: matchedEmployee.status === 'ACTIVE',
+              isVerified: true,
+            },
+            include: {
+              customer: true,
+              userRoles: { include: { role: true } },
+            },
+          });
+          await this.prisma.employee.update({
+            where: { id: matchedEmployee.id },
+            data: { userId: createdUser.id },
+          });
+
+          // Ensure Employee role
+          const empRole = await this.prisma.role.findFirst({
+            where: {
+              OR: [
+                { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
+                { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
+              ],
+            },
+          });
+          if (empRole) {
+            await this.prisma.userRole.create({
+              data: { userId: createdUser.id, roleId: empRole.id },
+            }).catch(() => null);
+          }
+
+          user = {
+            ...createdUser,
+            employee: matchedEmployee,
+          } as any;
         }
-
-        user = {
-          ...createdUser,
-          employee: matchedEmployee,
-        } as any;
       }
     }
 

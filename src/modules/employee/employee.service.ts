@@ -1176,7 +1176,14 @@ export class EmployeeService {
           deletedAt: null,
           ...(hasExplicitPassword ? { passwordHash } : {}),
         };
-        if (user.customerId !== null) {
+        if (user.customerId !== null && user.customerId !== numCustomerId) {
+          throw new ConflictException({
+            success: false,
+            message: 'A user account with this email already belongs to another organization.',
+            error: 'USER_BELONGS_TO_ANOTHER_TENANT',
+          });
+        }
+        if (user.customerId === null) {
           updateUserData.customerId = numCustomerId;
         }
 
@@ -1187,12 +1194,17 @@ export class EmployeeService {
       }
 
       // ─────────────────────────────────────────────────────────────────────
-      // DUPLICATE GUARD: Check if this User already has an Employee record.
+      // DUPLICATE GUARD: Check if this User or email already has an Employee record.
       // Employee.userId is @unique — a second create() would throw P2002.
       // We detect and reject it here with a clean 409 BEFORE calling create().
       // ─────────────────────────────────────────────────────────────────────
-      const existingEmployeeForUser = await tx.employee.findUnique({
-        where: { userId: user.id },
+      const existingEmployeeForUser = await tx.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            { email: normalizedEmail, customerId: numCustomerId },
+          ],
+        },
         select: { id: true, employeeCode: true, customerId: true },
       });
 
