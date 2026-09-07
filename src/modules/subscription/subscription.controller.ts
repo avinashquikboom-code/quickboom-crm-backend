@@ -800,6 +800,20 @@ export class SubscriptionController {
     return this.subscriptionService.renewCustomerSubscription(subscriptionId, dto, user?.id);
   }
 
+  @Delete('admin/subscriptions/bulk')
+  @Post('admin/subscriptions/bulk-delete')
+  @Delete('subscriptions/bulk')
+  @Post('subscriptions/bulk-delete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk soft-delete customer subscriptions (Admin)' })
+  async bulkDeleteSubscriptions(
+    @Body() dto: { ids: (number | string)[] },
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.bulkDeleteCustomerSubscriptions(dto?.ids, user);
+  }
+
   @Delete('admin/subscriptions/:subscriptionId')
   @Delete('subscriptions/:subscriptionId')
   @UseGuards(JwtAuthGuard)
@@ -809,7 +823,7 @@ export class SubscriptionController {
     @Param('subscriptionId') subscriptionId: string,
     @CurrentUser() user: any,
   ) {
-    return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user?.id);
+    return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user);
   }
 
   // ==========================================
@@ -861,6 +875,35 @@ export class SubscriptionController {
     @CurrentUser() user: any,
   ) {
     return this.subscriptionService.rejectOfflinePaymentRequest(id, user?.id, dto?.reason);
+  }
+
+  @Delete('admin/subscriptions/offline-requests/bulk')
+  @Post('admin/subscriptions/offline-requests/bulk-delete')
+  @Delete('admin/offline-requests/bulk')
+  @Post('admin/offline-requests/bulk-delete')
+  @Delete('admin/payments/offline-requests/bulk')
+  @Post('admin/payments/offline-requests/bulk-delete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete offline payment requests (Admin/Super Admin)' })
+  async bulkDeleteOfflinePaymentRequests(
+    @Body() dto: { ids: (number | string)[] },
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(dto?.ids || [], user);
+  }
+
+  @Delete('admin/subscriptions/offline-requests/:id')
+  @Delete('admin/offline-requests/:id')
+  @Delete('admin/payments/offline-requests/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a single offline payment request (Admin/Super Admin)' })
+  async deleteOfflinePaymentRequest(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.deleteOfflinePaymentRequest(id, user);
   }
 }
 

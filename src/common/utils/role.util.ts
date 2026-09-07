@@ -58,6 +58,38 @@ export function isUserAdminOrStaff(user: any): boolean {
   return false;
 }
 
+export function isUserAdmin(user: any): boolean {
+  if (!user) return false;
+  if (isUserSuperAdmin(user)) return true;
+
+  const rawRoles: any[] = [];
+  if (user.role) rawRoles.push(user.role);
+  if (user.roleType) rawRoles.push(user.roleType);
+  if (Array.isArray(user.roles)) rawRoles.push(...user.roles);
+  if (Array.isArray(user.userRoles)) {
+    for (const ur of user.userRoles) {
+      if (ur.role?.type) rawRoles.push(ur.role.type);
+      if (ur.role?.name) rawRoles.push(ur.role.name);
+    }
+  }
+
+  for (const r of rawRoles) {
+    if (!r) continue;
+    const val = typeof r === 'string' ? r : r?.type || r?.name || String(r);
+    const normalized = String(val).toUpperCase().replace(/[\s_-]+/g, '');
+    if (
+      normalized === 'SUPERADMIN' ||
+      normalized === 'COMPANYADMIN' ||
+      normalized === 'CUSTOMERADMIN' ||
+      normalized === 'TENANTADMIN' ||
+      normalized === 'ADMIN'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function isUserNormalCustomer(user: any): boolean {
   if (!user) return true;
   if (isUserAdminOrStaff(user)) return false;

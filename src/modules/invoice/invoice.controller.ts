@@ -24,7 +24,7 @@ import { Response } from 'express';
 @ApiTags('Invoices & Payments')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('invoices')
+@Controller(['invoices', 'admin/invoices'])
 export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
@@ -155,8 +155,18 @@ export class InvoiceController {
     return this.invoiceService.update(customerId, id, dto, user);
   }
 
+  @Delete('bulk')
+  @Post('bulk-delete')
+  @ApiOperation({ summary: 'Bulk delete invoices (Admin)' })
+  async bulkRemove(
+    @Body() dto: { ids: (number | string)[] },
+    @CurrentUser() user: any,
+  ) {
+    return this.invoiceService.bulkRemove(dto?.ids || [], user);
+  }
+
   @Delete(':id')
-  @ApiOperation({ summary: 'Cancel invoice' })
+  @ApiOperation({ summary: 'Delete invoice (Admin)' })
   async remove(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, UnauthorizedException, ForbiddenExceptio
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
 import PDFDocument = require('pdfkit');
 
@@ -528,14 +528,169 @@ export class InvoiceService {
     });
   }
 
+  /**
+   * Delete a single invoice (soft-delete)
+   * Enforces role authorization and tenant isolation.
+   * Preserves customer and unrelated financial data.
+   */
   async remove(customerId: number | string, id: number | string, user?: any) {
     const numId = Number(id);
-    await this.findOne(customerId, numId, user);
+    if (!numId || isNaN(numId)) {
+      throw new BadRequestException('Valid invoice ID is required');
+    }
 
-    return this.prisma.invoice.update({
-      where: { id: numId },
-      data: { deletedAt: new Date(), status: InvoiceStatus.CANCELLED },
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
+    if (!isSuperAdmin && !isAdmin) {
+      throw new ForbiddenException('Admin or Super Admin permissions required to delete invoices');
+    }
+
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: numId, deletedAt: null },
+      include: { customer: true },
     });
+
+    if (!invoice) {
+      throw new NotFoundException(`Invoice #${id} not found or already deleted`);
+    }
+
+    // Tenant / Customer Isolation
+    if (!isSuperAdmin) {
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== invoice.customerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. You cannot delete invoices belonging to another organization');
+      }
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.invoice.update({
+        where: { id: numId },
+        data: { deletedAt: now, status: InvoiceStatus.CANCELLED },
+      });
+
+      try {
+        await tx.auditLog.create({
+          data: {
+            action: 'DELETE_INVOICE',
+            module: 'INVOICES',
+            userId: user.id ? Number(user.id) : undefined,
+            customerId: invoice.customerId,
+            details: {
+              invoiceId: invoice.id,
+              invoiceNo: invoice.invoiceNo,
+              totalAmount: invoice.totalAmount,
+              deletedAt: now.toISOString(),
+              deletedBy: user.email || user.name || user.id,
+            },
+          },
+        });
+      } catch (_) {}
+    });
+
+    return {
+      success: true,
+      message: 'Invoice deleted successfully',
+      deletedId: numId,
+    };
+  }
+
+  /**
+   * Bulk delete invoices (atomic soft-delete)
+   * Enforces role authorization and tenant isolation across ALL selected records.
+   */
+  async bulkRemove(rawIds: (number | string)[], user?: any) {
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      throw new BadRequestException('An array of invoice IDs is required');
+    }
+
+    const numericIds = Array.from(
+      new Set(
+        rawIds
+          .map((id) => Number(id))
+          .filter((n) => !isNaN(n) && n > 0)
+      )
+    );
+
+    if (numericIds.length === 0) {
+      throw new BadRequestException('No valid invoice IDs provided');
+    }
+
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
+    if (!isSuperAdmin && !isAdmin) {
+      throw new ForbiddenException('Admin or Super Admin permissions required to delete invoices');
+    }
+
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        id: { in: numericIds },
+        deletedAt: null,
+      },
+    });
+
+    if (invoices.length === 0) {
+      throw new NotFoundException('None of the selected invoices were found or they have already been deleted');
+    }
+
+    // Tenant / Customer Isolation for every record
+    if (!isSuperAdmin) {
+      const callerCustomerId = Number(user.customerId);
+      const crossTenant = invoices.find((inv) => inv.customerId !== callerCustomerId);
+      if (crossTenant || !callerCustomerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. One or more selected invoices belong to another organization');
+      }
+    }
+
+    const foundIds = invoices.map((inv) => inv.id);
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.invoice.updateMany({
+        where: { id: { in: foundIds } },
+        data: {
+          deletedAt: now,
+          status: InvoiceStatus.CANCELLED,
+        },
+      });
+
+      for (const inv of invoices) {
+        try {
+          await tx.auditLog.create({
+            data: {
+              action: 'BULK_DELETE_INVOICE',
+              module: 'INVOICES',
+              userId: user.id ? Number(user.id) : undefined,
+              customerId: inv.customerId,
+              details: {
+                invoiceId: inv.id,
+                invoiceNo: inv.invoiceNo,
+                totalAmount: inv.totalAmount,
+                deletedAt: now.toISOString(),
+                deletedBy: user.email || user.name || user.id,
+                bulkBatchSize: foundIds.length,
+              },
+            },
+          });
+        } catch (_) {}
+      }
+    });
+
+    return {
+      success: true,
+      message: `${foundIds.length} ${foundIds.length === 1 ? 'invoice' : 'invoices'} deleted successfully.`,
+      deletedCount: foundIds.length,
+      deletedIds: foundIds,
+    };
   }
 
   async generateInvoicePdfBuffer(invoice: any, invoiceNo: string): Promise<Buffer> {

@@ -1,6 +1,14 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { PaymentMethod, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import {
   SubscriptionBillingCycle,
   SubscriptionStatus,
@@ -1356,7 +1364,11 @@ export class SubscriptionService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const now = new Date();
+    const tenDaysFromNow = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const fiveDaysFromNow = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+
+    const [items, total, totalActive, expiredCount, expiring10Count, expiring5Count] = await Promise.all([
       this.prisma.customerSubscription.findMany({
         where,
         skip,
@@ -1368,6 +1380,18 @@ export class SubscriptionService {
         },
       }),
       this.prisma.customerSubscription.count({ where }),
+      this.prisma.customerSubscription.count({
+        where: { deletedAt: null, status: SubscriptionStatus.ACTIVE, endDate: { gte: now } },
+      }),
+      this.prisma.customerSubscription.count({
+        where: { deletedAt: null, OR: [{ status: SubscriptionStatus.EXPIRED }, { endDate: { lt: now } }] },
+      }),
+      this.prisma.customerSubscription.count({
+        where: { deletedAt: null, status: SubscriptionStatus.ACTIVE, endDate: { gte: fiveDaysFromNow, lte: tenDaysFromNow } },
+      }),
+      this.prisma.customerSubscription.count({
+        where: { deletedAt: null, status: SubscriptionStatus.ACTIVE, endDate: { gte: now, lte: fiveDaysFromNow } },
+      }),
     ]);
 
     const formatted = items.map((s) => {
@@ -1408,6 +1432,13 @@ export class SubscriptionService {
     return {
       data: filtered,
       items: filtered,
+      counts: {
+        total,
+        totalActive,
+        expired: expiredCount,
+        expiring10: expiring10Count,
+        expiring5: expiring5Count,
+      },
       pagination: {
         page,
         pageSize: limit,
@@ -2370,15 +2401,37 @@ export class SubscriptionService {
   /**
    * Admin: Safely soft-delete a customer subscription
    */
-  async deleteCustomerSubscription(subscriptionId: number | string, adminUserId?: number) {
+  async deleteCustomerSubscription(subscriptionId: number | string, userOrAdminId?: any) {
     const numSubId = Number(subscriptionId);
-    const sub = await this.prisma.customerSubscription.findUnique({
-      where: { id: numSubId },
+    if (!numSubId || isNaN(numSubId) || numSubId <= 0) {
+      throw new BadRequestException('A valid subscription ID is required');
+    }
+
+    const user = typeof userOrAdminId === 'object' && userOrAdminId !== null ? userOrAdminId : null;
+    const adminUserId = user?.id ? Number(user.id) : (typeof userOrAdminId === 'number' ? userOrAdminId : undefined);
+
+    if (user) {
+      const isSuperAdmin = isUserSuperAdmin(user);
+      const isAdmin = isUserAdmin(user);
+      if (!isSuperAdmin && !isAdmin) {
+        throw new ForbiddenException('Admin or Super Admin permissions required to delete customer subscriptions');
+      }
+    }
+
+    const sub = await this.prisma.customerSubscription.findFirst({
+      where: { id: numSubId, deletedAt: null },
       include: { plan: true },
     });
 
     if (!sub) {
-      throw new NotFoundException(`Subscription #${subscriptionId} not found`);
+      throw new NotFoundException(`Subscription #${subscriptionId} not found or already deleted`);
+    }
+
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== sub.customerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. This subscription belongs to another organization');
+      }
     }
 
     await this.prisma.customerSubscription.update({
@@ -2399,7 +2452,7 @@ export class SubscriptionService {
           customerId: sub.customerId,
           details: {
             subscriptionId: sub.id,
-            planName: sub.plan.name,
+            planName: sub.plan?.name,
             deletedAt: new Date().toISOString(),
           },
         },
@@ -2409,6 +2462,103 @@ export class SubscriptionService {
     return {
       success: true,
       message: `Subscription #${subscriptionId} deleted successfully`,
+    };
+  }
+
+  /**
+   * Admin: Bulk soft-delete multiple customer subscriptions
+   */
+  async bulkDeleteCustomerSubscriptions(rawIds: (number | string)[], user: any) {
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      throw new BadRequestException('An array of subscription IDs is required');
+    }
+
+    const numericIds = Array.from(
+      new Set(
+        rawIds
+          .map((id) => Number(id))
+          .filter((n) => !isNaN(n) && n > 0)
+      )
+    );
+
+    if (numericIds.length === 0) {
+      throw new BadRequestException('No valid subscription IDs provided');
+    }
+
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
+    if (!isSuperAdmin && !isAdmin) {
+      throw new ForbiddenException('Admin or Super Admin permissions required to delete customer subscriptions');
+    }
+
+    // Find all matching active subscriptions
+    const subscriptions = await this.prisma.customerSubscription.findMany({
+      where: {
+        id: { in: numericIds },
+        deletedAt: null,
+      },
+      include: {
+        plan: true,
+      },
+    });
+
+    if (subscriptions.length === 0) {
+      throw new NotFoundException('None of the selected subscriptions were found or they have already been deleted');
+    }
+
+    // Tenant / Customer Isolation for every record
+    if (!isSuperAdmin) {
+      const callerCustomerId = Number(user.customerId);
+      const crossTenant = subscriptions.find((s) => s.customerId !== callerCustomerId);
+      if (crossTenant || !callerCustomerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. One or more selected subscriptions belong to another organization');
+      }
+    }
+
+    const foundIds = subscriptions.map((s) => s.id);
+    const now = new Date();
+
+    // Atomic database transaction
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Soft delete all matching subscriptions
+      await tx.customerSubscription.updateMany({
+        where: { id: { in: foundIds } },
+        data: {
+          deletedAt: now,
+          status: SubscriptionStatus.CANCELED,
+          updatedAt: now,
+        },
+      });
+
+      // 2. Write Audit Logs for deleted items
+      for (const s of subscriptions) {
+        try {
+          await tx.auditLog.create({
+            data: {
+              action: 'BULK_DELETE_SUBSCRIPTION',
+              module: 'SUBSCRIPTIONS',
+              userId: user.id ? Number(user.id) : undefined,
+              customerId: s.customerId,
+              details: {
+                subscriptionId: s.id,
+                planName: s.plan?.name,
+                deletedAt: now.toISOString(),
+              },
+            },
+          });
+        } catch (_) {}
+      }
+    });
+
+    return {
+      success: true,
+      message: `Successfully deleted ${foundIds.length} subscription(s)`,
+      deletedCount: foundIds.length,
+      deletedIds: foundIds,
     };
   }
 
@@ -2440,7 +2590,15 @@ export class SubscriptionService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const baseWhere: any = {
+      paymentMethod: { in: [PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.OTHER] },
+      deletedAt: null,
+    };
+    if (where.OR) {
+      baseWhere.OR = where.OR;
+    }
+
+    const [items, total, pendingCount, approvedCount, rejectedCount] = await Promise.all([
       this.prisma.paymentHistory.findMany({
         where,
         skip,
@@ -2454,6 +2612,15 @@ export class SubscriptionService {
         },
       }),
       this.prisma.paymentHistory.count({ where }),
+      this.prisma.paymentHistory.count({
+        where: { ...baseWhere, status: 'PENDING' },
+      }),
+      this.prisma.paymentHistory.count({
+        where: { ...baseWhere, status: { in: ['SUCCESS', 'PAID'] } },
+      }),
+      this.prisma.paymentHistory.count({
+        where: { ...baseWhere, status: { in: ['REJECTED', 'FAILED', 'CANCELED'] } },
+      }),
     ]);
 
     const formatted = items.map((p) => {
@@ -2501,6 +2668,12 @@ export class SubscriptionService {
       success: true,
       items: formatted,
       data: formatted,
+      counts: {
+        total: (pendingCount + approvedCount + rejectedCount),
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+      },
       pagination: {
         page,
         pageSize: limit,
@@ -2802,6 +2975,225 @@ export class SubscriptionService {
       message: 'Offline payment request has been rejected.',
       paymentStatus: 'REJECTED',
       subscriptionStatus: 'REJECTED',
+    };
+  }
+
+  /**
+   * Admin: Safely delete a single Offline Payment Request
+   * Enforces role authorization, tenant isolation, and subscription safety.
+   * Performs soft deletion on PaymentHistory, preserving customer and invoice data.
+   */
+  async deleteOfflinePaymentRequest(requestId: number | string, user: any) {
+    const numId = Number(requestId);
+    if (!numId || isNaN(numId)) {
+      throw new BadRequestException('Valid payment request ID is required');
+    }
+
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
+    if (!isSuperAdmin && !isAdmin) {
+      throw new ForbiddenException('Admin or Super Admin permissions required to delete offline payment requests');
+    }
+
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: {
+        id: numId,
+        paymentMethod: { in: [PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.OTHER] },
+        deletedAt: null,
+      },
+      include: {
+        customer: true,
+        subscription: true,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException(`Offline payment request #${requestId} not found or already deleted`);
+    }
+
+    // Tenant / Customer Isolation
+    if (!isSuperAdmin) {
+      const callerCustomerId = Number(user.customerId);
+      if (!callerCustomerId || callerCustomerId !== payment.customerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. You cannot delete payment requests belonging to another organization');
+      }
+    }
+
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Soft delete payment request
+      await tx.paymentHistory.update({
+        where: { id: payment.id },
+        data: {
+          deletedAt: now,
+          updatedAt: now,
+        },
+      });
+
+      // 2. If the linked subscription is still in PENDING status, cancel it so it does not linger
+      if (payment.subscriptionId && payment.subscription?.status === SubscriptionStatus.PENDING) {
+        await tx.customerSubscription.update({
+          where: { id: payment.subscriptionId },
+          data: {
+            status: SubscriptionStatus.CANCELED,
+            updatedAt: now,
+          },
+        });
+      }
+
+      // 3. Audit Log
+      try {
+        await tx.auditLog.create({
+          data: {
+            action: 'DELETE_OFFLINE_PAYMENT',
+            module: 'PAYMENTS',
+            userId: user.id ? Number(user.id) : undefined,
+            customerId: payment.customerId,
+            details: {
+              paymentId: payment.id,
+              subscriptionId: payment.subscriptionId,
+              orderNumber: payment.orderNumber,
+              totalAmount: payment.totalAmount || payment.amount,
+              paymentStatus: payment.status,
+              deletedAt: now.toISOString(),
+              deletedBy: user.email || user.name || user.id,
+            },
+          },
+        });
+      } catch (_) {}
+    });
+
+    return {
+      success: true,
+      message: 'Offline payment request deleted successfully.',
+      deletedId: payment.id,
+    };
+  }
+
+  /**
+   * Admin: Safely bulk delete Offline Payment Requests
+   * Enforces role authorization and tenant isolation across ALL selected records.
+   * Performs atomic database transaction.
+   */
+  async bulkDeleteOfflinePaymentRequests(rawIds: (number | string)[], user: any) {
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      throw new BadRequestException('An array of offline payment request IDs is required');
+    }
+
+    const numericIds = Array.from(
+      new Set(
+        rawIds
+          .map((id) => Number(id))
+          .filter((n) => !isNaN(n) && n > 0)
+      )
+    );
+
+    if (numericIds.length === 0) {
+      throw new BadRequestException('No valid offline payment request IDs provided');
+    }
+
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
+    if (!isSuperAdmin && !isAdmin) {
+      throw new ForbiddenException('Admin or Super Admin permissions required to delete offline payment requests');
+    }
+
+    // Find all matching active offline payment requests
+    const payments = await this.prisma.paymentHistory.findMany({
+      where: {
+        id: { in: numericIds },
+        paymentMethod: { in: [PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.OTHER] },
+        deletedAt: null,
+      },
+      include: {
+        subscription: true,
+      },
+    });
+
+    if (payments.length === 0) {
+      throw new NotFoundException('None of the selected offline payment requests were found or they have already been deleted');
+    }
+
+    // Tenant / Customer Isolation for every record
+    if (!isSuperAdmin) {
+      const callerCustomerId = Number(user.customerId);
+      const crossTenant = payments.find((p) => p.customerId !== callerCustomerId);
+      if (crossTenant || !callerCustomerId) {
+        throw new ForbiddenException('Cross-tenant data access forbidden. One or more selected requests belong to another organization');
+      }
+    }
+
+    const foundIds = payments.map((p) => p.id);
+    const now = new Date();
+
+    // Atomic database transaction
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Soft delete all matching payment history records
+      await tx.paymentHistory.updateMany({
+        where: { id: { in: foundIds } },
+        data: {
+          deletedAt: now,
+          updatedAt: now,
+        },
+      });
+
+      // 2. For any associated subscriptions that are still PENDING, mark them CANCELED
+      const pendingSubIds = payments
+        .filter((p) => p.subscriptionId && p.subscription?.status === SubscriptionStatus.PENDING)
+        .map((p) => p.subscriptionId as number);
+
+      if (pendingSubIds.length > 0) {
+        await tx.customerSubscription.updateMany({
+          where: {
+            id: { in: pendingSubIds },
+            status: SubscriptionStatus.PENDING,
+          },
+          data: {
+            status: SubscriptionStatus.CANCELED,
+            updatedAt: now,
+          },
+        });
+      }
+
+      // 3. Write Audit Logs for deleted items
+      for (const p of payments) {
+        try {
+          await tx.auditLog.create({
+            data: {
+              action: 'BULK_DELETE_OFFLINE_PAYMENT',
+              module: 'PAYMENTS',
+              userId: user.id ? Number(user.id) : undefined,
+              customerId: p.customerId,
+              details: {
+                paymentId: p.id,
+                subscriptionId: p.subscriptionId,
+                orderNumber: p.orderNumber,
+                totalAmount: p.totalAmount || p.amount,
+                paymentStatus: p.status,
+                deletedAt: now.toISOString(),
+                deletedBy: user.email || user.name || user.id,
+                bulkBatchSize: foundIds.length,
+              },
+            },
+          });
+        } catch (_) {}
+      }
+    });
+
+    return {
+      success: true,
+      message: `${foundIds.length} offline payment ${foundIds.length === 1 ? 'request' : 'requests'} deleted successfully.`,
+      deletedCount: foundIds.length,
+      deletedIds: foundIds,
     };
   }
 }
