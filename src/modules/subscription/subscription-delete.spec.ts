@@ -1,5 +1,6 @@
-import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException, RequestMethod } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
+import { SubscriptionController } from './subscription.controller';
 import { RoleType, SubscriptionStatus } from '@prisma/client';
 
 describe('Tenant Subscription Deletion (Single & Bulk) — Unit Tests', () => {
@@ -241,4 +242,66 @@ describe('Tenant Subscription Deletion (Single & Bulk) — Unit Tests', () => {
       expect(mockPrisma.customerSubscription.updateMany).not.toHaveBeenCalled();
     });
   });
+
+  describe('SubscriptionController Route & Method Tests', () => {
+    let controller: SubscriptionController;
+    let mockSubscriptionService: any;
+
+    beforeEach(() => {
+      mockSubscriptionService = {
+        bulkDeleteCustomerSubscriptions: jest.fn().mockResolvedValue({ success: true, deletedCount: 2 }),
+        deleteCustomerSubscription: jest.fn().mockResolvedValue({ success: true, message: 'Deleted' }),
+      };
+      controller = new SubscriptionController(
+        mockSubscriptionService,
+        {} as any,
+        {} as any,
+      );
+    });
+
+    it('registers POST /admin/subscriptions/bulk-delete route and method correctly', () => {
+      const paths = Reflect.getMetadata('path', controller.bulkDeleteSubscriptions);
+      const method = Reflect.getMetadata('method', controller.bulkDeleteSubscriptions);
+
+      expect(paths).toContain('admin/subscriptions/bulk-delete');
+      expect(paths).toContain('subscriptions/bulk-delete');
+      expect(method).toBe(RequestMethod.POST);
+    });
+
+    it('registers DELETE /admin/subscriptions/bulk and bulk-delete correctly', () => {
+      const paths = Reflect.getMetadata('path', controller.bulkDeleteSubscriptionsViaDelete);
+      const method = Reflect.getMetadata('method', controller.bulkDeleteSubscriptionsViaDelete);
+
+      expect(paths).toContain('admin/subscriptions/bulk');
+      expect(paths).toContain('admin/subscriptions/bulk-delete');
+      expect(method).toBe(RequestMethod.DELETE);
+    });
+
+    it('registers single DELETE /admin/subscriptions/:subscriptionId correctly', () => {
+      const paths = Reflect.getMetadata('path', controller.deleteSubscription);
+      const method = Reflect.getMetadata('method', controller.deleteSubscription);
+
+      expect(paths).toContain('admin/subscriptions/:subscriptionId');
+      expect(method).toBe(RequestMethod.DELETE);
+    });
+
+    it('delegates POST bulk delete with ids in body to service', async () => {
+      const res = await controller.bulkDeleteSubscriptions({ ids: [51, 52] }, undefined as any, mockSuperAdminUser);
+      expect(mockSubscriptionService.bulkDeleteCustomerSubscriptions).toHaveBeenCalledWith([51, 52], mockSuperAdminUser);
+      expect(res.success).toBe(true);
+    });
+
+    it('delegates POST bulk delete with query param ids to service', async () => {
+      const res = await controller.bulkDeleteSubscriptions({}, '51,52', mockSuperAdminUser);
+      expect(mockSubscriptionService.bulkDeleteCustomerSubscriptions).toHaveBeenCalledWith(['51', '52'], mockSuperAdminUser);
+      expect(res.success).toBe(true);
+    });
+
+    it('delegates DELETE single subscription to service', async () => {
+      const res = await controller.deleteSubscription('51', mockSuperAdminUser);
+      expect(mockSubscriptionService.deleteCustomerSubscription).toHaveBeenCalledWith('51', mockSuperAdminUser);
+      expect(res.success).toBe(true);
+    });
+  });
 });
+

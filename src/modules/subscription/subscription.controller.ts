@@ -800,22 +800,57 @@ export class SubscriptionController {
     return this.subscriptionService.renewCustomerSubscription(subscriptionId, dto, user?.id);
   }
 
-  @Delete('admin/subscriptions/bulk')
-  @Post('admin/subscriptions/bulk-delete')
-  @Delete('subscriptions/bulk')
-  @Post('subscriptions/bulk-delete')
+  @Post([
+    'admin/subscriptions/bulk-delete',
+    'subscriptions/bulk-delete',
+    'admin/subscriptions/bulk',
+    'subscriptions/bulk',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Bulk soft-delete customer subscriptions (Admin)' })
+  @ApiOperation({ summary: 'Bulk soft-delete customer subscriptions (Admin) via POST' })
   async bulkDeleteSubscriptions(
-    @Body() dto: { ids: (number | string)[] },
+    @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
+    @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
   ) {
-    return this.subscriptionService.bulkDeleteCustomerSubscriptions(dto?.ids, user);
+    let ids = dto?.ids || dto?.subscriptionIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
   }
 
-  @Delete('admin/subscriptions/:subscriptionId')
-  @Delete('subscriptions/:subscriptionId')
+  @Delete([
+    'admin/subscriptions/bulk',
+    'subscriptions/bulk',
+    'admin/subscriptions/bulk-delete',
+    'subscriptions/bulk-delete',
+  ])
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk soft-delete customer subscriptions (Admin) via DELETE' })
+  async bulkDeleteSubscriptionsViaDelete(
+    @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
+    @Query('ids') queryIds: string | string[],
+    @CurrentUser() user: any,
+  ) {
+    let ids = dto?.ids || dto?.subscriptionIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
+  }
+
+  @Delete(['admin/subscriptions/:subscriptionId', 'subscriptions/:subscriptionId'])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Soft-delete a customer subscription (Admin)' })
@@ -830,9 +865,11 @@ export class SubscriptionController {
   // Offline Payment Requests (Admin)
   // ==========================================
 
-  @Get('admin/subscriptions/offline-requests')
-  @Get('admin/offline-requests')
-  @Get('admin/payments/offline-requests')
+  @Get([
+    'admin/subscriptions/offline-requests',
+    'admin/offline-requests',
+    'admin/payments/offline-requests',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all offline payment requests for Admin review' })
@@ -850,9 +887,11 @@ export class SubscriptionController {
     });
   }
 
-  @Post('admin/subscriptions/offline-requests/:id/approve')
-  @Post('admin/offline-requests/:id/approve')
-  @Post('admin/payments/offline-requests/:id/approve')
+  @Post([
+    'admin/subscriptions/offline-requests/:id/approve',
+    'admin/offline-requests/:id/approve',
+    'admin/payments/offline-requests/:id/approve',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Approve an offline payment request and activate subscription' })
@@ -863,9 +902,11 @@ export class SubscriptionController {
     return this.subscriptionService.approveOfflinePaymentRequest(id, user?.id);
   }
 
-  @Post('admin/subscriptions/offline-requests/:id/reject')
-  @Post('admin/offline-requests/:id/reject')
-  @Post('admin/payments/offline-requests/:id/reject')
+  @Post([
+    'admin/subscriptions/offline-requests/:id/reject',
+    'admin/offline-requests/:id/reject',
+    'admin/payments/offline-requests/:id/reject',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reject an offline payment request' })
@@ -877,25 +918,65 @@ export class SubscriptionController {
     return this.subscriptionService.rejectOfflinePaymentRequest(id, user?.id, dto?.reason);
   }
 
-  @Delete('admin/subscriptions/offline-requests/bulk')
-  @Post('admin/subscriptions/offline-requests/bulk-delete')
-  @Delete('admin/offline-requests/bulk')
-  @Post('admin/offline-requests/bulk-delete')
-  @Delete('admin/payments/offline-requests/bulk')
-  @Post('admin/payments/offline-requests/bulk-delete')
+  @Post([
+    'admin/subscriptions/offline-requests/bulk-delete',
+    'admin/offline-requests/bulk-delete',
+    'admin/payments/offline-requests/bulk-delete',
+    'admin/subscriptions/offline-requests/bulk',
+    'admin/offline-requests/bulk',
+    'admin/payments/offline-requests/bulk',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Bulk delete offline payment requests (Admin/Super Admin)' })
+  @ApiOperation({ summary: 'Bulk delete offline payment requests (Admin/Super Admin) via POST' })
   async bulkDeleteOfflinePaymentRequests(
-    @Body() dto: { ids: (number | string)[] },
+    @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
+    @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
   ) {
-    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(dto?.ids || [], user);
+    let ids = dto?.ids || dto?.requestIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
   }
 
-  @Delete('admin/subscriptions/offline-requests/:id')
-  @Delete('admin/offline-requests/:id')
-  @Delete('admin/payments/offline-requests/:id')
+  @Delete([
+    'admin/subscriptions/offline-requests/bulk',
+    'admin/offline-requests/bulk',
+    'admin/payments/offline-requests/bulk',
+    'admin/subscriptions/offline-requests/bulk-delete',
+    'admin/offline-requests/bulk-delete',
+    'admin/payments/offline-requests/bulk-delete',
+  ])
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete offline payment requests (Admin/Super Admin) via DELETE' })
+  async bulkDeleteOfflinePaymentRequestsViaDelete(
+    @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
+    @Query('ids') queryIds: string | string[],
+    @CurrentUser() user: any,
+  ) {
+    let ids = dto?.ids || dto?.requestIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
+  }
+
+  @Delete([
+    'admin/subscriptions/offline-requests/:id',
+    'admin/offline-requests/:id',
+    'admin/payments/offline-requests/:id',
+  ])
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a single offline payment request (Admin/Super Admin)' })
