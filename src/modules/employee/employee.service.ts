@@ -831,29 +831,34 @@ export class EmployeeService {
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     const cleanPrefix = (prefix || defaultPrefix).toUpperCase().replace(/-+$/, '');
 
-    // Query existing and historical employee codes for this customer that match the prefix
-    const [existingEmployees, auditLogs] = await Promise.all([
-      client.employee.findMany({
-        where: {
-          customerId: numCustomerId,
-          employeeCode: {
-            startsWith: cleanPrefix,
-          },
+    // Query existing employee codes for this customer that match the prefix
+    const existingEmployees = await client.employee.findMany({
+      where: {
+        customerId: numCustomerId,
+        employeeCode: {
+          startsWith: cleanPrefix,
         },
-        select: { employeeCode: true },
-      }),
-      client.auditLog
-        ? client.auditLog.findMany({
-            where: {
-              customerId: numCustomerId,
-              module: 'EMPLOYEE',
-            },
-            select: { details: true },
-            take: 500,
-            orderBy: { id: 'desc' },
-          }).catch(() => [])
-        : Promise.resolve([]),
-    ]);
+      },
+      select: { employeeCode: true },
+    });
+
+    // Query audit logs using this.prisma outside of tx to avoid connection multiplexing or transaction aborts
+    let auditLogs: any[] = [];
+    if (this.prisma?.auditLog) {
+      try {
+        auditLogs = await this.prisma.auditLog.findMany({
+          where: {
+            customerId: numCustomerId,
+            module: 'EMPLOYEE',
+          },
+          select: { details: true },
+          take: 500,
+          orderBy: { id: 'desc' },
+        });
+      } catch {
+        auditLogs = [];
+      }
+    }
 
     let maxNum = 0;
     const regex = new RegExp(`^${cleanPrefix}-?(\\d+)$`, 'i');
@@ -970,6 +975,25 @@ export class EmployeeService {
           });
         }
         if (!department) {
+          const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
+          if (crossDept) {
+            let localDept = await tx.department.findFirst({
+              where: { customerId: numCustomerId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+            });
+            if (!localDept) {
+              localDept = await tx.department.create({
+                data: {
+                  customerId: numCustomerId,
+                  name: crossDept.name,
+                  code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
+                  isActive: crossDept.isActive,
+                },
+              });
+            }
+            department = localDept;
+          }
+        }
+        if (!department) {
           throw new NotFoundException({
             success: false,
             message: `Department #${dto.departmentId} not found`,
@@ -986,12 +1010,13 @@ export class EmployeeService {
               customerId: numCustomerId,
               name: dto.departmentName,
               code: (dto.departmentName || 'DEPT').substring(0, 5).toUpperCase(),
+              isActive: true,
             },
           });
         }
       } else {
         department = await tx.department.findFirst({
-          where: { customerId: numCustomerId },
+          where: { customerId: numCustomerId, isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!department) {
@@ -1000,37 +1025,73 @@ export class EmployeeService {
               customerId: numCustomerId,
               name: 'General',
               code: 'GEN',
+              isActive: true,
             },
           });
         }
       }
 
+      if (department && department.isActive === false) {
+        throw new BadRequestException({
+          success: false,
+          message: 'Selected department is no longer active.',
+          error: 'DEPARTMENT_INACTIVE',
+        });
+      }
+
       // Designation resolution
       let designation: any = null;
       if (dto.designationId) {
+        const numDesigId = Number(dto.designationId);
         designation = await tx.designation.findFirst({
-          where: { id: Number(dto.designationId), customerId: numCustomerId },
+          where: { id: numDesigId, customerId: numCustomerId },
         });
+        if (!designation && dto.designationName) {
+          designation = await tx.designation.findFirst({
+            where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          });
+        }
+        if (!designation) {
+          const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
+          if (crossDesig) {
+            let localDesig = await tx.designation.findFirst({
+              where: { customerId: numCustomerId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+            });
+            if (!localDesig) {
+              localDesig = await tx.designation.create({
+                data: {
+                  customerId: numCustomerId,
+                  name: crossDesig.name,
+                  code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
+                  departmentId: department?.id || null,
+                  isActive: crossDesig.isActive,
+                },
+              });
+            }
+            designation = localDesig;
+          }
+        }
         if (!designation) {
           throw new BadRequestException(`Designation #${dto.designationId} not found`);
         }
       } else if (dto.designationName) {
         designation = await tx.designation.findFirst({
-          where: { customerId: numCustomerId, name: dto.designationName },
+          where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!designation) {
           designation = await tx.designation.create({
             data: {
               customerId: numCustomerId,
               name: dto.designationName,
-              code: (dto.designationName || 'STF').substring(0, 4).toUpperCase(),
+              code: `${(dto.designationName || 'STF').substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
+              isActive: true,
             },
           });
         }
       } else {
         designation = await tx.designation.findFirst({
-          where: { customerId: numCustomerId },
+          where: { customerId: numCustomerId, isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!designation) {
@@ -1038,11 +1099,20 @@ export class EmployeeService {
             data: {
               customerId: numCustomerId,
               name: 'Staff',
-              code: 'STF',
+              code: `STF-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
+              isActive: true,
             },
           });
         }
+      }
+
+      if (designation && designation.isActive === false) {
+        throw new BadRequestException({
+          success: false,
+          message: 'Selected designation is no longer active.',
+          error: 'DESIGNATION_INACTIVE',
+        });
       }
 
       // User account password hashing
@@ -1050,6 +1120,7 @@ export class EmployeeService {
       const hasExplicitPassword = Boolean(dto.password && dto.password.trim().length > 0);
       const rawPassword = hasExplicitPassword ? dto.password!.trim() : 'Password@123';
       const passwordHash = await bcrypt.hash(rawPassword, 10);
+      const cleanPhone = dto.phone && dto.phone.trim().length > 0 ? dto.phone.trim() : null;
 
       // Find or create linked User account
       let user = await tx.user.findFirst({
@@ -1057,11 +1128,24 @@ export class EmployeeService {
       });
 
       if (!user) {
+        if (cleanPhone) {
+          const duplicatePhoneUser = await tx.user.findFirst({
+            where: { phone: cleanPhone },
+          });
+          if (duplicatePhoneUser) {
+            throw new BadRequestException({
+              success: false,
+              message: `Phone number '${cleanPhone}' is already registered to another user account.`,
+              error: 'PHONE_ALREADY_EXISTS',
+            });
+          }
+        }
+
         user = await tx.user.create({
           data: {
             customerId: numCustomerId,
             email: normalizedEmail,
-            phone: dto.phone || null,
+            phone: cleanPhone,
             firstName: dto.firstName,
             lastName: dto.lastName,
             passwordHash,
@@ -1070,17 +1154,32 @@ export class EmployeeService {
           },
         });
       } else {
-        // If user exists, update credentials, customerId, and active status
+        if (cleanPhone) {
+          const duplicatePhoneUser = await tx.user.findFirst({
+            where: { phone: cleanPhone, id: { not: user.id } },
+          });
+          if (duplicatePhoneUser) {
+            throw new BadRequestException({
+              success: false,
+              message: `Phone number '${cleanPhone}' is already registered to another user account.`,
+              error: 'PHONE_ALREADY_EXISTS',
+            });
+          }
+        }
+
         const updateUserData: any = {
-          customerId: numCustomerId,
           firstName: dto.firstName || user.firstName,
           lastName: dto.lastName || user.lastName,
-          phone: dto.phone || user.phone,
+          phone: cleanPhone || user.phone,
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
           isVerified: true,
           deletedAt: null,
           ...(hasExplicitPassword ? { passwordHash } : {}),
         };
+        if (user.customerId !== null) {
+          updateUserData.customerId = numCustomerId;
+        }
+
         user = await tx.user.update({
           where: { id: user.id },
           data: updateUserData,
@@ -1172,11 +1271,37 @@ export class EmployeeService {
       let branchName = dto.branch || dto.officeName || 'Head Office';
 
       if (dto.officeId) {
-        const office = await tx.branchGeofence.findFirst({
-          where: { id: Number(dto.officeId), customerId: numCustomerId },
+        const numOfficeId = Number(dto.officeId);
+        let office = await tx.branchGeofence.findFirst({
+          where: { id: numOfficeId, customerId: numCustomerId },
         });
         if (!office) {
+          const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
+          if (crossOffice) {
+            let localOffice = await tx.branchGeofence.findFirst({
+              where: { customerId: numCustomerId, name: { equals: crossOffice.name, mode: 'insensitive' } },
+            });
+            if (!localOffice) {
+              localOffice = await tx.branchGeofence.create({
+                data: {
+                  customerId: numCustomerId,
+                  name: crossOffice.name,
+                  city: crossOffice.city || 'Mumbai',
+                  latitude: crossOffice.latitude || 19.076,
+                  longitude: crossOffice.longitude || 72.8777,
+                  radiusMeters: crossOffice.radiusMeters || 200,
+                  isActive: crossOffice.isActive,
+                },
+              });
+            }
+            office = localOffice;
+          }
+        }
+        if (!office) {
           throw new BadRequestException(`Office #${dto.officeId} not found or does not belong to this customer`);
+        }
+        if (office && office.isActive === false) {
+          throw new BadRequestException('Selected office is no longer active.');
         }
         officeId = office.id;
         branchName = office.name;
@@ -1223,9 +1348,31 @@ export class EmployeeService {
       let shiftId: number | null = null;
       if (dto.shiftId) {
         const numShiftId = Number(dto.shiftId);
-        const shift = await tx.shift.findFirst({
+        let shift = await tx.shift.findFirst({
           where: { id: numShiftId, customerId: numCustomerId },
         });
+        if (!shift) {
+          const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
+          if (crossShift) {
+            let localShift = await tx.shift.findFirst({
+              where: { customerId: numCustomerId, name: { equals: crossShift.name, mode: 'insensitive' } },
+            });
+            if (!localShift) {
+              localShift = await tx.shift.create({
+                data: {
+                  customerId: numCustomerId,
+                  name: crossShift.name,
+                  code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
+                  startTime: crossShift.startTime,
+                  endTime: crossShift.endTime,
+                  durationHours: crossShift.durationHours,
+                  status: crossShift.status,
+                },
+              });
+            }
+            shift = localShift;
+          }
+        }
         if (!shift) {
           throw new BadRequestException(`Shift #${numShiftId} not found or does not belong to this customer`);
         }
@@ -1284,8 +1431,8 @@ export class EmployeeService {
           },
         });
 
-        if (tx.auditLog) {
-          await tx.auditLog.create({
+        if (this.prisma?.auditLog) {
+          this.prisma.auditLog.create({
             data: {
               customerId: numCustomerId,
               userId: user.id,
@@ -1362,28 +1509,74 @@ export class EmployeeService {
 
       // Handle user account updates (status & optional password)
       if (existing?.userId) {
-        const userUpdate: any = {};
-        if (dto.status !== undefined) {
-          userUpdate.isActive = dto.status === 'ACTIVE';
-          if (dto.status === 'ACTIVE') {
-            userUpdate.deletedAt = null;
-          }
-        }
-        if (dto.password && dto.password.trim().length > 0) {
-          userUpdate.passwordHash = await bcrypt.hash(dto.password.trim(), 10);
-        }
-        if (dto.firstName !== undefined) userUpdate.firstName = dto.firstName;
-        if (dto.lastName !== undefined) userUpdate.lastName = dto.lastName;
-        if (dto.phone !== undefined) userUpdate.phone = dto.phone;
-        userUpdate.customerId = targetCustId;
+        const userRecord = await tx.user.findUnique({
+          where: { id: existing.userId },
+        });
 
-        if (Object.keys(userUpdate).length > 0) {
-          await tx.user
-            .update({
+        if (userRecord) {
+          const userUpdate: any = {};
+          if (dto.status !== undefined) {
+            userUpdate.isActive = dto.status === 'ACTIVE';
+            if (dto.status === 'ACTIVE') {
+              userUpdate.deletedAt = null;
+            }
+          }
+          if (dto.password && dto.password.trim().length > 0) {
+            userUpdate.passwordHash = await bcrypt.hash(dto.password.trim(), 10);
+          }
+          if (dto.firstName !== undefined) userUpdate.firstName = dto.firstName;
+          if (dto.lastName !== undefined) userUpdate.lastName = dto.lastName;
+
+          if (dto.phone !== undefined) {
+            const cleanPhone = dto.phone && dto.phone.trim().length > 0 ? dto.phone.trim() : null;
+            if (cleanPhone) {
+              const duplicatePhoneUser = await tx.user.findFirst({
+                where: {
+                  phone: cleanPhone,
+                  id: { not: existing.userId },
+                },
+              });
+              if (duplicatePhoneUser) {
+                throw new BadRequestException({
+                  success: false,
+                  message: `Phone number '${cleanPhone}' is already in use by another account.`,
+                  error: 'PHONE_ALREADY_IN_USE',
+                });
+              }
+            }
+            userUpdate.phone = cleanPhone;
+          }
+
+          if (dto.email !== undefined) {
+            const cleanEmail = dto.email.trim().toLowerCase();
+            if (cleanEmail && cleanEmail !== userRecord.email) {
+              const duplicateEmailUser = await tx.user.findFirst({
+                where: {
+                  email: cleanEmail,
+                  id: { not: existing.userId },
+                },
+              });
+              if (duplicateEmailUser) {
+                throw new BadRequestException({
+                  success: false,
+                  message: `Email '${cleanEmail}' is already in use by another account.`,
+                  error: 'EMAIL_ALREADY_IN_USE',
+                });
+              }
+              userUpdate.email = cleanEmail;
+            }
+          }
+
+          if (userRecord.customerId !== null) {
+            userUpdate.customerId = targetCustId;
+          }
+
+          if (Object.keys(userUpdate).length > 0) {
+            await tx.user.update({
               where: { id: existing.userId },
               data: userUpdate,
-            })
-            .catch(() => null);
+            });
+          }
         }
       } else {
         // Auto-heal missing User account for this employee
@@ -1392,13 +1585,27 @@ export class EmployeeService {
           let user = await tx.user.findFirst({ where: { email: normalizedEmail } });
           const rawPassword = dto.password?.trim() || 'Password@123';
           const passwordHash = await bcrypt.hash(rawPassword, 10);
+          const cleanPhone = dto.phone && dto.phone.trim().length > 0 ? dto.phone.trim() : null;
 
           if (!user) {
+            if (cleanPhone) {
+              const duplicatePhoneUser = await tx.user.findFirst({
+                where: { phone: cleanPhone },
+              });
+              if (duplicatePhoneUser) {
+                throw new BadRequestException({
+                  success: false,
+                  message: `Phone number '${cleanPhone}' is already in use by another account.`,
+                  error: 'PHONE_ALREADY_IN_USE',
+                });
+              }
+            }
+
             user = await tx.user.create({
               data: {
                 customerId: targetCustId,
                 email: normalizedEmail,
-                phone: dto.phone || existing?.phone || null,
+                phone: cleanPhone,
                 firstName: dto.firstName || existing?.firstName || 'Employee',
                 lastName: dto.lastName || existing?.lastName || '',
                 passwordHash,
@@ -1407,12 +1614,26 @@ export class EmployeeService {
               },
             });
           } else {
+            if (cleanPhone) {
+              const duplicatePhoneUser = await tx.user.findFirst({
+                where: { phone: cleanPhone, id: { not: user.id } },
+              });
+              if (duplicatePhoneUser) {
+                throw new BadRequestException({
+                  success: false,
+                  message: `Phone number '${cleanPhone}' is already in use by another account.`,
+                  error: 'PHONE_ALREADY_IN_USE',
+                });
+              }
+            }
+
             await tx.user.update({
               where: { id: user.id },
               data: {
-                customerId: targetCustId,
+                customerId: user.customerId !== null ? targetCustId : null,
                 isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
                 deletedAt: null,
+                phone: cleanPhone || user.phone,
                 ...(dto.password?.trim() ? { passwordHash } : {}),
               },
             });
@@ -1463,10 +1684,36 @@ export class EmployeeService {
           });
         }
         if (!dept) {
+          const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
+          if (crossDept) {
+            let localDept = await tx.department.findFirst({
+              where: { customerId: targetCustId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+            });
+            if (!localDept) {
+              localDept = await tx.department.create({
+                data: {
+                  customerId: targetCustId,
+                  name: crossDept.name,
+                  code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
+                  isActive: crossDept.isActive,
+                },
+              });
+            }
+            dept = localDept;
+          }
+        }
+        if (!dept) {
           throw new NotFoundException({
             success: false,
             message: `Department #${numDeptId} not found`,
             error: 'DEPARTMENT_NOT_FOUND',
+          });
+        }
+        if (dept && dept.isActive === false) {
+          throw new BadRequestException({
+            success: false,
+            message: 'Selected department is no longer active.',
+            error: 'DEPARTMENT_INACTIVE',
           });
         }
         updateData.departmentId = dept.id;
@@ -1480,45 +1727,118 @@ export class EmployeeService {
               customerId: targetCustId,
               name: dto.departmentName,
               code: dto.departmentName.substring(0, 5).toUpperCase(),
+              isActive: true,
             },
+          });
+        }
+        if (dept && dept.isActive === false) {
+          throw new BadRequestException({
+            success: false,
+            message: 'Selected department is no longer active.',
+            error: 'DEPARTMENT_INACTIVE',
           });
         }
         updateData.departmentId = dept.id;
       }
 
-      if (dto.designationId !== undefined && dto.designationId !== null) {
+      if (dto.designationId !== undefined && dto.designationId !== null && String(dto.designationId).trim() !== '') {
         const numDesigId = Number(dto.designationId);
-        const desig = await tx.designation.findFirst({
+        let desig = await tx.designation.findFirst({
           where: { id: numDesigId, customerId: targetCustId },
         });
+        if (!desig && dto.designationName) {
+          desig = await tx.designation.findFirst({
+            where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          });
+        }
+        if (!desig) {
+          const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
+          if (crossDesig) {
+            let localDesig = await tx.designation.findFirst({
+              where: { customerId: targetCustId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+            });
+            if (!localDesig) {
+              localDesig = await tx.designation.create({
+                data: {
+                  customerId: targetCustId,
+                  name: crossDesig.name,
+                  code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
+                  departmentId: updateData.departmentId || existing?.departmentId || null,
+                  isActive: crossDesig.isActive,
+                },
+              });
+            }
+            desig = localDesig;
+          }
+        }
         if (!desig) {
           throw new BadRequestException(`Designation #${numDesigId} not found`);
+        }
+        if (desig && desig.isActive === false) {
+          throw new BadRequestException({
+            success: false,
+            message: 'Selected designation is no longer active.',
+            error: 'DESIGNATION_INACTIVE',
+          });
         }
         updateData.designationId = desig.id;
       } else if (dto.designationName) {
         let desig = await tx.designation.findFirst({
-          where: { customerId: targetCustId, name: dto.designationName },
+          where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!desig) {
           desig = await tx.designation.create({
             data: {
               customerId: targetCustId,
               name: dto.designationName,
-              code: dto.designationName.substring(0, 4).toUpperCase(),
+              code: `${dto.designationName.substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: updateData.departmentId || existing?.departmentId || null,
+              isActive: true,
             },
+          });
+        }
+        if (desig && desig.isActive === false) {
+          throw new BadRequestException({
+            success: false,
+            message: 'Selected designation is no longer active.',
+            error: 'DESIGNATION_INACTIVE',
           });
         }
         updateData.designationId = desig.id;
       }
 
-      if (dto.officeId !== undefined && dto.officeId !== null) {
+      if (dto.officeId !== undefined && dto.officeId !== null && String(dto.officeId).trim() !== '') {
         const numOfficeId = Number(dto.officeId);
-        const office = await tx.branchGeofence.findFirst({
+        let office = await tx.branchGeofence.findFirst({
           where: { id: numOfficeId, customerId: targetCustId },
         });
         if (!office) {
+          const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
+          if (crossOffice) {
+            let localOffice = await tx.branchGeofence.findFirst({
+              where: { customerId: targetCustId, name: { equals: crossOffice.name, mode: 'insensitive' } },
+            });
+            if (!localOffice) {
+              localOffice = await tx.branchGeofence.create({
+                data: {
+                  customerId: targetCustId,
+                  name: crossOffice.name,
+                  city: crossOffice.city || 'Mumbai',
+                  latitude: crossOffice.latitude || 19.076,
+                  longitude: crossOffice.longitude || 72.8777,
+                  radiusMeters: crossOffice.radiusMeters || 200,
+                  isActive: crossOffice.isActive,
+                },
+              });
+            }
+            office = localOffice;
+          }
+        }
+        if (!office) {
           throw new BadRequestException(`Office #${numOfficeId} not found`);
+        }
+        if (office && office.isActive === false) {
+          throw new BadRequestException('Selected office is no longer active.');
         }
         updateData.officeId = office.id;
         updateData.branch = office.name;
@@ -1541,9 +1861,31 @@ export class EmployeeService {
           updateData.shiftId = null;
         } else {
           const numShiftId = Number(dto.shiftId);
-          const shift = await tx.shift.findFirst({
+          let shift = await tx.shift.findFirst({
             where: { id: numShiftId, customerId: targetCustId },
           });
+          if (!shift) {
+            const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
+            if (crossShift) {
+              let localShift = await tx.shift.findFirst({
+                where: { customerId: targetCustId, name: { equals: crossShift.name, mode: 'insensitive' } },
+              });
+              if (!localShift) {
+                localShift = await tx.shift.create({
+                  data: {
+                    customerId: targetCustId,
+                    name: crossShift.name,
+                    code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
+                    startTime: crossShift.startTime,
+                    endTime: crossShift.endTime,
+                    durationHours: crossShift.durationHours,
+                    status: crossShift.status,
+                  },
+                });
+              }
+              shift = localShift;
+            }
+          }
           if (!shift) {
             throw new BadRequestException(`Shift #${numShiftId} not found or does not belong to this customer`);
           }
@@ -1670,8 +2012,8 @@ export class EmployeeService {
       });
 
       // 3. Record deletion in AuditLog to permanently reserve the employeeCode in audit history
-      if (tx.auditLog) {
-        await tx.auditLog.create({
+      if (this.prisma?.auditLog) {
+        this.prisma.auditLog.create({
           data: {
             customerId: empCustomerId,
             userId: userId,

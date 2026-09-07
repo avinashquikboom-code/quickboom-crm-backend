@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -237,7 +237,7 @@ export class EmployeeController {
     return this.employeeService.create({
       customerId: targetCustomerId,
       dto,
-      bypassUserLimit: true,
+      bypassUserLimit: isUserAdmin(user),
     });
   }
 
