@@ -156,13 +156,29 @@ export class InvoiceController {
   }
 
   @Delete('bulk')
+  @Delete('bulk-delete')
+  @Post('bulk')
   @Post('bulk-delete')
+  @Delete('admin/invoices/bulk')
+  @Delete('admin/invoices/bulk-delete')
+  @Post('admin/invoices/bulk')
+  @Post('admin/invoices/bulk-delete')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk delete invoices (Admin)' })
   async bulkRemove(
-    @Body() dto: { ids: (number | string)[] },
+    @Body() dto: { ids?: (number | string)[]; invoiceIds?: (number | string)[] },
+    @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
   ) {
-    return this.invoiceService.bulkRemove(dto?.ids || [], user);
+    let ids = dto?.ids || dto?.invoiceIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.invoiceService.bulkRemove(ids || [], user);
   }
 
   @Delete(':id')

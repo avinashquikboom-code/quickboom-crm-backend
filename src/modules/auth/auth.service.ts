@@ -617,7 +617,7 @@ export class AuthService {
     }
 
     // Auto-heal: User exists, but employee relation is unlinked (e.g. Employee.userId was null)
-    if (user && !user.employee) {
+    if (user && !user.employee && typeof this.prisma?.employee?.findFirst === 'function') {
       const unlinkedEmployee = await this.prisma.employee.findFirst({
         where: {
           OR: [
@@ -868,11 +868,11 @@ export class AuthService {
       if (userRole === 'COMPANY_ADMIN') {
         throw new ForbiddenException('Company Admin accounts cannot log in through the employee mobile portal.');
       }
-      if (!user.employee) {
-        throw new UnauthorizedException('Employee profile not found.');
-      }
       if (userRole !== 'EMPLOYEE') {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
+      }
+      if (!user.employee) {
+        throw new UnauthorizedException('Employee profile not found.');
       }
       if (user.employee.status === 'PAYMENT_PENDING' || user.employee.status === 'PENDING') {
         throw new UnauthorizedException('Payment verification pending.');
