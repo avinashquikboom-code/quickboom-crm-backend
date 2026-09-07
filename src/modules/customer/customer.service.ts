@@ -339,6 +339,10 @@ export class CustomerService {
         { phone: { contains: s, mode: 'insensitive' } },
         { city: { contains: s, mode: 'insensitive' } },
         { domain: { contains: s, mode: 'insensitive' } },
+        { users: { some: { email: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
+        { users: { some: { phone: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
+        { users: { some: { firstName: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
+        { users: { some: { lastName: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
       ];
     }
 
@@ -360,6 +364,17 @@ export class CustomerService {
         take: limit,
         orderBy,
         include: {
+          users: {
+            where: { deletedAt: null },
+            select: {
+              id: true,
+              email: true,
+              phone: true,
+              firstName: true,
+              lastName: true,
+            },
+            take: 5,
+          },
           subscriptions: {
             where: { deletedAt: null },
             include: { plan: true },
@@ -382,6 +397,7 @@ export class CustomerService {
 
     const now = new Date();
     const formatted = items.map((c) => {
+      const primaryUser = (c as any).users?.[0];
       // Find latest valid active subscription, otherwise latest created
       const activeSub =
         c.subscriptions.find(
@@ -425,8 +441,8 @@ export class CustomerService {
         companyName: c.companyName || c.name,
         company: c.companyName || c.name,
         domain: c.domain,
-        email: c.email || 'N/A',
-        phone: c.phone || 'N/A',
+        email: c.email || primaryUser?.email || 'N/A',
+        phone: c.phone || primaryUser?.phone || 'N/A',
         alternatePhone: c.alternatePhone,
         address: c.address,
         city: c.city || 'N/A',

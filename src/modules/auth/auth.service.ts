@@ -62,8 +62,14 @@ export class AuthService {
           ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
         ],
       },
+      include: {
+        customer: true,
+      },
     });
-    if (existingUser) {
+    
+
+    const hasActiveCustomer = existingUser?.customer && !existingUser.customer.deletedAt;
+    if (existingUser && hasActiveCustomer) {
       if (existingUser.email === normalizedEmail) {
         throw new ConflictException('Email is already registered');
       }
@@ -106,6 +112,9 @@ export class AuthService {
         // Find or Create Starter Plan
         let starterPlan = await tx.plan.findUnique({ where: { code: 'STARTER' } });
         if (!starterPlan) {
+          starterPlan = await tx.plan.findFirst({ where: { OR: [{ code: 'STARTER' }, { code: 'BASIC' }] } });
+        }
+        if (!starterPlan) {
           starterPlan = await tx.plan.create({
             data: {
               name: 'Starter Plan',
@@ -142,18 +151,35 @@ export class AuthService {
           },
         });
 
-        // Create Admin User
-        const user = await tx.user.create({
-          data: {
-            customerId: customer.id,
-            email: normalizedEmail,
-            phone: normalizedPhone,
-            firstName: firstName,
-            lastName: lastName,
-            passwordHash: hashedPassword,
-            isVerified: true,
-          },
-        });
+        // Create or Link Admin User (auto-heal orphan user if exists)
+        let user;
+        if (existingUser && !hasActiveCustomer) {
+          user = await tx.user.update({
+            where: { id: existingUser.id },
+            data: {
+              customerId: customer.id,
+              email: normalizedEmail,
+              phone: normalizedPhone,
+              firstName: firstName,
+              lastName: lastName,
+              passwordHash: hashedPassword,
+              isVerified: true,
+              isActive: true,
+            },
+          });
+        } else {
+          user = await tx.user.create({
+            data: {
+              customerId: customer.id,
+              email: normalizedEmail,
+              phone: normalizedPhone,
+              firstName: firstName,
+              lastName: lastName,
+              passwordHash: hashedPassword,
+              isVerified: true,
+            },
+          });
+        }
 
         // Assign Admin Role
         await tx.userRole.create({
