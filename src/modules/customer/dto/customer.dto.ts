@@ -77,6 +77,11 @@ export class CreateCustomerDto {
   @IsOptional()
   status?: string;
 
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  assignedEmployeeId?: number;
+
   @ApiPropertyOptional({ example: 'Rahul Sharma' })
   @IsString()
   @IsOptional()
@@ -173,6 +178,11 @@ export class UpdateCustomerDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  assignedEmployeeId?: number;
 
   @ApiPropertyOptional({ example: 'Rahul Sharma' })
   @IsString()

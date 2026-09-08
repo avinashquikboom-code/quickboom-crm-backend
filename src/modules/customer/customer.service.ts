@@ -320,7 +320,26 @@ export class CustomerService {
     }
 
     if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {
-      where.assignedEmployee = { contains: query.assignedEmployee.trim(), mode: 'insensitive' };
+      const trimmedEmp = query.assignedEmployee.trim();
+      const numEmpId = Number(trimmedEmp);
+      if (!isNaN(numEmpId) && numEmpId > 0) {
+        where.OR = [
+          { assignedEmployeeId: numEmpId },
+          { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
+        ];
+      } else {
+        where.OR = [
+          { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
+          {
+            assignedEmployeeRel: {
+              OR: [
+                { firstName: { contains: trimmedEmp, mode: 'insensitive' } },
+                { lastName: { contains: trimmedEmp, mode: 'insensitive' } },
+              ],
+            },
+          },
+        ];
+      }
     }
 
     if (query.company && query.company.trim()) {
@@ -365,6 +384,9 @@ export class CustomerService {
         take: limit,
         orderBy,
         include: {
+          assignedEmployeeRel: {
+            include: { department: true, designation: true },
+          },
           users: {
             where: { deletedAt: null },
             select: {
@@ -431,9 +453,18 @@ export class CustomerService {
 
       const gst = Math.round(basePrice * 0.18);
       const totalAmount = basePrice + gst;
-      const mrr = activeSub?.plan?.monthlyPrice
-        ? `₹${Number(activeSub.plan.monthlyPrice).toLocaleString('en-IN')}`
-        : '₹0';
+      const mrr = activeSub?.plan
+        ? billingCycle === 'YEARLY'
+          ? Math.round(Number(activeSub.plan.yearlyPrice) / 12)
+          : Math.round(Number(activeSub.plan.monthlyPrice))
+        : 0;
+
+      const resolvedAssignedName = c.assignedEmployeeRel
+        ? `${c.assignedEmployeeRel.firstName} ${c.assignedEmployeeRel.lastName}`.trim()
+        : (c.assignedEmployee || 'Unassigned');
+
+      const resolvedDepartment =
+        c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
       return {
         id: c.id,
@@ -453,8 +484,9 @@ export class CustomerService {
         customerType: c.customerType || 'ENTERPRISE',
         industry: c.industry || 'General',
         source: c.source || 'DIRECT',
-        assignedEmployee: c.assignedEmployee || 'Unassigned',
-        department: c.department || 'General',
+        assignedEmployeeId: c.assignedEmployeeId,
+        assignedEmployee: resolvedAssignedName,
+        department: resolvedDepartment,
         notes: c.notes,
         isActive: c.isActive,
         status: c.isActive ? 'ACTIVE' : 'INACTIVE',
@@ -526,6 +558,9 @@ export class CustomerService {
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
       include: {
+        assignedEmployeeRel: {
+          include: { department: true, designation: true },
+        },
         subscriptions: {
           where: { deletedAt: null },
           include: { plan: true },
@@ -585,10 +620,20 @@ export class CustomerService {
         : activeSub.status
       : 'NO_PLAN';
 
+    const resolvedAssignedName = customer.assignedEmployeeRel
+      ? `${customer.assignedEmployeeRel.firstName} ${customer.assignedEmployeeRel.lastName}`.trim()
+      : (customer.assignedEmployee || 'Unassigned');
+
+    const resolvedDepartment =
+      customer.assignedEmployeeRel?.department?.name || customer.department || 'General';
+
     return {
       ...safeCustomer,
       customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
       company: customer.companyName || customer.name,
+      assignedEmployeeId: customer.assignedEmployeeId,
+      assignedEmployee: resolvedAssignedName,
+      department: resolvedDepartment,
       plan: planName,
       planCode: activeSub?.plan?.code || 'NONE',
       billingCycle: activeSub?.billingCycle || 'MONTHLY',
@@ -699,6 +744,42 @@ export class CustomerService {
       }
     }
 
+    let assignedEmpId: number | null = dto.assignedEmployeeId ? Number(dto.assignedEmployeeId) : null;
+    let assignedEmpName: string | null = dto.assignedEmployee || null;
+    let resolvedDepartment: string | null = dto.department || null;
+
+    if (assignedEmpId) {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: assignedEmpId },
+        include: { department: true },
+      });
+      if (emp) {
+        assignedEmpName = `${emp.firstName} ${emp.lastName}`.trim();
+        if (!resolvedDepartment && emp.department?.name) {
+          resolvedDepartment = emp.department.name;
+        }
+      } else {
+        assignedEmpId = null;
+      }
+    } else if (assignedEmpName && assignedEmpName !== 'Unassigned') {
+      const parts = assignedEmpName.trim().split(/\s+/);
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { firstName: { contains: parts[0], mode: 'insensitive' } },
+            { lastName: { contains: parts[parts.length - 1], mode: 'insensitive' } },
+          ],
+        },
+        include: { department: true },
+      });
+      if (emp) {
+        assignedEmpId = emp.id;
+        if (!resolvedDepartment && emp.department?.name) {
+          resolvedDepartment = emp.department.name;
+        }
+      }
+    }
+
     const customer = await this.prisma.$transaction(async (tx) => {
       const created = await tx.customer.create({
         data: {
@@ -716,8 +797,9 @@ export class CustomerService {
           customerType: dto.customerType || 'ENTERPRISE',
           industry: dto.industry,
           source: dto.source || 'DIRECT',
-          assignedEmployee: dto.assignedEmployee,
-          department: dto.department,
+          assignedEmployeeId: assignedEmpId,
+          assignedEmployee: assignedEmpName,
+          department: resolvedDepartment,
           notes: dto.notes,
           userLimit: dto.userLimit || 15,
           leadLimit: dto.leadLimit || 1000,
@@ -763,6 +845,34 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
+    let assignedEmpId: number | null | undefined = undefined;
+    let assignedEmpName: string | null | undefined = undefined;
+    let resolvedDepartment: string | undefined = dto.department;
+
+    if (dto.assignedEmployeeId !== undefined) {
+      if (dto.assignedEmployeeId) {
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: Number(dto.assignedEmployeeId) },
+          include: { department: true },
+        });
+        if (emp) {
+          assignedEmpId = emp.id;
+          assignedEmpName = `${emp.firstName} ${emp.lastName}`.trim();
+          if (!resolvedDepartment && emp.department?.name) {
+            resolvedDepartment = emp.department.name;
+          }
+        } else {
+          assignedEmpId = null;
+          assignedEmpName = null;
+        }
+      } else {
+        assignedEmpId = null;
+        assignedEmpName = null;
+      }
+    } else if (dto.assignedEmployee !== undefined) {
+      assignedEmpName = dto.assignedEmployee;
+    }
+
     const updated = await this.prisma.customer.update({
       where: { id: numericId },
       data: {
@@ -779,8 +889,9 @@ export class CustomerService {
         customerType: dto.customerType,
         industry: dto.industry,
         source: dto.source,
-        assignedEmployee: dto.assignedEmployee,
-        department: dto.department,
+        assignedEmployeeId: assignedEmpId !== undefined ? assignedEmpId : undefined,
+        assignedEmployee: assignedEmpName !== undefined ? assignedEmpName : undefined,
+        department: resolvedDepartment !== undefined ? resolvedDepartment : undefined,
         notes: dto.notes,
         isActive: dto.isActive !== undefined ? dto.isActive : undefined,
         deletedAt: dto.isActive === true ? null : undefined,

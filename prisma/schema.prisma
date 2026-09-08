@@ -33,6 +33,7 @@ model Customer {
   industry                 String?
   source                   String?                   @default("DIRECT")
   assignedEmployee         String?
+  assignedEmployeeId       Int?
   department               String?
   notes                    String?
   attendancePolicies       AttendancePolicy[]
@@ -87,9 +88,11 @@ model Customer {
   employeeModuleOverrides  EmployeeModuleOverride[]
   roleLeadLimits           RoleLeadLimit[]
   employeeLeadLimits       EmployeeLeadLimit[]
+  assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
 
   @@index([deletedAt])
   @@index([isActive])
+  @@index([assignedEmployeeId])
   @@map("customers")
 }
 
@@ -1053,6 +1056,7 @@ model Employee {
   ledTeams                 Team[]                   @relation("TeamLeader")
   leadLimit                EmployeeLeadLimit?
   leads                    Lead[]                   @relation("EmployeeLeads")
+  assignedCustomers        Customer[]               @relation("CustomerAssignedStaff")
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
