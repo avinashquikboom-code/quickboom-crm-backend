@@ -289,6 +289,8 @@ export class CustomerService {
     isActive?: boolean;
     source?: string;
     assignedEmployee?: string;
+    teamId?: number | string;
+    assignedTeamId?: number | string;
     company?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -317,6 +319,14 @@ export class CustomerService {
 
     if (query.source && query.source !== 'ALL' && query.source.trim() !== '') {
       where.source = { equals: query.source.trim(), mode: 'insensitive' };
+    }
+
+    const filterTeamId = query.teamId || query.assignedTeamId;
+    if (filterTeamId && filterTeamId !== 'ALL' && String(filterTeamId).trim() !== '') {
+      const numTeam = Number(filterTeamId);
+      if (!isNaN(numTeam) && numTeam > 0) {
+        where.assignedTeamId = numTeam;
+      }
     }
 
     if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {
@@ -384,6 +394,26 @@ export class CustomerService {
         take: limit,
         orderBy,
         include: {
+          assignedTeam: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              leader: {
+                select: { id: true, firstName: true, lastName: true },
+              },
+              members: {
+                include: {
+                  employee: {
+                    select: { id: true, firstName: true, lastName: true },
+                  },
+                },
+              },
+              _count: {
+                select: { members: true },
+              },
+            },
+          },
           assignedEmployeeRel: {
             include: { department: true, designation: true },
           },
@@ -484,6 +514,20 @@ export class CustomerService {
         customerType: c.customerType || 'ENTERPRISE',
         industry: c.industry || 'General',
         source: c.source || 'DIRECT',
+        teamId: c.assignedTeamId,
+        team: (c as any).assignedTeam
+          ? {
+              id: (c as any).assignedTeam.id,
+              name: (c as any).assignedTeam.name,
+              description: (c as any).assignedTeam.description,
+              leader: (c as any).assignedTeam.leader
+                ? `${(c as any).assignedTeam.leader.firstName || ''} ${(c as any).assignedTeam.leader.lastName || ''}`.trim()
+                : null,
+              memberCount:
+                (c as any).assignedTeam._count?.members ||
+                ((c as any).assignedTeam.members || []).length,
+            }
+          : null,
         assignedEmployeeId: c.assignedEmployeeId,
         assignedEmployee: resolvedAssignedName,
         department: resolvedDepartment,
@@ -558,6 +602,23 @@ export class CustomerService {
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
       include: {
+        assignedTeam: {
+          include: {
+            leader: {
+              select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+            },
+            members: {
+              include: {
+                employee: {
+                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                },
+              },
+            },
+            _count: {
+              select: { members: true },
+            },
+          },
+        },
         assignedEmployeeRel: {
           include: { department: true, designation: true },
         },
@@ -601,12 +662,19 @@ export class CustomerService {
       const isAssignedEmployee =
         Boolean(user.employee && customer.assignedEmployeeId === user.employee.id);
 
+      const isAssignedTeamMember = Boolean(
+        user.employee &&
+        (customer.assignedTeam as any)?.members?.some(
+          (m: any) => m.employeeId === user.employee.id || m.employee?.id === user.employee.id,
+        ),
+      );
+
       // Check if caller is user belonging to this customer
       const isCustomerUser =
         callerCustomerId === numericId ||
         customer.users.some((u) => u.id === user.id);
 
-      if (!isCustomerUser && !isAssignedEmployee) {
+      if (!isCustomerUser && !isAssignedEmployee && !isAssignedTeamMember) {
         throw new ForbiddenException(
           'You do not have permission to access details for this customer.',
         );
@@ -645,10 +713,33 @@ export class CustomerService {
     const resolvedDepartment =
       customer.assignedEmployeeRel?.department?.name || customer.department || 'General';
 
+    const assignedTeamObj = (customer as any).assignedTeam;
+
     return {
       ...safeCustomer,
       customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
       company: customer.companyName || customer.name,
+      teamId: customer.assignedTeamId,
+      team: assignedTeamObj
+        ? {
+            id: assignedTeamObj.id,
+            name: assignedTeamObj.name,
+            description: assignedTeamObj.description,
+            leader: assignedTeamObj.leader
+              ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+              : null,
+            memberCount:
+              assignedTeamObj._count?.members ||
+              (assignedTeamObj.members || []).length,
+            members: (assignedTeamObj.members || []).map((m: any) => ({
+              id: m.employee?.id || m.employeeId,
+              name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+              email: m.employee?.email,
+              phone: m.employee?.phone,
+              role: m.role,
+            })),
+          }
+        : null,
       assignedEmployeeId: customer.assignedEmployeeId,
       assignedEmployee: resolvedAssignedName,
       department: resolvedDepartment,
@@ -762,6 +853,19 @@ export class CustomerService {
       }
     }
 
+    let assignedTeamId: number | null = dto.assignedTeamId !== undefined
+      ? (dto.assignedTeamId ? Number(dto.assignedTeamId) : null)
+      : (dto.teamId !== undefined ? (dto.teamId ? Number(dto.teamId) : null) : null);
+
+    if (assignedTeamId) {
+      const team = await this.prisma.team.findUnique({
+        where: { id: assignedTeamId },
+      });
+      if (!team) {
+        throw new NotFoundException(`Team #${assignedTeamId} not found.`);
+      }
+    }
+
     let assignedEmpId: number | null = dto.assignedEmployeeId ? Number(dto.assignedEmployeeId) : null;
     let assignedEmpName: string | null = dto.assignedEmployee || null;
     let resolvedDepartment: string | null = dto.department || null;
@@ -815,12 +919,24 @@ export class CustomerService {
           customerType: dto.customerType || 'ENTERPRISE',
           industry: dto.industry,
           source: dto.source || 'DIRECT',
+          assignedTeamId: assignedTeamId,
           assignedEmployeeId: assignedEmpId,
           assignedEmployee: assignedEmpName,
           department: resolvedDepartment,
           notes: dto.notes,
           userLimit: dto.userLimit || 15,
           leadLimit: dto.leadLimit || 1000,
+        },
+        include: {
+          assignedTeam: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              leader: { select: { id: true, firstName: true, lastName: true } },
+              _count: { select: { members: true } },
+            },
+          },
         },
       });
 
@@ -847,7 +963,23 @@ export class CustomerService {
       return created;
     });
 
-    return this.serializeBigInt(customer);
+    const safeCustomer = this.serializeBigInt(customer);
+    const assignedTeamObj = (customer as any).assignedTeam;
+    return {
+      ...safeCustomer,
+      teamId: safeCustomer.assignedTeamId,
+      team: assignedTeamObj
+        ? {
+            id: assignedTeamObj.id,
+            name: assignedTeamObj.name,
+            description: assignedTeamObj.description,
+            leader: assignedTeamObj.leader
+              ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+              : null,
+            memberCount: assignedTeamObj._count?.members || 0,
+          }
+        : null,
+    };
   }
 
   /**
@@ -861,6 +993,22 @@ export class CustomerService {
 
     if (!existing) {
       throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    let assignedTeamId: number | null | undefined = undefined;
+    if (dto.assignedTeamId !== undefined) {
+      assignedTeamId = dto.assignedTeamId ? Number(dto.assignedTeamId) : null;
+    } else if (dto.teamId !== undefined) {
+      assignedTeamId = dto.teamId ? Number(dto.teamId) : null;
+    }
+
+    if (assignedTeamId) {
+      const team = await this.prisma.team.findUnique({
+        where: { id: assignedTeamId },
+      });
+      if (!team) {
+        throw new NotFoundException(`Team #${assignedTeamId} not found.`);
+      }
     }
 
     let assignedEmpId: number | null | undefined = undefined;
@@ -907,6 +1055,7 @@ export class CustomerService {
         customerType: dto.customerType,
         industry: dto.industry,
         source: dto.source,
+        assignedTeamId: assignedTeamId !== undefined ? assignedTeamId : undefined,
         assignedEmployeeId: assignedEmpId !== undefined ? assignedEmpId : undefined,
         assignedEmployee: assignedEmpName !== undefined ? assignedEmpName : undefined,
         department: resolvedDepartment !== undefined ? resolvedDepartment : undefined,
@@ -916,9 +1065,100 @@ export class CustomerService {
         userLimit: dto.userLimit,
         leadLimit: dto.leadLimit,
       },
+      include: {
+        assignedTeam: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            leader: { select: { id: true, firstName: true, lastName: true } },
+            _count: { select: { members: true } },
+          },
+        },
+      },
     });
 
-    return this.serializeBigInt(updated);
+    const safeUpdated = this.serializeBigInt(updated);
+    const assignedTeamObj = (updated as any).assignedTeam;
+    return {
+      ...safeUpdated,
+      teamId: safeUpdated.assignedTeamId,
+      team: assignedTeamObj
+        ? {
+            id: assignedTeamObj.id,
+            name: assignedTeamObj.name,
+            description: assignedTeamObj.description,
+            leader: assignedTeamObj.leader
+              ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+              : null,
+            memberCount: assignedTeamObj._count?.members || 0,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Assign or reassign customer to an operating team
+   */
+  async assignTeam(id: number | string, teamId?: number | null) {
+    const numericId = this.parseCustomerId(id);
+    const existing = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!existing || existing.deletedAt) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    const resolvedTeamId = teamId ? Number(teamId) : null;
+    if (resolvedTeamId) {
+      const team = await this.prisma.team.findUnique({
+        where: { id: resolvedTeamId },
+      });
+      if (!team) {
+        throw new NotFoundException(`Team #${resolvedTeamId} not found.`);
+      }
+    }
+
+    const updated = await this.prisma.customer.update({
+      where: { id: numericId },
+      data: { assignedTeamId: resolvedTeamId },
+      include: {
+        assignedTeam: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            leader: { select: { id: true, firstName: true, lastName: true } },
+            _count: { select: { members: true } },
+          },
+        },
+      },
+    });
+
+    const safeUpdated = this.serializeBigInt(updated);
+    const assignedTeamObj = (updated as any).assignedTeam;
+    return {
+      success: true,
+      message: resolvedTeamId
+        ? 'Customer successfully assigned to team.'
+        : 'Customer team unassigned.',
+      data: {
+        ...safeUpdated,
+        teamId: safeUpdated.assignedTeamId,
+        team: assignedTeamObj
+          ? {
+              id: assignedTeamObj.id,
+              name: assignedTeamObj.name,
+              description: assignedTeamObj.description,
+              leader: assignedTeamObj.leader
+                ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+                : null,
+              memberCount: assignedTeamObj._count?.members || 0,
+            }
+          : null,
+      },
+    };
   }
 
   /**

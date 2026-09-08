@@ -89,10 +89,13 @@ model Customer {
   roleLeadLimits           RoleLeadLimit[]
   employeeLeadLimits       EmployeeLeadLimit[]
   assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  assignedTeamId           Int?
+  assignedTeam             Team?                     @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
 
   @@index([deletedAt])
   @@index([isActive])
   @@index([assignedEmployeeId])
+  @@index([assignedTeamId])
   @@map("customers")
 }
 
@@ -1641,6 +1644,7 @@ model Team {
   leader      Employee?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
   members     TeamMember[]
   works       Work[]
+  assignedCustomers Customer[]   @relation("CustomerAssignedTeam")
 
   @@index([customerId])
   @@index([leaderId])

@@ -86,6 +86,11 @@ describe('CustomerService - Resource Consumption', () => {
         count: jest.fn().mockResolvedValue(mockCustomers.length),
         findMany: jest.fn().mockResolvedValue(mockCustomers),
         findUnique: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+      },
+      team: {
+        findUnique: jest.fn(),
       },
     };
 
@@ -233,6 +238,91 @@ describe('CustomerService - Resource Consumption', () => {
 
       const superAdminUser = { id: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] };
       await expect(service.findOne(999, superAdminUser)).rejects.toThrow('Customer #999 not found.');
+    });
+  });
+
+  describe('Team Assignment Flow', () => {
+    it('assignTeam assigns customer to team and returns team details', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 23,
+        name: 'Customer A',
+        deletedAt: null,
+      });
+
+      prisma.team.findUnique.mockResolvedValue({
+        id: 2,
+        name: 'Social Media Team',
+      });
+
+      prisma.customer.update.mockResolvedValue({
+        id: 23,
+        name: 'Customer A',
+        assignedTeamId: 2,
+        assignedTeam: {
+          id: 2,
+          name: 'Social Media Team',
+          description: 'Team for marketing',
+          leader: { id: 1, firstName: 'Alice', lastName: 'Smith' },
+          _count: { members: 3 },
+        },
+      });
+
+      const res = await service.assignTeam(23, 2);
+      expect(res.success).toBe(true);
+      expect(res.data.teamId).toBe(2);
+      expect(res.data.team).toEqual({
+        id: 2,
+        name: 'Social Media Team',
+        description: 'Team for marketing',
+        leader: 'Alice Smith',
+        memberCount: 3,
+      });
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 23 },
+        data: { assignedTeamId: 2 },
+        include: expect.any(Object),
+      });
+    });
+
+    it('assignTeam throws NotFoundException if team does not exist', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 23,
+        name: 'Customer A',
+        deletedAt: null,
+      });
+
+      prisma.team.findUnique.mockResolvedValue(null);
+
+      await expect(service.assignTeam(23, 999)).rejects.toThrow('Team #999 not found.');
+    });
+
+    it('findAll filters by teamId', async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          id: 23,
+          name: 'Customer A',
+          assignedTeamId: 2,
+          assignedTeam: {
+            id: 2,
+            name: 'Social Media Team',
+            leader: { id: 1, firstName: 'Alice', lastName: 'Smith' },
+            _count: { members: 3 },
+            members: [],
+          },
+          subscriptions: [],
+          _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+        },
+      ]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({ teamId: 2 });
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ assignedTeamId: 2 }),
+        }),
+      );
+      expect(res.data[0].teamId).toBe(2);
+      expect(res.data[0].team.name).toBe('Social Media Team');
     });
   });
 });

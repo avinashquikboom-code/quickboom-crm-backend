@@ -80,6 +80,16 @@ export class CreateCustomerDto {
   @ApiPropertyOptional({ example: 2 })
   @IsNumber()
   @IsOptional()
+  teamId?: number;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  assignedTeamId?: number;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
   assignedEmployeeId?: number;
 
   @ApiPropertyOptional({ example: 'Rahul Sharma' })
@@ -182,6 +192,16 @@ export class UpdateCustomerDto {
   @ApiPropertyOptional({ example: 2 })
   @IsNumber()
   @IsOptional()
+  teamId?: number;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  assignedTeamId?: number;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
   assignedEmployeeId?: number;
 
   @ApiPropertyOptional({ example: 'Rahul Sharma' })
@@ -275,4 +295,16 @@ export class UpdateCustomerProfileDto {
   @IsString()
   @IsOptional()
   contactPerson?: string;
+}
+
+export class AssignCustomerTeamDto {
+  @ApiPropertyOptional({ example: 2, description: 'ID of the Team to assign this customer to (or null to unassign)' })
+  @IsNumber()
+  @IsOptional()
+  teamId?: number | null;
+
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  assignedTeamId?: number | null;
 }

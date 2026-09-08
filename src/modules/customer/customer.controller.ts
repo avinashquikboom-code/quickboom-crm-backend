@@ -15,6 +15,7 @@ import {
   CreateCustomerDto,
   UpdateCustomerDto,
   UpdateCustomerProfileDto,
+  AssignCustomerTeamDto,
 } from './dto/customer.dto';
 import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -120,6 +121,7 @@ export class CustomerController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'source', required: false })
+  @ApiQuery({ name: 'teamId', required: false, description: 'Filter by assigned Team ID' })
   @ApiQuery({ name: 'assignedEmployee', required: false })
   @ApiQuery({ name: 'company', required: false })
   @ApiQuery({ name: 'dateFrom', required: false })
@@ -133,6 +135,8 @@ export class CustomerController {
     @Query('status') status?: string,
     @Query('isActive') isActive?: string,
     @Query('source') source?: string,
+    @Query('teamId') teamId?: string,
+    @Query('assignedTeamId') assignedTeamId?: string,
     @Query('assignedEmployee') assignedEmployee?: string,
     @Query('company') company?: string,
     @Query('dateFrom') dateFrom?: string,
@@ -148,6 +152,7 @@ export class CustomerController {
       status,
       isActive: activeBool,
       source,
+      teamId: teamId || assignedTeamId,
       assignedEmployee,
       company,
       dateFrom,
@@ -217,6 +222,16 @@ export class CustomerController {
   @ApiOperation({ summary: 'Update customer' })
   async update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
     return this.customerService.update(id, dto);
+  }
+
+  @Patch(':id/assign-team')
+  @ApiOperation({ summary: 'Assign or reassign customer to an operating team' })
+  async assignTeam(
+    @Param('id') id: string,
+    @Body() dto: AssignCustomerTeamDto,
+  ) {
+    const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
+    return this.customerService.assignTeam(id, targetTeamId);
   }
 
   @Post(':id/restore')
