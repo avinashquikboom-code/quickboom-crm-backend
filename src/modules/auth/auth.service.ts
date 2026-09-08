@@ -74,8 +74,8 @@ export class AuthService {
       },
     });
 
-    const hasActiveCustomer = existingUser?.customer && !existingUser.customer.deletedAt;
-    if ((existingUser && hasActiveCustomer) || existingCustomer) {
+    const hasActiveCustomer = Boolean(existingUser?.customer && !existingUser.customer.deletedAt);
+    if (existingUser || existingCustomer) {
       if (existingUser?.email === normalizedEmail || existingCustomer?.email === normalizedEmail) {
         throw new ConflictException('Email is already registered');
       }
