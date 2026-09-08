@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsArray, ArrayNotEmpty } from 'class-validator';
 import { InvoiceStatus } from '@prisma/client';
 
 export class CreateInvoiceDto {
@@ -57,4 +57,21 @@ export class UpdateInvoiceDto {
   @IsEnum(InvoiceStatus)
   @IsOptional()
   status?: InvoiceStatus;
+}
+
+/**
+ * DTO for POST /invoices/bulk-delete
+ * The global ValidationPipe (forbidNonWhitelisted: true) requires a typed DTO
+ * class — a plain object body would be rejected with 400.
+ */
+export class BulkDeleteInvoiceDto {
+  @ApiProperty({
+    example: [1, 2, 3],
+    description: 'Array of invoice IDs to permanently soft-delete',
+    type: [Number],
+  })
+  @IsArray()
+  @ArrayNotEmpty({ message: 'ids must contain at least one invoice ID' })
+  @IsNotEmpty({ each: true })
+  ids: (number | string)[];
 }

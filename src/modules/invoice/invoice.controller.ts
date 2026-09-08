@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { InvoiceService } from './invoice.service';
-import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
+import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -155,30 +155,27 @@ export class InvoiceController {
     return this.invoiceService.update(customerId, id, dto, user);
   }
 
-  @Delete('bulk')
-  @Delete('bulk-delete')
-  @Post('bulk')
+  /**
+   * POST /api/v1/invoices/bulk-delete
+   *
+   * Bulk soft-delete selected invoices.
+   * - Requires JWT + Admin/Super Admin role (enforced in service layer)
+   * - Scoped to caller's tenant (enforced in service layer)
+   * - Uses Prisma transaction for atomicity
+   *
+   * Body: { "ids": [1, 2, 3] }
+   *
+   * NOTE: NestJS does NOT support stacking multiple @Post()/@Delete() decorators
+   * on a single method — only the last applied decorator's route survives.
+   * This is the single, authoritative bulk-delete route.
+   */
   @Post('bulk-delete')
-  @Delete('admin/invoices/bulk')
-  @Delete('admin/invoices/bulk-delete')
-  @Post('admin/invoices/bulk')
-  @Post('admin/invoices/bulk-delete')
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Bulk delete invoices (Admin)' })
+  @ApiOperation({ summary: 'Bulk delete invoices by ID list (Admin only)' })
   async bulkRemove(
-    @Body() dto: { ids?: (number | string)[]; invoiceIds?: (number | string)[] },
-    @Query('ids') queryIds: string | string[],
+    @Body() dto: BulkDeleteInvoiceDto,
     @CurrentUser() user: any,
   ) {
-    let ids = dto?.ids || dto?.invoiceIds;
-    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
-      if (Array.isArray(queryIds)) {
-        ids = queryIds;
-      } else if (typeof queryIds === 'string') {
-        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    return this.invoiceService.bulkRemove(ids || [], user);
+    return this.invoiceService.bulkRemove(dto.ids, user);
   }
 
   @Delete(':id')
