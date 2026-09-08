@@ -118,7 +118,7 @@ export class AuthService {
 
         // Find or Create Starter Plan
         let starterPlan = await tx.plan.findUnique({ where: { code: 'STARTER' } });
-        if (!starterPlan) {
+        if (!starterPlan && typeof tx.plan?.findFirst === 'function') {
           starterPlan = await tx.plan.findFirst({ where: { OR: [{ code: 'STARTER' }, { code: 'BASIC' }] } });
         }
         if (!starterPlan) {
