@@ -24,10 +24,16 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (request.method === 'OPTIONS') {
       return true;
     }
-    const authHeader = request.headers['authorization'];
-    const hasHeader = Boolean(authHeader);
+    const rawAuth =
+      request.headers?.['authorization'] ||
+      request.headers?.['Authorization'] ||
+      (typeof request.get === 'function' ? request.get('authorization') : null);
+    const authHeader = typeof rawAuth === 'string' ? rawAuth : null;
+    const hasHeader = Boolean(authHeader && authHeader.trim().length > 0);
     const hasBearer = typeof authHeader === 'string' && authHeader.trim().toLowerCase().startsWith('bearer ');
-    const tokenVal = hasBearer ? authHeader.trim().substring(7).trim() : null;
+    const tokenVal = hasBearer
+      ? authHeader.trim().substring(7).trim().replace(/^["']|["']$/g, '').trim()
+      : null;
     const hasValidToken = Boolean(
       tokenVal &&
       tokenVal !== 'null' &&
@@ -54,10 +60,16 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (err || !user) {
       const failureReason = info?.message || err?.message || 'Token missing or invalid';
       if (request) {
-        const authHeader = request.headers?.['authorization'];
-        const hasHeader = Boolean(authHeader);
+        const rawAuth =
+          request.headers?.['authorization'] ||
+          request.headers?.['Authorization'] ||
+          (typeof request.get === 'function' ? request.get('authorization') : null);
+        const authHeader = typeof rawAuth === 'string' ? rawAuth : null;
+        const hasHeader = Boolean(authHeader && authHeader.trim().length > 0);
         const hasBearer = typeof authHeader === 'string' && authHeader.trim().toLowerCase().startsWith('bearer ');
-        const tokenVal = hasBearer ? authHeader.trim().substring(7).trim() : null;
+        const tokenVal = hasBearer
+          ? authHeader.trim().substring(7).trim().replace(/^["']|["']$/g, '').trim()
+          : null;
         const hasValidToken = Boolean(
           tokenVal &&
           tokenVal !== 'null' &&

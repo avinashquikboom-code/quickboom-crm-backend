@@ -161,8 +161,8 @@ export class CustomerController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get single customer details' })
-  async findOne(@Param('id') id: string) {
-    return this.customerService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.customerService.findOne(id, user);
   }
 
   @Get(':id/activities')

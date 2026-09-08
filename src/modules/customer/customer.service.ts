@@ -550,10 +550,10 @@ export class CustomerService {
   /**
    * Get single customer with complete overview and related CRM entity counts
    */
-  async findOne(id: number | string) {
+  async findOne(id: number | string, user?: any) {
     const numericId = this.parseCustomerId(id);
     this.logger.log(
-      `[ADMIN_GET_CUSTOMER_DETAILS] Fetching details for customerId=${numericId}`,
+      `[GET_CUSTOMER_DETAILS] Fetching details for customerId=${numericId}`,
     );
     const customer = await this.prisma.customer.findUnique({
       where: { id: numericId },
@@ -593,6 +593,24 @@ export class CustomerService {
 
     if (!customer || customer.deletedAt) {
       throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    // Tenant / Role Authorization Check
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      const isAssignedEmployee =
+        Boolean(user.employee && customer.assignedEmployeeId === user.employee.id);
+
+      // Check if caller is user belonging to this customer
+      const isCustomerUser =
+        callerCustomerId === numericId ||
+        customer.users.some((u) => u.id === user.id);
+
+      if (!isCustomerUser && !isAssignedEmployee) {
+        throw new ForbiddenException(
+          'You do not have permission to access details for this customer.',
+        );
+      }
     }
 
     const now = new Date();

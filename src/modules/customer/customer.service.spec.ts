@@ -85,6 +85,7 @@ describe('CustomerService - Resource Consumption', () => {
       customer: {
         count: jest.fn().mockResolvedValue(mockCustomers.length),
         findMany: jest.fn().mockResolvedValue(mockCustomers),
+        findUnique: jest.fn(),
       },
     };
 
@@ -165,4 +166,74 @@ describe('CustomerService - Resource Consumption', () => {
     expect(callArgs.where.OR).toBeDefined();
     expect(callArgs.where.createdAt).toBeDefined();
   });
+
+  describe('findOne Authorization & Access Control', () => {
+    const mockCustomer23 = {
+      id: 23,
+      name: 'demo pvt ltd',
+      companyName: 'demo pvt ltd',
+      email: 'demo@gmail.com',
+      isActive: true,
+      deletedAt: null,
+      assignedEmployeeId: 10,
+      subscriptions: [],
+      users: [{ id: 2, email: 'demo@gmail.com' }],
+      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0, companies: 0 },
+    };
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockReset();
+    });
+
+    it('allows Super Admin to access customer 23 (200 OK)', async () => {
+      prisma.customer.findUnique.mockResolvedValue(mockCustomer23);
+
+      const superAdminUser = { id: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] };
+      const result = await service.findOne(23, superAdminUser);
+
+      expect(result).toBeDefined();
+      expect(result.id).toBe(23);
+      expect(result.name).toBe('demo pvt ltd');
+    });
+
+    it('allows customer 23 user to access their own customer record (200 OK)', async () => {
+      prisma.customer.findUnique.mockResolvedValue(mockCustomer23);
+
+      const customerUser = { id: 2, customerId: 23, role: 'CUSTOMER', roles: ['CUSTOMER'] };
+      const result = await service.findOne(23, customerUser);
+
+      expect(result).toBeDefined();
+      expect(result.id).toBe(23);
+    });
+
+    it('blocks cross-tenant customer (customerId=21) with ForbiddenException (403)', async () => {
+      prisma.customer.findUnique.mockResolvedValue(mockCustomer23);
+
+      const crossTenantUser = { id: 12, customerId: 21, role: 'CUSTOMER', roles: ['CUSTOMER'] };
+      await expect(service.findOne(23, crossTenantUser)).rejects.toThrow(
+        'You do not have permission to access details for this customer.',
+      );
+    });
+
+    it('allows assigned employee to access customer 23 (200 OK)', async () => {
+      prisma.customer.findUnique.mockResolvedValue(mockCustomer23);
+
+      const assignedEmployeeUser = {
+        id: 5,
+        role: 'EMPLOYEE',
+        employee: { id: 10 },
+      };
+      const result = await service.findOne(23, assignedEmployeeUser);
+      expect(result).toBeDefined();
+      expect(result.id).toBe(23);
+    });
+
+    it('throws NotFoundException when customer does not exist (404)', async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+
+      const superAdminUser = { id: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] };
+      await expect(service.findOne(999, superAdminUser)).rejects.toThrow('Customer #999 not found.');
+    });
+  });
 });
+

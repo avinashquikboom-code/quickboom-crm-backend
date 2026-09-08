@@ -14,7 +14,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private prisma: PrismaService,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        (req: any) => {
+          const rawHeader = req?.headers?.authorization || req?.headers?.Authorization;
+          if (typeof rawHeader === 'string') {
+            const match = rawHeader.match(/^Bearer\s+(.+)$/i);
+            if (match) {
+              return match[1].replace(/^["']|["']$/g, '').trim();
+            }
+          }
+          return null;
+        },
+      ]),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_SECRET') || 'quikboom_super_secret_jwt_access_key_2026',
     });
@@ -52,11 +64,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!user || !user.isActive || user.deletedAt) {
       this.logger.warn(`[JWT_STRATEGY] User ${userId} is inactive, deleted, or missing`);
-      throw new UnauthorizedException('Employee account is inactive or no longer exists.');
+      throw new UnauthorizedException('User account is inactive or no longer exists.');
     }
 
     const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
-    const tokenIsEmployee = payloadRole === 'EMPLOYEE' || payload.roleType === RoleType.CUSTOM;
+    const isCustomerAccount =
+      payloadRole === 'CUSTOMER' ||
+      payloadRole === 'CUSTOMER_ADMIN' ||
+      payloadRole === 'COMPANY_ADMIN' ||
+      user.customer != null;
+
+    const tokenIsEmployee =
+      !isCustomerAccount &&
+      (payloadRole === 'EMPLOYEE' ||
+        (payload.roleType === RoleType.CUSTOM && user.employee != null));
 
     if (tokenIsEmployee) {
       if (!user.employee || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false) {
