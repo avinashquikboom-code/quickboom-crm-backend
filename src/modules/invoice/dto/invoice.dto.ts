@@ -61,17 +61,45 @@ export class UpdateInvoiceDto {
 
 /**
  * DTO for POST /invoices/bulk-delete
+ *
+ * Accepts EITHER:
+ *   { "ids": [1, 2, 3] }          ← used by the Admin Panel frontend
+ *   { "invoiceIds": [1, 2, 3] }   ← alternative key supported for API consumers
+ *
  * The global ValidationPipe (forbidNonWhitelisted: true) requires a typed DTO
- * class — a plain object body would be rejected with 400.
+ * class — a plain object body without this class is rejected with 400.
+ *
+ * At least ONE of the two fields must be a non-empty array.
+ * The controller merges both fields before passing to the service.
  */
 export class BulkDeleteInvoiceDto {
   @ApiProperty({
     example: [1, 2, 3],
-    description: 'Array of invoice IDs to permanently soft-delete',
+    description: 'Array of invoice IDs to soft-delete (primary key field)',
     type: [Number],
+    required: false,
   })
-  @IsArray()
-  @ArrayNotEmpty({ message: 'ids must contain at least one invoice ID' })
-  @IsNotEmpty({ each: true })
-  ids: (number | string)[];
+  @IsArray({ message: 'ids must be an array' })
+  @IsOptional()
+  ids?: (number | string)[];
+
+  @ApiProperty({
+    example: [1, 2, 3],
+    description: 'Alternative field name — same as "ids"',
+    type: [Number],
+    required: false,
+  })
+  @IsArray({ message: 'invoiceIds must be an array' })
+  @IsOptional()
+  invoiceIds?: (number | string)[];
+
+  /**
+   * Returns the resolved, deduplicated list of IDs from whichever
+   * field(s) the caller provided.  Throws if none are supplied.
+   */
+  get resolvedIds(): (number | string)[] {
+    const merged = [...(this.ids ?? []), ...(this.invoiceIds ?? [])];
+    return Array.from(new Set(merged));
+  }
 }
+

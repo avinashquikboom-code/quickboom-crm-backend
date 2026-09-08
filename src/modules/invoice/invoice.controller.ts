@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -158,16 +159,17 @@ export class InvoiceController {
   /**
    * POST /api/v1/invoices/bulk-delete
    *
-   * Bulk soft-delete selected invoices.
-   * - Requires JWT + Admin/Super Admin role (enforced in service layer)
-   * - Scoped to caller's tenant (enforced in service layer)
-   * - Uses Prisma transaction for atomicity
+   * Bulk soft-delete selected invoices.  Accepts either:
+   *   { "ids": [1, 2, 3] }           ← Admin Panel frontend
+   *   { "invoiceIds": [1, 2, 3] }    ← alternative API consumers
    *
-   * Body: { "ids": [1, 2, 3] }
+   * - Requires JWT + Admin/Super Admin role (enforced in service)
+   * - Scoped to caller's tenant (enforced in service)
+   * - Atomic Prisma transaction with per-invoice audit log entries
    *
-   * NOTE: NestJS does NOT support stacking multiple @Post()/@Delete() decorators
-   * on a single method — only the last applied decorator's route survives.
-   * This is the single, authoritative bulk-delete route.
+   * NOTE: NestJS does NOT support stacking multiple @Post()/@Delete()
+   * decorators on a single method — only the last applied decorator
+   * survives.  This is the single, authoritative bulk-delete route.
    */
   @Post('bulk-delete')
   @ApiOperation({ summary: 'Bulk delete invoices by ID list (Admin only)' })
@@ -175,7 +177,13 @@ export class InvoiceController {
     @Body() dto: BulkDeleteInvoiceDto,
     @CurrentUser() user: any,
   ) {
-    return this.invoiceService.bulkRemove(dto.ids, user);
+    const resolvedIds = dto.resolvedIds;
+    if (!resolvedIds || resolvedIds.length === 0) {
+      throw new BadRequestException(
+        'Request body must contain a non-empty "ids" or "invoiceIds" array',
+      );
+    }
+    return this.invoiceService.bulkRemove(resolvedIds, user);
   }
 
   @Delete(':id')

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateInvoiceDto, UpdateInvoiceDto } from './dto/invoice.dto';
+import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
@@ -29,9 +29,23 @@ export class InvoiceService {
 
       if (!successfulPayments.length) return;
 
-      // Find existing invoices for this customer
-      const existingInvoices = await this.prisma.invoice.findMany({
-        where: { customerId, deletedAt: null },
+      // ─────────────────────────────────────────────────────────────────────
+      // CRITICAL: fetch ALL invoices — both live (deletedAt: null) AND
+      // soft-deleted ones.  If we only fetch live invoices here and an admin
+      // has manually deleted one, reconcile won't find a match and will
+      // immediately recreate it, causing the invoice to reappear on every
+      // list refresh.  By including deleted records in the existence check
+      // we correctly honour the admin's deletion decision.
+      // ─────────────────────────────────────────────────────────────────────
+      const allInvoices = await this.prisma.invoice.findMany({
+        where: { customerId },
+        select: {
+          id: true,
+          invoiceNo: true,
+          notes: true,
+          totalAmount: true,
+          deletedAt: true,
+        },
       });
 
       for (const p of successfulPayments) {
@@ -43,13 +57,16 @@ export class InvoiceService {
                   ? p.orderNumber.replace('#QB-', 'INV-2026-')
                   : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`));
 
-        // Check if matching invoice already exists
-        const exists = existingInvoices.some((inv) =>
+        // Check if a matching invoice already exists (live OR previously deleted).
+        // A deleted match means an admin intentionally removed it — do NOT recreate.
+        const exists = allInvoices.some((inv) =>
           inv.invoiceNo === expectedInvoiceNo ||
           (p.orderNumber && inv.invoiceNo === p.orderNumber) ||
           (p.orderNumber && inv.notes && inv.notes.includes(p.orderNumber)) ||
           (inv.notes && inv.notes.includes(`Order: ${p.id}`)) ||
-          (inv.notes && inv.notes.includes('Subscription payment for') && Math.abs(inv.totalAmount - Number(p.totalAmount || 0)) < 1)
+          (inv.notes &&
+            inv.notes.includes('Subscription payment for') &&
+            Math.abs(inv.totalAmount - Number(p.totalAmount || 0)) < 1)
         );
 
         if (!exists) {
@@ -75,6 +92,13 @@ export class InvoiceService {
           const planName = p.planName || p.subscription?.plan?.name || 'CRM Subscription Plan';
           const cycle = p.billingCycle || p.subscription?.billingCycle || 'MONTHLY';
           const method = p.paymentMethod || 'RAZORPAY';
+
+          console.log('[RECONCILE_CREATING_INVOICE]', {
+            customerId,
+            paymentId: p.id,
+            expectedInvoiceNo,
+            reason: 'No existing invoice (live or deleted) found for this payment',
+          });
 
           await this.prisma.invoice.create({
             data: {
