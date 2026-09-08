@@ -136,16 +136,9 @@ export class WorkPermissionService {
       }),
     ]);
 
-    // Build role set including standard roles
-    const roleNames = new Set<string>([
-      'Video Editor',
-      'Graphic Designer',
-      'Photographer',
-      'Telecaller',
-      'Sales Executive',
-      'Admin',
-    ]);
-
+    // Build role set exclusively from database — designations + custom roles
+    // No hardcoded names; duplicates are impossible since Set deduplicates by name
+    const roleNames = new Set<string>();
     designations.forEach((d) => roleNames.add(d.name));
     customRoles.forEach((r) => roleNames.add(r.name));
 
