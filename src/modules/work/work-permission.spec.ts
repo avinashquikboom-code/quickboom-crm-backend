@@ -10,11 +10,16 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
 
   beforeEach(async () => {
     prisma = {
+      customer: {
+        findFirst: jest.fn(),
+      },
       designation: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
       },
       role: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
       },
       roleWorkPermission: {
         findMany: jest.fn(),
@@ -289,6 +294,81 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
         ForbiddenException,
       );
       await expect(service.checkPermission(1, 101, 'video_edit')).resolves.toBe(true);
+    });
+  });
+
+  describe('Test Case 9: Dynamic Role Work Permissions from Database Designations', () => {
+    it('returns newly added designations with calculated active and total employee counts', async () => {
+      prisma.designation.findMany.mockResolvedValue([
+        {
+          id: 10,
+          name: 'Flutter Developer',
+          code: 'FLUT',
+          employees: [
+            { id: 1, status: 'ACTIVE' },
+            { id: 2, status: 'ACTIVE' },
+            { id: 3, status: 'INACTIVE' },
+          ],
+        },
+        {
+          id: 11,
+          name: 'HR Executive',
+          code: 'HREX',
+          employees: [{ id: 4, status: 'ACTIVE' }],
+        },
+      ]);
+      prisma.role.findMany.mockResolvedValue([]);
+      prisma.roleWorkPermission.findMany.mockResolvedValue([]);
+
+      const res = await service.getRoleWorkPermissions(1);
+      expect(res.roles).toHaveLength(2);
+
+      const flutterDev = res.roles.find((r) => r.roleName === 'Flutter Developer');
+      expect(flutterDev).toBeDefined();
+      expect(flutterDev.id).toBe('10');
+      expect(flutterDev.roleId).toBe('10');
+      expect(flutterDev.activeEmployeesCount).toBe(2);
+      expect(flutterDev.totalEmployeesCount).toBe(3);
+
+      const hrExec = res.roles.find((r) => r.roleName === 'HR Executive');
+      expect(hrExec).toBeDefined();
+      expect(hrExec.id).toBe('11');
+      expect(hrExec.activeEmployeesCount).toBe(1);
+      expect(hrExec.totalEmployeesCount).toBe(1);
+    });
+
+    it('filters out inactive designations through isActive: true query', async () => {
+      prisma.designation.findMany.mockImplementation(async (args: any) => {
+        expect(args.where.isActive).toBe(true);
+        return [{ id: 10, name: 'Active Dev', code: 'ACT', employees: [] }];
+      });
+      prisma.role.findMany.mockResolvedValue([]);
+      prisma.roleWorkPermission.findMany.mockResolvedValue([]);
+
+      const res = await service.getRoleWorkPermissions(1);
+      expect(res.roles).toHaveLength(1);
+      expect(res.roles[0].roleName).toBe('Active Dev');
+    });
+  });
+
+  describe('Test Case 10: ID-based Role Work Permissions Update', () => {
+    it('resolves designation by numeric ID and updates permissions correctly', async () => {
+      prisma.designation.findFirst.mockResolvedValue({
+        id: 10,
+        name: 'Flutter Developer',
+      });
+      prisma.roleWorkPermission.upsert.mockResolvedValue({
+        id: 1,
+        customerId: 1,
+        roleName: 'Flutter Developer',
+        workModule: 'leads',
+        isEnabled: true,
+      });
+
+      const updateRes = await service.updateRoleWorkPermissions(1, '10', { leads: true });
+      expect(updateRes.success).toBe(true);
+      expect(updateRes.roleName).toBe('Flutter Developer');
+      expect(prisma.roleWorkPermission.upsert).toHaveBeenCalled();
     });
   });
 });

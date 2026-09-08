@@ -483,9 +483,32 @@ export class WorkService {
   /**
    * Update work details, dates, or basic metadata.
    */
-  async update(scopedCustomerId: number | string | undefined, id: number | string, dto: UpdateWorkDto) {
+  async update(
+    scopedCustomerId: number | string | undefined,
+    id: number | string,
+    dto: UpdateWorkDto,
+    employeeId?: number,
+  ) {
     const numId = Number(id);
-    const existing = await this.findOne(scopedCustomerId, numId);
+    let existing: any;
+    if (employeeId) {
+      existing = await this.prisma.work.findFirst({
+        where: {
+          id: numId,
+          OR: [
+            { assignedToId: employeeId },
+            { editorId: employeeId },
+            { tasks: { some: { assignedToId: employeeId } } },
+            { team: { members: { some: { employeeId } } } },
+            { team: { leaderId: employeeId } },
+            ...(scopedCustomerId ? [{ customerId: Number(scopedCustomerId) }] : []),
+          ],
+        },
+      });
+    }
+    if (!existing) {
+      existing = await this.findOne(scopedCustomerId, numId);
+    }
 
     const updateData: any = {};
     if (dto.title !== undefined) updateData.title = dto.title;
@@ -1193,6 +1216,8 @@ status: ${item.status}`);
         { assignedToId: numEmployeeId },
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
+        { team: { members: { some: { employeeId: numEmployeeId } } } },
+        { team: { leaderId: numEmployeeId } },
       ],
       status: { not: WorkStatus.CANCELLED },
     };
@@ -1248,8 +1273,32 @@ status: ${item.status}`);
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true, address: true, city: true, state: true } },
-        team: { select: { name: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            companyName: true,
+            address: true,
+            city: true,
+            state: true,
+            socialMediaHandlers: {
+              take: 5,
+              select: { platform: true, accountName: true, accountUrl: true, status: true },
+            },
+          },
+        },
+        team: {
+          select: {
+            name: true,
+            members: {
+              select: {
+                employee: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+              },
+            },
+          },
+        },
         assignedTo: { select: { id: true, firstName: true, lastName: true } },
         editor: { select: { id: true, firstName: true, lastName: true } },
         entitlement: { select: { serviceName: true } },
@@ -1260,7 +1309,8 @@ status: ${item.status}`);
           },
         },
         tasks: {
-          select: { id: true, title: true, status: true, assignedToId: true },
+          select: { id: true, title: true, status: true, stepOrder: true, assignedToId: true, notes: true, createdAt: true },
+          orderBy: { stepOrder: 'asc' },
         },
       },
     });
@@ -1307,11 +1357,36 @@ status: ${item.status}`);
         .filter(Boolean)
         .join(', ') || null;
 
+      const assignedEmpList: string[] = [];
+      if (w.assignedTo) {
+        const atName = `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim();
+        if (atName) assignedEmpList.push(atName);
+      }
+      if (w.editor) {
+        const edName = `${w.editor.firstName} ${w.editor.lastName}`.trim();
+        if (edName && !assignedEmpList.includes(edName)) assignedEmpList.push(edName);
+      }
+      if (w.team?.members) {
+        for (const tm of w.team.members) {
+          if (tm.employee) {
+            const memberName = `${tm.employee.firstName} ${tm.employee.lastName}`.trim();
+            if (memberName && !assignedEmpList.includes(memberName)) assignedEmpList.push(memberName);
+          }
+        }
+      }
+
+      const smHandler = w.customer?.socialMediaHandlers?.[0];
+      const platform = smHandler?.platform || 'Instagram';
+      const smAccount = smHandler?.accountName
+        ? `${platform} — @${smHandler.accountName}`
+        : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\\s+/g, '')}` : 'Instagram');
+
       return {
         id: String(w.id),
         activityId: String(w.id),
         customerId: String(w.customerId),
         customerName: w.customer?.name || 'Customer',
+        customerBusiness: w.customer?.companyName || w.customer?.name || 'Customer',
         purchaseId: purchaseRef,
         productName: prodName,
         serviceName: prodName,
@@ -1327,6 +1402,7 @@ status: ${item.status}`);
         endTime: endTime,
         type: w.workType,
         activityType: w.workType,
+        workType: w.workType,
         status: w.status,
         location: customerLocation,
         canReschedule: false,
@@ -1341,13 +1417,19 @@ status: ${item.status}`);
         assignedToName: w.assignedTo
           ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
           : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Staff'),
+        assignedEmployees: assignedEmpList,
         editorId: w.editorId,
         editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
         team: w.team?.name || 'Creative Team',
+        assignedTeam: w.team?.name || 'Creative Team',
         notes: w.description || w.notes || `${w.title} deliverable`,
         outputUrl: w.outputUrl,
         feedback: w.feedback,
         revisionCount: w.revisionCount,
+        socialMediaAccount: smAccount,
+        platform: platform,
+        tasks: w.tasks || [],
+        durationDays: w.tasks?.length ? w.tasks.length : (w.workType === 'REEL' || w.workType === 'REELS_SHOOT' || w.workType === 'SHOOT' ? 3 : 1),
       };
     });
 

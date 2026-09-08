@@ -58,8 +58,13 @@ export class WorkController {
     @CurrentCustomer() customerId: string,
     @Req() req: any,
   ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.getRoleWorkPermissions(Number(custId));
+    const custId =
+      customerId ||
+      req?.headers?.['x-customer-id'] ||
+      req?.query?.customerId ||
+      req?.user?.customerId ||
+      req?.customerId;
+    return this.workPermissionService.getRoleWorkPermissions(custId);
   }
 
   @Put('permissions/roles/:roleName')
@@ -72,9 +77,14 @@ export class WorkController {
     @Body() body: { permissions: Record<string, boolean> },
     @Req() req: any,
   ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
+    const custId =
+      customerId ||
+      req?.headers?.['x-customer-id'] ||
+      req?.query?.customerId ||
+      req?.user?.customerId ||
+      req?.customerId;
     return this.workPermissionService.updateRoleWorkPermissions(
-      Number(custId),
+      custId,
       roleName,
       body.permissions || {},
     );
@@ -520,15 +530,18 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update work item details' })
   async update(
     @Param('id') id: string,
-    @CurrentCustomer() customerId: string,
     @Body() dto: UpdateWorkDto,
+    @CurrentUser() user: any,
+    @Req() req: any,
   ) {
-    return this.workService.update(customerId, id, dto);
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    return this.workService.update(custId, id, dto, employeeId ?? undefined);
   }
 
   @Post(':id/submit')

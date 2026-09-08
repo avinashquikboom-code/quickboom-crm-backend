@@ -114,33 +114,65 @@ export class WorkPermissionService {
     return [];
   }
 
+  private async resolveCustomerId(customerId?: number | string): Promise<number> {
+    if (customerId && !isNaN(Number(customerId)) && Number(customerId) > 0) {
+      return Number(customerId);
+    }
+    const firstCustomer = await this.prisma.customer.findFirst({
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    return firstCustomer?.id || 1;
+  }
+
   // ===========================================================================
   // ROLE PERMISSIONS
   // ===========================================================================
 
-  async getRoleWorkPermissions(customerId: number) {
-    const custId = Number(customerId);
+  async getRoleWorkPermissions(customerId: number | string) {
+    const custId = await this.resolveCustomerId(customerId);
 
     // 1. Fetch designations / roles available for this customer
     const [designations, customRoles, dbPermissions] = await Promise.all([
       this.prisma.designation.findMany({
-        where: { customerId: custId },
-        select: { id: true, name: true, code: true },
+        where: { customerId: custId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          employees: {
+            select: { id: true, status: true },
+          },
+        },
+        orderBy: [{ level: 'asc' }, { name: 'asc' }],
       }),
       this.prisma.role.findMany({
-        where: { customerId: custId, deletedAt: null },
-        select: { id: true, name: true },
+        where: {
+          customerId: custId,
+          deletedAt: null,
+          NOT: { name: { in: ['SUPER_ADMIN', 'COMPANY_ADMIN', 'CUSTOMER'] } },
+        },
+        select: {
+          id: true,
+          name: true,
+          userRoles: {
+            select: {
+              user: {
+                select: {
+                  employee: {
+                    select: { id: true, status: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
       }),
       this.prisma.roleWorkPermission.findMany({
         where: { customerId: custId },
       }),
     ]);
-
-    // Build role set exclusively from database — designations + custom roles
-    // No hardcoded names; duplicates are impossible since Set deduplicates by name
-    const roleNames = new Set<string>();
-    designations.forEach((d) => roleNames.add(d.name));
-    customRoles.forEach((r) => roleNames.add(r.name));
 
     // Map existing permissions by roleName -> workModule -> isEnabled
     const permMap = new Map<string, Map<string, boolean>>();
@@ -151,7 +183,14 @@ export class WorkPermissionService {
       permMap.get(p.roleName)!.set(p.workModule, p.isEnabled);
     }
 
-    const result = Array.from(roleNames).map((roleName) => {
+    const seenNames = new Set<string>();
+    const rolesList: any[] = [];
+
+    // 1. Process designations first (primary source for employee roles)
+    for (const d of designations) {
+      const roleName = d.name.trim();
+      seenNames.add(roleName.toLowerCase());
+
       const rolePerms = permMap.get(roleName);
       const defaultAllowed = this.getDefaultPermissionsForRole(roleName);
 
@@ -169,27 +208,110 @@ export class WorkPermissionService {
         };
       });
 
-      return {
-        roleName,
+      const totalEmployeesCount = d.employees ? d.employees.length : 0;
+      const activeEmployeesCount = d.employees
+        ? d.employees.filter((e) => (e.status || '').toUpperCase() === 'ACTIVE').length
+        : 0;
+
+      rolesList.push({
+        id: String(d.id),
+        roleId: String(d.id),
+        designationId: d.id,
+        roleName: d.name,
+        name: d.name,
+        code: d.code,
+        activeEmployeesCount,
+        totalEmployeesCount,
         modules,
-      };
-    });
+      });
+    }
+
+    // 2. Process custom roles if not already present as a designation
+    for (const r of customRoles) {
+      const roleName = r.name.trim();
+      if (seenNames.has(roleName.toLowerCase())) continue;
+      seenNames.add(roleName.toLowerCase());
+
+      const rolePerms = permMap.get(roleName);
+      const defaultAllowed = this.getDefaultPermissionsForRole(roleName);
+
+      const modules = STANDARD_WORK_MODULES.map((mod) => {
+        let isEnabled = false;
+        if (rolePerms && rolePerms.has(mod.key)) {
+          isEnabled = rolePerms.get(mod.key)!;
+        } else {
+          isEnabled = defaultAllowed.includes(mod.key);
+        }
+        return {
+          module: mod.key,
+          name: mod.name,
+          isEnabled,
+        };
+      });
+
+      const employees = (r.userRoles || [])
+        .map((ur) => ur.user?.employee)
+        .filter(Boolean);
+      const totalEmployeesCount = employees.length;
+      const activeEmployeesCount = employees.filter(
+        (e) => (e?.status || '').toUpperCase() === 'ACTIVE',
+      ).length;
+
+      rolesList.push({
+        id: `role_${r.id}`,
+        roleId: `role_${r.id}`,
+        designationId: null,
+        roleName: r.name,
+        name: r.name,
+        code: r.name.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 6) || 'ROLE',
+        activeEmployeesCount,
+        totalEmployeesCount,
+        modules,
+      });
+    }
 
     return {
       customerId: custId,
-      roles: result,
+      roles: rolesList,
       availableModules: STANDARD_WORK_MODULES,
       commonModules: COMMON_MODULES,
     };
   }
 
   async updateRoleWorkPermissions(
-    customerId: number,
-    roleName: string,
+    customerId: number | string,
+    roleIdentifier: string,
     permissions: Record<string, boolean>,
   ) {
-    const custId = Number(customerId);
-    const normalizedRole = roleName.trim();
+    const custId = await this.resolveCustomerId(customerId);
+    let normalizedRole = (roleIdentifier || '').trim();
+
+    // Check if roleIdentifier is numeric ID (e.g. "3") or prefixed ID (e.g. "desig_3" or "role_6")
+    const numericMatch = normalizedRole.match(/^(?:desig_|role_)?(\d+)$/i);
+    if (numericMatch) {
+      const numericId = parseInt(numericMatch[1], 10);
+      if (normalizedRole.startsWith('role_')) {
+        const foundRole = await this.prisma.role.findFirst({
+          where: { id: numericId, customerId: custId },
+          select: { name: true },
+        });
+        if (foundRole) normalizedRole = foundRole.name.trim();
+      } else {
+        const foundDesig = await this.prisma.designation.findFirst({
+          where: { id: numericId, customerId: custId },
+          select: { name: true },
+        });
+        if (foundDesig) {
+          normalizedRole = foundDesig.name.trim();
+        } else {
+          const foundRole = await this.prisma.role.findFirst({
+            where: { id: numericId, customerId: custId },
+            select: { name: true },
+          });
+          if (foundRole) normalizedRole = foundRole.name.trim();
+        }
+      }
+    }
 
     const updates = Object.entries(permissions).map(async ([moduleKey, isEnabled]) => {
       return this.prisma.roleWorkPermission.upsert({
@@ -217,9 +339,10 @@ export class WorkPermissionService {
 
     return {
       success: true,
-      message: `Permissions updated for role ${normalizedRole}`,
       roleName: normalizedRole,
+      roleIdentifier,
       permissions,
+      message: `Permissions updated for role ${normalizedRole}`,
     };
   }
 
