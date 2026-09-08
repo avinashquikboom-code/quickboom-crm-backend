@@ -367,6 +367,7 @@ export class WorkController {
   @ApiQuery({ name: 'month', required: false })
   @ApiQuery({ name: 'year', required: false })
   @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
   async getEmployeeCalendar(
     @CurrentUser() user: any,
     @Query('date') date?: string,
@@ -377,6 +378,7 @@ export class WorkController {
     @Query('month') month?: string,
     @Query('year') year?: string,
     @Query('status') status?: WorkStatus,
+    @Query('customerId') customerId?: string,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
     if (!employeeId) {
@@ -390,6 +392,7 @@ export class WorkController {
       month: month ? parseInt(month, 10) : undefined,
       year: year ? parseInt(year, 10) : undefined,
       status,
+      customerId: customerId ? parseInt(customerId, 10) : undefined,
     });
   }
 

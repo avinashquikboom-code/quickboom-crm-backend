@@ -52,10 +52,13 @@ describe('Customer Booking -> Employee Assignment -> Calendar Visibility Lifecyc
           return worksStore.filter((w) => {
             if (where.OR) {
               const matchesOr = where.OR.some((cond: any) => {
-                if (cond.assignedToId !== undefined && w.assignedToId === cond.assignedToId) return true;
-                if (cond.editorId !== undefined && w.editorId === cond.editorId) return true;
-                if (cond.tasks?.some?.assignedToId !== undefined) {
+                if (cond.assignedToId != null && w.assignedToId === cond.assignedToId) return true;
+                if (cond.editorId != null && w.editorId === cond.editorId) return true;
+                if (cond.tasks?.some?.assignedToId != null) {
                   return w.tasks?.some((t: any) => t.assignedToId === cond.tasks.some.assignedToId);
+                }
+                if (cond.customer?.assignedEmployeeId != null && w.customer?.assignedEmployeeId === cond.customer.assignedEmployeeId) {
+                  return true;
                 }
                 return false;
               });

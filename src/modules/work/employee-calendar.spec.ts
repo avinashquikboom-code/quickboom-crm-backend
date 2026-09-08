@@ -138,6 +138,20 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
                   if (condition.customer.assignedEmployee !== undefined) {
                     if (item.customer?.assignedEmployee !== condition.customer.assignedEmployee) return false;
                   }
+                  if (condition.customer.assignedTeam !== undefined) {
+                    const matchTeam = condition.customer.assignedTeam.OR?.some((tc: any) => {
+                      if (tc.members?.some?.employeeId !== undefined) {
+                        return item.customer?.assignedTeam?.members?.some((m: any) => m.employeeId === tc.members.some.employeeId);
+                      }
+                      if (tc.leaderId !== undefined) {
+                        return item.customer?.assignedTeam?.leaderId === tc.leaderId;
+                      }
+                      return false;
+                    });
+                    if (!matchTeam) return false;
+                  } else if (condition.customer.assignedEmployeeId === undefined && condition.customer.assignedEmployee === undefined) {
+                    return false;
+                  }
                   if (condition.assignedToId === null && item.assignedToId !== null) return false;
                   return true;
                 }

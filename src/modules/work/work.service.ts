@@ -1222,6 +1222,7 @@ status: ${item.status}`);
       month?: number;
       year?: number;
       status?: WorkStatus;
+      customerId?: number;
     } = {},
   ) {
     const startTime = Date.now();
@@ -1267,12 +1268,44 @@ status: ${item.status}`);
     orConditions.push({
       customer: { assignedEmployeeId: numEmployeeId },
       assignedToId: null,
+      editorId: null,
     });
 
     if (empFullName) {
       orConditions.push({
         customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
         assignedToId: null,
+        editorId: null,
+      });
+    }
+
+    // Team-based Customer assignment: activities belonging to customers assigned to this employee's team,
+    // provided the activity is not explicitly assigned to someone else
+    orConditions.push({
+      customer: {
+        assignedTeam: {
+          OR: [
+            { members: { some: { employeeId: numEmployeeId } } },
+            { leaderId: numEmployeeId },
+          ],
+        },
+      },
+      assignedToId: null,
+      editorId: null,
+    });
+
+    if (empRecord?.userId) {
+      orConditions.push({
+        customer: {
+          assignedTeam: {
+            OR: [
+              { members: { some: { employee: { userId: empRecord.userId } } } },
+              { leader: { userId: empRecord.userId } },
+            ],
+          },
+        },
+        assignedToId: null,
+        editorId: null,
       });
     }
 
@@ -1280,6 +1313,10 @@ status: ${item.status}`);
       OR: orConditions,
       status: { not: WorkStatus.CANCELLED },
     };
+
+    if (query.customerId) {
+      where.customerId = Number(query.customerId);
+    }
 
     if (query.status) {
       where.status = query.status;
@@ -1346,6 +1383,10 @@ status: ${item.status}`);
             state: true,
             assignedEmployeeId: true,
             assignedEmployee: true,
+            assignedTeamId: true,
+            assignedTeam: {
+              select: { id: true, name: true },
+            },
             socialMediaHandlers: {
               take: 5,
               select: { platform: true, accountName: true, accountUrl: true, status: true },
@@ -1536,8 +1577,8 @@ status: ${item.status}`);
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : [assignedEmpName],
         editorId: w.editorId,
         editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
-        team: w.team?.name || 'Creative Team',
-        assignedTeam: w.team?.name || 'Creative Team',
+        team: w.team?.name || w.customer?.assignedTeam?.name || 'Creative Team',
+        assignedTeam: w.team?.name || w.customer?.assignedTeam?.name || 'Creative Team',
         notes: w.description || w.notes || `${w.title} deliverable`,
         outputUrl: w.outputUrl,
         feedback: w.feedback,
