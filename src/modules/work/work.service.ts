@@ -396,6 +396,15 @@ export class WorkService {
         if (activeSub) resolvedSubscriptionId = activeSub.id;
       }
 
+      // Check if customer has an assigned employee to inherit
+      const customerRecord = await tx.customer.findUnique({
+        where: { id: numCustomerId },
+        select: { id: true, assignedEmployeeId: true },
+      });
+      const resolvedAssignedToId = dto.assignedToId
+        ? Number(dto.assignedToId)
+        : (customerRecord?.assignedEmployeeId || null);
+
       // Create Work deliverable record
       const work = await tx.work.create({
         data: {
@@ -404,7 +413,7 @@ export class WorkService {
           planId: activePlan.planId,
           entitlementId: entitlement.id,
           teamId: dto.teamId ? Number(dto.teamId) : null,
-          assignedToId: dto.assignedToId ? Number(dto.assignedToId) : null,
+          assignedToId: resolvedAssignedToId,
           editorId: dto.editorId ? Number(dto.editorId) : null,
           workType: dto.workType,
           title: dto.title,
@@ -412,7 +421,7 @@ export class WorkService {
           scheduledDate: schedDate,
           scheduledTime: dto.scheduledTime || '10:00 AM',
           priority: dto.priority || 'MEDIUM',
-          status: dto.assignedToId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
+          status: resolvedAssignedToId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
           notes: dto.notes,
         },
         include: {
@@ -1193,10 +1202,16 @@ status: ${item.status}`);
 
   /**
    * Get scheduled calendar events assigned to a specific employee.
-   * Strictly filters by:
-   * - assignedToId === employeeId, OR
-   * - editorId === employeeId, OR
-   * - tasks have assignedToId === employeeId
+   * Matches by:
+   * 1. Direct work assignment (assignedToId === employeeId || editorId === employeeId)
+   * 2. User ID match (assignedToId === employee.userId || editorId === employee.userId)
+   * 3. Subtask assignment (tasks.some.assignedToId === employeeId || tasks.some.assignedToId === employee.userId)
+   * 4. Team membership (team.members.some.employeeId === employeeId || team.leaderId === employeeId)
+   * 5. Customer assignment (customer.assignedEmployeeId === employeeId && assignedToId === null)
+   * 6. Customer assigned employee text name match (customer.assignedEmployee === employeeFullName && assignedToId === null)
+   *
+   * Timezone Normalization:
+   * Evaluates date queries against UTC, local server, and IST (UTC+05:30) to prevent 1-day shifts.
    */
   async getEmployeeCalendar(
     employeeId: number,
@@ -1211,14 +1226,58 @@ status: ${item.status}`);
   ) {
     const startTime = Date.now();
     const numEmployeeId = Number(employeeId);
+    if (!numEmployeeId || isNaN(numEmployeeId)) {
+      return [];
+    }
+
+    // Resolve employee details for complete relationship mapping
+    const empRecord = this.prisma.employee?.findUnique
+      ? await this.prisma.employee.findUnique({
+          where: { id: numEmployeeId },
+          select: { id: true, userId: true, firstName: true, lastName: true },
+        })
+      : (this.prisma.employee?.findFirst
+          ? await this.prisma.employee.findFirst({
+              where: { id: numEmployeeId },
+              select: { id: true, userId: true, firstName: true, lastName: true },
+            })
+          : null);
+
+    const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
+
+    // Build assignment OR conditions
+    const orConditions: any[] = [
+      { assignedToId: numEmployeeId },
+      { editorId: numEmployeeId },
+      { tasks: { some: { assignedToId: numEmployeeId } } },
+      { team: { members: { some: { employeeId: numEmployeeId } } } },
+      { team: { leaderId: numEmployeeId } },
+    ];
+
+    if (empRecord?.userId) {
+      orConditions.push(
+        { assignedToId: empRecord.userId },
+        { editorId: empRecord.userId },
+        { tasks: { some: { assignedToId: empRecord.userId } } },
+      );
+    }
+
+    // Customer assignment: activities belonging to customers assigned to this employee,
+    // provided the activity is not explicitly assigned to a different staff member
+    orConditions.push({
+      customer: { assignedEmployeeId: numEmployeeId },
+      assignedToId: null,
+    });
+
+    if (empFullName) {
+      orConditions.push({
+        customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
+        assignedToId: null,
+      });
+    }
+
     const where: any = {
-      OR: [
-        { assignedToId: numEmployeeId },
-        { editorId: numEmployeeId },
-        { tasks: { some: { assignedToId: numEmployeeId } } },
-        { team: { members: { some: { employeeId: numEmployeeId } } } },
-        { team: { leaderId: numEmployeeId } },
-      ],
+      OR: orConditions,
       status: { not: WorkStatus.CANCELLED },
     };
 
@@ -1239,6 +1298,7 @@ status: ${item.status}`);
         targetYear = y;
         targetMonth = m;
         targetDay = day;
+        // Expand Prisma query window by +/- 1 day to capture UTC/IST timezone offsets
         const startWindow = new Date(Date.UTC(y, m - 1, day - 1, 0, 0, 0, 0));
         const endWindow = new Date(Date.UTC(y, m - 1, day + 1, 23, 59, 59, 999));
         where.scheduledDate = { gte: startWindow, lte: endWindow };
@@ -1254,18 +1314,21 @@ status: ${item.status}`);
         }
       }
     } else if (query.month && query.year) {
-      const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 1, 0, 0, 0, 0));
-      const endOfMonth = new Date(Date.UTC(query.year, query.month, 0, 23, 59, 59, 999));
+      targetYear = query.year;
+      targetMonth = query.month;
+      // Buffer by +/- 1 day on month edges to avoid timezone truncation
+      const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 0, 0, 0, 0, 0));
+      const endOfMonth = new Date(Date.UTC(query.year, query.month, 2, 23, 59, 59, 999));
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
     } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
       where.scheduledDate = {};
       const from = query.dateFrom || (query as any).startDate;
       const to = query.dateTo || (query as any).endDate;
-      if (from) where.scheduledDate.gte = new Date(from);
+      if (from) where.scheduledDate.gte = new Date(new Date(from).getTime() - 24 * 60 * 60 * 1000);
       if (to) {
         const toDate = new Date(to);
         toDate.setHours(23, 59, 59, 999);
-        where.scheduledDate.lte = toDate;
+        where.scheduledDate.lte = new Date(toDate.getTime() + 24 * 60 * 60 * 1000);
       }
     }
 
@@ -1281,6 +1344,8 @@ status: ${item.status}`);
             address: true,
             city: true,
             state: true,
+            assignedEmployeeId: true,
+            assignedEmployee: true,
             socialMediaHandlers: {
               take: 5,
               select: { platform: true, accountName: true, accountUrl: true, status: true },
@@ -1289,9 +1354,12 @@ status: ${item.status}`);
         },
         team: {
           select: {
+            id: true,
             name: true,
+            leaderId: true,
             members: {
               select: {
+                employeeId: true,
                 employee: {
                   select: { id: true, firstName: true, lastName: true },
                 },
@@ -1315,28 +1383,78 @@ status: ${item.status}`);
       },
     });
 
-    const filteredItems = (targetYear && targetMonth && targetDay)
-      ? items.filter((w) => {
-          if (!w.scheduledDate) return false;
-          const raw = w.scheduledDate;
-          const str = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString() : String(raw));
-          const datePart = str.includes('T') ? str.split('T')[0] : str.split(' ')[0];
-          const [y, m, d] = datePart.split('-').map(Number);
-          if (y === targetYear && m === targetMonth && d === targetDay) return true;
+    // Timezone normalization helpers: check Direct String, UTC, Server Local, and IST (+05:30)
+    const matchesTargetDate = (dateVal: any, tY: number, tM: number, tD: number): boolean => {
+      if (!dateVal) return false;
+      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
+      const datePart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
+      const [sy, sm, sd] = datePart.split('-').map(Number);
+      if (sy === tY && sm === tM && sd === tD) return true;
 
-          const dateObj = new Date(w.scheduledDate);
-          if (isNaN(dateObj.getTime())) return false;
-          const isUtcMatch =
-            dateObj.getUTCFullYear() === targetYear &&
-            dateObj.getUTCMonth() + 1 === targetMonth &&
-            dateObj.getUTCDate() === targetDay;
-          const isLocalMatch =
-            dateObj.getFullYear() === targetYear &&
-            dateObj.getMonth() + 1 === targetMonth &&
-            dateObj.getDate() === targetDay;
-          return isUtcMatch || isLocalMatch;
-        })
-      : items;
+      const d = new Date(dateVal);
+      if (isNaN(d.getTime())) return false;
+
+      // UTC match
+      if (d.getUTCFullYear() === tY && d.getUTCMonth() + 1 === tM && d.getUTCDate() === tD) return true;
+      // Local server match
+      if (d.getFullYear() === tY && d.getMonth() + 1 === tM && d.getDate() === tD) return true;
+      // IST match (UTC + 05:30)
+      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      if (istDate.getUTCFullYear() === tY && istDate.getUTCMonth() + 1 === tM && istDate.getUTCDate() === tD) return true;
+
+      return false;
+    };
+
+    const matchesTargetMonth = (dateVal: any, tY: number, tM: number): boolean => {
+      if (!dateVal) return false;
+      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
+      const datePart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
+      const [sy, sm] = datePart.split('-').map(Number);
+      if (sy === tY && sm === tM) return true;
+
+      const d = new Date(dateVal);
+      if (isNaN(d.getTime())) return false;
+
+      // UTC match
+      if (d.getUTCFullYear() === tY && d.getUTCMonth() + 1 === tM) return true;
+      // Local server match
+      if (d.getFullYear() === tY && d.getMonth() + 1 === tM) return true;
+      // IST match (UTC + 05:30)
+      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      if (istDate.getUTCFullYear() === tY && istDate.getUTCMonth() + 1 === tM) return true;
+
+      return false;
+    };
+
+    // Filter items according to queried date / month
+    let filteredItems = items;
+    if (targetYear && targetMonth && targetDay) {
+      filteredItems = items.filter((w) => matchesTargetDate(w.scheduledDate, targetYear!, targetMonth!, targetDay!));
+    } else if (targetYear && targetMonth) {
+      filteredItems = items.filter((w) => matchesTargetMonth(w.scheduledDate, targetYear!, targetMonth!));
+    }
+
+    const formatScheduleDate = (dateVal: any, explicitTarget?: string): string => {
+      if (explicitTarget && /^\d{4}-\d{2}-\d{2}$/.test(explicitTarget)) {
+        const [y, m, d] = explicitTarget.split('-').map(Number);
+        if (matchesTargetDate(dateVal, y, m, d)) {
+          return explicitTarget;
+        }
+      }
+      if (!dateVal) return '';
+      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
+      const directPart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(directPart)) {
+        return directPart;
+      }
+      const d = new Date(dateVal);
+      if (isNaN(d.getTime())) return '';
+      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      const y = istDate.getUTCFullYear();
+      const m = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(istDate.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
 
     const result = filteredItems.map((w) => {
       const purchaseRef = w.subscriptionId
@@ -1347,11 +1465,7 @@ status: ${item.status}`);
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
       const planName = w.subscription?.plan?.name || 'Active Plan';
 
-      const schedDateVal = w.scheduledDate
-        ? (w.scheduledDate instanceof Date
-            ? w.scheduledDate.toISOString().split('T')[0]
-            : String(w.scheduledDate).split('T')[0])
-        : null;
+      const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate, targetDateStr) : null;
 
       const customerLocation = [w.customer?.address, w.customer?.city, w.customer?.state]
         .filter(Boolean)
@@ -1375,11 +1489,17 @@ status: ${item.status}`);
         }
       }
 
+      const assignedEmpName = w.assignedTo
+        ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
+        : (w.editor
+            ? `${w.editor.firstName} ${w.editor.lastName}`.trim()
+            : (w.customer?.assignedEmployee || (empRecord && w.customer?.assignedEmployeeId === numEmployeeId ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : 'Staff')));
+
       const smHandler = w.customer?.socialMediaHandlers?.[0];
       const platform = smHandler?.platform || 'Instagram';
       const smAccount = smHandler?.accountName
         ? `${platform} — @${smHandler.accountName}`
-        : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\\s+/g, '')}` : 'Instagram');
+        : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\s+/g, '')}` : 'Instagram');
 
       return {
         id: String(w.id),
@@ -1395,8 +1515,8 @@ status: ${item.status}`);
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
         scheduledTime: startTime,
-        date: w.scheduledDate,
-        scheduleDate: w.scheduledDate,
+        date: schedDateVal || w.scheduledDate,
+        scheduleDate: schedDateVal || w.scheduledDate,
         time: startTime,
         startTime: startTime,
         endTime: endTime,
@@ -1410,14 +1530,10 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedToId: w.assignedToId,
-        assignedEmployee: w.assignedTo
-          ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
-          : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Staff'),
-        assignedToName: w.assignedTo
-          ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
-          : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Staff'),
-        assignedEmployees: assignedEmpList,
+        assignedToId: w.assignedToId || (w.customer?.assignedEmployeeId === numEmployeeId ? numEmployeeId : null),
+        assignedEmployee: assignedEmpName,
+        assignedToName: assignedEmpName,
+        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : [assignedEmpName],
         editorId: w.editorId,
         editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
         team: w.team?.name || 'Creative Team',
@@ -1433,22 +1549,58 @@ status: ${item.status}`);
       };
     });
 
-    this.logger.log(`[EMPLOYEE_CALENDAR] employeeId: ${employeeId} count: ${result.length} durationMs: ${Date.now() - startTime}`);
+    this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG]
+employeeId: ${employeeId}
+selectedDate: ${targetDateStr || 'ALL'}
+month: ${query.month || 'ALL'}
+year: ${query.year || 'ALL'}
+returnedCount: ${result.length}
+durationMs: ${Date.now() - startTime}`);
+
+    for (const item of result) {
+      this.logger.log(`[EMPLOYEE_CALENDAR_ITEM]
+activityId: ${item.id}
+purchaseId: ${item.purchaseId}
+customer: ${item.customerName}
+type: ${item.activityType}
+scheduledDate: ${item.scheduledDate}
+time: ${item.time}
+status: ${item.status}
+assignedEmployee: ${item.assignedEmployee}`);
+    }
+
     return result;
   }
 
   /**
    * Resolve employee record ID for a user by user ID or email.
+   * Checks token payload, user.employee relation, userId, id, email, and phone.
    */
   async resolveEmployeeIdForUser(user: any): Promise<number | null> {
     if (!user) return null;
+    if (user.employee?.id) return Number(user.employee.id);
+    if (user.employeeId) return Number(user.employeeId);
+
+    const rawId = Number(user.id);
+    const email = user.email ? String(user.email).trim().toLowerCase() : undefined;
+    const phone = user.phone ? String(user.phone).trim() : undefined;
+
+    const orConditions: any[] = [];
+    if (!isNaN(rawId) && rawId > 0) {
+      orConditions.push({ userId: rawId });
+      orConditions.push({ id: rawId });
+    }
+    if (email) {
+      orConditions.push({ email: { equals: email, mode: 'insensitive' } });
+    }
+    if (phone) {
+      orConditions.push({ phone });
+    }
+
+    if (orConditions.length === 0) return null;
+
     const employee = await this.prisma.employee.findFirst({
-      where: {
-        OR: [
-          { userId: user.id },
-          { email: { equals: user.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
-        ],
-      },
+      where: { OR: orConditions },
       select: { id: true },
     });
     return employee?.id ?? null;
@@ -1682,19 +1834,22 @@ status: ${item.status}`);
 
         const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
 
+        const assignedEmpId = targetSub.customer?.assignedEmployeeId || null;
+
         const createdWork = await tx.work.create({
           data: {
             customerId: numCustomerId,
             subscriptionId: targetSub.id,
             planId: targetSub.planId,
             entitlementId: entId,
+            assignedToId: assignedEmpId,
             workType: act.workType,
             title: act.title,
             description: act.description,
             scheduledDate: act.scheduledDate,
             scheduledTime: act.scheduledTime,
             priority: 'MEDIUM',
-            status: WorkStatus.SCHEDULED,
+            status: assignedEmpId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
           },
         });
 
