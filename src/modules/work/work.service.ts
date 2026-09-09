@@ -1201,14 +1201,210 @@ status: ${item.status}`);
   }
 
   /**
+   * Helper to resolve the best-matching employee ID from a team's member list
+   * based on activity workType, title, description, or serviceName.
+   */
+  resolveTeamMemberForActivity(
+    act: { workType?: string; title?: string; description?: string; serviceName?: string },
+    members: Array<{
+      employeeId: number;
+      role?: string;
+      employee?: {
+        id: number;
+        firstName?: string;
+        lastName?: string;
+        designation?: { name: string } | null;
+        department?: { name: string } | null;
+      };
+    }>,
+    leaderId?: number | null,
+    roundRobinIndex: number = 0,
+  ): number | null {
+    if (!members || members.length === 0) {
+      return leaderId || null;
+    }
+
+    const textToMatch = `${act.workType || ''} ${act.title || ''} ${act.description || ''} ${act.serviceName || ''}`.toLowerCase();
+
+    const memberMatches = (m: any, keywords: string[]) => {
+      const desName = (m.employee?.designation?.name || '').toLowerCase();
+      const deptName = (m.employee?.department?.name || '').toLowerCase();
+      const role = (m.role || '').toLowerCase();
+      const combined = `${desName} ${deptName} ${role}`;
+      return keywords.some((k) => combined.includes(k));
+    };
+
+    // 1. Video Editing / Reel Edit
+    if (
+      textToMatch.includes('edit') ||
+      textToMatch.includes('editing') ||
+      textToMatch.includes('reel edit') ||
+      act.workType === WorkType.EDITING ||
+      act.workType === WorkType.VIDEO_EDITING ||
+      act.workType === WorkType.REEL
+    ) {
+      const matched = members.find((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
+      if (matched) return matched.employeeId;
+    }
+
+    // 2. Graphic Design / Post Design / Story
+    if (
+      textToMatch.includes('design') ||
+      textToMatch.includes('graphic') ||
+      textToMatch.includes('post design') ||
+      textToMatch.includes('poster') ||
+      textToMatch.includes('story') ||
+      act.workType === WorkType.POST_DESIGN ||
+      act.workType === WorkType.STORY ||
+      act.workType === WorkType.STORY_DESIGN ||
+      act.workType === WorkType.GRAPHIC_DESIGN ||
+      act.workType === WorkType.CREATIVE_POST
+    ) {
+      const matched = members.find((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));
+      if (matched) return matched.employeeId;
+    }
+
+    // 3. Shoot / Photo / Camera
+    if (
+      textToMatch.includes('shoot') ||
+      textToMatch.includes('photo') ||
+      textToMatch.includes('camera') ||
+      act.workType === WorkType.SHOOT ||
+      act.workType === WorkType.REELS_SHOOT
+    ) {
+      const matched = members.find((m) => memberMatches(m, ['photo', 'camera', 'shoot', 'videographer', 'photographer']));
+      if (matched) return matched.employeeId;
+    }
+
+    // 4. Social Media Posting / Publishing / Content
+    if (
+      textToMatch.includes('post') ||
+      textToMatch.includes('publish') ||
+      textToMatch.includes('social') ||
+      act.workType === WorkType.UPLOADING ||
+      act.workType === WorkType.SOCIAL_MEDIA_MANAGEMENT
+    ) {
+      const matched = members.find((m) => memberMatches(m, ['social', 'media', 'manager', 'marketing', 'content']));
+      if (matched) return matched.employeeId;
+    }
+
+    // 5. Fallback: Round-robin among members or leader
+    if (members.length > 0) {
+      const chosen = members[roundRobinIndex % members.length];
+      return chosen.employeeId;
+    }
+
+    return leaderId || null;
+  }
+
+  /**
+   * Synchronize and assign all unassigned or team-less activities for a customer to the customer's assigned team.
+   * Matches activities to team members based on their designation/specialization.
+   */
+  async syncCustomerTeamWorkAssignments(
+    customerId: number | string,
+    teamId: number | string,
+    txClient?: any,
+  ): Promise<number> {
+    const numCustomerId = Number(customerId);
+    const numTeamId = Number(teamId);
+    if (!numCustomerId || !numTeamId || isNaN(numCustomerId) || isNaN(numTeamId)) {
+      return 0;
+    }
+
+    const prisma = txClient || this.prisma;
+
+    const team = await prisma.team.findUnique({
+      where: { id: numTeamId },
+      include: {
+        leader: { select: { id: true, firstName: true, lastName: true } },
+        members: {
+          include: {
+            employee: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                designation: { select: { name: true } },
+                department: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!team) {
+      this.logger.warn(`syncCustomerTeamWorkAssignments: Team ${numTeamId} not found.`);
+      return 0;
+    }
+
+    // Find all works for this customer that are not cancelled and need assignment or team update
+    const unassignedWorks = await prisma.work.findMany({
+      where: {
+        customerId: numCustomerId,
+        status: { not: WorkStatus.CANCELLED },
+        OR: [
+          { assignedToId: null },
+          { teamId: null },
+          { teamId: { not: numTeamId } },
+        ],
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    if (unassignedWorks.length === 0) {
+      return 0;
+    }
+
+    let updatedCount = 0;
+    for (let i = 0; i < unassignedWorks.length; i++) {
+      const work = unassignedWorks[i];
+      const assignedEmpId =
+        work.assignedToId ||
+        this.resolveTeamMemberForActivity(work, team.members, team.leaderId, i);
+
+      const newStatus =
+        work.status === WorkStatus.SCHEDULED && assignedEmpId
+          ? WorkStatus.ASSIGNED
+          : work.status;
+
+      await prisma.work.update({
+        where: { id: work.id },
+        data: {
+          teamId: numTeamId,
+          assignedToId: assignedEmpId,
+          status: newStatus,
+        },
+      });
+
+      if (assignedEmpId) {
+        // Also ensure tasks are associated with the employee
+        await prisma.workTask.updateMany({
+          where: { workId: work.id, assignedToId: null },
+          data: { assignedToId: assignedEmpId },
+        });
+      }
+
+      updatedCount++;
+    }
+
+    this.logger.log(
+      `[WORK_ASSIGNMENT_SYNC] Customer ${numCustomerId}: Synced ${updatedCount} works to Team ${numTeamId} (${team.name}).`,
+    );
+
+    return updatedCount;
+  }
+
+  /**
    * Get scheduled calendar events assigned to a specific employee.
-   * Matches by:
+   * Matches strictly by:
    * 1. Direct work assignment (assignedToId === employeeId || editorId === employeeId)
    * 2. User ID match (assignedToId === employee.userId || editorId === employee.userId)
    * 3. Subtask assignment (tasks.some.assignedToId === employeeId || tasks.some.assignedToId === employee.userId)
-   * 4. Team membership (team.members.some.employeeId === employeeId || team.leaderId === employeeId)
-   * 5. Customer assignment (customer.assignedEmployeeId === employeeId && assignedToId === null)
-   * 6. Customer assigned employee text name match (customer.assignedEmployee === employeeFullName && assignedToId === null)
+   * 4. Customer direct assignment (customer.assignedEmployeeId === employeeId && assignedToId === null)
+   *
+   * Strict Isolation: Team members do NOT see other team members' activities.
    *
    * Timezone Normalization:
    * Evaluates date queries against UTC, local server, and IST (UTC+05:30) to prevent 1-day shifts.
@@ -1231,6 +1427,47 @@ status: ${item.status}`);
       return [];
     }
 
+    // Auto-sync unassigned team works if employee belongs to any teams
+    try {
+      const employeeTeams = await this.prisma.teamMember.findMany({
+        where: { employeeId: numEmployeeId },
+        select: { teamId: true },
+      });
+      const ledTeams = await this.prisma.team.findMany({
+        where: { leaderId: numEmployeeId },
+        select: { id: true },
+      });
+      const allMyTeamIds = Array.from(
+        new Set([
+          ...employeeTeams.map((t) => t.teamId),
+          ...ledTeams.map((t) => t.id),
+        ]),
+      );
+
+      if (allMyTeamIds.length > 0) {
+        const customersWithUnassignedWorks = await this.prisma.customer.findMany({
+          where: {
+            assignedTeamId: { in: allMyTeamIds },
+            works: {
+              some: {
+                status: { not: WorkStatus.CANCELLED },
+                assignedToId: null,
+              },
+            },
+          },
+          select: { id: true, assignedTeamId: true },
+        });
+
+        for (const c of customersWithUnassignedWorks) {
+          if (c.assignedTeamId) {
+            await this.syncCustomerTeamWorkAssignments(c.id, c.assignedTeamId);
+          }
+        }
+      }
+    } catch (syncErr: any) {
+      this.logger.warn(`Auto-sync team works in getEmployeeCalendar warning: ${syncErr?.message}`);
+    }
+
     // Resolve employee details for complete relationship mapping
     const empRecord = this.prisma.employee?.findUnique
       ? await this.prisma.employee.findUnique({
@@ -1246,13 +1483,11 @@ status: ${item.status}`);
 
     const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
 
-    // Build assignment OR conditions
+    // Build STRICT assignment OR conditions - ONLY activities assigned directly to this employee!
     const orConditions: any[] = [
       { assignedToId: numEmployeeId },
       { editorId: numEmployeeId },
       { tasks: { some: { assignedToId: numEmployeeId } } },
-      { team: { members: { some: { employeeId: numEmployeeId } } } },
-      { team: { leaderId: numEmployeeId } },
     ];
 
     if (empRecord?.userId) {
@@ -1263,7 +1498,7 @@ status: ${item.status}`);
       );
     }
 
-    // Customer assignment: activities belonging to customers assigned to this employee,
+    // Direct 1-on-1 customer assignment fallback: activities belonging to customers directly assigned to this employee,
     // provided the activity is not explicitly assigned to a different staff member
     orConditions.push({
       customer: { assignedEmployeeId: numEmployeeId },
@@ -1274,36 +1509,6 @@ status: ${item.status}`);
     if (empFullName) {
       orConditions.push({
         customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
-        assignedToId: null,
-        editorId: null,
-      });
-    }
-
-    // Team-based Customer assignment: activities belonging to customers assigned to this employee's team,
-    // provided the activity is not explicitly assigned to someone else
-    orConditions.push({
-      customer: {
-        assignedTeam: {
-          OR: [
-            { members: { some: { employeeId: numEmployeeId } } },
-            { leaderId: numEmployeeId },
-          ],
-        },
-      },
-      assignedToId: null,
-      editorId: null,
-    });
-
-    if (empRecord?.userId) {
-      orConditions.push({
-        customer: {
-          assignedTeam: {
-            OR: [
-              { members: { some: { employee: { userId: empRecord.userId } } } },
-              { leader: { userId: empRecord.userId } },
-            ],
-          },
-        },
         assignedToId: null,
         editorId: null,
       });
@@ -1867,6 +2072,35 @@ assignedEmployee: ${item.assignedEmployee}`);
       const existingTitles = new Set(existingWorks.map((w) => w.title.toLowerCase().trim()));
       const createdItems: any[] = [];
 
+      // Resolve team info if customer is assigned to a team
+      const assignedTeamId = targetSub.customer?.assignedTeamId || null;
+      let teamMembers: any[] = [];
+      let teamLeaderId: number | null = null;
+      if (assignedTeamId) {
+        const team = await tx.team.findUnique({
+          where: { id: assignedTeamId },
+          include: {
+            members: {
+              include: {
+                employee: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    designation: { select: { name: true } },
+                    department: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (team) {
+          teamLeaderId = team.leaderId;
+          teamMembers = team.members;
+        }
+      }
+
       for (const act of planActivities) {
         // Idempotency: Skip if activity with this title already exists for this subscription
         if (existingTitles.has(act.title.toLowerCase().trim())) {
@@ -1875,7 +2109,11 @@ assignedEmployee: ${item.assignedEmployee}`);
 
         const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
 
-        const assignedEmpId = targetSub.customer?.assignedEmployeeId || null;
+        const assignedEmpId =
+          targetSub.customer?.assignedEmployeeId ||
+          (assignedTeamId
+            ? this.resolveTeamMemberForActivity(act, teamMembers, teamLeaderId, totalCreated)
+            : null);
 
         const createdWork = await tx.work.create({
           data: {
@@ -1883,6 +2121,7 @@ assignedEmployee: ${item.assignedEmployee}`);
             subscriptionId: targetSub.id,
             planId: targetSub.planId,
             entitlementId: entId,
+            teamId: assignedTeamId,
             assignedToId: assignedEmpId,
             workType: act.workType,
             title: act.title,
@@ -1894,12 +2133,12 @@ assignedEmployee: ${item.assignedEmployee}`);
           },
         });
 
-        // Attach workflow task tracking
+        // Attach workflow task tracking with assigned employee
         await tx.workTask.createMany({
           data: [
-            { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING },
-            { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING },
-            { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING },
+            { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
+            { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
+            { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
           ],
         });
 

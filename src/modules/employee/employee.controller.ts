@@ -13,6 +13,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { EmployeeService } from './employee.service';
+import { WorkService } from '../work/work.service';
+import { WorkStatus } from '@prisma/client';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -25,7 +27,10 @@ import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 @UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('employees')
 export class EmployeeController {
-  constructor(private readonly employeeService: EmployeeService) {}
+  constructor(
+    private readonly employeeService: EmployeeService,
+    private readonly workService: WorkService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get paginated list of employees master data' })
@@ -104,6 +109,45 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
     return this.employeeService.getMyProfile(user, customerId);
+  }
+
+  @Get('me/calendar')
+  @ApiOperation({ summary: 'Get calendar scheduled activities for current authenticated employee' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getMyCalendar(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
+    @Query('customerId') customerId?: string,
+  ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!employeeId) {
+      return [];
+    }
+
+    return this.workService.getEmployeeCalendar(employeeId, {
+      date: date || startDate,
+      dateFrom: startDate || dateFrom,
+      dateTo: endDate || dateTo,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+      status,
+      customerId: customerId ? parseInt(customerId, 10) : undefined,
+    });
   }
 
   @Get('hrm/offices')

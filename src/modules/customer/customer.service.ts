@@ -1078,6 +1078,14 @@ export class CustomerService {
       },
     });
 
+    if (assignedTeamId && this.workService && typeof this.workService.syncCustomerTeamWorkAssignments === 'function') {
+      try {
+        await this.workService.syncCustomerTeamWorkAssignments(numericId, assignedTeamId);
+      } catch (syncErr: any) {
+        this.logger.warn(`Failed to sync team work assignments for customer ${numericId}: ${syncErr?.message}`);
+      }
+    }
+
     const safeUpdated = this.serializeBigInt(updated);
     const assignedTeamObj = (updated as any).assignedTeam;
     return {
@@ -1234,6 +1242,14 @@ export class CustomerService {
         },
       },
     });
+
+    if (resolvedTeamId && this.workService && typeof this.workService.syncCustomerTeamWorkAssignments === 'function') {
+      try {
+        await this.workService.syncCustomerTeamWorkAssignments(numericId, resolvedTeamId);
+      } catch (syncErr: any) {
+        this.logger.warn(`Failed to sync team work assignments for customer ${numericId}: ${syncErr?.message}`);
+      }
+    }
 
     const safeUpdated = this.serializeBigInt(updated);
     const assignedTeamObj = (updated as any).assignedTeam;
