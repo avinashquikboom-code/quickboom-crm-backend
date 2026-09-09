@@ -49,7 +49,13 @@ export class CustomerController {
     @Query('month') month?: string,
     @Query('year') year?: string,
   ) {
-    const targetCustId = customerId || user?.customerId || user?.id;
+    // Strict Customer Isolation: Customer JWT can ONLY access their own calendar.
+    // Never trust client customerId query param if user is a customer.
+    const isCustomer =
+      user?.role === 'CUSTOMER' ||
+      (user?.customerId && !user?.employee && !user?.roles?.some((r: any) => ['ADMIN', 'SUPER_ADMIN', 'COMPANY_ADMIN'].includes(r)));
+    const targetCustId = isCustomer ? (user?.customerId || user?.id) : (customerId || user?.customerId || user?.id);
+
     return this.workService.getCalendar(targetCustId, {
       date: date || startDate,
       dateFrom: startDate,

@@ -17,6 +17,7 @@ import {
 } from '../../common/utils/plan-deliverable.util';
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
+import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
 
 @Injectable()
 export class WorkService {
@@ -24,6 +25,7 @@ export class WorkService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly workPermissionService: WorkPermissionService,
     @Optional() private readonly planScheduleGateway?: PlanScheduleGateway,
   ) {}
 
@@ -405,6 +407,36 @@ export class WorkService {
         ? Number(dto.assignedToId)
         : (customerRecord?.assignedEmployeeId || null);
 
+      if (resolvedAssignedToId) {
+        const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
+          resolvedAssignedToId,
+          numCustomerId,
+        );
+        const normalizedType = normalizeActivityType({
+          workType: dto.workType,
+          title: dto.title,
+          description: dto.description,
+        });
+        if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
+          throw new BadRequestException(
+            `Cannot assign activity '${dto.title || normalizedType}' to employee #${resolvedAssignedToId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+          );
+        }
+      }
+
+      if (dto.editorId) {
+        const edId = Number(dto.editorId);
+        const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
+          edId,
+          numCustomerId,
+        );
+        if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
+          throw new BadRequestException(
+            `Cannot assign editor role to employee #${edId}. Their role '${perm.role}' does not support Video Editing.`,
+          );
+        }
+      }
+
       // Create Work deliverable record
       const work = await tx.work.create({
         data: {
@@ -517,6 +549,25 @@ export class WorkService {
     }
     if (!existing) {
       existing = await this.findOne(scopedCustomerId, numId);
+    }
+    if (dto.assignedToId) {
+      const targetEmpId = Number(dto.assignedToId);
+      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEmpId, existing.customerId);
+      const normalizedType = normalizeActivityType(existing);
+      if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
+        throw new BadRequestException(
+          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+        );
+      }
+    }
+    if (dto.editorId) {
+      const targetEditorId = Number(dto.editorId);
+      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEditorId, existing.customerId);
+      if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
+        throw new BadRequestException(
+          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.role}' does not support Video Editing.`,
+        );
+      }
     }
 
     const updateData: any = {};
@@ -766,6 +817,26 @@ export class WorkService {
   async assignTeam(scopedCustomerId: number | string | undefined, id: number | string, dto: AssignWorkDto) {
     const numId = Number(id);
     const existing = await this.findOne(scopedCustomerId, numId);
+
+    if (dto.assignedToId) {
+      const targetEmpId = Number(dto.assignedToId);
+      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEmpId, existing.customerId);
+      const normalizedType = normalizeActivityType(existing);
+      if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
+        throw new BadRequestException(
+          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+        );
+      }
+    }
+    if (dto.editorId) {
+      const targetEditorId = Number(dto.editorId);
+      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEditorId, existing.customerId);
+      if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
+        throw new BadRequestException(
+          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.role}' does not support Video Editing.`,
+        );
+      }
+    }
 
     const updateData: any = {};
     if (dto.assignedToId !== undefined) {
@@ -1092,6 +1163,8 @@ returnedSchedules: 0`);
             : String(w.scheduledDate).split('T')[0])
         : null;
 
+      const normalizedType = normalizeActivityType(w);
+
       return {
         id: String(w.id),
         activityId: String(w.id),
@@ -1110,8 +1183,9 @@ returnedSchedules: 0`);
         time: startTime,
         startTime: startTime,
         endTime: endTime,
-        type: isLocked ? 'LOCKED' : w.workType,
-        activityType: isLocked ? 'LOCKED' : w.workType,
+        type: isLocked ? 'LOCKED' : normalizedType,
+        activityType: isLocked ? 'LOCKED' : normalizedType,
+        workType: w.workType,
         status: isLocked ? 'LOCKED' : w.status,
         location: [w.customer?.address, w.customer?.city, w.customer?.state].filter(Boolean).join(', ') || null,
         canReschedule,
@@ -1224,7 +1298,7 @@ status: ${item.status}`);
       return leaderId || null;
     }
 
-    const textToMatch = `${act.workType || ''} ${act.title || ''} ${act.description || ''} ${act.serviceName || ''}`.toLowerCase();
+    const normalizedType = normalizeActivityType(act);
 
     const memberMatches = (m: any, keywords: string[]) => {
       const desName = (m.employee?.designation?.name || '').toLowerCase();
@@ -1234,61 +1308,28 @@ status: ${item.status}`);
       return keywords.some((k) => combined.includes(k));
     };
 
-    // 1. Video Editing / Reel Edit
-    if (
-      textToMatch.includes('edit') ||
-      textToMatch.includes('editing') ||
-      textToMatch.includes('reel edit') ||
-      act.workType === WorkType.EDITING ||
-      act.workType === WorkType.VIDEO_EDITING ||
-      act.workType === WorkType.REEL
-    ) {
-      const matched = members.find((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
-      if (matched) return matched.employeeId;
+    let eligibleMembers: typeof members = [];
+
+    if (normalizedType === 'REEL_EDIT' || normalizedType === 'VIDEO_EDITING') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
+    } else if (normalizedType === 'POST_DESIGN') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));
+    } else if (normalizedType === 'STORY_DESIGN') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'story', 'creative']));
+    } else if (normalizedType === 'REEL_SHOOT') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['photo', 'camera', 'shoot', 'videographer', 'photographer']));
+    } else if (normalizedType === 'REEL_POST' || normalizedType === 'STORY_POST') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['social', 'media', 'manager', 'marketing', 'content', 'executive']));
+    } else if (normalizedType === 'INFLUENCER_PROMO') {
+      eligibleMembers = members.filter((m) => memberMatches(m, ['influencer', 'promo', 'pr', 'marketing']));
     }
 
-    // 2. Graphic Design / Post Design / Story
-    if (
-      textToMatch.includes('design') ||
-      textToMatch.includes('graphic') ||
-      textToMatch.includes('post design') ||
-      textToMatch.includes('poster') ||
-      textToMatch.includes('story') ||
-      act.workType === WorkType.POST_DESIGN ||
-      act.workType === WorkType.STORY ||
-      act.workType === WorkType.STORY_DESIGN ||
-      act.workType === WorkType.GRAPHIC_DESIGN ||
-      act.workType === WorkType.CREATIVE_POST
-    ) {
-      const matched = members.find((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));
-      if (matched) return matched.employeeId;
+    if (eligibleMembers.length > 0) {
+      const chosen = eligibleMembers[roundRobinIndex % eligibleMembers.length];
+      return chosen.employeeId;
     }
 
-    // 3. Shoot / Photo / Camera
-    if (
-      textToMatch.includes('shoot') ||
-      textToMatch.includes('photo') ||
-      textToMatch.includes('camera') ||
-      act.workType === WorkType.SHOOT ||
-      act.workType === WorkType.REELS_SHOOT
-    ) {
-      const matched = members.find((m) => memberMatches(m, ['photo', 'camera', 'shoot', 'videographer', 'photographer']));
-      if (matched) return matched.employeeId;
-    }
-
-    // 4. Social Media Posting / Publishing / Content
-    if (
-      textToMatch.includes('post') ||
-      textToMatch.includes('publish') ||
-      textToMatch.includes('social') ||
-      act.workType === WorkType.UPLOADING ||
-      act.workType === WorkType.SOCIAL_MEDIA_MANAGEMENT
-    ) {
-      const matched = members.find((m) => memberMatches(m, ['social', 'media', 'manager', 'marketing', 'content']));
-      if (matched) return matched.employeeId;
-    }
-
-    // 5. Fallback: Round-robin among members or leader
+    // Fallback: Round-robin among all team members or leader
     if (members.length > 0) {
       const chosen = members[roundRobinIndex % members.length];
       return chosen.employeeId;
@@ -1472,14 +1513,21 @@ status: ${item.status}`);
     const empRecord = this.prisma.employee?.findUnique
       ? await this.prisma.employee.findUnique({
           where: { id: numEmployeeId },
-          select: { id: true, userId: true, firstName: true, lastName: true },
+          select: { id: true, userId: true, firstName: true, lastName: true, customerId: true },
         })
       : (this.prisma.employee?.findFirst
           ? await this.prisma.employee.findFirst({
               where: { id: numEmployeeId },
-              select: { id: true, userId: true, firstName: true, lastName: true },
+              select: { id: true, userId: true, firstName: true, lastName: true, customerId: true },
             })
           : null);
+
+    // Resolve employee role and allowed activity types for role-based visibility
+    const { role: empRole, allowedTypes, isFullAccess } =
+      await this.workPermissionService.getAllowedActivityTypesForEmployee(
+        numEmployeeId,
+        (empRecord as any)?.customerId,
+      );
 
     const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
 
@@ -1702,7 +1750,7 @@ status: ${item.status}`);
       return `${y}-${m}-${day}`;
     };
 
-    const result = filteredItems.map((w) => {
+    const mapped = filteredItems.map((w) => {
       const purchaseRef = w.subscriptionId
         ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
         : (w.subscription?.id ? `PUR-${String(w.subscription.id).padStart(3, '0')}` : `PUR-${String(w.customerId).padStart(3, '0')}`);
@@ -1747,6 +1795,8 @@ status: ${item.status}`);
         ? `${platform} — @${smHandler.accountName}`
         : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\s+/g, '')}` : 'Instagram');
 
+      const normalizedType = normalizeActivityType(w);
+
       return {
         id: String(w.id),
         activityId: String(w.id),
@@ -1766,8 +1816,8 @@ status: ${item.status}`);
         time: startTime,
         startTime: startTime,
         endTime: endTime,
-        type: w.workType,
-        activityType: w.workType,
+        type: normalizedType,
+        activityType: normalizedType,
         workType: w.workType,
         status: w.status,
         location: customerLocation,
@@ -1794,6 +1844,19 @@ status: ${item.status}`);
         durationDays: w.tasks?.length ? w.tasks.length : (w.workType === 'REEL' || w.workType === 'REELS_SHOOT' || w.workType === 'SHOOT' ? 3 : 1),
       };
     });
+
+    // Enforce role-based activity visibility: only activities supported by the employee's role/permissions
+    const result = isFullAccess
+      ? mapped
+      : mapped.filter((item) => allowedTypes.has(item.activityType));
+
+    this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
+employeeId: ${employeeId}
+role: ${empRole}
+isFullAccess: ${isFullAccess}
+allowedTypes: ${Array.from(allowedTypes).join(', ')}
+beforeFilter: ${mapped.length}
+afterFilter: ${result.length}`);
 
     this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG]
 employeeId: ${employeeId}

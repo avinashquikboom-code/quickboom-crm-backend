@@ -54,6 +54,27 @@ export const STANDARD_WORK_MODULES: WorkModuleMeta[] = [
     icon: 'camera',
     isRoleSpecific: true,
   },
+  {
+    key: 'reel_post',
+    name: 'Reel Post',
+    description: 'Reel publishing, captioning, hashtag strategy, and feed scheduling.',
+    icon: 'share_forward',
+    isRoleSpecific: true,
+  },
+  {
+    key: 'story_post',
+    name: 'Story Post',
+    description: 'Live story upload, interactive stickers, and highlight publishing.',
+    icon: 'share_forward',
+    isRoleSpecific: true,
+  },
+  {
+    key: 'influencer_promo',
+    name: 'Influencer Promo',
+    description: 'Influencer collaborations, promo campaigns, and brand partnerships.',
+    icon: 'user_star',
+    isRoleSpecific: true,
+  },
 ];
 
 // Default business configuration
@@ -64,16 +85,28 @@ export const DEFAULT_ROLE_WORK_MAPPINGS: Record<string, string[]> = {
   'GRAPHIC_DESIGNER': ['post_design', 'story_design'],
   'Photographer': ['reel_shoot'],
   'PHOTOGRAPHER': ['reel_shoot'],
+  'Reel Shooter': ['reel_shoot'],
+  'REEL_SHOOTER': ['reel_shoot'],
+  'Videographer': ['reel_shoot'],
+  'VIDEOGRAPHER': ['reel_shoot'],
+  'Social Media Executive': ['reel_post', 'story_post', 'post_publish'],
+  'SOCIAL_MEDIA_EXECUTIVE': ['reel_post', 'story_post', 'post_publish'],
+  'Social Media Manager': ['reel_post', 'story_post', 'post_publish'],
+  'SOCIAL_MEDIA_MANAGER': ['reel_post', 'story_post', 'post_publish'],
+  'Influencer Executive': ['influencer_promo'],
+  'INFLUENCER_EXECUTIVE': ['influencer_promo'],
+  'Influencer Lead': ['influencer_promo'],
+  'INFLUENCER_LEAD': ['influencer_promo'],
   'Telecaller': ['leads'],
   'TELECALLER': ['leads'],
   'Sales Executive': ['leads'],
   'SALES_EXECUTIVE': ['leads'],
   'Sales': ['leads'],
   'SALES': ['leads'],
-  'Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'Super Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
-  'SUPER_ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'],
+  'Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'Super Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'SUPER_ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
 };
 
 @Injectable()
@@ -106,11 +139,13 @@ export class WorkPermissionService {
     }
     // Partial match checks
     const lower = trimmed.toLowerCase();
-    if (lower.includes('video edit')) return ['video_edit'];
+    if (lower.includes('video edit') || lower.includes('editor')) return ['video_edit'];
     if (lower.includes('graphic') || lower.includes('designer')) return ['post_design', 'story_design'];
-    if (lower.includes('photo') || lower.includes('shoot')) return ['reel_shoot'];
+    if (lower.includes('photo') || lower.includes('shoot') || lower.includes('videograph')) return ['reel_shoot'];
+    if (lower.includes('social') || lower.includes('smm') || lower.includes('executive')) return ['reel_post', 'story_post', 'post_publish'];
+    if (lower.includes('influencer')) return ['influencer_promo'];
     if (lower.includes('telecall') || lower.includes('sales') || lower.includes('lead')) return ['leads'];
-    if (lower.includes('admin')) return ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot'];
+    if (lower.includes('admin')) return ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'];
     return [];
   }
 
@@ -878,4 +913,171 @@ export class WorkPermissionService {
     }
     return true;
   }
+
+  /**
+   * Get allowed normalized activity types for an employee based on their effective permissions/role.
+   */
+  async getAllowedActivityTypesForEmployee(
+    employeeId: number,
+    customerId?: number,
+  ): Promise<{
+    role: string;
+    allowedTypes: Set<string>;
+    isFullAccess: boolean;
+    workPermissions: string[];
+  }> {
+    const custId = await this.resolveCustomerId(customerId);
+    const effective = await this.getEmployeeEffectivePermissions(custId, { employeeId });
+
+    const roleName = (effective.role || '').toUpperCase();
+    const isFullAccess =
+      roleName.includes('ADMIN') ||
+      roleName.includes('SUPER') ||
+      roleName.includes('DIRECTOR') ||
+      roleName.includes('OWNER') ||
+      (roleName.includes('MANAGER') && !roleName.includes('SOCIAL'));
+
+    const allowedTypes = new Set<string>();
+
+    if (isFullAccess) {
+      [
+        'REEL_SHOOT',
+        'REEL_EDIT',
+        'REEL_POST',
+        'STORY_DESIGN',
+        'STORY_POST',
+        'POST_DESIGN',
+        'INFLUENCER_PROMO',
+        'VIDEO_EDITING',
+        'SHOOT',
+        'UPLOADING',
+        'GRAPHIC_DESIGN',
+      ].forEach((t) => allowedTypes.add(t));
+      return {
+        role: effective.role,
+        allowedTypes,
+        isFullAccess: true,
+        workPermissions: effective.workPermissions,
+      };
+    }
+
+    for (const mod of effective.workPermissions) {
+      const types = WORK_MODULE_TO_ACTIVITY_TYPES[mod] || [];
+      for (const t of types) {
+        allowedTypes.add(t);
+      }
+    }
+
+    return {
+      role: effective.role,
+      allowedTypes,
+      isFullAccess: false,
+      workPermissions: effective.workPermissions,
+    };
+  }
+}
+
+export const WORK_MODULE_TO_ACTIVITY_TYPES: Record<string, string[]> = {
+  video_edit: ['REEL_EDIT', 'VIDEO_EDITING', 'VIDEO', 'EDITING'],
+  post_design: ['POST_DESIGN', 'GRAPHIC_DESIGN', 'CREATIVE_POST'],
+  story_design: ['STORY_DESIGN', 'STORY'],
+  reel_shoot: ['REEL_SHOOT', 'SHOOT', 'REELS_SHOOT'],
+  reel_post: ['REEL_POST', 'UPLOADING'],
+  story_post: ['STORY_POST'],
+  post_publish: ['REEL_POST', 'STORY_POST', 'POST_PUBLISHING', 'UPLOADING'],
+  influencer_promo: ['INFLUENCER_PROMO', 'INFLUENCER_PROMOTION'],
+};
+
+export function normalizeActivityType(work: {
+  workType?: string | null;
+  title?: string | null;
+  description?: string | null;
+  serviceName?: string | null;
+}): string {
+  const text = `${work.title || ''} ${work.serviceName || ''} ${work.description || ''}`.toLowerCase();
+  const rawType = (work.workType || '').toUpperCase();
+
+  // 1. Reel Stages
+  if (
+    text.includes('reel shoot') ||
+    text.includes('reels shoot') ||
+    text.includes('video shoot') ||
+    rawType === 'REELS_SHOOT' ||
+    rawType === 'SHOOT'
+  ) {
+    return 'REEL_SHOOT';
+  }
+  if (
+    text.includes('reel edit') ||
+    text.includes('reels edit') ||
+    text.includes('video editing') ||
+    text.includes('color grading') ||
+    rawType === 'VIDEO_EDITING' ||
+    rawType === 'EDITING'
+  ) {
+    return 'REEL_EDIT';
+  }
+  if (
+    text.includes('reel post') ||
+    text.includes('reel publish') ||
+    text.includes('reels post') ||
+    rawType === 'UPLOADING'
+  ) {
+    return 'REEL_POST';
+  }
+
+  // 2. Story Stages
+  if (
+    text.includes('story post') ||
+    text.includes('story publish') ||
+    rawType === 'STORY_POST'
+  ) {
+    return 'STORY_POST';
+  }
+  if (
+    text.includes('story design') ||
+    text.includes('story creative') ||
+    rawType === 'STORY_DESIGN' ||
+    (rawType === 'STORY' && !text.includes('post'))
+  ) {
+    return 'STORY_DESIGN';
+  }
+
+  // 3. Post Stages
+  if (
+    text.includes('post design') ||
+    text.includes('creative post design') ||
+    text.includes('graphic design') ||
+    rawType === 'POST_DESIGN' ||
+    rawType === 'GRAPHIC_DESIGN'
+  ) {
+    return 'POST_DESIGN';
+  }
+  if (
+    text.includes('post publish') ||
+    text.includes('post upload') ||
+    text.includes('post publishing')
+  ) {
+    return 'REEL_POST';
+  }
+
+  // 4. Influencer
+  if (text.includes('influencer') || rawType.includes('INFLUENCER')) {
+    return 'INFLUENCER_PROMO';
+  }
+
+  // 5. Raw Type Fallbacks
+  if (rawType === 'REEL') {
+    if (text.includes('edit')) return 'REEL_EDIT';
+    if (text.includes('post') || text.includes('publish')) return 'REEL_POST';
+    return 'REEL_SHOOT';
+  }
+  if (rawType === 'CREATIVE_POST') {
+    if (text.includes('publish') || text.includes('post')) return 'REEL_POST';
+    return 'POST_DESIGN';
+  }
+  if (rawType === 'VIDEO') return 'REEL_EDIT';
+  if (rawType === 'STORY') return 'STORY_DESIGN';
+
+  return rawType || 'REEL_SHOOT';
 }
