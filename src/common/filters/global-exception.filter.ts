@@ -37,6 +37,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? exceptionResponse.error
         : null;
 
+    const code =
+      typeof exceptionResponse === 'object' && exceptionResponse?.code
+        ? exceptionResponse.code
+        : undefined;
+
     this.logger.error(
       `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(message)}`,
       exception instanceof Error ? exception.stack : '',
@@ -46,6 +51,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       statusCode: status,
       success: false,
       message: Array.isArray(message) ? message[0] : message,
+      ...(code ? { code } : {}),
       errors: Array.isArray(message) ? message : message ? [message] : [],
       errorDetails,
       timestamp: new Date().toISOString(),

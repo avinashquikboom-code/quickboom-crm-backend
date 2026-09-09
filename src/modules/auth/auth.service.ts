@@ -21,7 +21,7 @@ import {
   SendOtpDto,
   VerifyMobileOtpDto,
 } from './dto/auth.dto';
-import { EmployeeType, RoleType } from '@prisma/client';
+import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
 
@@ -723,7 +723,12 @@ export class AuthService {
         user.deletedAt = null;
         user.isActive = true;
       } else {
-        throw new UnauthorizedException('Invalid credentials');
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Invalid credentials',
+          code: 'INVALID_CREDENTIALS',
+          error: 'Unauthorized',
+        });
       }
     }
 
@@ -731,7 +736,12 @@ export class AuthService {
       (await bcrypt.compare(password, user.passwordHash)) ||
       (password !== password.trim() && (await bcrypt.compare(password.trim(), user.passwordHash)));
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Invalid credentials',
+        code: 'INVALID_CREDENTIALS',
+        error: 'Unauthorized',
+      });
     }
 
     if (!user.isActive) {
@@ -919,11 +929,63 @@ export class AuthService {
       if (userRole !== 'CUSTOMER_ADMIN' && userRole !== 'CUSTOMER') {
         throw new ForbiddenException('These credentials are not registered as a Customer account.');
       }
-      if (!user.customerId) {
-        throw new UnauthorizedException('Customer workspace is missing for this account.');
+      const customerRecord =
+        user.customer ||
+        (user.customerId
+          ? await this.prisma.customer.findUnique({ where: { id: user.customerId } })
+          : null);
+      if (!customerRecord) {
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Customer workspace is missing for this account.',
+          code: 'WORKSPACE_NOT_FOUND',
+          error: 'Unauthorized',
+        });
       }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
+      if (!customerRecord.isActive || customerRecord.deletedAt) {
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Your customer workspace has been suspended. Please contact support.',
+          code: 'WORKSPACE_SUSPENDED',
+          error: 'Unauthorized',
+        });
+      }
+
+      // Check subscription: do not treat subscription expiry as workspace suspension
+      if (typeof this.prisma?.customerSubscription?.findMany === 'function') {
+        const customerSubscriptions = await this.prisma.customerSubscription.findMany({
+          where: {
+            customerId: customerRecord.id,
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (customerSubscriptions && customerSubscriptions.length > 0) {
+          const now = new Date();
+          const hasActiveSub = customerSubscriptions.some(
+            (s) =>
+              (s.status === SubscriptionStatus.ACTIVE && (!s.endDate || new Date(s.endDate) >= now)) ||
+              (s.status === SubscriptionStatus.TRIAL && (!s.trialEndsAt || new Date(s.trialEndsAt) >= now)),
+          );
+
+          if (!hasActiveSub) {
+            const hasExpiredSub = customerSubscriptions.some(
+              (s) =>
+                s.status === SubscriptionStatus.EXPIRED ||
+                (s.endDate && new Date(s.endDate) < now) ||
+                s.status === SubscriptionStatus.PAST_DUE,
+            );
+            if (hasExpiredSub) {
+              throw new UnauthorizedException({
+                statusCode: 401,
+                message: 'Your subscription has expired. Please renew your subscription to continue.',
+                code: 'SUBSCRIPTION_EXPIRED',
+                error: 'Unauthorized',
+              });
+            }
+          }
+        }
       }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole)) {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
@@ -994,10 +1056,25 @@ export class AuthService {
       }
     } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
       if (!user.isActive) {
-        throw new UnauthorizedException('Your customer account has been deactivated.');
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Your customer account has been deactivated.',
+          code: 'ACCOUNT_DEACTIVATED',
+          error: 'Unauthorized',
+        });
       }
-      if (user.customer && !user.customer.isActive) {
-        throw new UnauthorizedException('Your customer workspace has been suspended. Please contact support.');
+      const customerRecord =
+        user.customer ||
+        (user.customerId
+          ? await this.prisma.customer.findUnique({ where: { id: user.customerId } })
+          : null);
+      if (customerRecord && (!customerRecord.isActive || customerRecord.deletedAt)) {
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Your customer workspace has been suspended. Please contact support.',
+          code: 'WORKSPACE_SUSPENDED',
+          error: 'Unauthorized',
+        });
       }
     }
 
