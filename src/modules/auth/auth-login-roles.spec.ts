@@ -6,7 +6,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
-import { RoleType } from '@prisma/client';
+import { RoleType, SubscriptionStatus } from '@prisma/client';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 
@@ -293,12 +293,101 @@ describe('Customer Mobile Login Role Validation', () => {
 
     prisma.user.findFirst.mockResolvedValue(mockSuspendedUser);
 
-    await expect(
-      mobileAuthController.loginCustomer({
+    try {
+      await mobileAuthController.loginCustomer({
         email: 'test@gmail.com',
         password: 'validPassword123',
-      }),
-    ).rejects.toThrow(UnauthorizedException);
+      });
+      fail('Should have thrown UnauthorizedException');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'WORKSPACE_SUSPENDED',
+      });
+    }
+  });
+
+  it('5b. Rejects CUSTOMER_ADMIN when subscription is expired with SUBSCRIPTION_EXPIRED code', async () => {
+    const mockCustomerWithExpiredSub = {
+      id: 10,
+      customerId: 11,
+      email: 'test_expired@gmail.com',
+      firstName: 'Customer',
+      lastName: 'Admin',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      customer: {
+        id: 11,
+        name: 'Active Workspace But Expired Sub',
+        isActive: true,
+        deletedAt: null,
+      },
+      userRoles: [
+        {
+          roleId: 7,
+          role: {
+            id: 7,
+            name: 'Customer Administrator',
+            type: RoleType.CUSTOMER_ADMIN,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockCustomerWithExpiredSub);
+    prisma.customerSubscription = {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 1,
+          customerId: 11,
+          status: SubscriptionStatus.EXPIRED,
+          endDate: new Date(Date.now() - 10000),
+        },
+      ]),
+    };
+
+    try {
+      await mobileAuthController.loginCustomer({
+        email: 'test_expired@gmail.com',
+        password: 'validPassword123',
+      });
+      fail('Should have thrown UnauthorizedException');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'SUBSCRIPTION_EXPIRED',
+      });
+    }
+  });
+
+  it('5c. Rejects login with invalid password with INVALID_CREDENTIALS code', async () => {
+    const mockCustomerUser = {
+      id: 10,
+      customerId: 11,
+      email: 'test@gmail.com',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      deletedAt: null,
+      customer: { id: 11, isActive: true },
+      userRoles: [{ role: { type: RoleType.CUSTOMER_ADMIN } }],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockCustomerUser);
+
+    try {
+      await mobileAuthController.loginCustomer({
+        email: 'test@gmail.com',
+        password: 'wrong_password',
+      });
+      fail('Should have thrown UnauthorizedException');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect(err.getResponse()).toMatchObject({
+        code: 'INVALID_CREDENTIALS',
+      });
+    }
   });
 
   it('6. Rejects CUSTOMER_ADMIN (test@gmail.com) from Employee mobile endpoint with HTTP 403 Forbidden', async () => {
