@@ -1098,10 +1098,105 @@ export class CustomerService {
   }
 
   /**
+   * Get assigned team for a customer
+   */
+  async getAssignedTeam(id: number | string, user?: any) {
+    const numericId = this.parseCustomerId(id);
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: numericId },
+      include: {
+        assignedTeam: {
+          include: {
+            leader: {
+              select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+            },
+            members: {
+              include: {
+                employee: {
+                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                },
+              },
+            },
+            _count: {
+              select: { members: true },
+            },
+          },
+        },
+        users: {
+          where: { deletedAt: null },
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!customer || customer.deletedAt) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      const isStaff = isUserAdminOrStaff(user);
+      const isCustomerUser =
+        callerCustomerId === numericId ||
+        customer.users.some((u) => u.id === user.id);
+
+      if (!isStaff && !isCustomerUser) {
+        throw new ForbiddenException(
+          'You do not have permission to view team assignment for this customer.',
+        );
+      }
+    }
+
+    const assignedTeamObj = (customer as any).assignedTeam;
+    const teamData = assignedTeamObj
+      ? {
+          id: assignedTeamObj.id,
+          name: assignedTeamObj.name,
+          description: assignedTeamObj.description,
+          leader: assignedTeamObj.leader
+            ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+            : null,
+          memberCount:
+            assignedTeamObj._count?.members ||
+            (assignedTeamObj.members || []).length,
+          members: (assignedTeamObj.members || []).map((m: any) => ({
+            id: m.employee?.id || m.employeeId,
+            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+            email: m.employee?.email,
+            phone: m.employee?.phone,
+            role: m.role,
+          })),
+        }
+      : null;
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Assigned team retrieved successfully.',
+      data: {
+        customerId: numericId,
+        teamId: customer.assignedTeamId,
+        team: teamData,
+      },
+      customerId: numericId,
+      teamId: customer.assignedTeamId,
+      team: teamData,
+    };
+  }
+
+  /**
    * Assign or reassign customer to an operating team
    */
-  async assignTeam(id: number | string, teamId?: number | null) {
+  async assignTeam(id: number | string, teamId?: number | null, user?: any) {
     const numericId = this.parseCustomerId(id);
+
+    // Role authorization check: only super admin or admin/staff can assign teams
+    if (user && !isUserAdminOrStaff(user)) {
+      throw new ForbiddenException(
+        'You do not have permission to assign teams to customers.',
+      );
+    }
+
     const existing = await this.prisma.customer.findUnique({
       where: { id: numericId },
     });
@@ -1125,11 +1220,15 @@ export class CustomerService {
       data: { assignedTeamId: resolvedTeamId },
       include: {
         assignedTeam: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            leader: { select: { id: true, firstName: true, lastName: true } },
+          include: {
+            leader: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+            members: {
+              include: {
+                employee: {
+                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                },
+              },
+            },
             _count: { select: { members: true } },
           },
         },
@@ -1138,26 +1237,42 @@ export class CustomerService {
 
     const safeUpdated = this.serializeBigInt(updated);
     const assignedTeamObj = (updated as any).assignedTeam;
+    const teamData = assignedTeamObj
+      ? {
+          id: assignedTeamObj.id,
+          name: assignedTeamObj.name,
+          description: assignedTeamObj.description,
+          leader: assignedTeamObj.leader
+            ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+            : null,
+          memberCount:
+            assignedTeamObj._count?.members ||
+            (assignedTeamObj.members || []).length,
+          members: (assignedTeamObj.members || []).map((m: any) => ({
+            id: m.employee?.id || m.employeeId,
+            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+            email: m.employee?.email,
+            phone: m.employee?.phone,
+            role: m.role,
+          })),
+        }
+      : null;
+
     return {
+      statusCode: 200,
       success: true,
       message: resolvedTeamId
         ? 'Customer successfully assigned to team.'
         : 'Customer team unassigned.',
       data: {
         ...safeUpdated,
+        customerId: numericId,
         teamId: safeUpdated.assignedTeamId,
-        team: assignedTeamObj
-          ? {
-              id: assignedTeamObj.id,
-              name: assignedTeamObj.name,
-              description: assignedTeamObj.description,
-              leader: assignedTeamObj.leader
-                ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
-                : null,
-              memberCount: assignedTeamObj._count?.members || 0,
-            }
-          : null,
+        team: teamData,
       },
+      customerId: numericId,
+      teamId: safeUpdated.assignedTeamId,
+      team: teamData,
     };
   }
 

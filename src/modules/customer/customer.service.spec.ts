@@ -264,6 +264,7 @@ describe('CustomerService - Resource Consumption', () => {
           description: 'Team for marketing',
           leader: { id: 1, firstName: 'Alice', lastName: 'Smith' },
           _count: { members: 3 },
+          members: [],
         },
       });
 
@@ -276,12 +277,25 @@ describe('CustomerService - Resource Consumption', () => {
         description: 'Team for marketing',
         leader: 'Alice Smith',
         memberCount: 3,
+        members: [],
       });
       expect(prisma.customer.update).toHaveBeenCalledWith({
         where: { id: 23 },
         data: { assignedTeamId: 2 },
         include: expect.any(Object),
       });
+    });
+
+    it('assignTeam throws ForbiddenException if user lacks permission', async () => {
+      const normalCustomerUser = {
+        id: 99,
+        role: 'CUSTOMER',
+        customerId: 23,
+      };
+
+      await expect(service.assignTeam(23, 2, normalCustomerUser)).rejects.toThrow(
+        'You do not have permission to assign teams to customers.',
+      );
     });
 
     it('assignTeam throws NotFoundException if team does not exist', async () => {
@@ -294,6 +308,44 @@ describe('CustomerService - Resource Consumption', () => {
       prisma.team.findUnique.mockResolvedValue(null);
 
       await expect(service.assignTeam(23, 999)).rejects.toThrow('Team #999 not found.');
+    });
+
+    it('getAssignedTeam returns assigned team data with leader and members', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 23,
+        name: 'Customer A',
+        deletedAt: null,
+        assignedTeamId: 2,
+        assignedTeam: {
+          id: 2,
+          name: 'Social Media Team',
+          description: 'Team for marketing',
+          leader: { id: 1, firstName: 'Alice', lastName: 'Smith', email: 'alice@team.com', phone: '123' },
+          _count: { members: 1 },
+          members: [
+            {
+              id: 10,
+              role: 'MEMBER',
+              employee: { id: 5, firstName: 'Bob', lastName: 'Jones', email: 'bob@team.com', phone: '456' },
+            },
+          ],
+        },
+        users: [],
+      });
+
+      const res = await service.getAssignedTeam(23);
+      expect(res.success).toBe(true);
+      expect(res.data.customerId).toBe(23);
+      expect(res.data.teamId).toBe(2);
+      expect(res.data.team.name).toBe('Social Media Team');
+      expect(res.data.team.leader).toBe('Alice Smith');
+      expect(res.data.team.memberCount).toBe(1);
+      expect(res.data.team.members[0].name).toBe('Bob Jones');
+    });
+
+    it('getAssignedTeam throws NotFoundException if customer does not exist', async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+      await expect(service.getAssignedTeam(999)).rejects.toThrow('Customer #999 not found.');
     });
 
     it('findAll filters by teamId', async () => {

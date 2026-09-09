@@ -224,14 +224,21 @@ export class CustomerController {
     return this.customerService.update(id, dto);
   }
 
-  @Patch(':id/assign-team')
+  @Get([':id/assign-team', ':id/team'])
+  @ApiOperation({ summary: 'Get assigned team for a customer' })
+  async getAssignedTeam(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.customerService.getAssignedTeam(id, user);
+  }
+
+  @Patch([':id/assign-team', ':id/team'])
   @ApiOperation({ summary: 'Assign or reassign customer to an operating team' })
   async assignTeam(
     @Param('id') id: string,
     @Body() dto: AssignCustomerTeamDto,
+    @CurrentUser() user: any,
   ) {
     const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
-    return this.customerService.assignTeam(id, targetTeamId);
+    return this.customerService.assignTeam(id, targetTeamId, user);
   }
 
   @Post(':id/restore')
