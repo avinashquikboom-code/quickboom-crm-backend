@@ -67,6 +67,55 @@ export class TeamController {
     return this.teamService.findAll(targetCustomerId, query);
   }
 
+  @Get('my-teams')
+  @ApiOperation({ summary: 'Get all teams belonging to authenticated employee or organization' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getMyTeams(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
+    return this.teamService.getMyTeams(user, targetCustomerId);
+  }
+
+  @Get('me/calendar')
+  @ApiOperation({ summary: 'Get Team Calendar for primary team of authenticated employee' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'month', required: false, type: Number })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false })
+  async getMyTeamCalendar(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query() query: any,
+  ) {
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, query?.customerId);
+    const myTeams = await this.teamService.getMyTeams(user, targetCustomerId);
+    if (!myTeams || myTeams.length === 0) {
+      return [];
+    }
+    return this.teamService.getTeamCalendar(myTeams[0].id, query, user, targetCustomerId);
+  }
+
+  @Get(':id/calendar')
+  @ApiOperation({ summary: 'Get Team Calendar for specific team' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'month', required: false, type: Number })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false })
+  async getTeamCalendar(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query() query: any,
+  ) {
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, query?.customerId);
+    return this.teamService.getTeamCalendar(id, query, user, targetCustomerId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single team details with members and leader' })
   @ApiQuery({ name: 'customerId', required: false })
