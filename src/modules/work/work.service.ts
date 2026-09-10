@@ -1458,8 +1458,12 @@ status: ${item.status}`);
       dateTo?: string;
       month?: number;
       year?: number;
-      status?: WorkStatus;
+      status?: WorkStatus | string;
       customerId?: number;
+      employeeId?: number;
+      teamId?: number;
+      workType?: string;
+      search?: string;
     } = {},
   ) {
     const startTime = Date.now();
@@ -1523,56 +1527,120 @@ status: ${item.status}`);
           : null);
 
     // Resolve employee role and allowed activity types for role-based visibility
-    const { role: empRole, allowedTypes, isFullAccess } =
+    const { role: empRole, allowedTypes, isFullAccess, isProductionManager } =
       await this.workPermissionService.getAllowedActivityTypesForEmployee(
         numEmployeeId,
         (empRecord as any)?.customerId,
       );
 
     const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
+    const tenantCustomerId = (empRecord as any)?.customerId;
 
-    // Build STRICT assignment OR conditions - ONLY activities assigned directly to this employee!
-    const orConditions: any[] = [
-      { assignedToId: numEmployeeId },
-      { editorId: numEmployeeId },
-      { tasks: { some: { assignedToId: numEmployeeId } } },
-    ];
+    let where: any;
 
-    if (empRecord?.userId) {
-      orConditions.push(
-        { assignedToId: empRecord.userId },
-        { editorId: empRecord.userId },
-        { tasks: { some: { assignedToId: empRecord.userId } } },
-      );
-    }
+    if (isProductionManager) {
+      // Production Manager is a supervisory role!
+      // Must be able to see and manage production work across ALL employees and teams under the permitted organization/workspace.
+      // Do NOT give Production Manager the same restricted task visibility as a normal Employee.
+      where = {
+        status: { not: WorkStatus.CANCELLED },
+        ...(tenantCustomerId ? { customer: { id: { gt: 0 } } } : {}),
+      };
 
-    // Direct 1-on-1 customer assignment fallback: activities belonging to customers directly assigned to this employee,
-    // provided the activity is not explicitly assigned to a different staff member
-    orConditions.push({
-      customer: { assignedEmployeeId: numEmployeeId },
-      assignedToId: null,
-      editorId: null,
-    });
+      // Filter by specific customer if requested
+      if (query.customerId) {
+        where.customerId = Number(query.customerId);
+      }
 
-    if (empFullName) {
+      // Filter by specific employee if requested
+      if (query.employeeId) {
+        const filterEmpId = Number(query.employeeId);
+        where.OR = [
+          { assignedToId: filterEmpId },
+          { editorId: filterEmpId },
+          { tasks: { some: { assignedToId: filterEmpId } } },
+        ];
+      }
+
+      // Filter by specific team if requested
+      if (query.teamId) {
+        const filterTeamId = Number(query.teamId);
+        const teamCond = [
+          { teamId: filterTeamId },
+          { customer: { assignedTeamId: filterTeamId } },
+          { team: { members: { some: { teamId: filterTeamId } } } },
+        ];
+        if (where.OR) {
+          where.AND = [{ OR: where.OR }, { OR: teamCond }];
+          delete where.OR;
+        } else {
+          where.OR = teamCond;
+        }
+      }
+    } else {
+      // NORMAL EMPLOYEE:
+      // Employee sees only:
+      // - Their own assigned work
+      // - Their permitted team work if existing business rules allow it
+      // - Their assigned customers
+      // - Their own task/status actions
+      const orConditions: any[] = [
+        { assignedToId: numEmployeeId },
+        { editorId: numEmployeeId },
+        { tasks: { some: { assignedToId: numEmployeeId } } },
+      ];
+
+      if (empRecord?.userId) {
+        orConditions.push(
+          { assignedToId: empRecord.userId },
+          { editorId: empRecord.userId },
+          { tasks: { some: { assignedToId: empRecord.userId } } },
+        );
+      }
+
+      // Direct 1-on-1 customer assignment fallback: activities belonging to customers directly assigned to this employee,
+      // provided the activity is not explicitly assigned to a different staff member
       orConditions.push({
-        customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
+        customer: { assignedEmployeeId: numEmployeeId },
         assignedToId: null,
         editorId: null,
       });
-    }
 
-    const where: any = {
-      OR: orConditions,
-      status: { not: WorkStatus.CANCELLED },
-    };
+      if (empFullName) {
+        orConditions.push({
+          customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
+          assignedToId: null,
+          editorId: null,
+        });
+      }
 
-    if (query.customerId) {
-      where.customerId = Number(query.customerId);
+      where = {
+        OR: orConditions,
+        status: { not: WorkStatus.CANCELLED },
+      };
+
+      if (query.customerId) {
+        where.customerId = Number(query.customerId);
+      }
     }
 
     if (query.status) {
-      where.status = query.status;
+      const qStatus = String(query.status).toUpperCase();
+      if (qStatus === 'PENDING') {
+        where.status = { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] };
+      } else if (qStatus === 'IN_PROGRESS') {
+        where.status = { in: [WorkStatus.IN_PROGRESS, WorkStatus.PROCESSING] };
+      } else if (qStatus === 'COMPLETED') {
+        where.status = { in: [WorkStatus.COMPLETED, WorkStatus.APPROVED] };
+      } else if (qStatus === 'BLOCKED') {
+        where.status = 'BLOCKED' as any;
+      } else if (Object.values(WorkStatus).includes(qStatus as any)) {
+        where.status = qStatus as WorkStatus;
+      }
+    }
+
+    if (query.workType) {
+      where.workType = query.workType;
     }
 
     let targetDateStr: string | undefined;
@@ -1829,12 +1897,13 @@ status: ${item.status}`);
         assignedToId: w.assignedToId || (w.customer?.assignedEmployeeId === numEmployeeId ? numEmployeeId : null),
         assignedEmployee: assignedEmpName,
         assignedToName: assignedEmpName,
-        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : [assignedEmpName],
+        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
         editorId: w.editorId,
         editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
-        team: w.team?.name || w.customer?.assignedTeam?.name || 'Creative Team',
-        assignedTeam: w.team?.name || w.customer?.assignedTeam?.name || 'Creative Team',
-        notes: w.description || w.notes || `${w.title} deliverable`,
+        teamId: w.teamId || w.customer?.assignedTeamId || null,
+        team: w.team?.name || w.customer?.assignedTeam?.name || null,
+        assignedTeam: w.team?.name || w.customer?.assignedTeam?.name || null,
+        notes: w.notes || w.description || null,
         outputUrl: w.outputUrl,
         feedback: w.feedback,
         revisionCount: w.revisionCount,
@@ -1879,6 +1948,145 @@ assignedEmployee: ${item.assignedEmployee}`);
     }
 
     return result;
+  }
+
+  /**
+   * Get production dashboard metrics for supervisory Production Manager.
+   * Derives real metrics strictly from the shared Work/Calendar records.
+   */
+  async getProductionMetrics(
+    employeeId: number,
+    query: {
+      customerId?: number;
+      employeeId?: number;
+      teamId?: number;
+      date?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      month?: number;
+      year?: number;
+    } = {},
+  ) {
+    const works = await this.getEmployeeCalendar(employeeId, query);
+
+    const total = works.length;
+    let pending = 0;
+    let inProgress = 0;
+    let completed = 0;
+    let blocked = 0;
+    let today = 0;
+    let overdue = 0;
+
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    for (const w of works) {
+      const s = String(w.status || '').toUpperCase();
+      if (s === 'COMPLETED' || s === 'APPROVED') {
+        completed++;
+      } else if (s === 'IN_PROGRESS' || s === 'PROCESSING') {
+        inProgress++;
+      } else if (s === 'BLOCKED') {
+        blocked++;
+      } else {
+        pending++;
+      }
+
+      const itemDate = w.scheduledDate || (typeof w.date === 'string' ? w.date.split('T')[0] : '');
+      if (itemDate === todayStr) {
+        today++;
+      }
+
+      if (itemDate && itemDate < todayStr && s !== 'COMPLETED' && s !== 'APPROVED' && s !== 'CANCELLED') {
+        overdue++;
+      }
+    }
+
+    return {
+      total,
+      pending,
+      inProgress,
+      completed,
+      blocked,
+      today,
+      overdue,
+    };
+  }
+
+  /**
+   * Get filter options (customers, employees, teams, statuses) for Production Manager dashboard.
+   */
+  async getProductionFilterOptions(employeeId: number) {
+    const works = await this.getEmployeeCalendar(employeeId, {});
+    const customerMap = new Map<number, string>();
+    const employeeMap = new Map<number, string>();
+    const teamMap = new Map<number, string>();
+
+    for (const w of works) {
+      if (w.customerId && w.customerName) {
+        customerMap.set(Number(w.customerId), w.customerName);
+      }
+      if (w.assignedToId && w.assignedEmployee) {
+        employeeMap.set(Number(w.assignedToId), w.assignedEmployee);
+      }
+      if (w.editorId && w.editorName) {
+        employeeMap.set(Number(w.editorId), w.editorName);
+      }
+      if (w.assignedTeam) {
+        const tId = Number(w.teamId || 0);
+        if (tId > 0) {
+          teamMap.set(tId, w.assignedTeam);
+        }
+      }
+    }
+
+    const numEmployeeId = Number(employeeId);
+    const emp = await this.prisma.employee.findUnique({
+      where: { id: numEmployeeId },
+      select: { customerId: true },
+    });
+
+    if (emp?.customerId) {
+      const allEmps = await this.prisma.employee.findMany({
+        where: { customerId: emp.customerId, status: 'ACTIVE' },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      for (const e of allEmps) {
+        const name = `${e.firstName} ${e.lastName}`.trim();
+        if (name && !employeeMap.has(e.id)) {
+          employeeMap.set(e.id, name);
+        }
+      }
+
+      const allTeams = await this.prisma.team.findMany({
+        where: { customerId: emp.customerId, isActive: true },
+        select: { id: true, name: true },
+      });
+      for (const t of allTeams) {
+        if (t.name && !teamMap.has(t.id)) {
+          teamMap.set(t.id, t.name);
+        }
+      }
+
+      const allCustomers = await this.prisma.customer.findMany({
+        where: { deletedAt: null, isActive: true },
+        select: { id: true, name: true, companyName: true },
+        take: 100,
+      });
+      for (const c of allCustomers) {
+        const name = c.companyName || c.name;
+        if (name && !customerMap.has(c.id)) {
+          customerMap.set(c.id, name);
+        }
+      }
+    }
+
+    return {
+      customers: Array.from(customerMap.entries()).map(([id, name]) => ({ id, name })),
+      employees: Array.from(employeeMap.entries()).map(([id, name]) => ({ id, name })),
+      teams: Array.from(teamMap.entries()).map(([id, name]) => ({ id, name })),
+      statuses: ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'BLOCKED'],
+    };
   }
 
   /**

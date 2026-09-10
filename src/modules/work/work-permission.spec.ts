@@ -53,7 +53,7 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
     service = module.get<WorkPermissionService>(WorkPermissionService);
   });
 
-  it('should list all 5 standard role-specific modules', () => {
+  it('should list all standard role-specific modules', () => {
     const modules = service.getWorkModules();
     expect(modules.map((m) => m.key)).toEqual([
       'leads',
@@ -61,6 +61,9 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
       'post_design',
       'story_design',
       'reel_shoot',
+      'reel_post',
+      'story_post',
+      'influencer_promo',
     ]);
   });
 

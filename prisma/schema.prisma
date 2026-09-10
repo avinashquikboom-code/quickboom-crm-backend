@@ -1968,6 +1968,7 @@ enum TaskStatus {
   SUBMITTED
   UNDER_REVIEW
   REJECTED
+  BLOCKED
 }
 
 enum TaskPriority {
@@ -2111,6 +2112,7 @@ enum WorkStatus {
   UNDER_REVIEW
   COMPLETED
   CANCELLED
+  BLOCKED
 }
 
 enum WorkPriority {
@@ -2471,3 +2473,29 @@ model EmployeeLeadLimit {
   @@index([employeeId])
   @@map("employee_lead_limits")
 }
+
+model MarketplaceTool {
+  id          Int       @id @default(autoincrement())
+  title       String
+  subtitle    String?
+  description String?
+  icon        String?
+  category    String    @default("GROWTH_TOOLS")
+  route       String?
+  externalUrl String?
+  badge       String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  isPublished Boolean   @default(true)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([isActive, isPublished])
+  @@index([sortOrder])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("marketplace_tools")
+}
+

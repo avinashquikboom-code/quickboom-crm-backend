@@ -368,6 +368,9 @@ export class WorkController {
   @ApiQuery({ name: 'year', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'teamId', required: false })
+  @ApiQuery({ name: 'workType', required: false })
   async getEmployeeCalendar(
     @CurrentUser() user: any,
     @Query('date') date?: string,
@@ -379,13 +382,16 @@ export class WorkController {
     @Query('year') year?: string,
     @Query('status') status?: WorkStatus,
     @Query('customerId') customerId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('teamId') teamId?: string,
+    @Query('workType') workType?: string,
   ) {
-    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    if (!employeeId) {
+    const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!authEmpId) {
       return [];
     }
 
-    return this.workService.getEmployeeCalendar(employeeId, {
+    return this.workService.getEmployeeCalendar(authEmpId, {
       date: date || startDate,
       dateFrom: startDate || dateFrom,
       dateTo: endDate || dateTo,
@@ -393,7 +399,53 @@ export class WorkController {
       year: year ? parseInt(year, 10) : undefined,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
+      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      teamId: teamId ? parseInt(teamId, 10) : undefined,
+      workType,
     });
+  }
+
+  @Get('production/metrics')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get supervisory production metrics for Production Manager' })
+  async getProductionMetrics(
+    @CurrentUser() user: any,
+    @Query('customerId') customerId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('teamId') teamId?: string,
+    @Query('date') date?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!authEmpId) {
+      return { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0, today: 0, overdue: 0 };
+    }
+    return this.workService.getProductionMetrics(authEmpId, {
+      customerId: customerId ? parseInt(customerId, 10) : undefined,
+      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      teamId: teamId ? parseInt(teamId, 10) : undefined,
+      date,
+      dateFrom,
+      dateTo,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    });
+  }
+
+  @Get('production/filter-options')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get supervisory filter options for Production Manager' })
+  async getProductionFilterOptions(@CurrentUser() user: any) {
+    const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!authEmpId) {
+      return { customers: [], employees: [], teams: [], statuses: [] };
+    }
+    return this.workService.getProductionFilterOptions(authEmpId);
   }
 
   @Get('calendar')
@@ -632,5 +684,43 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Body('status') status: TaskStatus,
   ) {
     return this.workService.updateTaskStatus(customerIdQuery, id, taskId, status);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update work item status' })
+  async updateWorkStatus(
+    @Param('id') id: string,
+    @Body('status') status: WorkStatus,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    return this.workService.update(custId, id, { status } as any, employeeId ?? undefined);
+  }
+
+  @Post(':id/updates')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Submit progress update from employee or production manager' })
+  async submitWorkUpdate(
+    @Param('id') id: string,
+    @Body() body: { notes?: string; status?: WorkStatus },
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    return this.workService.update(
+      custId,
+      id,
+      {
+        notes: body.notes,
+        status: body.status,
+      } as any,
+      employeeId ?? undefined,
+    );
   }
 }

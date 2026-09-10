@@ -12,12 +12,12 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 @ApiTags('Product Showcase')
 @Controller()
 export class ShowcaseController {
-  constructor(private readonly showcaseService: ShowcaseService) {}
+  constructor(private readonly showcaseService: ShowcaseService) { }
 
   @Get(['customer/products/showcase', 'products/showcase', 'customer/showcase/pinteresty-tops'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiOperation({ summary: 'Get Pinteresty Tops product showcase for Customer Home screen' })
+  @ApiOperation({ summary: 'Get Businees Tools product showcase for Customer Home screen' })
   async getPinterestyTopsShowcase(
     @CurrentCustomer() customerId?: string,
   ): Promise<{ statusCode: number; success: boolean; data: ProductShowcaseResponse }> {

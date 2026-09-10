@@ -36,14 +36,14 @@ export interface ProductShowcaseResponse {
 export class ShowcaseService {
   private readonly logger = new Logger(ShowcaseService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * Retrieves showcase products for customer home screen.
    * Can query database products if present, or dynamically build the catalog showcase.
    */
   async getPinterestyTopsShowcase(customerId?: any): Promise<ProductShowcaseResponse> {
-    this.logger.log(`[SHOWCASE_REQUEST] Fetching Pinteresty Tops showcase for customerId: ${customerId}`);
+    this.logger.log(`[SHOWCASE_REQUEST] Fetching Businees Tools showcase for customerId: ${customerId}`);
 
     // If customer has created products in the database, we can mix or prefer them
     let dbProducts: any[] = [];
@@ -110,15 +110,15 @@ export class ShowcaseService {
     // If database products exist, map them over default items
     const products: ShowcaseProductDto[] = dbProducts.length >= 4
       ? dbProducts.slice(0, 4).map((p, idx) => ({
-          id: String(p.id),
-          name: p.name,
-          title: p.name,
-          imageUrl: defaultProducts[idx % defaultProducts.length].imageUrl,
-          thumbnailUrl: defaultProducts[idx % defaultProducts.length].thumbnailUrl,
-          originalPrice: p.unitPrice ? Math.round(p.unitPrice * 1.4) : defaultProducts[idx].originalPrice,
-          sellingPrice: p.unitPrice || defaultProducts[idx].sellingPrice,
-          currency: p.currency === 'INR' ? '₹' : (p.currency || '₹'),
-        }))
+        id: String(p.id),
+        name: p.name,
+        title: p.name,
+        imageUrl: defaultProducts[idx % defaultProducts.length].imageUrl,
+        thumbnailUrl: defaultProducts[idx % defaultProducts.length].thumbnailUrl,
+        originalPrice: p.unitPrice ? Math.round(p.unitPrice * 1.4) : defaultProducts[idx].originalPrice,
+        sellingPrice: p.unitPrice || defaultProducts[idx].sellingPrice,
+        currency: p.currency === 'INR' ? '₹' : (p.currency || '₹'),
+      }))
       : defaultProducts;
 
     const featuredInfluencer: FeaturedInfluencerDto = {
@@ -134,7 +134,7 @@ export class ShowcaseService {
 
     return {
       id: 'showcase_pinteresty_tops',
-      categoryTitle: 'Pinteresty Tops',
+      categoryTitle: 'Businees Tools',
       totalProductCount: 47,
       viewAllUrl: '/catalog/pinteresty-tops',
       featuredInfluencer,

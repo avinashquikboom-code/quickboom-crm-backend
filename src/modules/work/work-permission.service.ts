@@ -103,6 +103,10 @@ export const DEFAULT_ROLE_WORK_MAPPINGS: Record<string, string[]> = {
   'SALES_EXECUTIVE': ['leads'],
   'Sales': ['leads'],
   'SALES': ['leads'],
+  'Production Manager': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'PRODUCTION_MANAGER': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'Production Lead': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
+  'PRODUCTION_LEAD': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
   'Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
   'Super Admin': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
   'ADMIN': ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
@@ -924,13 +928,21 @@ export class WorkPermissionService {
     role: string;
     allowedTypes: Set<string>;
     isFullAccess: boolean;
+    isProductionManager: boolean;
     workPermissions: string[];
   }> {
     const custId = await this.resolveCustomerId(customerId);
     const effective = await this.getEmployeeEffectivePermissions(custId, { employeeId });
 
     const roleName = (effective.role || '').toUpperCase();
+    const isProductionManager =
+      roleName.includes('PRODUCTION') ||
+      roleName.includes('PROD_MGR') ||
+      roleName.includes('PRODUCTION_MANAGER') ||
+      roleName.includes('PRODUCTION_LEAD');
+
     const isFullAccess =
+      isProductionManager ||
       roleName.includes('ADMIN') ||
       roleName.includes('SUPER') ||
       roleName.includes('DIRECTOR') ||
@@ -957,6 +969,7 @@ export class WorkPermissionService {
         role: effective.role,
         allowedTypes,
         isFullAccess: true,
+        isProductionManager,
         workPermissions: effective.workPermissions,
       };
     }
@@ -972,6 +985,7 @@ export class WorkPermissionService {
       role: effective.role,
       allowedTypes,
       isFullAccess: false,
+      isProductionManager: false,
       workPermissions: effective.workPermissions,
     };
   }
