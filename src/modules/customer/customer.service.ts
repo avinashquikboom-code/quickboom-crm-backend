@@ -451,13 +451,13 @@ export class CustomerService {
     const now = new Date();
     const formatted = items.map((c) => {
       const primaryUser = (c as any).users?.[0];
-      // Find latest valid active subscription, otherwise latest created
+      // Find latest valid active subscription strictly
       const activeSub =
         c.subscriptions.find(
           (s) =>
             s.status === 'ACTIVE' &&
             (!s.endDate || new Date(s.endDate) >= now),
-        ) || c.subscriptions[0];
+        );
 
       const isSubActive =
         activeSub &&
@@ -687,7 +687,7 @@ export class CustomerService {
         (s) =>
           s.status === 'ACTIVE' &&
           (!s.endDate || new Date(s.endDate) >= now),
-      ) || customer.subscriptions[0];
+      );
 
     const isSubActive =
       activeSub &&
@@ -939,26 +939,6 @@ export class CustomerService {
           },
         },
       });
-
-      // Automatically provision initial subscription plan if plans exist
-      const defaultPlan = await tx.plan.findFirst({
-        where: { deletedAt: null },
-        orderBy: { id: 'asc' },
-      });
-
-      if (defaultPlan) {
-        await tx.customerSubscription.create({
-          data: {
-            customerId: created.id,
-            planId: defaultPlan.id,
-            status: 'ACTIVE',
-            billingCycle: 'MONTHLY',
-            startDate: new Date(),
-            endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-            autoRenew: true,
-          },
-        });
-      }
 
       return created;
     });

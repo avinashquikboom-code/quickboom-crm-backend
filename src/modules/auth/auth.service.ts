@@ -116,38 +116,6 @@ export class AuthService {
           },
         });
 
-        // Find or Create Starter Plan
-        let starterPlan = await tx.plan.findUnique({ where: { code: 'STARTER' } });
-        if (!starterPlan && typeof tx.plan?.findFirst === 'function') {
-          starterPlan = await tx.plan.findFirst({ where: { OR: [{ code: 'STARTER' }, { code: 'BASIC' }] } });
-        }
-        if (!starterPlan) {
-          starterPlan = await tx.plan.create({
-            data: {
-              name: 'Starter Plan',
-              code: 'STARTER',
-              monthlyPrice: 29.0,
-              yearlyPrice: 290.0,
-              userLimit: 5,
-              leadLimit: 500,
-              storageLimit: BigInt(5368709120), // 5GB
-              features: ['LEADS', 'CONTACTS', 'DEALS', 'TASKS'],
-            },
-          });
-        }
-
-        // Create Subscription
-        await tx.customerSubscription.create({
-          data: {
-            customerId: customer.id,
-            planId: starterPlan.id,
-            startDate: new Date(),
-            endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-            trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-            status: 'TRIAL',
-          },
-        });
-
         // Create Admin Role for Customer
         const adminRole = await tx.role.create({
           data: {

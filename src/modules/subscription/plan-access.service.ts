@@ -171,18 +171,14 @@ export class PlanAccessService {
         }
       : null;
 
-    // Prioritize active non-expired subscription, then latest active, then latest subscription
-    const sub =
-      activeSub ||
-      subs.find((s) => s.status === SubscriptionStatus.ACTIVE && s.plan) ||
-      subs.find((s) => s.plan) ||
-      subs[0];
+    // Strictly require a valid active subscription with an attached plan
+    const sub = activeSub;
 
     let basePlan = sub?.plan;
 
-    // If no subscription found, return null or empty with upcomingPlan
+    // If no active subscription found, return null or upcomingPlan structure
     if (!sub || !basePlan) {
-      this.logger.debug(`[PLAN_DEBUG] No subscription found for customer ${numCustomerId}`);
+      this.logger.debug(`[PLAN_DEBUG] No active subscription found for customer ${numCustomerId}`);
       if (upcomingPlan) {
         return {
           customerId: numCustomerId,
