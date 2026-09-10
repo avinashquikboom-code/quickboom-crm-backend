@@ -41,6 +41,7 @@ import { MarketingModule } from './modules/marketing/marketing.module';
 import { S3Module } from './modules/s3/s3.module';
 import { Msg91Module } from './modules/msg91/msg91.module';
 import { SocialMediaHandlerModule } from './modules/social-media-handler/social-media-handler.module';
+import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -90,6 +91,7 @@ import { AppController } from './app.controller';
     TrendingModule,
     MarketingModule,
     SocialMediaHandlerModule,
+    MarketplaceModule,
   ],
   controllers: [AppController],
 })
