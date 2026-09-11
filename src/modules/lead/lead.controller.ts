@@ -62,6 +62,12 @@ export class LeadController {
     return this.leadService.getSummaryMetrics(customerId, user);
   }
 
+  @Get('stages')
+  @ApiOperation({ summary: 'Get configured lead stages / statuses with sort order, label, and colors' })
+  async getStages() {
+    return this.leadService.getStages();
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get paginated list of leads' })
   @ApiQuery({ name: 'page', required: false })

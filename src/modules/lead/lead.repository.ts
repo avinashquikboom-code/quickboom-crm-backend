@@ -13,6 +13,7 @@ import {
   UpdateLeadDto,
 } from './dto/lead.dto';
 import { LeadStatus } from '@prisma/client';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class LeadRepository {
@@ -369,13 +370,8 @@ export class LeadRepository {
     options: { page?: number; limit?: number; search?: string; status?: string; assignedToId?: string | number },
     user?: any,
   ) {
-    const numCustomerId = Number(customerId || user?.customerId);
-    const isSuperAdmin =
-      user?.role === 'SUPER_ADMIN' ||
-      user?.roleType === 'SUPER_ADMIN' ||
-      user?.roles?.includes('SUPER_ADMIN') ||
-      user?.roles?.includes('Super Administrator') ||
-      customerId === undefined;
+    const numCustomerId = Number(customerId ?? user?.customerId);
+    const isSuperAdmin = isUserSuperAdmin(user);
 
     const page = Math.max(Number(options.page) || 1, 1);
     const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
@@ -493,9 +489,14 @@ export class LeadRepository {
     notes?: string,
   ) {
     const numId = Number(id);
+    const numCustomerId = Number(customerId);
     const numUserId = Number(userId);
-    await this.prisma.lead.update({
-      where: { id: numId },
+    const updateWhere: any = { id: numId };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      updateWhere.customerId = numCustomerId;
+    }
+    await this.prisma.lead.updateMany({
+      where: updateWhere,
       data: { status: toStatus },
     });
 

@@ -9,8 +9,18 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { LeadPriority, LeadStatus } from '@prisma/client';
+
+export function normalizeLeadStatus(value: any): any {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const upper = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+  if (upper === 'WON_CONVERTED' || upper === 'CONVERT') return LeadStatus.CONVERTED;
+  if (upper === 'FOLLOWUP') return LeadStatus.FOLLOW_UP;
+  return upper;
+}
 
 export class CreateLeadDto {
   @ApiProperty({ example: 'Enterprise Cloud Modernization' })
@@ -74,6 +84,7 @@ export class CreateLeadDto {
   source?: string;
 
   @ApiPropertyOptional({ enum: LeadStatus, example: LeadStatus.NEW })
+  @Transform(({ value }) => normalizeLeadStatus(value))
   @IsEnum(LeadStatus)
   @IsOptional()
   status?: LeadStatus;
@@ -448,6 +459,7 @@ export class StartWorkDto {
 
 export class UpdateLeadStatusDto {
   @ApiProperty({ enum: LeadStatus, example: LeadStatus.FOLLOW_UP })
+  @Transform(({ value }) => normalizeLeadStatus(value))
   @IsEnum(LeadStatus)
   @IsNotEmpty()
   status: LeadStatus;

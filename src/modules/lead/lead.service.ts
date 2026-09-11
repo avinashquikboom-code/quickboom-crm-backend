@@ -66,6 +66,26 @@ export class LeadService {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
+  getStages() {
+    return [
+      { key: 'NEW', label: 'New', sortOrder: 0, color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD' },
+      { key: 'CONTACTED', label: 'Contacted', sortOrder: 1, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
+      { key: 'FOLLOW_UP', label: 'Follow-up', sortOrder: 2, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
+      { key: 'VISIT', label: 'Visit Scheduled', sortOrder: 3, color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF' },
+      { key: 'QUALIFIED', label: 'Qualified', sortOrder: 4, color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF' },
+      { key: 'PROPOSAL', label: 'Proposal', sortOrder: 5, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
+      { key: 'PROPOSAL_SENT', label: 'Proposal Sent', sortOrder: 6, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
+      { key: 'NEGOTIATION', label: 'Negotiation', sortOrder: 7, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
+      { key: 'FINAL_CALL', label: 'Final Call', sortOrder: 8, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
+      { key: 'PAYMENT', label: 'Payment Pending', sortOrder: 9, color: '#2563EB', bgColor: '#DBEAFE', borderColor: '#BFDBFE' },
+      { key: 'WORK_STARTED', label: 'Work Started', sortOrder: 10, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
+      { key: 'WON', label: 'Won', sortOrder: 11, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
+      { key: 'CONVERTED', label: 'Converted', sortOrder: 12, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
+      { key: 'LOST', label: 'Lost', sortOrder: 13, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3' },
+      { key: 'CANCELLED', label: 'Cancelled', sortOrder: 14, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3' },
+    ];
+  }
+
   async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
