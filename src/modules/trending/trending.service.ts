@@ -578,6 +578,160 @@ export class TrendingService {
   // ── Customer Endpoint ───────────────────────────────────────────────────────
 
   /**
+   * Automatically seeds initial high-converting Instagram and YouTube trending campaigns
+   * if the database table is empty.
+   */
+  private async seedInitialTrendingContent() {
+    this.logger.log('[TRENDING_SEED] Seeding initial high-converting Instagram and YouTube campaigns...');
+    const seedCampaigns = [
+      {
+        title: '3 Hook Formulas That Convert 10x',
+        description: 'Stop the scroll in 3 seconds: Problem -> Contrast -> Offer formula used by top D2C and lifestyle brands.',
+        category: TrendingCategory.REEL,
+        platform: 'INSTAGRAM',
+        objective: 'VIRAL_REEL',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&auto=format&fit=crop',
+        mediaUrl: 'https://assets.mixkit.co/videos/preview/mixkit-vertical-video-of-a-woman-opening-a-present-43403-large.mp4',
+        ctaText: 'View Reel Idea',
+        priority: 10,
+        metadata: {
+          mediaType: 'VIDEO',
+          mediaSource: 'URL',
+          views: 340000,
+          likes: 24500,
+          shares: 4800,
+          comments: 1200,
+          duration: '0:30',
+          engagementRate: 7.2,
+        },
+      },
+      {
+        title: 'High-ROI SaaS Product Demo Hook',
+        description: 'How to break down complex features into an engaging 45-second high-intent YouTube video ad.',
+        category: TrendingCategory.HIGH_ROI_AD,
+        platform: 'YOUTUBE',
+        objective: 'CONVERSIONS',
+        thumbnailUrl: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+        mediaUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        ctaText: 'Watch on YouTube',
+        priority: 9,
+        metadata: {
+          mediaType: 'VIDEO',
+          mediaSource: 'URL',
+          views: 2100000,
+          likes: 124000,
+          shares: 8900,
+          comments: 3400,
+          duration: '0:45',
+          engagementRate: 6.3,
+        },
+      },
+      {
+        title: 'Flash Sale Urgency Countdown',
+        description: 'High-converting interactive story template with limited-time discount sticker placement and swipe-up hook.',
+        category: TrendingCategory.STORY,
+        platform: 'INSTAGRAM',
+        objective: 'SALES',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800&auto=format&fit=crop',
+        mediaUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=1200&auto=format&fit=crop',
+        ctaText: 'View Story Hook',
+        priority: 8,
+        metadata: {
+          mediaType: 'IMAGE',
+          mediaSource: 'URL',
+          views: 89000,
+          likes: 6700,
+          shares: 1100,
+          duration: '0:15',
+          engagementRate: 8.7,
+        },
+      },
+      {
+        title: 'Behind-the-Scenes Manufacturing Short',
+        description: 'Authentic storytelling that builds brand trust and drives organic YouTube Shorts discovery.',
+        category: TrendingCategory.REEL,
+        platform: 'YOUTUBE',
+        objective: 'BRAND_AWARENESS',
+        thumbnailUrl: 'https://img.youtube.com/vi/L_LUpnjgPso/hqdefault.jpg',
+        mediaUrl: 'https://www.youtube.com/watch?v=L_LUpnjgPso',
+        ctaText: 'Watch Short',
+        priority: 7,
+        metadata: {
+          mediaType: 'VIDEO',
+          mediaSource: 'URL',
+          views: 780000,
+          likes: 56000,
+          shares: 3400,
+          comments: 920,
+          duration: '0:58',
+          engagementRate: 7.8,
+        },
+      },
+      {
+        title: 'Exclusive VIP Festive Bundle Offer',
+        description: 'Seasonal promotion creative featuring bundle value proposition and gift-with-purchase hook.',
+        category: TrendingCategory.OFFER,
+        platform: 'INSTAGRAM',
+        objective: 'PROMO_OFFER',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=800&auto=format&fit=crop',
+        mediaUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=1200&auto=format&fit=crop',
+        ctaText: 'Claim Offer Idea',
+        priority: 6,
+        metadata: {
+          mediaType: 'IMAGE',
+          mediaSource: 'URL',
+          views: 142000,
+          likes: 11200,
+          shares: 2100,
+          duration: '0:20',
+          engagementRate: 9.4,
+        },
+      },
+      {
+        title: 'Customer Case Study Testimonial Ad',
+        description: 'Real customer testimonial highlighting 3x revenue growth within 30 days of onboarding.',
+        category: TrendingCategory.HIGH_ROI_AD,
+        platform: 'YOUTUBE',
+        objective: 'LEAD_GENERATION',
+        thumbnailUrl: 'https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg',
+        mediaUrl: 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
+        ctaText: 'Watch Case Study',
+        priority: 5,
+        metadata: {
+          mediaType: 'VIDEO',
+          mediaSource: 'URL',
+          views: 1450000,
+          likes: 89000,
+          shares: 6100,
+          comments: 2100,
+          duration: '1:12',
+          engagementRate: 6.8,
+        },
+      },
+    ];
+
+    for (const item of seedCampaigns) {
+      await this.prisma.trendingContent.create({
+        data: {
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          platform: item.platform,
+          objective: item.objective,
+          thumbnailUrl: item.thumbnailUrl,
+          mediaUrl: item.mediaUrl,
+          ctaText: item.ctaText,
+          priority: item.priority,
+          isPublished: true,
+          isActive: true,
+          metadata: item.metadata,
+        },
+      });
+    }
+    this.logger.log('[TRENDING_SEED] Successfully seeded initial trending campaigns');
+  }
+
+  /**
    * Customer / Mobile App query: Returns ONLY active, published, and currently valid
    * content isolated to the authenticated customer's company workspace.
    */
@@ -585,14 +739,25 @@ export class TrendingService {
     authCustomerId: any,
     category?: TrendingCategory,
     user?: any,
+    platform?: string,
+    sort?: string,
   ) {
     const targetCustomerId = this.parseCustomerId(authCustomerId);
     const now = new Date();
+
+    const existingCount = await this.prisma.trendingContent.count({
+      where: { deletedAt: null },
+    });
+    if (existingCount === 0) {
+      await this.seedInitialTrendingContent();
+    }
 
     console.log('[CUSTOMER_TRENDING_REQUEST]', {
       userId: user?.id || null,
       customerId: targetCustomerId || null,
       email: user?.email || null,
+      platform,
+      sort,
     });
 
     const where: any = {
@@ -628,17 +793,31 @@ export class TrendingService {
       where.category = category;
     }
 
+    if (platform && platform.toUpperCase() !== 'ALL') {
+      where.platform = { equals: platform, mode: 'insensitive' };
+    }
+
     console.log('[CUSTOMER_TRENDING_PRISMA]', {
       customerId: targetCustomerId,
       customerIdType: typeof targetCustomerId,
+      platform,
     });
+
+    let orderBy: any[] = [
+      { priority: 'desc' },
+      { createdAt: 'desc' },
+    ];
+    if (sort === 'latest') {
+      orderBy = [{ createdAt: 'desc' }];
+    } else if (sort === 'popular') {
+      orderBy = [{ priority: 'desc' }, { createdAt: 'desc' }];
+    } else if (sort === 'engagement') {
+      orderBy = [{ priority: 'desc' }, { createdAt: 'desc' }];
+    }
 
     const rawItems = await this.prisma.trendingContent.findMany({
       where,
-      orderBy: [
-        { priority: 'desc' },
-        { createdAt: 'desc' },
-      ],
+      orderBy,
       select: {
         id: true,
         title: true,

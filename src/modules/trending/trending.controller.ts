@@ -160,22 +160,30 @@ export class TrendingController {
   @Get(['customer/trending', 'customer/marketing/trending'])
   @ApiOperation({ summary: 'Get active published trending content for customer' })
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
+  @ApiQuery({ name: 'platform', type: String, required: false })
+  @ApiQuery({ name: 'sort', type: String, required: false })
   async findAllCustomer(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Query('category') category?: TrendingCategory,
+    @Query('platform') platform?: string,
+    @Query('sort') sort?: string,
   ) {
-    return this.trendingService.findAllCustomer(customerId, category, user);
+    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort);
   }
 
   @Get('trending')
   @ApiOperation({ summary: 'Alias: Get active published trending content' })
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
+  @ApiQuery({ name: 'platform', type: String, required: false })
+  @ApiQuery({ name: 'sort', type: String, required: false })
   async findAllTrendingAlias(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Query('category') category?: TrendingCategory,
+    @Query('platform') platform?: string,
+    @Query('sort') sort?: string,
   ) {
-    return this.trendingService.findAllCustomer(customerId, category, user);
+    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort);
   }
 }
