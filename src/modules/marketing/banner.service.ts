@@ -32,6 +32,7 @@ export class BannerService {
 
     const rawKey = banner.imageKey || banner.imagePublicId || this.s3Service.extractKey(banner.imageUrl);
     const resolvedUrl = (await this.s3Service.getPresignedUrl(banner.imageUrl || rawKey)) || banner.imageUrl;
+    const meta = typeof banner.metadata === 'object' && banner.metadata !== null ? banner.metadata : {};
 
     return {
       ...banner,
@@ -42,6 +43,12 @@ export class BannerService {
       bannerImage: resolvedUrl,
       bannerUrl: resolvedUrl,
       mediaUrl: resolvedUrl,
+      couponCode: banner.couponCode || meta.couponCode || meta.code || null,
+      discount: banner.discount || meta.discount || meta.discountPct || null,
+      brand: banner.brand || meta.brand || null,
+      terms: banner.terms || meta.terms || null,
+      minOrder: banner.minOrder || meta.minOrder || null,
+      category: banner.category || meta.category || null,
     };
   }
 
@@ -80,6 +87,16 @@ export class BannerService {
     const customerId = user.customerId ?? null;
     const cleanKey = imagePublicId || this.s3Service.extractKey(imageUrl);
 
+    const couponMetadata: Record<string, any> = {
+      ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      ...(dto.couponCode ? { couponCode: dto.couponCode.trim() } : {}),
+      ...(dto.discount ? { discount: dto.discount.trim() } : {}),
+      ...(dto.brand ? { brand: dto.brand.trim() } : {}),
+      ...(dto.terms ? { terms: dto.terms.trim() } : {}),
+      ...(dto.minOrder ? { minOrder: dto.minOrder.trim() } : {}),
+      ...(dto.category ? { category: dto.category.trim() } : {}),
+    };
+
     let banner: any;
     try {
       banner = await this.prisma.marketingBanner.create({
@@ -99,6 +116,7 @@ export class BannerService {
           startAt,
           endAt,
           createdBy: user.id,
+          metadata: Object.keys(couponMetadata).length > 0 ? couponMetadata : undefined,
         },
       });
     } catch (dbErr: any) {
@@ -287,6 +305,36 @@ export class BannerService {
 
     const cleanKey = imagePublicId || (imageUrl ? this.s3Service.extractKey(imageUrl) : undefined);
 
+    let updatedMetadata = existing.metadata;
+    if (
+      dto.metadata !== undefined ||
+      dto.couponCode !== undefined ||
+      dto.discount !== undefined ||
+      dto.brand !== undefined ||
+      dto.terms !== undefined ||
+      dto.minOrder !== undefined ||
+      dto.category !== undefined
+    ) {
+      const prevMeta =
+        typeof existing.metadata === 'object' && existing.metadata !== null
+          ? existing.metadata
+          : {};
+      const newMeta =
+        typeof dto.metadata === 'object' && dto.metadata !== null
+          ? dto.metadata
+          : {};
+      updatedMetadata = {
+        ...prevMeta,
+        ...newMeta,
+        ...(dto.couponCode !== undefined ? { couponCode: dto.couponCode ? dto.couponCode.trim() : null } : {}),
+        ...(dto.discount !== undefined ? { discount: dto.discount ? dto.discount.trim() : null } : {}),
+        ...(dto.brand !== undefined ? { brand: dto.brand ? dto.brand.trim() : null } : {}),
+        ...(dto.terms !== undefined ? { terms: dto.terms ? dto.terms.trim() : null } : {}),
+        ...(dto.minOrder !== undefined ? { minOrder: dto.minOrder ? dto.minOrder.trim() : null } : {}),
+        ...(dto.category !== undefined ? { category: dto.category ? dto.category.trim() : null } : {}),
+      };
+    }
+
     const updated = await this.prisma.marketingBanner.update({
       where: { id },
       data: {
@@ -315,6 +363,7 @@ export class BannerService {
         }),
         ...(startAt !== undefined && { startAt }),
         ...(endAt !== undefined && { endAt }),
+        ...(updatedMetadata !== undefined && { metadata: updatedMetadata }),
       },
     });
 

@@ -91,6 +91,40 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
   endAt?: string;
+
+  @ApiPropertyOptional({ example: 'QBSUITE50', description: 'Coupon code for redemption' })
+  @IsString()
+  @IsOptional()
+  couponCode?: string;
+
+  @ApiPropertyOptional({ example: '50–80% OFF', description: 'Discount display value' })
+  @IsString()
+  @IsOptional()
+  discount?: string;
+
+  @ApiPropertyOptional({ example: 'fwD', description: 'Brand or sponsor name' })
+  @IsString()
+  @IsOptional()
+  brand?: string;
+
+  @ApiPropertyOptional({ example: 'Valid on annual plans only' })
+  @IsString()
+  @IsOptional()
+  terms?: string;
+
+  @ApiPropertyOptional({ example: '₹500' })
+  @IsString()
+  @IsOptional()
+  minOrder?: string;
+
+  @ApiPropertyOptional({ example: 'SOFTWARE' })
+  @IsString()
+  @IsOptional()
+  category?: string;
+
+  @ApiPropertyOptional({ description: 'Additional metadata in JSON format' })
+  @IsOptional()
+  metadata?: any;
 }
 
 export class UpdateMarketingBannerDto extends PartialType(CreateMarketingBannerDto) {}
