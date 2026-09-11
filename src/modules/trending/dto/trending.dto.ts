@@ -112,6 +112,50 @@ export class CreateTrendingContentDto {
   @IsOptional()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ example: false, default: false })
+  @Transform(transformBoolean)
+  @IsBoolean()
+  @IsOptional()
+  isFeatured?: boolean;
+
+  @ApiPropertyOptional({ example: 120000, default: 0 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  views?: number;
+
+  @ApiPropertyOptional({ example: 9000, default: 0 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  likes?: number;
+
+  @ApiPropertyOptional({ example: 1200, default: 0 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  shares?: number;
+
+  @ApiPropertyOptional({ example: 450, default: 0 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  comments?: number;
+
+  @ApiPropertyOptional({ example: '0:30' })
+  @IsString()
+  @IsOptional()
+  duration?: string;
+
+  @ApiPropertyOptional({ example: 7.5, default: 0.0 })
+  @IsOptional()
+  @Type(() => Number)
+  engagementRate?: number;
+
   @ApiPropertyOptional({ example: '2026-08-27T00:00:00.000Z' })
   @IsDateString()
   @IsOptional()
@@ -215,6 +259,50 @@ export class UpdateTrendingContentDto {
   @IsOptional()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ example: false })
+  @Transform(transformBoolean)
+  @IsBoolean()
+  @IsOptional()
+  isFeatured?: boolean;
+
+  @ApiPropertyOptional({ example: 120000 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  views?: number;
+
+  @ApiPropertyOptional({ example: 9000 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  likes?: number;
+
+  @ApiPropertyOptional({ example: 1200 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  shares?: number;
+
+  @ApiPropertyOptional({ example: 450 })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  @Type(() => Number)
+  comments?: number;
+
+  @ApiPropertyOptional({ example: '0:30' })
+  @IsString()
+  @IsOptional()
+  duration?: string;
+
+  @ApiPropertyOptional({ example: 7.5 })
+  @IsOptional()
+  @Type(() => Number)
+  engagementRate?: number;
+
   @ApiPropertyOptional({ example: '2026-08-27T00:00:00.000Z' })
   @IsDateString()
   @IsOptional()
@@ -236,6 +324,20 @@ export class QueryTrendingDto {
   @IsEnum(TrendingCategory)
   @IsOptional()
   category?: TrendingCategory;
+
+  @ApiPropertyOptional({ example: 'INSTAGRAM' })
+  @IsString()
+  @IsOptional()
+  platform?: string;
+
+  @ApiPropertyOptional({ example: 'true' })
+  @IsOptional()
+  isFeatured?: string | boolean;
+
+  @ApiPropertyOptional({ example: 'latest' })
+  @IsString()
+  @IsOptional()
+  sort?: string;
 
   @ApiPropertyOptional({ enum: ['IMAGE', 'VIDEO', 'ALL'] })
   @IsOptional()
@@ -279,4 +381,11 @@ export class UpdateActiveStatusDto {
   @Transform(transformBoolean)
   @IsBoolean()
   isActive: boolean;
+}
+
+export class UpdateFeaturedStatusDto {
+  @ApiProperty({ example: true })
+  @Transform(transformBoolean)
+  @IsBoolean()
+  isFeatured: boolean;
 }

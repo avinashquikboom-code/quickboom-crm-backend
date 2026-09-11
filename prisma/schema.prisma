@@ -2328,6 +2328,13 @@ model TrendingContent {
   priority      Int              @default(0)
   isPublished   Boolean          @default(true)
   isActive      Boolean          @default(true)
+  isFeatured    Boolean          @default(false)
+  views         Int?             @default(0)
+  likes         Int?             @default(0)
+  shares        Int?             @default(0)
+  comments      Int?             @default(0)
+  duration      String?
+  engagementRate Float?          @default(0.0)
   startAt       DateTime?
   endAt         DateTime?
   createdBy     Int?
@@ -2340,6 +2347,7 @@ model TrendingContent {
   @@index([customerId, isActive, isPublished])
   @@index([category])
   @@index([priority])
+  @@index([isFeatured])
   @@index([deletedAt])
   @@map("trending_contents")
 }

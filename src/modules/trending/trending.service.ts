@@ -49,10 +49,19 @@ export class TrendingService {
       resolvedThumbnailUrl = (await this.s3Service.getPresignedUrl(resolvedThumbnailUrl)) || resolvedThumbnailUrl;
     }
 
+    const meta = (item.metadata && typeof item.metadata === 'object') ? item.metadata : {};
+
     return {
       ...item,
       mediaUrl: resolvedMediaUrl,
       thumbnailUrl: resolvedThumbnailUrl,
+      views: item.views !== null && item.views !== undefined ? item.views : (meta.views || 0),
+      likes: item.likes !== null && item.likes !== undefined ? item.likes : (meta.likes || 0),
+      shares: item.shares !== null && item.shares !== undefined ? item.shares : (meta.shares || 0),
+      comments: item.comments !== null && item.comments !== undefined ? item.comments : (meta.comments || 0),
+      duration: item.duration || meta.duration || null,
+      engagementRate: item.engagementRate !== null && item.engagementRate !== undefined ? item.engagementRate : (meta.engagementRate || 0.0),
+      isFeatured: item.isFeatured !== undefined ? Boolean(item.isFeatured) : false,
     };
   }
 
@@ -139,6 +148,13 @@ export class TrendingService {
               priority: dto.priority !== undefined ? Number(dto.priority) : 0,
               isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
               isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+              isFeatured: dto.isFeatured !== undefined ? Boolean(dto.isFeatured) : false,
+              views: dto.views !== undefined ? Number(dto.views) : 0,
+              likes: dto.likes !== undefined ? Number(dto.likes) : 0,
+              shares: dto.shares !== undefined ? Number(dto.shares) : 0,
+              comments: dto.comments !== undefined ? Number(dto.comments) : 0,
+              duration: dto.duration?.trim() || null,
+              engagementRate: dto.engagementRate !== undefined ? Number(dto.engagementRate) : 0.0,
               startAt,
               endAt,
               createdBy: userId || null,
@@ -220,6 +236,13 @@ export class TrendingService {
         priority: dto.priority !== undefined ? Number(dto.priority) : 0,
         isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
         isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+        isFeatured: dto.isFeatured !== undefined ? Boolean(dto.isFeatured) : false,
+        views: dto.views !== undefined ? Number(dto.views) : 0,
+        likes: dto.likes !== undefined ? Number(dto.likes) : 0,
+        shares: dto.shares !== undefined ? Number(dto.shares) : 0,
+        comments: dto.comments !== undefined ? Number(dto.comments) : 0,
+        duration: dto.duration?.trim() || null,
+        engagementRate: dto.engagementRate !== undefined ? Number(dto.engagementRate) : 0.0,
         startAt,
         endAt,
         createdBy: userId || null,
@@ -278,6 +301,16 @@ export class TrendingService {
       });
     }
 
+    if (query.platform && query.platform.toUpperCase() !== 'ALL') {
+      andConditions.push({ platform: { equals: query.platform, mode: 'insensitive' } });
+    }
+
+    if (query.isFeatured !== undefined && query.isFeatured !== '') {
+      andConditions.push({
+        isFeatured: query.isFeatured === true || query.isFeatured === 'true',
+      });
+    }
+
     if (query.isPublished !== undefined && query.isPublished !== '') {
       andConditions.push({
         isPublished: query.isPublished === true || query.isPublished === 'true',
@@ -291,6 +324,18 @@ export class TrendingService {
     }
 
     const where: any = { AND: andConditions };
+
+    let adminOrderBy: any[] = [
+      { priority: 'desc' },
+      { createdAt: 'desc' },
+    ];
+    if (query.sort === 'latest') {
+      adminOrderBy = [{ createdAt: 'desc' }];
+    } else if (query.sort === 'popular') {
+      adminOrderBy = [{ views: 'desc' }, { likes: 'desc' }, { createdAt: 'desc' }];
+    } else if (query.sort === 'engagement') {
+      adminOrderBy = [{ engagementRate: 'desc' }, { likes: 'desc' }, { createdAt: 'desc' }];
+    }
 
     const baseStatsWhere: any = {
       AND: [
@@ -313,10 +358,7 @@ export class TrendingService {
         where,
         skip,
         take: limit,
-        orderBy: [
-          { priority: 'desc' },
-          { createdAt: 'desc' },
-        ],
+        orderBy: adminOrderBy,
         include: {
           customer: { select: { id: true, name: true, domain: true } },
           createdByUser: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -492,6 +534,13 @@ export class TrendingService {
         ...(dto.priority !== undefined && { priority: Number(dto.priority) }),
         ...(dto.isPublished !== undefined && { isPublished: Boolean(dto.isPublished) }),
         ...(dto.isActive !== undefined && { isActive: Boolean(dto.isActive) }),
+        ...(dto.isFeatured !== undefined && { isFeatured: Boolean(dto.isFeatured) }),
+        ...(dto.views !== undefined && { views: Number(dto.views) }),
+        ...(dto.likes !== undefined && { likes: Number(dto.likes) }),
+        ...(dto.shares !== undefined && { shares: Number(dto.shares) }),
+        ...(dto.comments !== undefined && { comments: Number(dto.comments) }),
+        ...(dto.duration !== undefined && { duration: dto.duration?.trim() || null }),
+        ...(dto.engagementRate !== undefined && { engagementRate: Number(dto.engagementRate) }),
         ...(startAt !== undefined && { startAt }),
         ...(endAt !== undefined && { endAt }),
         metadata,
@@ -571,6 +620,30 @@ export class TrendingService {
     return {
       success: true,
       message: `Trending content status set to ${isActive ? 'active' : 'inactive'}`,
+      data: await this.resolveTrendingMedia(updated),
+    };
+  }
+
+  /**
+   * Toggle or update featured status.
+   */
+  async setFeatured(
+    authCustomerId: any,
+    id: number | string,
+    isFeatured: boolean,
+    isSuperAdmin = false,
+  ) {
+    await this.findOne(authCustomerId, id, isSuperAdmin);
+    const numId = parseInt(String(id), 10);
+
+    const updated = await this.prisma.trendingContent.update({
+      where: { id: numId },
+      data: { isFeatured },
+    });
+
+    return {
+      success: true,
+      message: `Trending content marked as ${isFeatured ? 'featured' : 'standard'}`,
       data: await this.resolveTrendingMedia(updated),
     };
   }
@@ -724,6 +797,13 @@ export class TrendingService {
           priority: item.priority,
           isPublished: true,
           isActive: true,
+          isFeatured: (item as any).isFeatured || false,
+          views: item.metadata?.views || 0,
+          likes: item.metadata?.likes || 0,
+          shares: item.metadata?.shares || 0,
+          comments: item.metadata?.comments || 0,
+          duration: item.metadata?.duration || null,
+          engagementRate: item.metadata?.engagementRate || 0.0,
           metadata: item.metadata,
         },
       });
@@ -741,6 +821,8 @@ export class TrendingService {
     user?: any,
     platform?: string,
     sort?: string,
+    search?: string,
+    isFeatured?: string | boolean,
   ) {
     const targetCustomerId = this.parseCustomerId(authCustomerId);
     const now = new Date();
@@ -758,27 +840,41 @@ export class TrendingService {
       email: user?.email || null,
       platform,
       sort,
+      search,
+      isFeatured,
     });
+
+    const andConditions: any[] = [
+      {
+        OR: [
+          { startAt: null },
+          { startAt: { lte: now } },
+        ],
+      },
+      {
+        OR: [
+          { endAt: null },
+          { endAt: { gte: now } },
+        ],
+      },
+    ];
+
+    if (search && search.trim().length > 0) {
+      const s = search.trim();
+      andConditions.push({
+        OR: [
+          { title: { contains: s, mode: 'insensitive' } },
+          { description: { contains: s, mode: 'insensitive' } },
+          { platform: { contains: s, mode: 'insensitive' } },
+        ],
+      });
+    }
 
     const where: any = {
       deletedAt: null,
       isActive: true,
       isPublished: true,
-      // Date scheduling filter: startAt <= now (or null) AND endAt >= now (or null)
-      AND: [
-        {
-          OR: [
-            { startAt: null },
-            { startAt: { lte: now } },
-          ],
-        },
-        {
-          OR: [
-            { endAt: null },
-            { endAt: { gte: now } },
-          ],
-        },
-      ],
+      AND: andConditions,
     };
 
     // Multi-tenant isolation: Content belonging to customer's workspace OR global platform templates
@@ -797,6 +893,10 @@ export class TrendingService {
       where.platform = { equals: platform, mode: 'insensitive' };
     }
 
+    if (isFeatured !== undefined && isFeatured !== '') {
+      where.isFeatured = isFeatured === true || isFeatured === 'true';
+    }
+
     console.log('[CUSTOMER_TRENDING_PRISMA]', {
       customerId: targetCustomerId,
       customerIdType: typeof targetCustomerId,
@@ -810,9 +910,9 @@ export class TrendingService {
     if (sort === 'latest') {
       orderBy = [{ createdAt: 'desc' }];
     } else if (sort === 'popular') {
-      orderBy = [{ priority: 'desc' }, { createdAt: 'desc' }];
+      orderBy = [{ views: 'desc' }, { likes: 'desc' }, { createdAt: 'desc' }];
     } else if (sort === 'engagement') {
-      orderBy = [{ priority: 'desc' }, { createdAt: 'desc' }];
+      orderBy = [{ engagementRate: 'desc' }, { likes: 'desc' }, { createdAt: 'desc' }];
     }
 
     const rawItems = await this.prisma.trendingContent.findMany({
@@ -830,6 +930,13 @@ export class TrendingService {
         platform: true,
         objective: true,
         priority: true,
+        isFeatured: true,
+        views: true,
+        likes: true,
+        shares: true,
+        comments: true,
+        duration: true,
+        engagementRate: true,
         startAt: true,
         endAt: true,
         createdAt: true,

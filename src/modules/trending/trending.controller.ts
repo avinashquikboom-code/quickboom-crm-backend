@@ -22,6 +22,7 @@ import {
   QueryTrendingDto,
   UpdatePublishStatusDto,
   UpdateActiveStatusDto,
+  UpdateFeaturedStatusDto,
 } from './dto/trending.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -155,6 +156,19 @@ export class TrendingController {
     return this.trendingService.setStatus(customerId, id, dto.isActive, isSuperAdmin);
   }
 
+  @Patch(['admin/trending/:id/featured', 'admin/marketing/trending/:id/featured'])
+  @ApiOperation({ summary: 'Set featured status for trending content (Company Admin only)' })
+  async setFeatured(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateFeaturedStatusDto,
+  ) {
+    this.checkCompanyAdminAccess(user);
+    const isSuperAdmin = isUserSuperAdmin(user);
+    return this.trendingService.setFeatured(customerId, id, dto.isFeatured, isSuperAdmin);
+  }
+
   // ── Customer Endpoint ───────────────────────────────────────────────────────
 
   @Get(['customer/trending', 'customer/marketing/trending'])
@@ -162,14 +176,18 @@ export class TrendingController {
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
   @ApiQuery({ name: 'platform', type: String, required: false })
   @ApiQuery({ name: 'sort', type: String, required: false })
+  @ApiQuery({ name: 'search', type: String, required: false })
+  @ApiQuery({ name: 'isFeatured', type: Boolean, required: false })
   async findAllCustomer(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Query('category') category?: TrendingCategory,
     @Query('platform') platform?: string,
     @Query('sort') sort?: string,
+    @Query('search') search?: string,
+    @Query('isFeatured') isFeatured?: string,
   ) {
-    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort);
+    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort, search, isFeatured);
   }
 
   @Get('trending')
@@ -177,13 +195,17 @@ export class TrendingController {
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
   @ApiQuery({ name: 'platform', type: String, required: false })
   @ApiQuery({ name: 'sort', type: String, required: false })
+  @ApiQuery({ name: 'search', type: String, required: false })
+  @ApiQuery({ name: 'isFeatured', type: Boolean, required: false })
   async findAllTrendingAlias(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Query('category') category?: TrendingCategory,
     @Query('platform') platform?: string,
     @Query('sort') sort?: string,
+    @Query('search') search?: string,
+    @Query('isFeatured') isFeatured?: string,
   ) {
-    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort);
+    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort, search, isFeatured);
   }
 }
