@@ -2528,3 +2528,58 @@ model MarketplaceTool {
   @@map("marketplace_tools")
 }
 
+model InfluencerCategory {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  slug        String       @unique
+  icon        String?
+  description String?
+  sortOrder   Int          @default(0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  influencers Influencer[]
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("influencer_categories")
+}
+
+model Influencer {
+  id             Int                 @id @default(autoincrement())
+  name           String
+  handle         String?
+  avatarUrl      String?
+  profileImage   String?
+  platform       String              @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
+  categoryId     Int?
+  categoryName   String?
+  category       InfluencerCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  location       String?             @default("India")
+  city           String?
+  followers      Int                 @default(0)
+  followersCount String?             @default("0")
+  engagementRate Float               @default(0.0)
+  isVerified     Boolean             @default(true)
+  isFeatured     Boolean             @default(true)
+  isActive       Boolean             @default(true)
+  bio            String?
+  bookingUrl     String?
+  pricing        Float?
+  rating         Float?              @default(4.9)
+  sortOrder      Int                 @default(0)
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  deletedAt      DateTime?
+
+  @@index([isActive, isFeatured])
+  @@index([categoryId])
+  @@index([platform])
+  @@index([sortOrder])
+  @@index([deletedAt])
+  @@map("influencers")
+}
+
+
