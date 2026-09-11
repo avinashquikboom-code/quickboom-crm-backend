@@ -52,6 +52,11 @@ export class CreateMarketingBannerDto {
   @IsOptional()
   ctaUrl?: string;
 
+  @ApiPropertyOptional({ example: 'OPEN_PLAN', description: 'Action type / destination: OPEN_PLAN, OPEN_URL, OPEN_COUPON, OPEN_DETAILS, OPEN_ORDERS, OPEN_CALENDAR' })
+  @IsString()
+  @IsOptional()
+  actionType?: string;
+
   @ApiPropertyOptional({ example: 10, default: 0 })
   @IsInt()
   @IsOptional()

@@ -43,6 +43,7 @@ export class BannerService {
       bannerImage: resolvedUrl,
       bannerUrl: resolvedUrl,
       mediaUrl: resolvedUrl,
+      actionType: banner.actionType || meta.actionType || meta.action || (banner.ctaUrl?.startsWith('http') ? 'OPEN_URL' : null),
       couponCode: banner.couponCode || meta.couponCode || meta.code || null,
       discount: banner.discount || meta.discount || meta.discountPct || null,
       brand: banner.brand || meta.brand || null,
@@ -89,6 +90,7 @@ export class BannerService {
 
     const couponMetadata: Record<string, any> = {
       ...(typeof dto.metadata === 'object' && dto.metadata !== null ? dto.metadata : {}),
+      ...(dto.actionType ? { actionType: dto.actionType.trim() } : {}),
       ...(dto.couponCode ? { couponCode: dto.couponCode.trim() } : {}),
       ...(dto.discount ? { discount: dto.discount.trim() } : {}),
       ...(dto.brand ? { brand: dto.brand.trim() } : {}),
@@ -308,6 +310,7 @@ export class BannerService {
     let updatedMetadata = existing.metadata;
     if (
       dto.metadata !== undefined ||
+      dto.actionType !== undefined ||
       dto.couponCode !== undefined ||
       dto.discount !== undefined ||
       dto.brand !== undefined ||
@@ -326,6 +329,7 @@ export class BannerService {
       updatedMetadata = {
         ...prevMeta,
         ...newMeta,
+        ...(dto.actionType !== undefined ? { actionType: dto.actionType ? dto.actionType.trim() : null } : {}),
         ...(dto.couponCode !== undefined ? { couponCode: dto.couponCode ? dto.couponCode.trim() : null } : {}),
         ...(dto.discount !== undefined ? { discount: dto.discount ? dto.discount.trim() : null } : {}),
         ...(dto.brand !== undefined ? { brand: dto.brand ? dto.brand.trim() : null } : {}),
