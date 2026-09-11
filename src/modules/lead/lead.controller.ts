@@ -16,6 +16,7 @@ import {
   ConvertLeadDto,
   CreateLeadDto,
   CreateLeadNoteDto,
+  CreateLeadStageDto,
   CreateProposalDto,
   FinalCallDto,
   LogFollowUpDto,
@@ -23,6 +24,7 @@ import {
   RecordPaymentDto,
   StartWorkDto,
   UpdateLeadDto,
+  UpdateLeadStageDto,
   UpdateLeadStatusDto,
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -64,8 +66,44 @@ export class LeadController {
 
   @Get('stages')
   @ApiOperation({ summary: 'Get configured lead stages / statuses with sort order, label, and colors' })
-  async getStages() {
-    return this.leadService.getStages();
+  @ApiQuery({ name: 'includeInactive', required: false })
+  async getStages(
+    @CurrentCustomer() customerId?: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    const shouldInclude = includeInactive === undefined ? true : includeInactive === 'true';
+    return this.leadService.getStages(customerId, shouldInclude);
+  }
+
+  @Post('stages')
+  @ApiOperation({ summary: 'Create a new lead stage' })
+  async createStage(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: CreateLeadStageDto,
+  ) {
+    return this.leadService.createStage(customerId, user, dto);
+  }
+
+  @Patch('stages/:id')
+  @ApiOperation({ summary: 'Update lead stage details or active status' })
+  async updateStage(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateLeadStageDto,
+  ) {
+    return this.leadService.updateStage(customerId, user, id, dto);
+  }
+
+  @Delete('stages/:id')
+  @ApiOperation({ summary: 'Delete lead stage if no leads are assigned' })
+  async deleteStage(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.deleteStage(customerId, user, id);
   }
 
   @Get()

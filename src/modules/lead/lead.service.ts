@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { LeadRepository } from './lead.repository';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
   CreateLeadDto,
   CreateLeadNoteDto,
+  CreateLeadStageDto,
   CreateProposalDto,
   FinalCallDto,
   LogFollowUpDto,
@@ -12,6 +13,7 @@ import {
   RecordPaymentDto,
   StartWorkDto,
   UpdateLeadDto,
+  UpdateLeadStageDto,
   UpdateLeadStatusDto,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
@@ -66,24 +68,71 @@ export class LeadService {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
-  getStages() {
+  async getStages(customerId?: number | string, includeInactive = true) {
+    try {
+      const dbStages = await this.leadRepository.findStages(customerId, includeInactive);
+      if (dbStages && dbStages.length > 0) {
+        return dbStages.map((stage: any) => ({
+          id: stage.id,
+          key: stage.key,
+          name: stage.name,
+          label: stage.name,
+          color: stage.color,
+          bgColor: stage.bgColor,
+          borderColor: stage.borderColor,
+          sortOrder: stage.sortOrder,
+          isActive: stage.isActive,
+          isSystem: stage.isSystem,
+          leadsCount: stage._count?.leads ?? 0,
+        }));
+      }
+    } catch {
+      // Fallback if db table not yet queried
+    }
+
     return [
-      { key: 'NEW', label: 'New', sortOrder: 0, color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD' },
-      { key: 'CONTACTED', label: 'Contacted', sortOrder: 1, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
-      { key: 'FOLLOW_UP', label: 'Follow-up', sortOrder: 2, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
-      { key: 'VISIT', label: 'Visit Scheduled', sortOrder: 3, color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF' },
-      { key: 'QUALIFIED', label: 'Qualified', sortOrder: 4, color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF' },
-      { key: 'PROPOSAL', label: 'Proposal', sortOrder: 5, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
-      { key: 'PROPOSAL_SENT', label: 'Proposal Sent', sortOrder: 6, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
-      { key: 'NEGOTIATION', label: 'Negotiation', sortOrder: 7, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
-      { key: 'FINAL_CALL', label: 'Final Call', sortOrder: 8, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
-      { key: 'PAYMENT', label: 'Payment Pending', sortOrder: 9, color: '#2563EB', bgColor: '#DBEAFE', borderColor: '#BFDBFE' },
-      { key: 'WORK_STARTED', label: 'Work Started', sortOrder: 10, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
-      { key: 'WON', label: 'Won', sortOrder: 11, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
-      { key: 'CONVERTED', label: 'Converted', sortOrder: 12, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
-      { key: 'LOST', label: 'Lost', sortOrder: 13, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3' },
-      { key: 'CANCELLED', label: 'Cancelled', sortOrder: 14, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3' },
+      { id: 1, key: 'NEW', name: 'New', label: 'New', sortOrder: 0, color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 2, key: 'CONTACTED', name: 'Contacted', label: 'Contacted', sortOrder: 1, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 3, key: 'FOLLOW_UP', name: 'Follow-up', label: 'Follow-up', sortOrder: 2, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 4, key: 'VISIT', name: 'Visit Scheduled', label: 'Visit Scheduled', sortOrder: 3, color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 5, key: 'QUALIFIED', name: 'Qualified', label: 'Qualified', sortOrder: 4, color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 6, key: 'PROPOSAL', name: 'Proposal', label: 'Proposal', sortOrder: 5, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 7, key: 'PROPOSAL_SENT', name: 'Proposal Sent', label: 'Proposal Sent', sortOrder: 6, color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 8, key: 'NEGOTIATION', name: 'Negotiation', label: 'Negotiation', sortOrder: 7, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 9, key: 'FINAL_CALL', name: 'Final Call', sortOrder: 8, color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 10, key: 'PAYMENT', name: 'Payment Pending', sortOrder: 9, color: '#2563EB', bgColor: '#DBEAFE', borderColor: '#BFDBFE', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 11, key: 'WORK_STARTED', name: 'Work Started', sortOrder: 10, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 12, key: 'WON', name: 'Won', sortOrder: 11, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 13, key: 'CONVERTED', name: 'Converted', label: 'Converted', sortOrder: 12, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 14, key: 'LOST', name: 'Lost', label: 'Lost', sortOrder: 13, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', isActive: true, isSystem: true, leadsCount: 0 },
+      { id: 15, key: 'CANCELLED', name: 'Cancelled', label: 'Cancelled', sortOrder: 14, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', isActive: true, isSystem: true, leadsCount: 0 },
     ];
+  }
+
+  async createStage(customerId: number | string | undefined, user: any, dto: CreateLeadStageDto) {
+    return this.leadRepository.createStage(customerId, dto);
+  }
+
+  async updateStage(customerId: number | string | undefined, user: any, id: number | string, dto: UpdateLeadStageDto) {
+    const stage = await this.leadRepository.findStageById(id);
+    if (!stage) {
+      throw new NotFoundException(`Stage with ID ${id} not found`);
+    }
+    return this.leadRepository.updateStage(id, dto);
+  }
+
+  async deleteStage(customerId: number | string | undefined, user: any, id: number | string) {
+    const stage = await this.leadRepository.findStageById(id);
+    if (!stage) {
+      throw new NotFoundException(`Stage with ID ${id} not found`);
+    }
+    const leadCount = await this.leadRepository.countLeadsForStage(id, stage.key);
+    if (leadCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete stage "${stage.name}" because it is currently assigned to ${leadCount} lead(s). Please reassign existing leads or deactivate the stage instead.`,
+      );
+    }
+    return this.leadRepository.deleteStage(id);
   }
 
   async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string }, user?: any) {
@@ -118,6 +167,7 @@ export class LeadService {
       dto.status,
       userId,
       dto.notes,
+      dto.stageId,
     );
     return this.getLeadById(customerId, id);
   }

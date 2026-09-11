@@ -18,6 +18,7 @@ describe('Lead Stage / Status Synchronization Tests', () => {
   // In-memory mock database
   let leadsTable: any[] = [];
   let statusHistoryTable: any[] = [];
+  let stagesTable: any[] = [];
 
   beforeEach(async () => {
     leadsTable = [
@@ -66,6 +67,23 @@ describe('Lead Stage / Status Synchronization Tests', () => {
     ];
 
     statusHistoryTable = [];
+    stagesTable = [
+      { id: 1, customerId: null, name: 'New', key: 'NEW', color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD', sortOrder: 0, isActive: true, isSystem: true, deletedAt: null },
+      { id: 2, customerId: null, name: 'Contacted', key: 'CONTACTED', color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', sortOrder: 1, isActive: true, isSystem: true, deletedAt: null },
+      { id: 3, customerId: null, name: 'Follow-up', key: 'FOLLOW_UP', color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', sortOrder: 2, isActive: true, isSystem: true, deletedAt: null },
+      { id: 4, customerId: null, name: 'Visit Scheduled', key: 'VISIT', color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF', sortOrder: 3, isActive: true, isSystem: true, deletedAt: null },
+      { id: 5, customerId: null, name: 'Qualified', key: 'QUALIFIED', color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF', sortOrder: 4, isActive: true, isSystem: true, deletedAt: null },
+      { id: 6, customerId: null, name: 'Proposal', key: 'PROPOSAL', color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', sortOrder: 5, isActive: true, isSystem: true, deletedAt: null },
+      { id: 7, customerId: null, name: 'Proposal Sent', key: 'PROPOSAL_SENT', color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', sortOrder: 6, isActive: true, isSystem: true, deletedAt: null },
+      { id: 8, customerId: null, name: 'Negotiation', key: 'NEGOTIATION', color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', sortOrder: 7, isActive: true, isSystem: true, deletedAt: null },
+      { id: 9, customerId: null, name: 'Final Call', key: 'FINAL_CALL', color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', sortOrder: 8, isActive: true, isSystem: true, deletedAt: null },
+      { id: 10, customerId: null, name: 'Payment Pending', key: 'PAYMENT', color: '#2563EB', bgColor: '#DBEAFE', borderColor: '#BFDBFE', sortOrder: 9, isActive: true, isSystem: true, deletedAt: null },
+      { id: 11, customerId: null, name: 'Work Started', key: 'WORK_STARTED', color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', sortOrder: 10, isActive: true, isSystem: true, deletedAt: null },
+      { id: 12, customerId: null, name: 'Won', key: 'WON', color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', sortOrder: 11, isActive: true, isSystem: true, deletedAt: null },
+      { id: 13, customerId: null, name: 'Converted', key: 'CONVERTED', color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', sortOrder: 12, isActive: true, isSystem: true, deletedAt: null },
+      { id: 14, customerId: null, name: 'Lost', key: 'LOST', color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', sortOrder: 13, isActive: true, isSystem: true, deletedAt: null },
+      { id: 15, customerId: null, name: 'Cancelled', key: 'CANCELLED', color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', sortOrder: 14, isActive: true, isSystem: true, deletedAt: null },
+    ];
 
     prisma = {
       lead: {
@@ -90,6 +108,15 @@ describe('Lead Stage / Status Synchronization Tests', () => {
             if (where.deletedAt === null && l.deletedAt !== null) return false;
             if (where.customerId !== undefined && l.customerId !== where.customerId) return false;
             if (where.status !== undefined && l.status !== where.status) return false;
+            if (where.stageId !== undefined && l.stageId !== where.stageId) return false;
+            if (where.OR && Array.isArray(where.OR)) {
+              const matchesOr = where.OR.some((cond: any) => {
+                if (cond.stageId !== undefined && l.stageId === cond.stageId) return true;
+                if (cond.status !== undefined && l.status === cond.status) return true;
+                return false;
+              });
+              if (!matchesOr) return false;
+            }
             return true;
           });
           return items.length;
@@ -120,6 +147,44 @@ describe('Lead Stage / Status Synchronization Tests', () => {
           if (where.id === 1) return { id: 1, name: 'Customer 1', isActive: true, deletedAt: null };
           if (where.id === 2) return { id: 2, name: 'Customer 2', isActive: true, deletedAt: null };
           return null;
+        }),
+      },
+      leadStage: {
+        findMany: jest.fn(async ({ where }) => {
+          return stagesTable.filter((s) => {
+            if (where.deletedAt === null && s.deletedAt !== null) return false;
+            if (where.isActive === true && !s.isActive) return false;
+            return true;
+          }).map((s) => ({
+            ...s,
+            _count: {
+              leads: leadsTable.filter((l) => l.deletedAt === null && (l.stageId === s.id || l.status === s.key)).length,
+            },
+          }));
+        }),
+        findFirst: jest.fn(async ({ where }) => {
+          return stagesTable.find((s) => {
+            if (where.deletedAt === null && s.deletedAt !== null) return false;
+            if (where.id !== undefined && s.id !== where.id) return false;
+            if (where.key !== undefined && s.key !== where.key) return false;
+            return true;
+          }) || null;
+        }),
+        create: jest.fn(async ({ data }) => {
+          const newStage = {
+            id: stagesTable.length + 1,
+            ...data,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            deletedAt: null,
+          };
+          stagesTable.push(newStage);
+          return newStage;
+        }),
+        update: jest.fn(async ({ where, data }) => {
+          const stage = stagesTable.find((s) => s.id === where.id);
+          if (stage) Object.assign(stage, data);
+          return stage;
         }),
       },
     };
@@ -235,4 +300,98 @@ describe('Lead Stage / Status Synchronization Tests', () => {
       expect(convertedStage?.color).toBe('#16A34A');
     });
   });
+
+  describe('5. Dynamic Lead Stage CRUD & Synchronized Management', () => {
+    it('Creates a new dynamic stage with custom color and sort order', async () => {
+      const created = await controller.createStage('1', { id: 1, role: 'SUPER_ADMIN' }, {
+        name: 'Interested',
+        color: '#10B981',
+        sortOrder: 4,
+        isActive: true,
+      });
+
+      expect(created).toBeDefined();
+      expect(created.name).toBe('Interested');
+      expect(created.key).toBe('INTERESTED');
+      expect(created.color).toBe('#10B981');
+      expect(created.sortOrder).toBe(4);
+      expect(created.isActive).toBe(true);
+
+      const stages = await controller.getStages('1');
+      const found = stages.find((s) => s.name === 'Interested');
+      expect(found).toBeDefined();
+      expect(found?.leadsCount).toBe(0);
+    });
+
+    it('Updates stage name and color dynamically and reflects in stage list', async () => {
+      const created = await controller.createStage('1', { id: 1, role: 'SUPER_ADMIN' }, {
+        name: 'Interested',
+        color: '#10B981',
+        sortOrder: 4,
+        isActive: true,
+      });
+
+      const updated = await controller.updateStage(
+        '1',
+        { id: 1, role: 'SUPER_ADMIN' },
+        String(created.id),
+        { name: 'Highly Interested', color: '#059669' },
+      );
+
+      expect(updated.name).toBe('Highly Interested');
+      expect(updated.color).toBe('#059669');
+
+      const stages = await controller.getStages('1');
+      const found = stages.find((s) => s.id === created.id);
+      expect(found?.name).toBe('Highly Interested');
+    });
+
+    it('Toggles stage active/inactive state and persists via API', async () => {
+      const created = await controller.createStage('1', { id: 1, role: 'SUPER_ADMIN' }, {
+        name: 'Proposal Review',
+        color: '#3B82F6',
+        sortOrder: 5,
+        isActive: true,
+      });
+
+      const deactivated = await controller.updateStage(
+        '1',
+        { id: 1, role: 'SUPER_ADMIN' },
+        String(created.id),
+        { isActive: false },
+      );
+
+      expect(deactivated.isActive).toBe(false);
+
+      const allStages = await controller.getStages('1', 'true');
+      const deactivatedStage = allStages.find((s) => s.id === created.id);
+      expect(deactivatedStage?.isActive).toBe(false);
+    });
+
+    it('Safely guards against deleting a stage when leads are assigned', async () => {
+      // In the mock table, NEW has 3 leads assigned
+      await expect(
+        controller.deleteStage('1', { id: 1, role: 'SUPER_ADMIN' }, '1'),
+      ).rejects.toThrow(/Cannot delete stage "New" because it is currently assigned/);
+    });
+
+    it('Allows deleting an unassigned stage safely', async () => {
+      const unusedStage = await controller.createStage('1', { id: 1, role: 'SUPER_ADMIN' }, {
+        name: 'Temporary Stage',
+        color: '#6B7280',
+        sortOrder: 99,
+        isActive: true,
+      });
+
+      const deleteRes = await controller.deleteStage(
+        '1',
+        { id: 1, role: 'SUPER_ADMIN' },
+        String(unusedStage.id),
+      );
+
+      expect(deleteRes).toBeDefined();
+      expect(deleteRes.deletedAt).toBeInstanceOf(Date);
+    });
+  });
 });
+

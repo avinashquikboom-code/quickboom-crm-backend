@@ -30,17 +30,32 @@ export class LeadRepository {
     const numCustomerId = Number(customerId);
     const numCreatedById = Number(createdById);
     const status = dto.status || LeadStatus.NEW;
+    let stageId = dto.stageId ? Number(dto.stageId) : undefined;
+    if (!stageId && client.leadStage) {
+      const matchStage = await client.leadStage.findFirst({
+        where: {
+          key: status,
+          deletedAt: null,
+          OR: [{ customerId: numCustomerId }, { customerId: null }],
+        },
+        orderBy: { customerId: 'desc' },
+      });
+      if (matchStage) stageId = matchStage.id;
+    }
+
     const { notes, ...leadData } = dto;
     const lead = await client.lead.create({
       data: {
         ...leadData,
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         status,
+        stageId,
         customerId: numCustomerId,
         createdById: numCreatedById,
         employeeId: employeeId ? Number(employeeId) : undefined,
       },
       include: {
+        stage: true,
         assignedTo: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
@@ -419,6 +434,7 @@ export class LeadRepository {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
+          stage: true,
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
         },
@@ -449,6 +465,7 @@ export class LeadRepository {
     return this.prisma.lead.findFirst({
       where,
       include: {
+        stage: true,
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
         notes: {
@@ -487,6 +504,7 @@ export class LeadRepository {
     toStatus: LeadStatus,
     userId: number | string,
     notes?: string,
+    stageId?: number,
   ) {
     const numId = Number(id);
     const numCustomerId = Number(customerId);
@@ -495,9 +513,31 @@ export class LeadRepository {
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       updateWhere.customerId = numCustomerId;
     }
+
+    let resolvedStageId = stageId ? Number(stageId) : undefined;
+    if (!resolvedStageId && this.prisma.leadStage) {
+      const matchStage = await this.prisma.leadStage.findFirst({
+        where: {
+          key: toStatus,
+          deletedAt: null,
+          OR: [
+            ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+            { customerId: null },
+          ],
+        },
+        orderBy: { customerId: 'desc' },
+      });
+      if (matchStage) resolvedStageId = matchStage.id;
+    }
+
+    const updateData: any = { status: toStatus };
+    if (resolvedStageId) {
+      updateData.stageId = resolvedStageId;
+    }
+
     await this.prisma.lead.updateMany({
       where: updateWhere,
-      data: { status: toStatus },
+      data: updateData,
     });
 
     await this.prisma.leadStatusHistory.create({
@@ -887,5 +927,102 @@ export class LeadRepository {
       },
     });
     return fallback.id;
+  }
+
+  async findStages(customerId?: number | string, includeInactive = true) {
+    const numCustomerId = Number(customerId);
+    const where: any = { deletedAt: null };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.OR = [{ customerId: numCustomerId }, { customerId: null }];
+    } else {
+      where.customerId = null;
+    }
+    if (!includeInactive) {
+      where.isActive = true;
+    }
+
+    return this.prisma.leadStage.findMany({
+      where,
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      include: {
+        _count: {
+          select: {
+            leads: {
+              where: {
+                deletedAt: null,
+                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {}),
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async findStageById(id: number | string) {
+    return this.prisma.leadStage.findFirst({
+      where: { id: Number(id), deletedAt: null },
+      include: {
+        _count: {
+          select: {
+            leads: { where: { deletedAt: null } },
+          },
+        },
+      },
+    });
+  }
+
+  async createStage(customerId: number | string | undefined, data: any) {
+    const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+    const key = data.name.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    return this.prisma.leadStage.create({
+      data: {
+        name: data.name.trim(),
+        key,
+        color: data.color || '#0284C7',
+        bgColor: data.bgColor || '#E0F2FE',
+        borderColor: data.borderColor || '#BAE6FD',
+        sortOrder: data.sortOrder !== undefined ? Number(data.sortOrder) : 0,
+        isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+        customerId: numCustomerId,
+      },
+    });
+  }
+
+  async updateStage(id: number | string, data: any) {
+    const updateData: any = {};
+    if (data.name !== undefined) {
+      updateData.name = data.name.trim();
+      updateData.key = data.name.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    }
+    if (data.color !== undefined) updateData.color = data.color;
+    if (data.bgColor !== undefined) updateData.bgColor = data.bgColor;
+    if (data.borderColor !== undefined) updateData.borderColor = data.borderColor;
+    if (data.sortOrder !== undefined) updateData.sortOrder = Number(data.sortOrder);
+    if (data.isActive !== undefined) updateData.isActive = Boolean(data.isActive);
+
+    return this.prisma.leadStage.update({
+      where: { id: Number(id) },
+      data: updateData,
+    });
+  }
+
+  async deleteStage(id: number | string) {
+    return this.prisma.leadStage.update({
+      where: { id: Number(id) },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async countLeadsForStage(stageId: number | string, statusKey?: string) {
+    const numStageId = Number(stageId);
+    const where: any = {
+      deletedAt: null,
+      OR: [
+        { stageId: numStageId },
+        ...(statusKey ? [{ status: statusKey as any }] : []),
+      ],
+    };
+    return this.prisma.lead.count({ where });
   }
 }

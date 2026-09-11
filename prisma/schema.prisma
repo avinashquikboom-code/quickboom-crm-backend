@@ -55,6 +55,7 @@ model Customer {
   featureToggles           FeatureToggle[]
   invoices                 Invoice[]
   leads                    Lead[]
+  leadStages               LeadStage[]
   leaveAdjustments         LeaveAdjustmentHistory[]
   leavePolicies            LeavePolicy[]
   locationTrackingSettings LocationTrackingSetting[]
@@ -339,6 +340,8 @@ model Lead {
   category             String?
   source               String                 @default("WEBSITE")
   status               LeadStatus             @default(NEW)
+  stageId              Int?
+  stage                LeadStage?             @relation(fields: [stageId], references: [id], onDelete: SetNull)
   priority             LeadPriority           @default(MEDIUM)
   value                Float                  @default(0)
   assignedToId         Int?
@@ -379,6 +382,7 @@ model Lead {
 
   @@index([customerId])
   @@index([status])
+  @@index([stageId])
   @@index([assignedToId])
   @@index([employeeId])
   @@index([googlePlaceId])
@@ -435,6 +439,31 @@ model LeadReminder {
   lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([leadId])
+}
+
+model LeadStage {
+  id          Int       @id @default(autoincrement())
+  customerId  Int?
+  name        String
+  key         String
+  color       String    @default("#0284C7")
+  bgColor     String?   @default("#E0F2FE")
+  borderColor String?   @default("#BAE6FD")
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  isSystem    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  leads       Lead[]
+
+  @@unique([customerId, key])
+  @@index([customerId])
+  @@index([sortOrder])
+  @@index([deletedAt])
+  @@map("lead_stages")
 }
 
 model Company {

@@ -94,6 +94,11 @@ export class CreateLeadDto {
   @IsOptional()
   priority?: LeadPriority;
 
+  @ApiPropertyOptional({ example: 1 })
+  @IsNumber()
+  @IsOptional()
+  stageId?: number;
+
   @ApiPropertyOptional({ example: 45000.0 })
   @IsNumber()
   @IsOptional()
@@ -464,8 +469,47 @@ export class UpdateLeadStatusDto {
   @IsNotEmpty()
   status: LeadStatus;
 
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  stageId?: number;
+
   @ApiPropertyOptional({ example: 'Moved to next pipeline stage' })
   @IsString()
   @IsOptional()
   notes?: string;
 }
+
+export class CreateLeadStageDto {
+  @ApiProperty({ example: 'Interested' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional({ example: '#10B981' })
+  @IsString()
+  @IsOptional()
+  color?: string;
+
+  @ApiPropertyOptional({ example: '#ECFDF5' })
+  @IsString()
+  @IsOptional()
+  bgColor?: string;
+
+  @ApiPropertyOptional({ example: '#A7F3D0' })
+  @IsString()
+  @IsOptional()
+  borderColor?: string;
+
+  @ApiPropertyOptional({ example: 4 })
+  @IsNumber()
+  @IsOptional()
+  sortOrder?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  isActive?: boolean;
+}
+
+export class UpdateLeadStageDto extends PartialType(CreateLeadStageDto) {}
+
