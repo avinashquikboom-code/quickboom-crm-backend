@@ -504,6 +504,12 @@ export class CustomerService {
         companyName: c.companyName || c.name,
         company: c.companyName || c.name,
         workspaceName: c.companyName || c.name,
+        // ── Contact person full name (from the primary linked User) ──
+        contactFirstName: primaryUser?.firstName || '',
+        contactLastName: primaryUser?.lastName || '',
+        contactFullName: primaryUser
+          ? `${primaryUser.firstName || ''} ${primaryUser.lastName || ''}`.trim()
+          : '',
         domain: c.domain,
         email: c.email || primaryUser?.email || 'N/A',
         phone: c.phone || primaryUser?.phone || 'N/A',
