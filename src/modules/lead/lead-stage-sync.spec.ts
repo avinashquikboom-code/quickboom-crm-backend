@@ -393,5 +393,60 @@ describe('Lead Stage / Status Synchronization Tests', () => {
       expect(deleteRes.deletedAt).toBeInstanceOf(Date);
     });
   });
+
+  describe('5. Status Update Validation & Normalization (UpdateLeadStatusDto)', () => {
+    it('Normalizes Follow-up (FOLLOW_UP) to FOLLOW_UP without validation errors', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const { UpdateLeadStatusDto } = await import('./dto/lead.dto');
+
+      const dto = plainToInstance(UpdateLeadStatusDto, { status: 'Follow-up (FOLLOW_UP)' });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.status).toBe(LeadStatus.FOLLOW_UP);
+    });
+
+    it('Validates and transforms all 15 canonical lead statuses', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const { UpdateLeadStatusDto } = await import('./dto/lead.dto');
+
+      const statuses = [
+        'NEW',
+        'FOLLOW_UP',
+        'CONTACTED',
+        'VISIT',
+        'QUALIFIED',
+        'PROPOSAL',
+        'PROPOSAL_SENT',
+        'FINAL_CALL',
+        'NEGOTIATION',
+        'PAYMENT',
+        'WORK_STARTED',
+        'WON',
+        'LOST',
+        'CANCELLED',
+        'CONVERTED',
+      ];
+
+      for (const st of statuses) {
+        const dto = plainToInstance(UpdateLeadStatusDto, { status: st });
+        const errors = await validate(dto);
+        expect(errors.length).toBe(0);
+        expect(dto.status).toBe(st);
+      }
+    });
+
+    it('Accepts UI labels with parentheses for other statuses too', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const { UpdateLeadStatusDto } = await import('./dto/lead.dto');
+
+      const dto = plainToInstance(UpdateLeadStatusDto, { status: 'Visit Scheduled (VISIT)' });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.status).toBe(LeadStatus.VISIT);
+    });
+  });
 });
 

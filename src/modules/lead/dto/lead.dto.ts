@@ -16,9 +16,16 @@ export function normalizeLeadStatus(value: any): any {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
   if (!trimmed) return value;
-  const upper = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+  const parenMatch = trimmed.match(/\(([^)]+)\)$/);
+  const rawKey = parenMatch ? parenMatch[1].trim() : trimmed;
+  const upper = rawKey.toUpperCase().replace(/[\s-]+/g, '_');
   if (upper === 'WON_CONVERTED' || upper === 'CONVERT') return LeadStatus.CONVERTED;
-  if (upper === 'FOLLOWUP') return LeadStatus.FOLLOW_UP;
+  if (upper === 'FOLLOWUP' || upper === 'FOLLOW_UP') return LeadStatus.FOLLOW_UP;
+  if (upper === 'VISIT_SCHEDULED') return LeadStatus.VISIT;
+  if (upper === 'PAYMENT_PENDING') return LeadStatus.PAYMENT;
+  if (upper === 'FINALCALL') return LeadStatus.FINAL_CALL;
+  if (upper === 'WORKSTARTED') return LeadStatus.WORK_STARTED;
+  if (upper === 'PROPOSALSENT') return LeadStatus.PROPOSAL_SENT;
   return upper;
 }
 
