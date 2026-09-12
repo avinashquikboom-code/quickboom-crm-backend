@@ -505,6 +505,23 @@ export class BannerService {
       if (meta && Array.isArray(meta.customerIds) && resolvedCustomerId) {
         return meta.customerIds.map(Number).includes(resolvedCustomerId);
       }
+      const bAny = b as any;
+      const isCoupon = Boolean(
+        bAny.couponCode ||
+        meta?.couponCode ||
+        meta?.code ||
+        meta?.isCoupon ||
+        meta?.discount ||
+        bAny.category === 'COUPON' ||
+        meta?.category === 'COUPON' ||
+        bAny.category === 'OFFER' ||
+        meta?.category === 'OFFER' ||
+        bAny.actionType === 'OPEN_COUPON' ||
+        meta?.actionType === 'OPEN_COUPON'
+      );
+      if (isCoupon && (!meta?.customerIds || !Array.isArray(meta.customerIds) || meta.customerIds.length === 0)) {
+        return true;
+      }
       return false;
     });
 
