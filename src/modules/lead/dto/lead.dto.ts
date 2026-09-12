@@ -470,11 +470,11 @@ export class StartWorkDto {
 }
 
 export class UpdateLeadStatusDto {
-  @ApiProperty({ enum: LeadStatus, example: LeadStatus.FOLLOW_UP })
-  @Transform(({ value }) => normalizeLeadStatus(value))
+  @ApiPropertyOptional({ enum: LeadStatus, example: LeadStatus.FOLLOW_UP })
+  @Transform(({ value }) => (value ? normalizeLeadStatus(value) : undefined))
   @IsEnum(LeadStatus)
-  @IsNotEmpty()
-  status: LeadStatus;
+  @IsOptional()
+  status?: LeadStatus;
 
   @ApiPropertyOptional({ example: 2 })
   @IsNumber()
