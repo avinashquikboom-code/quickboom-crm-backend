@@ -574,22 +574,20 @@ export class BannerService {
         }
       }
 
-      if (currentImageUrl) {
-        const item = await this.resolveBannerMedia({
-          ...b,
-          imageUrl: currentImageUrl,
-          imagePublicId: currentImageKey,
-          imageKey: currentImageKey,
-        });
+      const item = await this.resolveBannerMedia({
+        ...b,
+        imageUrl: currentImageUrl || b.imageUrl || '',
+        imagePublicId: currentImageKey || b.imageKey || b.imagePublicId || null,
+        imageKey: currentImageKey || b.imageKey || b.imagePublicId || null,
+      });
 
-        resultBanners.push(item);
-        this.logger.log(
-          `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
-        );
-        this.logger.log(
-          `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${item.customerId ?? 'GLOBAL'}`,
-        );
-      }
+      resultBanners.push(item);
+      this.logger.log(
+        `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
+      );
+      this.logger.log(
+        `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${item.customerId ?? 'GLOBAL'}`,
+      );
     }
 
     console.log('[BANNER_API_RESPONSE]', {
