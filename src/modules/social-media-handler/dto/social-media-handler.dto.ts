@@ -17,6 +17,16 @@ export class CreateSocialMediaHandlerDto {
   @IsString()
   accountUrl?: string;
 
+  @ApiPropertyOptional({ example: 'carefitness_social_id', description: 'Social Media ID / Username' })
+  @IsOptional()
+  @IsString()
+  socialMediaId?: string;
+
+  @ApiPropertyOptional({ example: 'MySecretPassword123!', description: 'Account password for social media management' })
+  @IsOptional()
+  @IsString()
+  password?: string;
+
   @ApiPropertyOptional({ example: 'John Doe', description: 'Assigned handler / executive name' })
   @IsOptional()
   @IsString()

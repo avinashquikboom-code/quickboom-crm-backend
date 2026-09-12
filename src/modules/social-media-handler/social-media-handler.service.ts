@@ -27,6 +27,67 @@ export class SocialMediaHandlerService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Helper to safely encode metadata (socialMediaId, password) into notes field
+   */
+  private encodeMetadataIntoNotes(
+    userNotes?: string | null,
+    socialMediaId?: string | null,
+    password?: string | null,
+  ): string | null {
+    const hasSocialMediaId = socialMediaId !== undefined && socialMediaId !== null && socialMediaId.trim().length > 0;
+    const hasPassword = password !== undefined && password !== null && password.trim().length > 0;
+
+    if (!hasSocialMediaId && !hasPassword) {
+      return userNotes?.trim() || null;
+    }
+
+    const meta: Record<string, string> = {};
+    if (hasSocialMediaId) meta.socialMediaId = socialMediaId!.trim();
+    if (hasPassword) meta.password = password!.trim();
+    if (userNotes && userNotes.trim().length > 0) meta.userNotes = userNotes.trim();
+
+    return `__QB_META__:${JSON.stringify(meta)}`;
+  }
+
+  /**
+   * Helper to decode metadata from notes field and attach top-level fields
+   */
+  private formatHandlerRecord(record: any): any {
+    if (!record) return record;
+    let socialMediaId = record.socialMediaId || record.accountName || '';
+    let password = record.password || '';
+    let cleanNotes = record.notes || null;
+
+    if (record.notes && typeof record.notes === 'string') {
+      if (record.notes.startsWith('__QB_META__:')) {
+        try {
+          const jsonStr = record.notes.substring('__QB_META__:'.length);
+          const meta = JSON.parse(jsonStr);
+          if (meta.socialMediaId) socialMediaId = meta.socialMediaId;
+          if (meta.password) password = meta.password;
+          cleanNotes = meta.userNotes || null;
+        } catch (_) {}
+      } else if (record.notes.startsWith('{') && record.notes.endsWith('}')) {
+        try {
+          const meta = JSON.parse(record.notes);
+          if (meta.socialMediaId || meta.password) {
+            if (meta.socialMediaId) socialMediaId = meta.socialMediaId;
+            if (meta.password) password = meta.password;
+            cleanNotes = meta.userNotes || null;
+          }
+        } catch (_) {}
+      }
+    }
+
+    return {
+      ...record,
+      socialMediaId,
+      password,
+      notes: cleanNotes,
+    };
+  }
+
+  /**
    * Resolve target customer ID based on user authorization
    */
   private resolveTargetCustomerId(
@@ -75,6 +136,12 @@ export class SocialMediaHandlerService {
       ? new Date(dto.endDate)
       : new Date(start.getTime() + duration * 24 * 60 * 60 * 1000);
 
+    const notesWithMeta = this.encodeMetadataIntoNotes(
+      dto.notes,
+      dto.socialMediaId,
+      dto.password,
+    );
+
     const handler = await this.prisma.socialMediaHandler.create({
       data: {
         customerId: targetCustomerId,
@@ -86,7 +153,7 @@ export class SocialMediaHandlerService {
         handlerEmail: dto.handlerEmail?.trim() || null,
         workType: dto.workType?.trim() || 'Content Posting',
         status: dto.status?.toUpperCase() || 'ACTIVE',
-        notes: dto.notes?.trim() || null,
+        notes: notesWithMeta,
         startDate: start,
         endDate: end,
         durationDays: duration,
@@ -105,7 +172,7 @@ export class SocialMediaHandlerService {
     return {
       success: true,
       message: 'Social Media Handler created successfully',
-      data: handler,
+      data: this.formatHandlerRecord(handler),
     };
   }
 
@@ -120,36 +187,33 @@ export class SocialMediaHandlerService {
       `[SOCIAL_MEDIA_HANDLER_REQUEST]\nuserId: ${context.id}\ncustomerId: ${context.customerId ?? 'NONE'}\nrole: ${context.role ?? 'CUSTOMER'}`,
     );
 
-    const where: any = {
-      deletedAt: null,
-    };
+    const where: any = { deletedAt: null };
 
+    // Scoping
     if (!isAdmin) {
-      // Regular customer user: Strictly locked to their own authenticated customer ID
-      if (!context.customerId || Number(context.customerId) <= 0) {
-        throw new ForbiddenException('User does not belong to any customer organization');
+      if (!context.customerId) {
+        throw new ForbiddenException('Customer ID context is required');
       }
       where.customerId = Number(context.customerId);
-    } else if (query.customerId) {
-      // Admin filtered by explicit customerId
-      const parsedCustId = Number(String(query.customerId).replace(/[^0-9]/g, ''));
-      if (parsedCustId && !isNaN(parsedCustId)) {
-        where.customerId = parsedCustId;
+    } else if (query.customerId && query.customerId !== 'ALL') {
+      const parsed = Number(String(query.customerId).replace(/[^0-9]/g, ''));
+      if (parsed && !isNaN(parsed) && parsed > 0) {
+        where.customerId = parsed;
       }
-    } else if (context.customerId && !isSuperAdmin) {
-      // Company admin locked to their company's customer ID if specified
-      where.customerId = Number(context.customerId);
     }
 
+    // Platform filter
     if (query.platform && query.platform !== 'ALL') {
-      where.platform = { equals: query.platform.trim().toUpperCase(), mode: 'insensitive' };
+      where.platform = query.platform.toUpperCase();
     }
 
+    // Status filter
     if (query.status && query.status !== 'ALL') {
-      where.status = { equals: query.status.trim().toUpperCase(), mode: 'insensitive' };
+      where.status = query.status.toUpperCase();
     }
 
-    if (query.search && query.search.trim()) {
+    // Search filter
+    if (query.search && query.search.trim().length > 0) {
       const s = query.search.trim();
       where.OR = [
         { accountName: { contains: s, mode: 'insensitive' } },
@@ -165,16 +229,12 @@ export class SocialMediaHandlerService {
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
     const skip = (page - 1) * limit;
 
-    this.logger.log(
-      `[SOCIAL_MEDIA_HANDLER_QUERY]\ncustomerId: ${where.customerId ?? 'ALL'}\nwhere: ${JSON.stringify(where)}`,
-    );
-
     const [items, total] = await Promise.all([
       this.prisma.socialMediaHandler.findMany({
         where,
         skip,
         take: limit,
-        orderBy: [{ createdAt: 'desc' }],
+        orderBy: { id: 'desc' },
         include: {
           customer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true },
@@ -188,8 +248,8 @@ export class SocialMediaHandlerService {
 
     return {
       success: true,
-      data: items,
-      items,
+      data: items.map((i) => this.formatHandlerRecord(i)),
+      items: items.map((i) => this.formatHandlerRecord(i)),
       pagination: {
         page,
         limit,
@@ -225,7 +285,7 @@ export class SocialMediaHandlerService {
 
     return {
       success: true,
-      data: handler,
+      data: this.formatHandlerRecord(handler),
     };
   }
 
@@ -233,7 +293,8 @@ export class SocialMediaHandlerService {
    * Update Social Media Handler with customer ownership validation
    */
   async update(id: number, dto: UpdateSocialMediaHandlerDto, context: UserContext) {
-    await this.findOne(id, context);
+    const existing = await this.findOne(id, context);
+    const existingData = existing.data;
 
     const data: any = {};
     if (dto.platform !== undefined) data.platform = dto.platform.trim().toUpperCase();
@@ -244,7 +305,14 @@ export class SocialMediaHandlerService {
     if (dto.handlerEmail !== undefined) data.handlerEmail = dto.handlerEmail?.trim() || null;
     if (dto.workType !== undefined) data.workType = dto.workType?.trim() || null;
     if (dto.status !== undefined) data.status = dto.status?.toUpperCase() || 'ACTIVE';
-    if (dto.notes !== undefined) data.notes = dto.notes?.trim() || null;
+
+    if (dto.notes !== undefined || dto.socialMediaId !== undefined || dto.password !== undefined) {
+      const targetNotes = dto.notes !== undefined ? dto.notes : existingData.notes;
+      const targetSocialMediaId = dto.socialMediaId !== undefined ? dto.socialMediaId : existingData.socialMediaId;
+      const targetPassword = dto.password !== undefined ? dto.password : existingData.password;
+      data.notes = this.encodeMetadataIntoNotes(targetNotes, targetSocialMediaId, targetPassword);
+    }
+
     if (dto.startDate !== undefined) data.startDate = dto.startDate ? new Date(dto.startDate) : null;
     if (dto.endDate !== undefined) data.endDate = dto.endDate ? new Date(dto.endDate) : null;
     if (dto.durationDays !== undefined) data.durationDays = Number(dto.durationDays);
@@ -259,12 +327,16 @@ export class SocialMediaHandlerService {
       },
     });
 
-    this.logger.log(`[SOCIAL_MEDIA_HANDLER_UPDATE]\nid: ${id}\nupdated: ${JSON.stringify(data)}`);
+    const safeLogData = { ...data };
+    if (safeLogData.notes && safeLogData.notes.startsWith('__QB_META__:')) {
+      safeLogData.notes = '[METADATA_STORED]';
+    }
+    this.logger.log(`[SOCIAL_MEDIA_HANDLER_UPDATE]\nid: ${id}\nupdated: ${JSON.stringify(safeLogData)}`);
 
     return {
       success: true,
       message: 'Social Media Handler updated successfully',
-      data: updated,
+      data: this.formatHandlerRecord(updated),
     };
   }
 
