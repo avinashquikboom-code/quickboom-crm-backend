@@ -1132,8 +1132,10 @@ export class AuthService {
 
     const company = (user.customer?.companyName || user.customer?.name || '').trim();
     const rawLastName = (user.lastName || '').trim();
-    const cleanUserLastName = rawLastName.toLowerCase() === company.toLowerCase() ? '' : rawLastName;
-    const personFullName = [user.firstName, cleanUserLastName].filter(Boolean).join(' ').trim();
+    const rawMiddleName = ((user as any).middleName || '').trim();
+    const compLower = company.toLowerCase();
+    const cleanUserLastName = (rawLastName.toLowerCase() === compLower || (compLower.length >= 3 && rawLastName.toLowerCase().endsWith(compLower))) ? '' : rawLastName;
+    const personFullName = [user.firstName, rawMiddleName, cleanUserLastName].filter(Boolean).join(' ').trim();
     const customerCode = effectiveCustomerId ? `CUST-${String(effectiveCustomerId).padStart(4, '0')}` : null;
 
     const userData: any = {
@@ -1141,6 +1143,7 @@ export class AuthService {
       email: user.email,
       phone: user.phone || null,
       firstName: user.firstName,
+      middleName: rawMiddleName || null,
       lastName: cleanUserLastName,
       fullName: personFullName || user.firstName,
       role: userRole,

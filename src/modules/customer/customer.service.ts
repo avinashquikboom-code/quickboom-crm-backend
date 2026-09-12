@@ -2082,15 +2082,18 @@ export class CustomerService {
     // Cleanly separate person name from business/company name
     const rawCompany = (customer.companyName || '').trim();
     const rawCustName = (customer.name || '').trim();
-    const resolvedBusiness = rawCompany || rawCustName || 'Customer Workspace';
+    const resolvedBusiness = rawCompany || (rawCustName.toLowerCase() !== (userRecord.firstName || '').toLowerCase() ? rawCustName : '') || 'Customer Workspace';
 
     let pFirst = (userRecord.firstName || '').trim();
     let pMiddle = ((userRecord as any).middleName || '').trim();
     let pLast = (userRecord.lastName || '').trim();
 
     // Prevent accidental company name bleed into user lastName
-    if (pLast.toLowerCase() === resolvedBusiness.toLowerCase()) {
-      pLast = '';
+    const compLower = (rawCompany || resolvedBusiness).toLowerCase().trim();
+    if (compLower.length > 0) {
+      if (pLast.toLowerCase() === compLower || (compLower.length >= 3 && pLast.toLowerCase().endsWith(compLower))) {
+        pLast = '';
+      }
     }
 
     // If customer.name contains the customer's actual full name entered in Admin Panel
@@ -2166,7 +2169,7 @@ export class CustomerService {
           phone: userRecord.phone,
           firstName: pFirst || userRecord.firstName,
           middleName: pMiddle || (userRecord as any).middleName || null,
-          lastName: pLast || (userRecord.lastName.toLowerCase() === resolvedBusiness.toLowerCase() ? '' : userRecord.lastName),
+          lastName: pLast,
           fullName: pFullName,
           avatar: userRecord.avatar,
           designation: userRecord.designation,
