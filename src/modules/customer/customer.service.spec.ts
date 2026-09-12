@@ -4,6 +4,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 import { WorkService } from '../work/work.service';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import { UpdateCustomerDto } from './dto/customer.dto';
 
 describe('CustomerService - Resource Consumption', () => {
   let service: CustomerService;
@@ -376,6 +379,63 @@ describe('CustomerService - Resource Consumption', () => {
       expect(res.data[0].teamId).toBe(2);
       expect(res.data[0].team.name).toBe('Social Media Team');
     });
+
+    it('update updates customer assignedTeamId and status properly', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 23, name: 'Little Laugh' });
+      prisma.team.findUnique.mockResolvedValue({ id: 3, name: 'Production Team' });
+      prisma.customer.update.mockResolvedValue({
+        id: 23,
+        name: 'Little Laugh',
+        assignedTeamId: 3,
+        isActive: true,
+        assignedTeam: {
+          id: 3,
+          name: 'Production Team',
+          description: 'Handles production tasks',
+          leader: { firstName: 'Jane', lastName: 'Doe' },
+          _count: { members: 5 },
+        },
+      });
+
+      const res = await service.update(23, {
+        name: 'Little Laugh',
+        status: 'ACTIVE',
+        assignedTeamId: 3,
+      });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 23 },
+          data: expect.objectContaining({
+            assignedTeamId: 3,
+            isActive: true,
+          }),
+        }),
+      );
+      expect(res.teamId).toBe(3);
+      expect(res.team.name).toBe('Production Team');
+    });
+
+    it('UpdateCustomerDto allows status, assignedTeamId, teamId and rejects non-whitelisted properties', async () => {
+      const validDto = plainToInstance(UpdateCustomerDto, {
+        name: 'Little Laugh',
+        status: 'ACTIVE',
+        assignedTeamId: 3,
+        teamId: 3,
+      });
+      const validErrors = await validate(validDto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(validErrors.length).toBe(0);
+
+      const invalidDto = plainToInstance(UpdateCustomerDto, {
+        name: 'Little Laugh',
+        nonExistentProp: 'bad_value',
+      });
+      const invalidErrors = await validate(invalidDto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(invalidErrors.length).toBeGreaterThan(0);
+      expect(invalidErrors[0].property).toBe('nonExistentProp');
+    });
   });
 });
+
+
 

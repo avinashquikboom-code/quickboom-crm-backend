@@ -1042,8 +1042,16 @@ export class CustomerService {
         assignedEmployee: assignedEmpName !== undefined ? assignedEmpName : undefined,
         department: resolvedDepartment !== undefined ? resolvedDepartment : undefined,
         notes: dto.notes,
-        isActive: dto.isActive !== undefined ? dto.isActive : undefined,
-        deletedAt: dto.isActive === true ? null : undefined,
+        isActive:
+          dto.isActive !== undefined
+            ? dto.isActive
+            : dto.status !== undefined
+            ? dto.status === 'ACTIVE'
+            : undefined,
+        deletedAt:
+          dto.isActive === true || dto.status === 'ACTIVE'
+            ? null
+            : undefined,
         userLimit: dto.userLimit,
         leadLimit: dto.leadLimit,
       },

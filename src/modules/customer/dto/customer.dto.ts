@@ -184,6 +184,11 @@ export class UpdateCustomerDto {
   @IsOptional()
   source?: string;
 
+  @ApiPropertyOptional({ example: 'ACTIVE' })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()
