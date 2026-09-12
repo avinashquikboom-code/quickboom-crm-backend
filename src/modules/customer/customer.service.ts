@@ -2077,6 +2077,41 @@ export class CustomerService {
 
     const activeSub = customer.subscriptions[0];
     const qbCode = this.qbIdGenerator.generateQBUserId('CUSTOMER', customer.id);
+    const customerCode = `CUST-${String(customer.id).padStart(4, '0')}`;
+
+    // Cleanly separate person name from business/company name
+    const rawCompany = (customer.companyName || '').trim();
+    const rawCustName = (customer.name || '').trim();
+    const resolvedBusiness = rawCompany || rawCustName || 'Customer Workspace';
+
+    let pFirst = (userRecord.firstName || '').trim();
+    let pMiddle = ((userRecord as any).middleName || '').trim();
+    let pLast = (userRecord.lastName || '').trim();
+
+    // Prevent accidental company name bleed into user lastName
+    if (pLast.toLowerCase() === resolvedBusiness.toLowerCase()) {
+      pLast = '';
+    }
+
+    // If customer.name contains the customer's actual full name entered in Admin Panel
+    // (e.g. "Avinash Sanjay Magar" vs Company "QuikBoom Digital Marketing")
+    if (rawCustName && rawCustName.toLowerCase() !== resolvedBusiness.toLowerCase()) {
+      const parts = rawCustName.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) {
+        if (!pFirst) pFirst = parts[0];
+      } else if (parts.length === 2) {
+        if (!pFirst) pFirst = parts[0];
+        if (!pLast) pLast = parts[1];
+      } else if (parts.length >= 3) {
+        if (!pFirst) pFirst = parts[0];
+        if (!pMiddle) pMiddle = parts.slice(1, -1).join(' ');
+        if (!pLast) pLast = parts[parts.length - 1];
+      }
+    }
+
+    const pFullName = [pFirst, pMiddle, pLast].filter(Boolean).join(' ').trim() ||
+      (rawCustName.toLowerCase() !== resolvedBusiness.toLowerCase() ? rawCustName : pFirst) ||
+      'Customer';
 
     const safeCustomer = this.serializeBigInt(customer);
 
@@ -2084,9 +2119,20 @@ export class CustomerService {
       success: true,
       data: {
         id: customer.id,
-        customerId: qbCode,
-        name: customer.name,
-        companyName: customer.companyName || customer.name,
+        customerId: customerCode,
+        customerCode: customerCode,
+        qbCustomerId: qbCode,
+        name: rawCustName,
+        firstName: pFirst,
+        middleName: pMiddle || null,
+        lastName: pLast,
+        fullName: pFullName,
+        contactFirstName: pFirst,
+        contactMiddleName: pMiddle || null,
+        contactLastName: pLast,
+        contactFullName: pFullName,
+        companyName: resolvedBusiness,
+        businessName: resolvedBusiness,
         domain: customer.domain,
         logo: customer.logo,
         profileImage: customer.logo || userRecord.avatar,
@@ -2118,8 +2164,10 @@ export class CustomerService {
           id: userRecord.id,
           email: userRecord.email,
           phone: userRecord.phone,
-          firstName: userRecord.firstName,
-          lastName: userRecord.lastName,
+          firstName: pFirst || userRecord.firstName,
+          middleName: pMiddle || (userRecord as any).middleName || null,
+          lastName: pLast || (userRecord.lastName.toLowerCase() === resolvedBusiness.toLowerCase() ? '' : userRecord.lastName),
+          fullName: pFullName,
           avatar: userRecord.avatar,
           designation: userRecord.designation,
         },

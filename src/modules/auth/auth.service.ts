@@ -91,10 +91,10 @@ export class AuthService {
     if (dto.fullName && (!firstName || !lastName)) {
       const parts = dto.fullName.trim().split(/\s+/);
       firstName = parts[0] || 'Customer';
-      lastName = parts.slice(1).join(' ') || (dto.companyName ? dto.companyName.trim() : 'Admin');
+      lastName = parts.slice(1).join(' ');
     }
     if (!firstName) firstName = companyOrCustomerName.split(/\s+/)[0] || 'Customer';
-    if (!lastName) lastName = 'Admin';
+    if (!lastName) lastName = '';
 
     const rawPassword = dto.password || '123456';
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
@@ -1130,18 +1130,31 @@ export class AuthService {
       : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (effectiveCustomerId || user.id) : user.id);
     const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
+    const company = (user.customer?.companyName || user.customer?.name || '').trim();
+    const rawLastName = (user.lastName || '').trim();
+    const cleanUserLastName = rawLastName.toLowerCase() === company.toLowerCase() ? '' : rawLastName;
+    const personFullName = [user.firstName, cleanUserLastName].filter(Boolean).join(' ').trim();
+    const customerCode = effectiveCustomerId ? `CUST-${String(effectiveCustomerId).padStart(4, '0')}` : null;
+
     const userData: any = {
       id: user.id,
       email: user.email,
       phone: user.phone || null,
       firstName: user.firstName,
-      lastName: user.lastName,
+      lastName: cleanUserLastName,
+      fullName: personFullName || user.firstName,
       role: userRole,
       roleId: roleId,
       roleType: userRoleType,
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
-      ...(userRole !== 'SUPER_ADMIN' && effectiveCustomerId && { customerId: effectiveCustomerId, customerName: user.customer?.name ?? null }),
+      ...(userRole !== 'SUPER_ADMIN' && effectiveCustomerId && {
+        customerId: effectiveCustomerId,
+        customerCode: customerCode,
+        customerName: personFullName || user.customer?.name || null,
+        businessName: company || null,
+        companyName: company || null,
+      }),
     };
 
     if (userRole === 'EMPLOYEE' && employeeData) {
