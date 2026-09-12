@@ -52,7 +52,10 @@ export class SocialMediaHandlerService {
   /**
    * Helper to decode metadata from notes field and attach top-level fields
    */
-  private formatHandlerRecord(record: any): any {
+  private formatHandlerRecord(
+    record: any,
+    options: { includePassword?: boolean } = { includePassword: true },
+  ): any {
     if (!record) return record;
     let socialMediaId = record.socialMediaId || record.accountName || '';
     let password = record.password || '';
@@ -82,7 +85,7 @@ export class SocialMediaHandlerService {
     return {
       ...record,
       socialMediaId,
-      password,
+      password: options.includePassword ? password : (password ? '••••••••' : ''),
       notes: cleanNotes,
     };
   }
@@ -136,9 +139,10 @@ export class SocialMediaHandlerService {
       ? new Date(dto.endDate)
       : new Date(start.getTime() + duration * 24 * 60 * 60 * 1000);
 
+    const resolvedSocialMediaId = dto.socialMediaId?.trim() || dto.accountName.trim();
     const notesWithMeta = this.encodeMetadataIntoNotes(
       dto.notes,
-      dto.socialMediaId,
+      resolvedSocialMediaId,
       dto.password,
     );
 
@@ -172,7 +176,7 @@ export class SocialMediaHandlerService {
     return {
       success: true,
       message: 'Social Media Handler created successfully',
-      data: this.formatHandlerRecord(handler),
+      data: this.formatHandlerRecord(handler, { includePassword: true }),
     };
   }
 
@@ -248,8 +252,8 @@ export class SocialMediaHandlerService {
 
     return {
       success: true,
-      data: items.map((i) => this.formatHandlerRecord(i)),
-      items: items.map((i) => this.formatHandlerRecord(i)),
+      data: items.map((i) => this.formatHandlerRecord(i, { includePassword: false })),
+      items: items.map((i) => this.formatHandlerRecord(i, { includePassword: false })),
       pagination: {
         page,
         limit,
@@ -285,7 +289,7 @@ export class SocialMediaHandlerService {
 
     return {
       success: true,
-      data: this.formatHandlerRecord(handler),
+      data: this.formatHandlerRecord(handler, { includePassword: true }),
     };
   }
 
@@ -308,8 +312,23 @@ export class SocialMediaHandlerService {
 
     if (dto.notes !== undefined || dto.socialMediaId !== undefined || dto.password !== undefined) {
       const targetNotes = dto.notes !== undefined ? dto.notes : existingData.notes;
-      const targetSocialMediaId = dto.socialMediaId !== undefined ? dto.socialMediaId : existingData.socialMediaId;
-      const targetPassword = dto.password !== undefined ? dto.password : existingData.password;
+      const targetSocialMediaId =
+        dto.socialMediaId !== undefined && dto.socialMediaId !== null && dto.socialMediaId.trim().length > 0
+          ? dto.socialMediaId.trim()
+          : (existingData.socialMediaId || existingData.accountName || '');
+
+      // Keep existing password unchanged during edit unless user explicitly enters a new password.
+      // Never overwrite it with null, empty string, or masked bullet placeholder.
+      const hasExplicitNewPassword =
+        dto.password !== undefined &&
+        dto.password !== null &&
+        dto.password.trim().length > 0 &&
+        !dto.password.includes('•••');
+
+      const targetPassword = hasExplicitNewPassword
+        ? dto.password!.trim()
+        : (existingData.password || null);
+
       data.notes = this.encodeMetadataIntoNotes(targetNotes, targetSocialMediaId, targetPassword);
     }
 
@@ -336,7 +355,7 @@ export class SocialMediaHandlerService {
     return {
       success: true,
       message: 'Social Media Handler updated successfully',
-      data: this.formatHandlerRecord(updated),
+      data: this.formatHandlerRecord(updated, { includePassword: true }),
     };
   }
 
