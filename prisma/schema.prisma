@@ -92,6 +92,14 @@ model Customer {
   assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
   assignedTeamId           Int?
   assignedTeam             Team?                     @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  influencerBookings       InfluencerBooking[]
+  influencerBookingPayments InfluencerBookingPayment[]
+  influencerReviews        InfluencerReview[]
+  aiWallet                 AiCreditWallet?
+  aiTransactions           AiCreditTransaction[]
+  aiGenerations            AiGeneration[]
+  socialAccounts           SocialAccount[]
+  socialPublishes          SocialPublish[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -2555,32 +2563,49 @@ model InfluencerCategory {
 }
 
 model Influencer {
-  id             Int                 @id @default(autoincrement())
-  name           String
-  handle         String?
-  avatarUrl      String?
-  profileImage   String?
-  platform       String              @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
-  categoryId     Int?
-  categoryName   String?
-  category       InfluencerCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  location       String?             @default("India")
-  city           String?
-  followers      Int                 @default(0)
-  followersCount String?             @default("0")
-  engagementRate Float               @default(0.0)
-  isVerified     Boolean             @default(true)
-  isFeatured     Boolean             @default(true)
-  isActive       Boolean             @default(true)
-  bio            String?
-  bookingUrl     String?
-  pricing        Float?
-  rating         Float?              @default(4.9)
-  sortOrder      Int                 @default(0)
-  metadata       Json?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  deletedAt      DateTime?
+  id                 Int                      @id @default(autoincrement())
+  name               String
+  handle             String?
+  avatarUrl          String?
+  profileImage       String?
+  coverImage         String?
+  platform           String                   @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
+  categoryId         Int?
+  categoryName       String?
+  category           InfluencerCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  location           String?                  @default("India")
+  city               String?
+  localArea          String?
+  followers          Int                      @default(0)
+  followersCount     String?                  @default("0")
+  engagementRate     Float                    @default(0.0)
+  isVerified         Boolean                  @default(true)
+  isFeatured         Boolean                  @default(true)
+  isActive           Boolean                  @default(true)
+  status             String                   @default("ACTIVE") // ACTIVE, INACTIVE
+  verificationStatus String                   @default("VERIFIED") // VERIFIED, PENDING, UNVERIFIED
+  topCreator         Boolean                  @default(false)
+  startingPrice      Float?
+  bio                String?
+  languages          String[]                 @default(["English", "Hindi"])
+  instagramHandle    String?
+  youtubeHandle      String?
+  gender             String?
+  ageRange           String?
+  bookingUrl         String?
+  pricing            Float?
+  rating             Float?                   @default(4.9)
+  sortOrder          Int                      @default(0)
+  metadata           Json?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  deletedAt          DateTime?
+
+  packages           InfluencerPackage[]
+  availabilities     InfluencerAvailability[]
+  portfolios         InfluencerPortfolio[]
+  reviews            InfluencerReview[]
+  bookings           InfluencerBooking[]
 
   @@index([isActive, isFeatured])
   @@index([categoryId])
@@ -2588,6 +2613,314 @@ model Influencer {
   @@index([sortOrder])
   @@index([deletedAt])
   @@map("influencers")
+}
+
+model InfluencerPackage {
+  id           Int                 @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer          @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  name         String
+  type         String              @default("POST") // STORY, REEL, POST, CUSTOM
+  description  String?
+  duration     String?
+  price        Float
+  isPopular    Boolean             @default(false)
+  status       String              @default("ACTIVE") // ACTIVE, INACTIVE
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  deletedAt    DateTime?
+  bookings     InfluencerBooking[]
+
+  @@index([influencerId])
+  @@index([status])
+  @@map("influencer_packages")
+}
+
+model InfluencerAvailability {
+  id           Int        @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  date         DateTime
+  isAvailable  Boolean    @default(true)
+  startTime    String?
+  endTime      String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  @@index([influencerId, date])
+  @@map("influencer_availabilities")
+}
+
+model InfluencerBooking {
+  id                 Int                        @id @default(autoincrement())
+  bookingId          String                     @unique
+  customerId         Int
+  customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  influencerId       Int
+  influencer         Influencer                 @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  packageId          Int?
+  package            InfluencerPackage?         @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  campaignDate       DateTime
+  brandName          String
+  contactPerson      String
+  mobileNumber       String
+  email              String
+  businessName       String
+  instagramId        String?
+  campaignObjective  String?
+  notes              String?
+  packageAmount      Float
+  platformFee        Float                      @default(500)
+  gst                Float                      @default(0)
+  totalAmount        Float
+  bookingStatus      String                     @default("PENDING") // PENDING, CONFIRMED, REJECTED, CANCELLED, COMPLETED
+  paymentStatus      String                     @default("PENDING") // PENDING, PROCESSING, PAID, FAILED, REFUNDED
+  paymentMethod      String?                    @default("RAZORPAY")
+  razorpayOrderId    String?
+  razorpayPaymentId  String?
+  razorpaySignature  String?
+  rejectionReason    String?
+  cancelledAt        DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  deletedAt          DateTime?
+  payments           InfluencerBookingPayment[]
+
+  @@index([customerId])
+  @@index([influencerId])
+  @@index([bookingStatus])
+  @@index([paymentStatus])
+  @@index([deletedAt])
+  @@map("influencer_bookings")
+}
+
+model InfluencerBookingPayment {
+  id            Int               @id @default(autoincrement())
+  bookingId     Int
+  booking       InfluencerBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId    Int
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  amount        Float
+  currency      String            @default("INR")
+  paymentMethod String            @default("RAZORPAY")
+  paymentId     String?
+  orderId       String?
+  signature     String?
+  status        String            @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  rawResponse   Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([bookingId])
+  @@index([customerId])
+  @@map("influencer_booking_payments")
+}
+
+model InfluencerPortfolio {
+  id            Int        @id @default(autoincrement())
+  influencerId  Int
+  influencer    Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  title         String
+  mediaUrl      String
+  mediaType     String     @default("IMAGE") // IMAGE, VIDEO
+  caption       String?
+  likesCount    Int        @default(0)
+  commentsCount Int        @default(0)
+  viewsCount    Int        @default(0)
+  sortOrder     Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+
+  @@index([influencerId])
+  @@map("influencer_portfolios")
+}
+
+model InfluencerReview {
+  id           Int        @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  customerId   Int?
+  customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  brandName    String
+  rating       Float      @default(5.0)
+  comment      String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  @@index([influencerId])
+  @@map("influencer_reviews")
+}
+
+// =========================================================================
+// AI STUDIO & SOCIAL MEDIA PUBLISHING MODELS
+// =========================================================================
+
+model AiServiceConfig {
+  id             Int       @id @default(autoincrement())
+  code           String    @unique // AI_POST, AI_POSTER, AI_VIDEO, AI_CAPTION, AI_HASHTAGS, AI_REGENERATE
+  name           String
+  description    String?
+  creditCost     Int       @default(1)
+  pricePerCredit Float     @default(10.0) // In INR
+  packPrice      Float?
+  isActive       Boolean   @default(true)
+  sortOrder      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([code])
+  @@index([isActive])
+  @@map("ai_service_configs")
+}
+
+model AiCreditWallet {
+  id           Int                   @id @default(autoincrement())
+  customerId   Int                   @unique
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  balance      Int                   @default(20) // Welcome credits
+  totalEarned  Int                   @default(20)
+  totalSpent   Int                   @default(0)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  transactions AiCreditTransaction[]
+
+  @@index([customerId])
+  @@map("ai_credit_wallets")
+}
+
+model AiCreditTransaction {
+  id              Int            @id @default(autoincrement())
+  walletId        Int
+  wallet          AiCreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  customerId      Int
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  amount          Int // Positive for top-ups, negative for usage
+  balanceAfter    Int
+  type            String // PURCHASE, USAGE, REFUND, GRANT
+  serviceCode     String? // AI_POST, AI_POSTER, AI_VIDEO, etc.
+  generationId    Int?
+  paymentId       String?
+  razorpayOrderId String?
+  notes           String?
+  createdAt       DateTime       @default(now())
+
+  @@index([customerId])
+  @@index([walletId])
+  @@map("ai_credit_transactions")
+}
+
+model AiGeneration {
+  id             Int                 @id @default(autoincrement())
+  generationId   String              @unique // AIGEN-YYYYMMDD-XXXX
+  customerId     Int
+  customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type           String // POST, POSTER, VIDEO, CAPTION, HASHTAGS
+  status         String              @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  product        String
+  objective      String?
+  targetAudience String?
+  platform       String? // INSTAGRAM, FACEBOOK, YOUTUBE, TIKTOK, LINKEDIN
+  language       String?             @default("English")
+  tone           String?             @default("Premium")
+  cta            String?
+  instructions   String?
+  creditsSpent   Int                 @default(0)
+  caption        String?
+  hashtags       String[]            @default([])
+  mediaUrl       String?
+  mediaType      String?             @default("IMAGE") // IMAGE, VIDEO, TEXT
+  errorMessage   String?
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  deletedAt      DateTime?
+  assets         AiGenerationAsset[]
+  publishes      SocialPublish[]
+
+  @@index([customerId])
+  @@index([type])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("ai_generations")
+}
+
+model AiGenerationAsset {
+  id           Int          @id @default(autoincrement())
+  generationId Int
+  generation   AiGeneration @relation(fields: [generationId], references: [id], onDelete: Cascade)
+  assetType    String       @default("IMAGE") // IMAGE, VIDEO, THUMBNAIL, VOICE
+  url          String
+  fileKey      String?
+  width        Int?
+  height       Int?
+  duration     Float?
+  createdAt    DateTime     @default(now())
+
+  @@index([generationId])
+  @@map("ai_generation_assets")
+}
+
+model SocialAccount {
+  id                    Int             @id @default(autoincrement())
+  customerId            Int
+  customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  platform              String // INSTAGRAM, FACEBOOK, YOUTUBE, TIKTOK, LINKEDIN
+  accountName           String
+  username              String?
+  profilePic            String?
+  externalAccountId     String
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  tokenExpiresAt        DateTime?
+  scopes                String[]        @default([])
+  isConnected           Boolean         @default(true)
+  metadata              Json?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  deletedAt             DateTime?
+  publishes             SocialPublish[]
+
+  @@unique([customerId, platform, externalAccountId])
+  @@index([customerId])
+  @@index([platform])
+  @@index([isConnected])
+  @@index([deletedAt])
+  @@map("social_accounts")
+}
+
+model SocialPublish {
+  id              Int            @id @default(autoincrement())
+  publishId       String         @unique // PUB-YYYYMMDD-XXXX
+  customerId      Int
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  socialAccountId Int
+  socialAccount   SocialAccount  @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  generationId    Int?
+  generation      AiGeneration?  @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  platform        String
+  content         String?
+  mediaUrls       String[]       @default([])
+  status          String         @default("QUEUED") // DRAFT, QUEUED, PROCESSING, PUBLISHED, FAILED, SCHEDULED, CANCELLED
+  scheduledFor    DateTime?
+  publishedAt     DateTime?
+  externalPostId  String?
+  externalPostUrl String?
+  errorMessage    String?
+  retryCount      Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([customerId])
+  @@index([socialAccountId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("social_publishes")
 }
 
 

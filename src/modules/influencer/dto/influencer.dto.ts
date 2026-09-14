@@ -1,5 +1,17 @@
-import { IsString, IsOptional, IsBoolean, IsInt, IsNumber, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  Min,
+  IsArray,
+  IsEmail,
+  IsNotEmpty,
+  IsIn,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 
 export class FilterInfluencersQueryDto {
   @ApiPropertyOptional({ description: 'Filter by category slug or name', example: 'fashion' })
@@ -20,11 +32,81 @@ export class FilterInfluencersQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by status (ACTIVE/INACTIVE)' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+export class CreateInfluencerCategoryDto {
+  @ApiProperty({ description: 'Category name', example: 'Instagram Influencers' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty({ description: 'Unique slug', example: 'instagram' })
+  @IsString()
+  @IsNotEmpty()
+  slug: string;
+
+  @ApiPropertyOptional({ description: 'Icon name or URL' })
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional({ description: 'Category description' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Display sort order', default: 0 })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @ApiPropertyOptional({ description: 'Active status', default: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateInfluencerCategoryDto {
+  @ApiPropertyOptional({ description: 'Category name' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Slug' })
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @ApiPropertyOptional({ description: 'Icon' })
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional({ description: 'Description' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Sort order' })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @ApiPropertyOptional({ description: 'Active status' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class CreateInfluencerDto {
   @ApiProperty({ description: 'Full name of the influencer', example: 'Ananya Sharma' })
   @IsString()
+  @IsNotEmpty()
   name: string;
 
   @ApiPropertyOptional({ description: 'Social media handle', example: '@ananya_lifestyle' })
@@ -37,10 +119,15 @@ export class CreateInfluencerDto {
   @IsString()
   avatarUrl?: string;
 
-  @ApiPropertyOptional({ description: 'High-res profile/cover image URL' })
+  @ApiPropertyOptional({ description: 'High-res profile image URL' })
   @IsOptional()
   @IsString()
   profileImage?: string;
+
+  @ApiPropertyOptional({ description: 'Cover banner image URL' })
+  @IsOptional()
+  @IsString()
+  coverImage?: string;
 
   @ApiPropertyOptional({ description: 'Primary platform', example: 'INSTAGRAM', default: 'INSTAGRAM' })
   @IsOptional()
@@ -66,6 +153,11 @@ export class CreateInfluencerDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  @ApiPropertyOptional({ description: 'Local area / neighborhood', example: 'Bodakdev' })
+  @IsOptional()
+  @IsString()
+  localArea?: string;
 
   @ApiPropertyOptional({ description: 'Follower count as number', example: 125000 })
   @IsOptional()
@@ -97,10 +189,56 @@ export class CreateInfluencerDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ description: 'Lifecycle status', default: 'ACTIVE' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Verification status badge', default: 'VERIFIED' })
+  @IsOptional()
+  @IsString()
+  verificationStatus?: string;
+
+  @ApiPropertyOptional({ description: 'Top Creator badge', default: false })
+  @IsOptional()
+  @IsBoolean()
+  topCreator?: boolean;
+
+  @ApiPropertyOptional({ description: 'Starting package price' })
+  @IsOptional()
+  @IsNumber()
+  startingPrice?: number;
+
   @ApiPropertyOptional({ description: 'Creator bio' })
   @IsOptional()
   @IsString()
   bio?: string;
+
+  @ApiPropertyOptional({ description: 'Supported languages', example: ['Hindi', 'English'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  languages?: string[];
+
+  @ApiPropertyOptional({ description: 'Instagram handle' })
+  @IsOptional()
+  @IsString()
+  instagramHandle?: string;
+
+  @ApiPropertyOptional({ description: 'YouTube handle' })
+  @IsOptional()
+  @IsString()
+  youtubeHandle?: string;
+
+  @ApiPropertyOptional({ description: 'Gender' })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiPropertyOptional({ description: 'Age range' })
+  @IsOptional()
+  @IsString()
+  ageRange?: string;
 
   @ApiPropertyOptional({ description: 'Direct booking or portfolio link' })
   @IsOptional()
@@ -135,7 +273,7 @@ export class UpdateInfluencerDto {
   @IsString()
   handle?: string;
 
-  @ApiPropertyOptional({ description: 'Avatar / Profile image URL' })
+  @ApiPropertyOptional({ description: 'Avatar URL' })
   @IsOptional()
   @IsString()
   avatarUrl?: string;
@@ -144,6 +282,11 @@ export class UpdateInfluencerDto {
   @IsOptional()
   @IsString()
   profileImage?: string;
+
+  @ApiPropertyOptional({ description: 'Cover banner image URL' })
+  @IsOptional()
+  @IsString()
+  coverImage?: string;
 
   @ApiPropertyOptional({ description: 'Primary platform' })
   @IsOptional()
@@ -169,6 +312,11 @@ export class UpdateInfluencerDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  @ApiPropertyOptional({ description: 'Local area' })
+  @IsOptional()
+  @IsString()
+  localArea?: string;
 
   @ApiPropertyOptional({ description: 'Followers count' })
   @IsOptional()
@@ -200,10 +348,56 @@ export class UpdateInfluencerDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ description: 'Lifecycle status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Verification status' })
+  @IsOptional()
+  @IsString()
+  verificationStatus?: string;
+
+  @ApiPropertyOptional({ description: 'Top Creator' })
+  @IsOptional()
+  @IsBoolean()
+  topCreator?: boolean;
+
+  @ApiPropertyOptional({ description: 'Starting price' })
+  @IsOptional()
+  @IsNumber()
+  startingPrice?: number;
+
   @ApiPropertyOptional({ description: 'Bio' })
   @IsOptional()
   @IsString()
   bio?: string;
+
+  @ApiPropertyOptional({ description: 'Languages' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  languages?: string[];
+
+  @ApiPropertyOptional({ description: 'Instagram handle' })
+  @IsOptional()
+  @IsString()
+  instagramHandle?: string;
+
+  @ApiPropertyOptional({ description: 'YouTube handle' })
+  @IsOptional()
+  @IsString()
+  youtubeHandle?: string;
+
+  @ApiPropertyOptional({ description: 'Gender' })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiPropertyOptional({ description: 'Age range' })
+  @IsOptional()
+  @IsString()
+  ageRange?: string;
 
   @ApiPropertyOptional({ description: 'Booking URL' })
   @IsOptional()
@@ -224,4 +418,225 @@ export class UpdateInfluencerDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+}
+
+// =========================================================================
+// INFLUENCER PACKAGE DTOS
+// =========================================================================
+
+export class CreateInfluencerPackageDto {
+  @ApiProperty({ description: 'Package name', example: '1 Reel Package' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional({ description: 'Package type', example: 'REEL', default: 'POST' })
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @ApiPropertyOptional({ description: 'Package description' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Deliverable duration or turnaround', example: '3-5 Days' })
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @ApiProperty({ description: 'Package price in INR', example: 5000 })
+  @IsNumber()
+  @Min(0)
+  price: number;
+
+  @ApiPropertyOptional({ description: 'Mark as popular package', default: false })
+  @IsOptional()
+  @IsBoolean()
+  isPopular?: boolean;
+
+  @ApiPropertyOptional({ description: 'Status', default: 'ACTIVE' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Sort order', default: 0 })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+}
+
+export class UpdateInfluencerPackageDto {
+  @ApiPropertyOptional({ description: 'Package name' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Package type' })
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @ApiPropertyOptional({ description: 'Description' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Duration' })
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @ApiPropertyOptional({ description: 'Price in INR' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
+
+  @ApiPropertyOptional({ description: 'Is popular' })
+  @IsOptional()
+  @IsBoolean()
+  isPopular?: boolean;
+
+  @ApiPropertyOptional({ description: 'Status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Sort order' })
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+}
+
+// =========================================================================
+// AVAILABILITY DTOS
+// =========================================================================
+
+export class SetInfluencerAvailabilityDto {
+  @ApiProperty({ description: 'Available date in ISO format or YYYY-MM-DD', example: '2026-09-18' })
+  @IsString()
+  @IsNotEmpty()
+  date: string;
+
+  @ApiPropertyOptional({ description: 'Is date available', default: true })
+  @IsOptional()
+  @IsBoolean()
+  isAvailable?: boolean;
+
+  @ApiPropertyOptional({ description: 'Optional slot start time', example: '10:00 AM' })
+  @IsOptional()
+  @IsString()
+  startTime?: string;
+
+  @ApiPropertyOptional({ description: 'Optional slot end time', example: '06:00 PM' })
+  @IsOptional()
+  @IsString()
+  endTime?: string;
+}
+
+// =========================================================================
+// BOOKING DTOS
+// =========================================================================
+
+export class CreateInfluencerBookingDto {
+  @ApiProperty({ description: 'Influencer ID' })
+  @IsInt()
+  @Type(() => Number)
+  influencerId: number;
+
+  @ApiProperty({ description: 'Package ID selected by customer' })
+  @IsInt()
+  @Type(() => Number)
+  packageId: number;
+
+  @ApiProperty({ description: 'Campaign date', example: '2026-09-18' })
+  @IsString()
+  @IsNotEmpty()
+  campaignDate: string;
+
+  @ApiProperty({ description: 'Brand name', example: 'Quick Boom' })
+  @IsString()
+  @IsNotEmpty()
+  brandName: string;
+
+  @ApiProperty({ description: 'Contact person name', example: 'Rahul Sharma' })
+  @IsString()
+  @IsNotEmpty()
+  contactPerson: string;
+
+  @ApiProperty({ description: 'Contact phone / WhatsApp number', example: '+91 9876543210' })
+  @IsString()
+  @IsNotEmpty()
+  mobileNumber: string;
+
+  @ApiProperty({ description: 'Contact email address', example: 'contact@brand.com' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ description: 'Registered business name', example: 'Quick Boom Agency' })
+  @IsString()
+  @IsNotEmpty()
+  businessName: string;
+
+  @ApiPropertyOptional({ description: 'Brand Instagram handle', example: '@brand_official' })
+  @IsOptional()
+  @IsString()
+  instagramId?: string;
+
+  @ApiPropertyOptional({ description: 'Campaign objective', example: 'Brand Awareness' })
+  @IsOptional()
+  @IsString()
+  campaignObjective?: string;
+
+  @ApiPropertyOptional({ description: 'Additional campaign brief or notes' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class VerifyInfluencerPaymentDto {
+  @ApiProperty({ description: 'Booking ID string or database ID' })
+  @IsNotEmpty()
+  bookingId: string | number;
+
+  @ApiProperty({ description: 'Razorpay payment ID', example: 'pay_xxxxxxxx' })
+  @IsString()
+  @IsNotEmpty()
+  razorpayPaymentId: string;
+
+  @ApiProperty({ description: 'Razorpay order ID', example: 'order_xxxxxxxx' })
+  @IsString()
+  @IsNotEmpty()
+  razorpayOrderId: string;
+
+  @ApiProperty({ description: 'Razorpay signature', example: 'xxxxxxxxxxxxxxxx' })
+  @IsString()
+  @IsNotEmpty()
+  razorpaySignature: string;
+}
+
+export class UpdateBookingStatusDto {
+  @ApiProperty({
+    description: 'Updated booking status',
+    enum: ['PENDING', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'COMPLETED'],
+  })
+  @IsString()
+  @IsIn(['PENDING', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'COMPLETED'])
+  status: string;
+
+  @ApiPropertyOptional({ description: 'Rejection or cancellation reason' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class UpdatePaymentStatusDto {
+  @ApiProperty({
+    description: 'Updated payment status',
+    enum: ['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED'],
+  })
+  @IsString()
+  @IsIn(['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED'])
+  paymentStatus: string;
 }

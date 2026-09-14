@@ -43,6 +43,8 @@ import { Msg91Module } from './modules/msg91/msg91.module';
 import { SocialMediaHandlerModule } from './modules/social-media-handler/social-media-handler.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { InfluencerModule } from './modules/influencer/influencer.module';
+import { AiStudioModule } from './modules/ai-studio/ai-studio.module';
+import { SocialPublishingModule } from './modules/social-publishing/social-publishing.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -94,6 +96,8 @@ import { AppController } from './app.controller';
     SocialMediaHandlerModule,
     MarketplaceModule,
     InfluencerModule,
+    AiStudioModule,
+    SocialPublishingModule,
   ],
   controllers: [AppController],
 })

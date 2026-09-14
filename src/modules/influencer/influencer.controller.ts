@@ -10,10 +10,24 @@ import {
   ParseIntPipe,
   UseGuards,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { InfluencerService } from './influencer.service';
-import { CreateInfluencerDto, FilterInfluencersQueryDto, UpdateInfluencerDto } from './dto/influencer.dto';
+import {
+  CreateInfluencerDto,
+  FilterInfluencersQueryDto,
+  UpdateInfluencerDto,
+  CreateInfluencerCategoryDto,
+  UpdateInfluencerCategoryDto,
+  CreateInfluencerPackageDto,
+  UpdateInfluencerPackageDto,
+  SetInfluencerAvailabilityDto,
+  CreateInfluencerBookingDto,
+  VerifyInfluencerPaymentDto,
+  UpdateBookingStatusDto,
+  UpdatePaymentStatusDto,
+} from './dto/influencer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 
@@ -22,41 +36,60 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 export class InfluencerController {
   constructor(private readonly influencerService: InfluencerService) {}
 
+  private resolveCustomerId(req: any): number {
+    const user = req.user;
+    const rawId =
+      user?.customerId ??
+      (user?.role === 'CUSTOMER' ? user?.customerId || user?.id : undefined) ??
+      req.headers?.['x-customer-id'];
+    const parsed = parseInt(String(rawId), 10);
+    if (isNaN(parsed) || parsed <= 0) {
+      throw new ForbiddenException('Valid customer authentication session is required');
+    }
+    return parsed;
+  }
+
   // =========================================================================
-  // CUSTOMER / CLIENT APIS
+  // PUBLIC / CUSTOMER BROWSING APIS
   // =========================================================================
 
   @Get(['influencers/categories', 'customer/influencer-categories'])
-  @ApiOperation({ summary: 'Get active influencer categories with counts' })
+  @ApiOperation({ summary: 'Get active influencer categories with creator counts' })
   async getCategories() {
     const data = await this.influencerService.getCategories();
-    return {
-      statusCode: 200,
-      success: true,
-      data,
-    };
+    return { statusCode: 200, success: true, data };
   }
 
   @Get(['influencers', 'customer/influencers'])
   @ApiOperation({ summary: 'Get active influencers for Customer Home and Listing screen' })
   async getActiveInfluencers(@Query() query: FilterInfluencersQueryDto) {
     const data = await this.influencerService.getActiveInfluencers(query);
-    return {
-      statusCode: 200,
-      success: true,
-      data,
-    };
+    return { statusCode: 200, success: true, data };
   }
 
   @Get(['influencers/:id', 'customer/influencers/:id'])
-  @ApiOperation({ summary: 'Get single influencer details' })
+  @ApiOperation({ summary: 'Get single influencer details with packages and availability' })
   async getInfluencerById(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getInfluencerById(id);
-    return {
-      statusCode: 200,
-      success: true,
-      data,
-    };
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get('influencers/:id/packages')
+  @ApiOperation({ summary: 'Get active packages for an influencer' })
+  async getPackages(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.getPackages(id);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get('influencers/:id/availability')
+  @ApiOperation({ summary: 'Get available dates and time slots for an influencer' })
+  async getAvailability(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const data = await this.influencerService.getAvailability(id, startDate, endDate);
+    return { statusCode: 200, success: true, data };
   }
 
   @Post('customer/influencers/:id/favorite')
@@ -64,25 +97,85 @@ export class InfluencerController {
   async toggleFavorite(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const customerId = req.user?.customerId || req.user?.id;
     const data = await this.influencerService.toggleFavorite(id, customerId);
+    return { statusCode: 200, success: true, data };
+  }
+
+  // =========================================================================
+  // CUSTOMER BOOKING FLOW (ISOLATED TO CURRENT LOGGED-IN CUSTOMER)
+  // =========================================================================
+
+  @Post(['influencer-bookings', 'customer/influencer-bookings'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Create a new influencer booking and initialize payment' })
+  async createBooking(@Req() req: any, @Body() dto: CreateInfluencerBookingDto) {
+    const customerId = this.resolveCustomerId(req);
+    const result = await this.influencerService.createBooking(customerId, dto);
     return {
-      statusCode: 200,
+      statusCode: 201,
       success: true,
-      data,
+      message: 'Influencer booking created successfully',
+      ...result,
     };
   }
 
-  @Post('customer/influencers/:id/book')
-  @ApiOperation({ summary: 'Book or request collaboration with an influencer' })
-  async bookInfluencer(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: any,
+  @Post(['influencer-bookings/verify-payment', 'influencer-bookings/:id/verify-payment'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Verify server-side Razorpay payment and confirm booking' })
+  async verifyPayment(
     @Req() req: any,
+    @Body() dto: VerifyInfluencerPaymentDto,
+    @Param('id') paramId?: string,
   ) {
-    const customerId = req.user?.customerId || req.user?.id;
-    const data = await this.influencerService.bookInfluencer(id, customerId, body);
+    const customerId = this.resolveCustomerId(req);
+    if (paramId && !dto.bookingId) {
+      dto.bookingId = paramId;
+    }
+    const result = await this.influencerService.verifyBookingPayment(customerId, dto);
     return {
       statusCode: 200,
       success: true,
+      message: result.message,
+      booking: result.booking,
+    };
+  }
+
+  @Get(['influencer-bookings/my', 'customer/influencer-bookings/my'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get current customer bookings with isolation and status filter' })
+  async getMyBookings(@Req() req: any, @Query('status') status?: string) {
+    const customerId = this.resolveCustomerId(req);
+    const data = await this.influencerService.getMyBookings(customerId, status);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get(['influencer-bookings/:id', 'customer/influencer-bookings/:id'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get booking details by ID (enforcing customer isolation)' })
+  async getBookingById(@Req() req: any, @Param('id') id: string) {
+    const customerId = this.resolveCustomerId(req);
+    const data = await this.influencerService.getBookingById(customerId, id);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post(['influencer-bookings/:id/cancel', 'customer/influencer-bookings/:id/cancel'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Cancel an upcoming booking' })
+  async cancelBooking(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('reason') reason?: string,
+  ) {
+    const customerId = this.resolveCustomerId(req);
+    const data = await this.influencerService.cancelBooking(customerId, id, reason);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Booking cancelled successfully',
       data,
     };
   }
@@ -91,17 +184,69 @@ export class InfluencerController {
   // ADMIN PANEL MANAGEMENT APIS
   // =========================================================================
 
+  // Categories
+  @Get('admin/influencer-categories')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get all influencer categories (Admin)' })
+  async getAllCategoriesAdmin() {
+    const data = await this.influencerService.getAllCategoriesAdmin();
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post('admin/influencer-categories')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Create new influencer category (Admin)' })
+  async createCategory(@Body() dto: CreateInfluencerCategoryDto) {
+    const data = await this.influencerService.createCategory(dto);
+    return {
+      statusCode: 201,
+      success: true,
+      message: 'Category created successfully',
+      data,
+    };
+  }
+
+  @Patch('admin/influencer-categories/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Update influencer category (Admin)' })
+  async updateCategory(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateInfluencerCategoryDto,
+  ) {
+    const data = await this.influencerService.updateCategory(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Category updated successfully',
+      data,
+    };
+  }
+
+  @Delete('admin/influencer-categories/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Delete influencer category (Admin)' })
+  async deleteCategory(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.deleteCategory(id);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Category deleted successfully',
+      data,
+    };
+  }
+
+  // Influencers
   @Get('admin/influencers')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Get all influencers including inactive (Admin)' })
-  async getAllInfluencersAdmin() {
-    const data = await this.influencerService.getAllInfluencersAdmin();
-    return {
-      statusCode: 200,
-      success: true,
-      data,
-    };
+  async getAllInfluencersAdmin(@Query() query: any) {
+    const data = await this.influencerService.getAllInfluencersAdmin(query);
+    return { statusCode: 200, success: true, data };
   }
 
   @Post('admin/influencers')
@@ -116,6 +261,15 @@ export class InfluencerController {
       message: 'Influencer created successfully',
       data,
     };
+  }
+
+  @Get('admin/influencers/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get single influencer details (Admin)' })
+  async getInfluencerAdmin(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.getInfluencerById(id);
+    return { statusCode: 200, success: true, data };
   }
 
   @Patch('admin/influencers/:id')
@@ -145,6 +299,219 @@ export class InfluencerController {
       statusCode: 200,
       success: true,
       message: 'Influencer deleted successfully',
+      data,
+    };
+  }
+
+  // Packages
+  @Get('admin/influencers/:id/packages')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get all packages for an influencer (Admin)' })
+  async getAllPackagesAdmin(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.getAllPackagesAdmin(id);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post('admin/influencers/:id/packages')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Create package for influencer (Admin)' })
+  async createPackage(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateInfluencerPackageDto,
+  ) {
+    const data = await this.influencerService.createPackage(id, dto);
+    return {
+      statusCode: 201,
+      success: true,
+      message: 'Package created successfully',
+      data,
+    };
+  }
+
+  @Patch('admin/influencer-packages/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Update influencer package (Admin)' })
+  async updatePackage(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateInfluencerPackageDto,
+  ) {
+    const data = await this.influencerService.updatePackage(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Package updated successfully',
+      data,
+    };
+  }
+
+  @Delete('admin/influencer-packages/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Delete influencer package (Admin)' })
+  async deletePackage(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.deletePackage(id);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Package deleted successfully',
+      data,
+    };
+  }
+
+  // Availability
+  @Get('admin/influencers/:id/availability')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get influencer availability (Admin)' })
+  async getAvailabilityAdmin(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const data = await this.influencerService.getAvailability(id, startDate, endDate);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post('admin/influencers/:id/availability')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Set or toggle date availability for influencer (Admin)' })
+  async setAvailability(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetInfluencerAvailabilityDto,
+  ) {
+    const data = await this.influencerService.setAvailability(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Availability updated successfully',
+      data,
+    };
+  }
+
+  @Delete('admin/influencer-availability/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Remove availability slot (Admin)' })
+  async deleteAvailability(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.deleteAvailability(id);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Availability slot deleted successfully',
+      data,
+    };
+  }
+
+  // Bookings Management
+  @Get('admin/influencer-bookings')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'List all bookings with search, filters and pagination (Admin)' })
+  async getAllBookingsAdmin(@Query() query: any) {
+    const data = await this.influencerService.getAllBookingsAdmin(query);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get('admin/influencer-bookings/stats')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get booking KPIs: totalBookings, pendingApproval, totalRevenue (Admin)' })
+  async getBookingStatsAdmin() {
+    const data = await this.influencerService.getBookingStatsAdmin();
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get('admin/influencer-bookings/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get single booking details with payments (Admin)' })
+  async getBookingDetailsAdmin(@Param('id') id: string) {
+    const data = await this.influencerService.getBookingById(0, id, true);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Patch('admin/influencer-bookings/:id/status')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Update booking status (Admin)' })
+  async updateBookingStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateBookingStatusDto,
+  ) {
+    const data = await this.influencerService.updateBookingStatusAdmin(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Booking status updated successfully',
+      data,
+    };
+  }
+
+  @Patch('admin/influencer-bookings/:id/payment-status')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Update payment status (Admin)' })
+  async updatePaymentStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePaymentStatusDto,
+  ) {
+    const data = await this.influencerService.updatePaymentStatusAdmin(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Payment status updated successfully',
+      data,
+    };
+  }
+
+  @Post('admin/influencer-bookings/:id/approve')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Approve pending booking (Admin)' })
+  async approveBooking(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.approveBookingAdmin(id);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Booking approved successfully',
+      data,
+    };
+  }
+
+  @Post('admin/influencer-bookings/:id/reject')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Reject booking (Admin)' })
+  async rejectBooking(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('reason') reason?: string,
+  ) {
+    const data = await this.influencerService.rejectBookingAdmin(id, reason);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Booking rejected successfully',
+      data,
+    };
+  }
+
+  @Post('admin/influencer-bookings/:id/cancel')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Cancel booking (Admin)' })
+  async cancelBookingAdmin(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('reason') reason?: string,
+  ) {
+    const data = await this.influencerService.cancelBooking(0, id, reason, true);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Booking cancelled by admin',
       data,
     };
   }
