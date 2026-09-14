@@ -27,6 +27,8 @@ export enum IntegrationProvider {
   AWS = 'AWS',
   MSG91 = 'MSG91',
   SHIPROCKET = 'SHIPROCKET',
+  OPENAI = 'OPENAI',
+  GEMINI = 'GEMINI',
 }
 
 export function normalizeProvider(provider: string): string {
@@ -43,7 +45,23 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'AWS' || norm === 'AMAZON' || norm === 'S3' || norm === 'AWS_S3' || norm === 'AMAZON_S3') return IntegrationProvider.AWS;
   if (norm === 'MSG91' || norm === 'MSG_91' || norm === 'SMS_MSG91' || norm === 'OTP_MSG91') return IntegrationProvider.MSG91;
   if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
+  if (norm === 'OPENAI' || norm === 'OPEN_AI' || norm === 'CHATGPT') return IntegrationProvider.OPENAI;
+  if (norm === 'GEMINI' || norm === 'GOOGLE_GEMINI' || norm === 'GOOGLE_AI') return IntegrationProvider.GEMINI;
   return norm;
+}
+
+export interface OpenAiDynamicConfig {
+  apiKey: string;
+  isEnabled: boolean;
+  isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+}
+
+export interface GeminiDynamicConfig {
+  apiKey: string;
+  isEnabled: boolean;
+  isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
 export interface AwsS3DynamicConfig {
@@ -357,6 +375,35 @@ export class IntegrationSettingsService {
         };
       }
 
+      case IntegrationProvider.OPENAI: {
+        const apiKey = (process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '').trim();
+        return {
+          provider: IntegrationProvider.OPENAI,
+          isEnabled: Boolean(apiKey),
+          environment: 'LIVE',
+          credentials: { apiKey },
+          config: {},
+          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
+      case IntegrationProvider.GEMINI: {
+        const apiKey = (
+          process.env.GEMINI_API_KEY ||
+          process.env.GOOGLE_GEMINI_API_KEY ||
+          process.env.GOOGLE_API_KEY ||
+          ''
+        ).trim();
+        return {
+          provider: IntegrationProvider.GEMINI,
+          isEnabled: Boolean(apiKey),
+          environment: 'LIVE',
+          credentials: { apiKey },
+          config: {},
+          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
       default:
         return {
           provider: normProvider,
@@ -549,6 +596,36 @@ export class IntegrationSettingsService {
   }
 
   /**
+   * Typed helper for OpenAI dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getOpenAiConfig(): Promise<OpenAiDynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.OPENAI);
+    const creds = conf?.credentials || {};
+    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.OPENAI_API_KEY || ''));
+    const isConfigured = Boolean(apiKey);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+
+    return { apiKey, isEnabled, isConfigured, source };
+  }
+
+  /**
+   * Typed helper for Google Gemini dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getGeminiConfig(): Promise<GeminiDynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.GEMINI);
+    const creds = conf?.credentials || {};
+    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''));
+    const isConfigured = Boolean(apiKey);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+
+    return { apiKey, isEnabled, isConfigured, source };
+  }
+
+  /**
    * Updates or creates integration settings in PostgreSQL, encrypting sensitive fields,
    * invalidating the cache immediately, and writing an audit log.
    */
@@ -562,6 +639,18 @@ export class IntegrationSettingsService {
     // Fetch existing configuration to handle masked credentials retention
     const existing = await this.getIntegrationConfig(normProvider);
     const existingCreds = existing?.credentials || {};
+
+    // Validate non-empty API key for AI integrations
+    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI) {
+      const incomingKey = dto.credentials?.apiKey;
+      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : 'Google Gemini';
+      if (incomingKey !== undefined && typeof incomingKey === 'string' && incomingKey.trim().length === 0) {
+        throw new BadRequestException(`${providerLabel} API Key cannot be empty or whitespace-only`);
+      }
+      if (!existingCreds.apiKey && (!incomingKey || typeof incomingKey !== 'string' || !incomingKey.trim())) {
+        throw new BadRequestException(`${providerLabel} API Key is required`);
+      }
+    }
 
     const incomingCreds = dto.credentials || {};
     const encryptedCreds: Record<string, any> = {};
@@ -836,6 +925,8 @@ export class IntegrationSettingsService {
       IntegrationProvider.WHATSAPP,
       IntegrationProvider.AWS,
       IntegrationProvider.MSG91,
+      IntegrationProvider.OPENAI,
+      IntegrationProvider.GEMINI,
     ];
     const results = [];
 
@@ -1111,6 +1202,80 @@ export class IntegrationSettingsService {
             err?.message ||
             'Could not authenticate with MSG91';
           throw new BadRequestException(`MSG91 connection test failed: ${errMsg}`);
+        }
+      }
+
+      case IntegrationProvider.OPENAI: {
+        const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
+        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+          throw new BadRequestException('OpenAI API Key is required to test connection');
+        }
+
+        try {
+          const response = await axios.get('https://api.openai.com/v1/models', {
+            headers: {
+              Authorization: `Bearer ${apiKey.trim()}`,
+            },
+            timeout: 8000,
+          });
+
+          if (response.status === 200) {
+            return {
+              success: true,
+              provider: 'OPENAI',
+              status: 'CONNECTED',
+              message: 'OpenAI API Key verified successfully!',
+              details: {
+                keyPrefix: apiKey.trim().substring(0, Math.min(7, apiKey.trim().length)) + '...',
+                modelsCount: response.data?.data?.length || 0,
+              },
+            };
+          }
+          throw new Error(`Unexpected response: ${response.status}`);
+        } catch (err: any) {
+          this.logger.error(`[OPENAI_TEST_FAILED] ${err?.message}`);
+          const errMsg =
+            err?.response?.data?.error?.message ||
+            err?.message ||
+            'Could not authenticate with OpenAI API';
+          throw new BadRequestException(`OpenAI connection test failed: ${errMsg}`);
+        }
+      }
+
+      case IntegrationProvider.GEMINI: {
+        const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
+        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+          throw new BadRequestException('Google Gemini API Key is required to test connection');
+        }
+
+        try {
+          const response = await axios.get(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`,
+            {
+              timeout: 8000,
+            },
+          );
+
+          if (response.status === 200) {
+            return {
+              success: true,
+              provider: 'GEMINI',
+              status: 'CONNECTED',
+              message: 'Google Gemini API Key verified successfully!',
+              details: {
+                keyPrefix: apiKey.trim().substring(0, Math.min(8, apiKey.trim().length)) + '...',
+                modelsCount: response.data?.models?.length || 0,
+              },
+            };
+          }
+          throw new Error(`Unexpected response: ${response.status}`);
+        } catch (err: any) {
+          this.logger.error(`[GEMINI_TEST_FAILED] ${err?.message}`);
+          const errMsg =
+            err?.response?.data?.error?.message ||
+            err?.message ||
+            'Could not authenticate with Google Gemini API';
+          throw new BadRequestException(`Google Gemini connection test failed: ${errMsg}`);
         }
       }
 

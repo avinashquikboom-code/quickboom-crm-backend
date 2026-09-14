@@ -6,6 +6,7 @@ import {
   VideoGenerationResult,
 } from './ai-provider.interface';
 import { S3Service } from '../s3/s3.service';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -15,7 +16,10 @@ export class AiProviderService implements IAiProvider {
   private readonly logger = new Logger(AiProviderService.name);
   private readonly videoJobs = new Map<string, VideoGenerationResult>();
 
-  constructor(private readonly s3Service: S3Service) {}
+  constructor(
+    private readonly s3Service: S3Service,
+    private readonly integrationSettingsService?: IntegrationSettingsService,
+  ) {}
 
   /**
    * Generates tailored marketing text, caption, and hashtags
@@ -36,6 +40,58 @@ export class AiProviderService implements IAiProvider {
     const resolvedTone = tone || 'Premium';
     const resolvedCta = cta || 'Order Now';
     const lang = language || 'English';
+
+    // Check if Gemini is configured in Integration Settings
+    if (this.integrationSettingsService) {
+      try {
+        const geminiConfig = await this.integrationSettingsService.getGeminiConfig();
+        if (geminiConfig?.apiKey && geminiConfig?.isEnabled !== false) {
+          const promptText = `Generate a compelling marketing post for: "${product}".
+Objective: ${objective || 'Product Launch'}
+Platform: ${plat}
+Language: ${lang}
+Tone: ${resolvedTone}
+Call to Action: ${resolvedCta}
+Special Instructions: ${instructions || 'None'}
+
+Return ONLY a valid JSON object with the following structure:
+{
+  "caption": "engaging post caption with body and call to action",
+  "hashtags": ["#tag1", "#tag2", "#tag3"],
+  "cta": "${resolvedCta}"
+}`;
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiConfig.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }],
+                generationConfig: { responseMimeType: 'application/json' },
+              }),
+            },
+          );
+
+          if (response.ok) {
+            const data = (await response.json()) as any;
+            const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (textOutput) {
+              const parsed = JSON.parse(textOutput);
+              if (parsed.caption && Array.isArray(parsed.hashtags)) {
+                return {
+                  caption: parsed.caption,
+                  hashtags: parsed.hashtags,
+                  cta: parsed.cta || resolvedCta,
+                };
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`Gemini API text generation error: ${err?.message}; using template engine.`);
+      }
+    }
 
     // Hook styles based on objective
     const hooks: Record<string, string> = {
@@ -103,6 +159,71 @@ export class AiProviderService implements IAiProvider {
     referenceImageUrl?: string;
   }): Promise<ImageGenerationResult> {
     const { product, objective, cta, tone } = params;
+
+    // Check if OpenAI is configured in Integration Settings
+    if (this.integrationSettingsService) {
+      try {
+        const openAiConfig = await this.integrationSettingsService.getOpenAiConfig();
+        if (openAiConfig?.apiKey && openAiConfig?.isEnabled !== false) {
+          const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
+
+          const response = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${openAiConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: 'dall-e-3',
+              prompt,
+              n: 1,
+              size: '1024x1024',
+              response_format: 'b64_json',
+            }),
+          });
+
+          if (response.ok) {
+            const data = (await response.json()) as any;
+            const b64 = data?.data?.[0]?.b64_json;
+            if (b64) {
+              const buffer = Buffer.from(b64, 'base64');
+              const uniqueId = crypto.randomBytes(8).toString('hex');
+              const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
+
+              let mediaUrl = `/uploads/ai-posters/${filename}`;
+              try {
+                const s3Res = await this.s3Service.uploadFile(
+                  {
+                    buffer,
+                    originalname: filename,
+                    mimetype: 'image/png',
+                    size: buffer.length,
+                  } as any,
+                  'ai-studio',
+                );
+                if (s3Res?.imageUrl) {
+                  mediaUrl = s3Res.imageUrl;
+                }
+              } catch {
+                const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+                fs.mkdirSync(uploadDir, { recursive: true });
+                fs.writeFileSync(path.join(uploadDir, filename), buffer);
+              }
+
+              return {
+                buffer,
+                url: mediaUrl,
+                fileKey: filename,
+                width: 1024,
+                height: 1024,
+              };
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`OpenAI image generation error: ${err?.message}; falling back to SVG vector poster.`);
+      }
+    }
 
     // Generate high-definition SVG vector poster
     const primaryColor = tone?.toLowerCase() === 'luxury' || tone?.toLowerCase() === 'premium' ? '#0F172A' : '#047857';
