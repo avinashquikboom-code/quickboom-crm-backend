@@ -74,14 +74,14 @@ export class InfluencerController {
     return { statusCode: 200, success: true, data };
   }
 
-  @Get('influencers/:id/packages')
+  @Get(['influencers/:id/packages', 'customer/influencers/:id/packages'])
   @ApiOperation({ summary: 'Get active packages for an influencer' })
   async getPackages(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getPackages(id);
     return { statusCode: 200, success: true, data };
   }
 
-  @Get('influencers/:id/availability')
+  @Get(['influencers/:id/availability', 'customer/influencers/:id/availability'])
   @ApiOperation({ summary: 'Get available dates and time slots for an influencer' })
   async getAvailability(
     @Param('id', ParseIntPipe) id: number,
@@ -92,7 +92,7 @@ export class InfluencerController {
     return { statusCode: 200, success: true, data };
   }
 
-  @Post('customer/influencers/:id/favorite')
+  @Post(['influencers/:id/favorite', 'customer/influencers/:id/favorite'])
   @ApiOperation({ summary: 'Toggle favorite status for an influencer' })
   async toggleFavorite(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const customerId = req.user?.customerId || req.user?.id;
@@ -115,11 +115,17 @@ export class InfluencerController {
       statusCode: 201,
       success: true,
       message: 'Influencer booking created successfully',
+      data: result.booking,
       ...result,
     };
   }
 
-  @Post(['influencer-bookings/verify-payment', 'influencer-bookings/:id/verify-payment'])
+  @Post([
+    'influencer-bookings/verify-payment',
+    'customer/influencer-bookings/verify-payment',
+    'influencer-bookings/:id/verify-payment',
+    'customer/influencer-bookings/:id/verify-payment',
+  ])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Verify server-side Razorpay payment and confirm booking' })
@@ -137,6 +143,7 @@ export class InfluencerController {
       statusCode: 200,
       success: true,
       message: result.message,
+      data: result.booking,
       booking: result.booking,
     };
   }
