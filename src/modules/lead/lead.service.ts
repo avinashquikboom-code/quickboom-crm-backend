@@ -69,57 +69,34 @@ export class LeadService {
   }
 
   async getStages(customerId?: number | string, includeInactive = true) {
-    // System stage defaults (always shown, even if not seeded in DB)
-    const SYSTEM_STAGE_DEFAULTS = [
-      { id: null, key: 'NEW',           name: 'New',            label: 'New',            sortOrder: 0,  color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'CONTACTED',     name: 'Contacted',      label: 'Contacted',      sortOrder: 1,  color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'FOLLOW_UP',     name: 'Follow-up',      label: 'Follow-up',      sortOrder: 2,  color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'VISIT',         name: 'Visit Scheduled',label: 'Visit Scheduled',sortOrder: 3,  color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'QUALIFIED',     name: 'Qualified',      label: 'Qualified',      sortOrder: 4,  color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'PROPOSAL',      name: 'Proposal',       label: 'Proposal',       sortOrder: 5,  color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'PROPOSAL_SENT', name: 'Proposal Sent',  label: 'Proposal Sent',  sortOrder: 6,  color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'NEGOTIATION',   name: 'Negotiation',    label: 'Negotiation',    sortOrder: 7,  color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'FINAL_CALL',    name: 'Final Call',     label: 'Final Call',     sortOrder: 8,  color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'PAYMENT',       name: 'Payment Pending',label: 'Payment Pending',sortOrder: 9,  color: '#2563EB', bgColor: '#DBEAFE', borderColor: '#BFDBFE', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'WORK_STARTED',  name: 'Work Started',   label: 'Work Started',   sortOrder: 10, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'WON',           name: 'Won',            label: 'Won',            sortOrder: 11, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'CONVERTED',     name: 'Converted',      label: 'Converted',      sortOrder: 12, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'LOST',          name: 'Lost',           label: 'Lost',           sortOrder: 13, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', isActive: true, isSystem: true, leadsCount: 0 },
-      { id: null, key: 'CANCELLED',     name: 'Cancelled',      label: 'Cancelled',      sortOrder: 14, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', isActive: true, isSystem: true, leadsCount: 0 },
-    ];
-
+    // Stage Management is the SINGLE SOURCE OF TRUTH.
+    // Do NOT merge hardcoded system defaults here — only return what is configured in DB.
     let dbStages: any[] = [];
     try {
       dbStages = await this.leadRepository.findStages(customerId, includeInactive) ?? [];
-    } catch {
-      // If DB query fails, fall back to system defaults only
-      return SYSTEM_STAGE_DEFAULTS;
+    } catch (err) {
+      // If DB query fails, return empty array — do NOT silently fall back to hardcoded list.
+      // The caller (frontend) will show a proper error/retry state.
+      console.error('[LeadService] getStages DB query failed:', err);
+      return [];
     }
 
-    // Map DB stages to response format
-    const dbMapped = dbStages.map((stage: any) => ({
-      id: stage.id,
-      key: stage.key,
-      name: stage.name,
-      label: stage.name,
-      color: stage.color,
-      bgColor: stage.bgColor,
-      borderColor: stage.borderColor,
-      sortOrder: stage.sortOrder,
-      isActive: stage.isActive,
-      isSystem: stage.isSystem ?? false,
-      leadsCount: stage._count?.leads ?? 0,
-    }));
-
-    // Always merge: DB stages take priority; add system defaults for any keys missing from DB
-    const dbKeys = new Set(dbStages.map((s: any) => s.key));
-    const missingSystemStages = SYSTEM_STAGE_DEFAULTS.filter((s) => !dbKeys.has(s.key));
-
-    const allStages = [...dbMapped, ...missingSystemStages].sort(
-      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
-    );
-
-    return allStages;
+    // Map DB stages to response format and sort by sortOrder
+    return dbStages
+      .map((stage: any) => ({
+        id: stage.id,
+        key: stage.key,
+        name: stage.name,
+        label: stage.name,
+        color: stage.color,
+        bgColor: stage.bgColor,
+        borderColor: stage.borderColor,
+        sortOrder: stage.sortOrder,
+        isActive: stage.isActive,
+        isSystem: stage.isSystem ?? false,
+        leadsCount: stage._count?.leads ?? 0,
+      }))
+      .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }
 
   async createStage(customerId: number | string | undefined, user: any, dto: CreateLeadStageDto) {
