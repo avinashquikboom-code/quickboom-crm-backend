@@ -956,15 +956,23 @@ export class LeadRepository {
 
   async findStages(customerId?: number | string, includeInactive = true) {
     const numCustomerId = Number(customerId);
-    const where: any = { deletedAt: null };
-    if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.OR = [{ customerId: numCustomerId }, { customerId: null }];
-    } else {
-      where.customerId = null;
+    const hasCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
+
+    let targetCustomerId: number | null = null;
+    if (hasCustomer) {
+      const customerCount = await this.prisma.leadStage.count({
+        where: { customerId: numCustomerId, deletedAt: null },
+      });
+      if (customerCount > 0) {
+        targetCustomerId = numCustomerId;
+      }
     }
-    if (!includeInactive) {
-      where.isActive = true;
-    }
+
+    const where: any = {
+      customerId: targetCustomerId,
+      deletedAt: null,
+      ...(includeInactive ? {} : { isActive: true }),
+    };
 
     return this.prisma.leadStage.findMany({
       where,
@@ -975,7 +983,7 @@ export class LeadRepository {
             leads: {
               where: {
                 deletedAt: null,
-                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {}),
+                ...(hasCustomer ? { customerId: numCustomerId } : {}),
               },
             },
           },
