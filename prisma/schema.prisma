@@ -404,12 +404,15 @@ model LeadStatusHistory {
   leadId      Int
   fromStatus  LeadStatus?
   toStatus    LeadStatus
+  fromStageId Int?
+  toStageId   Int?
   changedById Int?
   notes       String?
   createdAt   DateTime    @default(now())
   lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([leadId])
+  @@index([toStageId])
 }
 
 model LeadNote {
@@ -1967,18 +1970,23 @@ enum SubscriptionBillingCycle {
 
 enum LeadStatus {
   NEW
-  FOLLOW_UP
   CONTACTED
+  CALL_BACK
+  DETAILS_SENT
+  FOLLOW_UP
+  VISIT_SCHEDULED
+  VISIT_DONE
+  PROPOSAL_SENT
+  NEGOTIATION
+  FINAL_CALL
+  WON
+  LOST
+  // Legacy values kept for backward compatibility
   VISIT
   QUALIFIED
   PROPOSAL
-  PROPOSAL_SENT
-  FINAL_CALL
-  NEGOTIATION
   PAYMENT
   WORK_STARTED
-  WON
-  LOST
   CANCELLED
   CONVERTED
 }

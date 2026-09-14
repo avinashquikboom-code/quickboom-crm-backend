@@ -22,6 +22,7 @@ import {
   LogFollowUpDto,
   ManageVisitDto,
   RecordPaymentDto,
+  ReorderLeadStagesDto,
   StartWorkDto,
   UpdateLeadDto,
   UpdateLeadStageDto,
@@ -83,6 +84,16 @@ export class LeadController {
     @Body() dto: CreateLeadStageDto,
   ) {
     return this.leadService.createStage(customerId, user, dto);
+  }
+
+  @Patch('stages/reorder')
+  @ApiOperation({ summary: 'Reorder lead stages by updating their sort order positions in bulk' })
+  async reorderStages(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: ReorderLeadStagesDto,
+  ) {
+    return this.leadService.reorderStages(customerId, user, dto);
   }
 
   @Patch('stages/:id')

@@ -3,6 +3,55 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
+const DEFAULT_LEAD_STAGES = [
+  { key: 'NEW',              name: 'New',              sortOrder: 1,  color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD' },
+  { key: 'CONTACTED',       name: 'Contacted',        sortOrder: 2,  color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
+  { key: 'CALL_BACK',       name: 'Call Back',        sortOrder: 3,  color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF' },
+  { key: 'DETAILS_SENT',    name: 'Details Sent',     sortOrder: 4,  color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF' },
+  { key: 'FOLLOW_UP',       name: 'Follow-Up',        sortOrder: 5,  color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
+  { key: 'VISIT_SCHEDULED', name: 'Visit Scheduled',  sortOrder: 6,  color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
+  { key: 'VISIT_DONE',      name: 'Visit Done',       sortOrder: 7,  color: '#0891B2', bgColor: '#E0F7FA', borderColor: '#B2EBF2' },
+  { key: 'PROPOSAL_SENT',   name: 'Proposal Sent',    sortOrder: 8,  color: '#7C3AED', bgColor: '#EDE9FE', borderColor: '#DDD6FE' },
+  { key: 'NEGOTIATION',     name: 'Negotiation',      sortOrder: 9,  color: '#B45309', bgColor: '#FFFBEB', borderColor: '#FDE68A' },
+  { key: 'FINAL_CALL',      name: 'Final Call',       sortOrder: 10, color: '#C2410C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
+  { key: 'WON',             name: 'Won',              sortOrder: 11, color: '#15803D', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
+  { key: 'LOST',            name: 'Lost',             sortOrder: 12, color: '#DC2626', bgColor: '#FFF1F2', borderColor: '#FECDD3' },
+];
+
+async function seedDefaultLeadStages(customerId: number | null) {
+  let created = 0;
+  for (const stage of DEFAULT_LEAD_STAGES) {
+    try {
+      await prisma.leadStage.upsert({
+        where: {
+          customerId_key: { customerId: customerId as any, key: stage.key },
+        },
+        update: {}, // Never overwrite existing data
+        create: {
+          customerId,
+          name: stage.name,
+          key: stage.key,
+          sortOrder: stage.sortOrder,
+          color: stage.color,
+          bgColor: stage.bgColor,
+          borderColor: stage.borderColor,
+          isActive: true,
+          isSystem: true,
+        },
+      });
+      created++;
+    } catch (err: any) {
+      // Skip if already exists with different unique key structure
+      if (!err.message?.includes('Unique constraint')) throw err;
+    }
+  }
+  if (created > 0) {
+    console.log(`✅ Seeded ${created} default lead stages for customer ${customerId ?? 'global'}`);
+  } else {
+    console.log(`✓  Lead stages already exist for customer ${customerId ?? 'global'} — skipped`);
+  }
+}
+
 async function main() {
   const email = 'admin@quickboom.com';
   const legacyEmail = 'admin@quikboom.com';
@@ -139,6 +188,9 @@ async function main() {
       data: { isActive: true },
     });
   }
+
+  // 4.1 Seed default lead stages for the default customer (idempotent)
+  await seedDefaultLeadStages(customer.id);
 
   // 5. Create or update Demo Mobile Employee User (demo@gmail.com / 123456)
   const demoEmail = 'demo@gmail.com';

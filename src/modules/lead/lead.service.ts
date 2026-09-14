@@ -11,6 +11,7 @@ import {
   LogFollowUpDto,
   ManageVisitDto,
   RecordPaymentDto,
+  ReorderLeadStagesDto,
   StartWorkDto,
   UpdateLeadDto,
   UpdateLeadStageDto,
@@ -70,18 +71,22 @@ export class LeadService {
 
   async getStages(customerId?: number | string, includeInactive = true) {
     // Stage Management is the SINGLE SOURCE OF TRUTH.
-    // Do NOT merge hardcoded system defaults here — only return what is configured in DB.
+    // Auto-seed default stages for a new workspace on first call.
+    const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+    try {
+      await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
+    } catch (err) {
+      console.warn('[LeadService] ensureDefaultStagesForCustomer failed (non-fatal):', err);
+    }
+
     let dbStages: any[] = [];
     try {
       dbStages = await this.leadRepository.findStages(customerId, includeInactive) ?? [];
     } catch (err) {
-      // If DB query fails, return empty array — do NOT silently fall back to hardcoded list.
-      // The caller (frontend) will show a proper error/retry state.
       console.error('[LeadService] getStages DB query failed:', err);
       return [];
     }
 
-    // Map DB stages to response format and sort by sortOrder
     return dbStages
       .map((stage: any) => ({
         id: stage.id,
@@ -109,6 +114,13 @@ export class LeadService {
       throw new NotFoundException(`Stage with ID ${id} not found`);
     }
     return this.leadRepository.updateStage(id, dto);
+  }
+
+  async reorderStages(customerId: number | string | undefined, user: any, dto: ReorderLeadStagesDto) {
+    if (!dto.stages || dto.stages.length === 0) {
+      throw new BadRequestException('stages array cannot be empty.');
+    }
+    return this.leadRepository.reorderStages(customerId, dto.stages);
   }
 
   async deleteStage(customerId: number | string | undefined, user: any, id: number | string) {

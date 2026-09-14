@@ -19,9 +19,14 @@ export function normalizeLeadStatus(value: any): any {
   const parenMatch = trimmed.match(/\(([^)]+)\)$/);
   const rawKey = parenMatch ? parenMatch[1].trim() : trimmed;
   const upper = rawKey.toUpperCase().replace(/[\s-]+/g, '_');
+  // New 12-stage sequence mappings
+  if (upper === 'CALL_BACK' || upper === 'CALLBACK') return LeadStatus.CALL_BACK;
+  if (upper === 'DETAILS_SENT' || upper === 'DETAILSSENT') return LeadStatus.DETAILS_SENT;
+  if (upper === 'VISIT_SCHEDULED' || upper === 'VISITSCHEDULED') return LeadStatus.VISIT_SCHEDULED;
+  if (upper === 'VISIT_DONE' || upper === 'VISITDONE') return LeadStatus.VISIT_DONE;
+  // Legacy compatibility mappings
   if (upper === 'WON_CONVERTED' || upper === 'CONVERT') return LeadStatus.CONVERTED;
   if (upper === 'FOLLOWUP' || upper === 'FOLLOW_UP') return LeadStatus.FOLLOW_UP;
-  if (upper === 'VISIT_SCHEDULED') return LeadStatus.VISIT;
   if (upper === 'PAYMENT_PENDING') return LeadStatus.PAYMENT;
   if (upper === 'FINALCALL') return LeadStatus.FINAL_CALL;
   if (upper === 'WORKSTARTED') return LeadStatus.WORK_STARTED;
@@ -520,3 +525,28 @@ export class CreateLeadStageDto {
 
 export class UpdateLeadStageDto extends PartialType(CreateLeadStageDto) {}
 
+export class ReorderLeadStagesItemDto {
+  @ApiProperty({ example: 3, description: 'Stage ID' })
+  @IsNumber()
+  id: number;
+
+  @ApiProperty({ example: 2, description: 'New sort order / position (1-based)' })
+  @IsNumber()
+  sortOrder: number;
+}
+
+export class ReorderLeadStagesDto {
+  @ApiProperty({
+    type: [ReorderLeadStagesItemDto],
+    description: 'Array of stage IDs and their new sort order positions',
+    example: [
+      { id: 1, sortOrder: 1 },
+      { id: 3, sortOrder: 2 },
+      { id: 2, sortOrder: 3 },
+    ],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReorderLeadStagesItemDto)
+  stages: ReorderLeadStagesItemDto[];
+}

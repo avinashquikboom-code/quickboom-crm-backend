@@ -530,6 +530,28 @@ export class LeadRepository {
       if (matchStage) resolvedStageId = matchStage.id;
     }
 
+    // Resolve fromStageId from the current lead before update
+    let fromStageId: number | undefined;
+    if (fromStatus && this.prisma.leadStage) {
+      const currentLead = await this.prisma.lead.findUnique({ where: { id: numId }, select: { stageId: true } });
+      if (currentLead?.stageId) {
+        fromStageId = currentLead.stageId;
+      } else {
+        const fromStage = await this.prisma.leadStage.findFirst({
+          where: {
+            key: fromStatus,
+            deletedAt: null,
+            OR: [
+              ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+              { customerId: null },
+            ],
+          },
+          orderBy: { customerId: 'desc' },
+        });
+        if (fromStage) fromStageId = fromStage.id;
+      }
+    }
+
     const updateData: any = { status: toStatus };
     if (resolvedStageId) {
       updateData.stageId = resolvedStageId;
@@ -540,21 +562,24 @@ export class LeadRepository {
       data: updateData,
     });
 
+    // Record full history with stage IDs so UI can resolve stage names from API
     await this.prisma.leadStatusHistory.create({
       data: {
         leadId: numId,
         fromStatus,
         toStatus,
+        fromStageId: fromStageId ?? null,
+        toStageId: resolvedStageId ?? null,
         changedById: numUserId,
         notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${toStatus}`,
-      },
+      } as any,
     });
 
     await this.logTimeline(
       numId,
       'STATUS_CHANGED',
       `Stage updated to ${toStatus}${notes ? ` (${notes})` : ''}`,
-      { fromStatus, toStatus },
+      { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
     );
   }
 
@@ -1024,5 +1049,97 @@ export class LeadRepository {
       ],
     };
     return this.prisma.lead.count({ where });
+  }
+
+  /**
+   * Reorder stages — bulk update sortOrder in a single transaction.
+   * Validates that every stage ID belongs to the given customer before updating.
+   */
+  async reorderStages(
+    customerId: number | string | undefined,
+    stages: { id: number; sortOrder: number }[],
+  ) {
+    const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+
+    // Validate ownership: all stage IDs must belong to this customer
+    if (numCustomerId) {
+      const stageIds = stages.map((s) => Number(s.id));
+      const owned = await this.prisma.leadStage.findMany({
+        where: {
+          id: { in: stageIds },
+          deletedAt: null,
+          OR: [{ customerId: numCustomerId }, { customerId: null }],
+        },
+        select: { id: true },
+      });
+      const ownedIds = new Set(owned.map((s) => s.id));
+      const invalid = stageIds.filter((id) => !ownedIds.has(id));
+      if (invalid.length > 0) {
+        throw new Error(`Stage IDs [${invalid.join(', ')}] do not belong to this workspace.`);
+      }
+    }
+
+    // Validate no duplicate sortOrder values
+    const orders = stages.map((s) => s.sortOrder);
+    if (new Set(orders).size !== orders.length) {
+      throw new Error('Duplicate sortOrder values are not allowed.');
+    }
+
+    // Bulk update in transaction
+    return this.prisma.$transaction(
+      stages.map((s) =>
+        this.prisma.leadStage.update({
+          where: { id: Number(s.id) },
+          data: { sortOrder: Number(s.sortOrder) },
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Seed the 12 default lead stages for a customer if they don't already have any.
+   * Idempotent — safe to call multiple times.
+   */
+  async ensureDefaultStagesForCustomer(customerId: number | null) {
+    const DEFAULT_STAGES = [
+      { key: 'NEW',              name: 'New',              sortOrder: 1,  color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD' },
+      { key: 'CONTACTED',       name: 'Contacted',        sortOrder: 2,  color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
+      { key: 'CALL_BACK',       name: 'Call Back',        sortOrder: 3,  color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF' },
+      { key: 'DETAILS_SENT',    name: 'Details Sent',     sortOrder: 4,  color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF' },
+      { key: 'FOLLOW_UP',       name: 'Follow-Up',        sortOrder: 5,  color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
+      { key: 'VISIT_SCHEDULED', name: 'Visit Scheduled',  sortOrder: 6,  color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
+      { key: 'VISIT_DONE',      name: 'Visit Done',       sortOrder: 7,  color: '#0891B2', bgColor: '#E0F7FA', borderColor: '#B2EBF2' },
+      { key: 'PROPOSAL_SENT',   name: 'Proposal Sent',    sortOrder: 8,  color: '#7C3AED', bgColor: '#EDE9FE', borderColor: '#DDD6FE' },
+      { key: 'NEGOTIATION',     name: 'Negotiation',      sortOrder: 9,  color: '#B45309', bgColor: '#FFFBEB', borderColor: '#FDE68A' },
+      { key: 'FINAL_CALL',      name: 'Final Call',       sortOrder: 10, color: '#C2410C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
+      { key: 'WON',             name: 'Won',              sortOrder: 11, color: '#15803D', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
+      { key: 'LOST',            name: 'Lost',             sortOrder: 12, color: '#DC2626', bgColor: '#FFF1F2', borderColor: '#FECDD3' },
+    ];
+
+    const existingCount = await this.prisma.leadStage.count({
+      where: { customerId, deletedAt: null },
+    });
+
+    if (existingCount > 0) return; // Already has stages — don't overwrite
+
+    for (const stage of DEFAULT_STAGES) {
+      await this.prisma.leadStage.upsert({
+        where: {
+          customerId_key: { customerId: customerId as any, key: stage.key },
+        },
+        update: {}, // Don't overwrite existing
+        create: {
+          customerId,
+          name: stage.name,
+          key: stage.key,
+          sortOrder: stage.sortOrder,
+          color: stage.color,
+          bgColor: stage.bgColor,
+          borderColor: stage.borderColor,
+          isActive: true,
+          isSystem: true,
+        },
+      });
+    }
   }
 }
