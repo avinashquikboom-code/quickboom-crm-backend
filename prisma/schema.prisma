@@ -2590,7 +2590,7 @@ model Influencer {
   isVerified         Boolean                  @default(true)
   isFeatured         Boolean                  @default(true)
   isActive           Boolean                  @default(true)
-  status             String                   @default("ACTIVE") // ACTIVE, INACTIVE
+  status             String                   @default("PENDING") // PENDING, APPROVED, REJECTED, SUSPENDED, ACTIVE
   verificationStatus String                   @default("VERIFIED") // VERIFIED, PENDING, UNVERIFIED
   topCreator         Boolean                  @default(false)
   startingPrice      Float?
@@ -2598,6 +2598,18 @@ model Influencer {
   languages          String[]                 @default(["English", "Hindi"])
   instagramHandle    String?
   youtubeHandle      String?
+  email              String?                  @unique
+  phone              String?
+  passwordHash       String?
+  userId             Int?
+  socialLinks        Json?
+  rejectionReason    String?
+  approvedAt         DateTime?
+  approvedBy         Int?
+  rejectedAt         DateTime?
+  rejectedBy         Int?
+  suspendedAt        DateTime?
+  suspendedBy        Int?
   gender             String?
   ageRange           String?
   bookingUrl         String?
@@ -2615,6 +2627,8 @@ model Influencer {
   reviews            InfluencerReview[]
   bookings           InfluencerBooking[]
 
+  @@index([status])
+  @@index([email])
   @@index([isActive, isFeatured])
   @@index([categoryId])
   @@index([platform])

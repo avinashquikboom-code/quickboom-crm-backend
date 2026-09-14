@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -20,8 +21,12 @@ import {
   VerifyInfluencerPaymentDto,
   UpdateBookingStatusDto,
   UpdatePaymentStatusDto,
+  RegisterInfluencerDto,
+  RejectInfluencerDto,
+  ResubmitInfluencerDto,
 } from './dto/influencer.dto';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class InfluencerService {
@@ -43,7 +48,7 @@ export class InfluencerService {
         _count: {
           select: {
             influencers: {
-              where: { isActive: true, deletedAt: null },
+              where: { isActive: true, deletedAt: null, status: { in: ['APPROVED', 'ACTIVE'] } },
             },
           },
         },
@@ -59,7 +64,7 @@ export class InfluencerService {
           _count: {
             select: {
               influencers: {
-                where: { isActive: true, deletedAt: null },
+                where: { isActive: true, deletedAt: null, status: { in: ['APPROVED', 'ACTIVE'] } },
               },
             },
           },
@@ -162,6 +167,7 @@ export class InfluencerService {
     const whereClause: any = {
       deletedAt: null,
       isActive: true,
+      status: { in: ['APPROVED', 'ACTIVE'] },
     };
 
     if (query.featured === true || query.featured === 'true') {
@@ -196,7 +202,7 @@ export class InfluencerService {
       ];
     }
 
-    return this.prisma.influencer.findMany({
+    const influencers = await this.prisma.influencer.findMany({
       where: whereClause,
       include: {
         category: {
@@ -209,11 +215,22 @@ export class InfluencerService {
       },
       orderBy: [{ sortOrder: 'asc' }, { id: 'desc' }],
     });
+
+    return influencers.map((inf) => {
+      const { passwordHash: _, ...safe } = inf;
+      return safe;
+    });
   }
 
-  async getInfluencerById(id: number) {
+  async getInfluencerById(id: number, forAdmin: boolean = false) {
+    const whereCondition: any = { id, deletedAt: null };
+    if (!forAdmin) {
+      whereCondition.isActive = true;
+      whereCondition.status = { in: ['APPROVED', 'ACTIVE'] };
+    }
+
     const influencer = await this.prisma.influencer.findFirst({
-      where: { id, deletedAt: null },
+      where: whereCondition,
       include: {
         category: true,
         packages: {
@@ -237,9 +254,10 @@ export class InfluencerService {
       },
     });
     if (!influencer) {
-      throw new NotFoundException(`Influencer with ID ${id} not found`);
+      throw new NotFoundException(`Influencer with ID ${id} not found or not approved`);
     }
-    return influencer;
+    const { passwordHash: _, ...safe } = influencer;
+    return safe;
   }
 
   async getAllInfluencersAdmin(query?: any) {
@@ -266,7 +284,7 @@ export class InfluencerService {
       ];
     }
 
-    return this.prisma.influencer.findMany({
+    const list = await this.prisma.influencer.findMany({
       where: whereClause,
       include: {
         category: true,
@@ -279,6 +297,11 @@ export class InfluencerService {
         },
       },
       orderBy: [{ sortOrder: 'asc' }, { id: 'desc' }],
+    });
+
+    return list.map((item) => {
+      const { passwordHash: _, ...safe } = item;
+      return safe;
     });
   }
 
@@ -403,9 +426,27 @@ export class InfluencerService {
   // PACKAGES
   // =========================================================================
 
-  async getPackages(influencerId: number) {
+  async getPackages(influencerId: number, forAdmin: boolean = false) {
+    if (!forAdmin) {
+      const influencer = await this.prisma.influencer.findFirst({
+        where: {
+          id: influencerId,
+          deletedAt: null,
+          isActive: true,
+          status: { in: ['APPROVED', 'ACTIVE'] },
+        },
+      });
+      if (!influencer) {
+        throw new NotFoundException(`Influencer #${influencerId} not found or not approved`);
+      }
+    }
+
     return this.prisma.influencerPackage.findMany({
-      where: { influencerId, deletedAt: null, status: 'ACTIVE' },
+      where: {
+        influencerId,
+        deletedAt: null,
+        ...(forAdmin ? {} : { status: 'ACTIVE' }),
+      },
       orderBy: [{ sortOrder: 'asc' }, { price: 'asc' }],
     });
   }
@@ -474,7 +515,21 @@ export class InfluencerService {
   // AVAILABILITY
   // =========================================================================
 
-  async getAvailability(influencerId: number, startDate?: string, endDate?: string) {
+  async getAvailability(influencerId: number, startDate?: string, endDate?: string, forAdmin: boolean = false) {
+    if (!forAdmin) {
+      const influencer = await this.prisma.influencer.findFirst({
+        where: {
+          id: influencerId,
+          deletedAt: null,
+          isActive: true,
+          status: { in: ['APPROVED', 'ACTIVE'] },
+        },
+      });
+      if (!influencer) {
+        throw new NotFoundException(`Influencer #${influencerId} not found or not approved`);
+      }
+    }
+
     const where: any = {
       influencerId,
       deletedAt: null,
@@ -590,6 +645,12 @@ export class InfluencerService {
     });
     if (!influencer) {
       throw new NotFoundException(`Active influencer #${dto.influencerId} not found`);
+    }
+
+    if (influencer.status !== 'APPROVED' && influencer.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        `Influencer #${dto.influencerId} is currently ${influencer.status}. Only APPROVED influencers can receive new bookings.`,
+      );
     }
 
     // 2. Verify package existence and ownership
@@ -1158,5 +1219,337 @@ export class InfluencerService {
       });
       categoryMap.set(cat.slug, created.id);
     }
+  }
+
+  // =========================================================================
+  // SELF-REGISTRATION & APPLICATION WORKFLOW
+  // =========================================================================
+
+  async registerInfluencer(dto: RegisterInfluencerDto) {
+    const normalizedEmail = (dto.email || '').trim().toLowerCase();
+    const normalizedPhone = (dto.phone || '').trim();
+
+    if (!normalizedEmail) {
+      throw new BadRequestException('Email address is required');
+    }
+    if (!normalizedPhone) {
+      throw new BadRequestException('Mobile number is required');
+    }
+    if (!dto.name || !dto.name.trim()) {
+      throw new BadRequestException('Full name is required');
+    }
+    if (!dto.password || dto.password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+
+    const existingInfluencer = await this.prisma.influencer.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          { phone: normalizedPhone },
+        ],
+        deletedAt: null,
+      },
+    });
+    if (existingInfluencer) {
+      if (existingInfluencer.email === normalizedEmail) {
+        throw new ConflictException('An influencer application with this email already exists');
+      }
+      throw new ConflictException('An influencer application with this mobile number already exists');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+
+    let categoryName = dto.categoryName;
+    if (dto.categoryId && !categoryName) {
+      const cat = await this.prisma.influencerCategory.findUnique({
+        where: { id: dto.categoryId },
+      });
+      if (cat) categoryName = cat.name;
+    }
+
+    const handle = dto.instagramHandle
+      ? (dto.instagramHandle.startsWith('@') ? dto.instagramHandle : `@${dto.instagramHandle.replace(/https?:\/\/(www\.)?instagram\.com\//, '').replace(/\/$/, '')}`)
+      : `@${dto.name.toLowerCase().replace(/[^a-z0-9_]/g, '')}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const newInfluencer = await this.prisma.influencer.create({
+      data: {
+        name: dto.name.trim(),
+        handle,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        passwordHash,
+        categoryId: dto.categoryId,
+        categoryName,
+        bio: dto.bio,
+        location: dto.location || 'India',
+        city: dto.city,
+        platform: dto.platform || 'INSTAGRAM',
+        instagramHandle: dto.instagramHandle,
+        youtubeHandle: dto.youtubeHandle,
+        socialLinks: dto.socialLinks ? dto.socialLinks : undefined,
+        profileImage: dto.profileImage,
+        avatarUrl: dto.profileImage,
+        coverImage: dto.coverImage,
+        followers: dto.followers || 0,
+        followersCount: dto.followersCount || (dto.followers ? `${(dto.followers / 1000).toFixed(0)}K` : '0'),
+        startingPrice: dto.startingPrice,
+        status: 'PENDING', // STRICT SERVER ENFORCEMENT: Never trust client-injected status
+        isActive: false,   // Must remain inactive until approved by admin
+        isVerified: false,
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    const { passwordHash: _, ...safeInfluencer } = newInfluencer;
+
+    this.logger.log(`[INFLUENCER_REGISTERED] Creator registered: ${safeInfluencer.name} (${safeInfluencer.email}) with status PENDING`);
+
+    return {
+      success: true,
+      message: 'Application submitted successfully. It will be reviewed by our admin team.',
+      status: 'PENDING',
+      influencer: safeInfluencer,
+    };
+  }
+
+  async getApplicationStatus(identifier: string | number) {
+    const isNum = !isNaN(Number(identifier));
+    const influencer = await this.prisma.influencer.findFirst({
+      where: {
+        ...(isNum ? { id: Number(identifier) } : { email: String(identifier).trim().toLowerCase() }),
+        deletedAt: null,
+      },
+      include: {
+        category: true,
+      },
+    });
+    if (!influencer) {
+      throw new NotFoundException('Influencer application not found');
+    }
+    const { passwordHash: _, ...safeInfluencer } = influencer;
+    return safeInfluencer;
+  }
+
+  async resubmitApplication(id: number, dto: ResubmitInfluencerDto) {
+    const influencer = await this.prisma.influencer.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!influencer) {
+      throw new NotFoundException(`Influencer #${id} not found`);
+    }
+    if (influencer.status !== 'REJECTED') {
+      throw new BadRequestException('Only rejected influencer applications can be resubmitted');
+    }
+
+    const updated = await this.prisma.influencer.update({
+      where: { id },
+      data: {
+        ...(dto.name && { name: dto.name.trim() }),
+        ...(dto.categoryId !== undefined && { categoryId: dto.categoryId }),
+        ...(dto.categoryName !== undefined && { categoryName: dto.categoryName }),
+        ...(dto.bio !== undefined && { bio: dto.bio }),
+        ...(dto.location !== undefined && { location: dto.location }),
+        ...(dto.city !== undefined && { city: dto.city }),
+        ...(dto.instagramHandle !== undefined && { instagramHandle: dto.instagramHandle }),
+        ...(dto.youtubeHandle !== undefined && { youtubeHandle: dto.youtubeHandle }),
+        ...(dto.socialLinks !== undefined && { socialLinks: dto.socialLinks }),
+        ...(dto.profileImage !== undefined && { profileImage: dto.profileImage, avatarUrl: dto.profileImage }),
+        ...(dto.followers !== undefined && { followers: dto.followers }),
+        ...(dto.followersCount !== undefined && { followersCount: dto.followersCount }),
+        status: 'PENDING',
+        rejectionReason: null,
+        updatedAt: new Date(),
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    const { passwordHash: _, ...safeInfluencer } = updated;
+    this.logger.log(`[INFLUENCER_RESUBMITTED] Creator #${id} (${safeInfluencer.name}) resubmitted application for review`);
+
+    return {
+      success: true,
+      message: 'Application resubmitted successfully. It is now pending admin review.',
+      status: 'PENDING',
+      influencer: safeInfluencer,
+    };
+  }
+
+  // =========================================================================
+  // ADMIN APPLICATION REVIEW & LIFECYCLE MANAGEMENT
+  // =========================================================================
+
+  async getInfluencerApplicationsAdmin(query: any) {
+    const whereClause: any = {
+      deletedAt: null,
+    };
+
+    if (query?.status && query.status.toUpperCase() !== 'ALL') {
+      whereClause.status = query.status.toUpperCase();
+    }
+
+    if (query?.category && query.category.toLowerCase() !== 'all') {
+      whereClause.OR = [
+        { category: { slug: query.category.toLowerCase() } },
+        { category: { name: { contains: query.category, mode: 'insensitive' } } },
+        { categoryName: { contains: query.category, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query?.search && query.search.trim().length > 0) {
+      const search = query.search.trim();
+      whereClause.AND = [
+        {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { handle: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+            { phone: { contains: search, mode: 'insensitive' } },
+            { city: { contains: search, mode: 'insensitive' } },
+            { location: { contains: search, mode: 'insensitive' } },
+            { categoryName: { contains: search, mode: 'insensitive' } },
+          ],
+        },
+      ];
+    }
+
+    const [items, total, pendingCount, approvedCount, rejectedCount, suspendedCount] = await Promise.all([
+      this.prisma.influencer.findMany({
+        where: whereClause,
+        include: {
+          category: true,
+          packages: {
+            where: { deletedAt: null },
+            take: 5,
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+      }),
+      this.prisma.influencer.count({ where: { deletedAt: null } }),
+      this.prisma.influencer.count({ where: { deletedAt: null, status: 'PENDING' } }),
+      this.prisma.influencer.count({ where: { deletedAt: null, status: { in: ['APPROVED', 'ACTIVE'] } } }),
+      this.prisma.influencer.count({ where: { deletedAt: null, status: 'REJECTED' } }),
+      this.prisma.influencer.count({ where: { deletedAt: null, status: 'SUSPENDED' } }),
+    ]);
+
+    const safeItems = items.map((item) => {
+      const { passwordHash: _, ...safe } = item;
+      return safe;
+    });
+
+    return {
+      items: safeItems,
+      counts: {
+        total,
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        suspended: suspendedCount,
+      },
+    };
+  }
+
+  async approveInfluencerAdmin(id: number, adminId?: number) {
+    const influencer = await this.prisma.influencer.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!influencer) {
+      throw new NotFoundException(`Influencer #${id} not found`);
+    }
+
+    const updated = await this.prisma.influencer.update({
+      where: { id },
+      data: {
+        status: 'APPROVED',
+        isActive: true,
+        isVerified: true,
+        approvedAt: new Date(),
+        ...(adminId ? { approvedBy: adminId } : {}),
+        rejectionReason: null,
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    const { passwordHash: _, ...safe } = updated;
+    this.logger.log(`[INFLUENCER_APPROVED] Admin approved creator #${id} (${updated.name})`);
+
+    return {
+      success: true,
+      message: `Influencer ${updated.name} has been approved and is now live in the mobile hub`,
+      status: 'APPROVED',
+      influencer: safe,
+    };
+  }
+
+  async rejectInfluencerAdmin(id: number, dto: RejectInfluencerDto, adminId?: number) {
+    const influencer = await this.prisma.influencer.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!influencer) {
+      throw new NotFoundException(`Influencer #${id} not found`);
+    }
+
+    const updated = await this.prisma.influencer.update({
+      where: { id },
+      data: {
+        status: 'REJECTED',
+        isActive: false,
+        rejectionReason: dto.reason.trim(),
+        rejectedAt: new Date(),
+        ...(adminId ? { rejectedBy: adminId } : {}),
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    const { passwordHash: _, ...safe } = updated;
+    this.logger.log(`[INFLUENCER_REJECTED] Admin rejected creator #${id} (${updated.name}) reason: "${dto.reason}"`);
+
+    return {
+      success: true,
+      message: `Influencer ${updated.name} application has been rejected`,
+      status: 'REJECTED',
+      rejectionReason: dto.reason.trim(),
+      influencer: safe,
+    };
+  }
+
+  async suspendInfluencerAdmin(id: number, adminId?: number) {
+    const influencer = await this.prisma.influencer.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!influencer) {
+      throw new NotFoundException(`Influencer #${id} not found`);
+    }
+
+    const updated = await this.prisma.influencer.update({
+      where: { id },
+      data: {
+        status: 'SUSPENDED',
+        isActive: false,
+        suspendedAt: new Date(),
+        ...(adminId ? { suspendedBy: adminId } : {}),
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    const { passwordHash: _, ...safe } = updated;
+    this.logger.log(`[INFLUENCER_SUSPENDED] Admin suspended creator #${id} (${updated.name})`);
+
+    return {
+      success: true,
+      message: `Influencer ${updated.name} has been suspended and removed from mobile listings`,
+      status: 'SUSPENDED',
+      influencer: safe,
+    };
   }
 }

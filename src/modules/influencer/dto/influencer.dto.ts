@@ -640,3 +640,163 @@ export class UpdatePaymentStatusDto {
   @IsIn(['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED'])
   paymentStatus: string;
 }
+
+export class RegisterInfluencerDto {
+  @ApiProperty({ description: 'Full Name of the influencer', example: 'Rohan Joshi' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty({ description: 'Email address', example: 'rohan.joshi@example.com' })
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @ApiProperty({ description: 'Mobile / contact number', example: '+91 9876543210' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiProperty({ description: 'Account password (minimum 6 chars)', example: 'Secret@123' })
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+
+  @ApiPropertyOptional({ description: 'Category ID from categories catalog' })
+  @IsOptional()
+  @IsInt()
+  categoryId?: number;
+
+  @ApiPropertyOptional({ description: 'Category Name' })
+  @IsOptional()
+  @IsString()
+  categoryName?: string;
+
+  @ApiPropertyOptional({ description: 'Profile bio / description' })
+  @IsOptional()
+  @IsString()
+  bio?: string;
+
+  @ApiPropertyOptional({ description: 'Location / State / Country', default: 'India' })
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @ApiPropertyOptional({ description: 'City' })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({ description: 'Primary platform', default: 'INSTAGRAM' })
+  @IsOptional()
+  @IsString()
+  platform?: string;
+
+  @ApiPropertyOptional({ description: 'Instagram handle or URL' })
+  @IsOptional()
+  @IsString()
+  instagramHandle?: string;
+
+  @ApiPropertyOptional({ description: 'YouTube handle or channel URL' })
+  @IsOptional()
+  @IsString()
+  youtubeHandle?: string;
+
+  @ApiPropertyOptional({ description: 'Other social media profile links (Facebook, TikTok, LinkedIn)' })
+  @IsOptional()
+  socialLinks?: any;
+
+  @ApiPropertyOptional({ description: 'Profile avatar image URL' })
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
+
+  @ApiPropertyOptional({ description: 'Cover image URL' })
+  @IsOptional()
+  @IsString()
+  coverImage?: string;
+
+  @ApiPropertyOptional({ description: 'Estimated follower count as integer' })
+  @IsOptional()
+  @IsInt()
+  followers?: number;
+
+  @ApiPropertyOptional({ description: 'Formatted follower count (e.g. 50K)' })
+  @IsOptional()
+  @IsString()
+  followersCount?: string;
+
+  @ApiPropertyOptional({ description: 'Estimated base/starting fee' })
+  @IsOptional()
+  @IsNumber()
+  startingPrice?: number;
+}
+
+export class RejectInfluencerDto {
+  @ApiProperty({ description: 'Reason for rejection', example: 'Social profile could not be verified' })
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}
+
+export class ResubmitInfluencerDto {
+  @ApiPropertyOptional({ description: 'Full Name' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Category ID' })
+  @IsOptional()
+  @IsInt()
+  categoryId?: number;
+
+  @ApiPropertyOptional({ description: 'Category Name' })
+  @IsOptional()
+  @IsString()
+  categoryName?: string;
+
+  @ApiPropertyOptional({ description: 'Bio / description' })
+  @IsOptional()
+  @IsString()
+  bio?: string;
+
+  @ApiPropertyOptional({ description: 'Location' })
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @ApiPropertyOptional({ description: 'City' })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({ description: 'Instagram handle or URL' })
+  @IsOptional()
+  @IsString()
+  instagramHandle?: string;
+
+  @ApiPropertyOptional({ description: 'YouTube handle or URL' })
+  @IsOptional()
+  @IsString()
+  youtubeHandle?: string;
+
+  @ApiPropertyOptional({ description: 'Other social media links' })
+  @IsOptional()
+  socialLinks?: any;
+
+  @ApiPropertyOptional({ description: 'Profile image' })
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
+
+  @ApiPropertyOptional({ description: 'Follower count' })
+  @IsOptional()
+  @IsInt()
+  followers?: number;
+
+  @ApiPropertyOptional({ description: 'Follower count text' })
+  @IsOptional()
+  @IsString()
+  followersCount?: string;
+}
+

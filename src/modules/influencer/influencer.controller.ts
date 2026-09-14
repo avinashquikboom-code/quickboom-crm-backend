@@ -27,6 +27,9 @@ import {
   VerifyInfluencerPaymentDto,
   UpdateBookingStatusDto,
   UpdatePaymentStatusDto,
+  RegisterInfluencerDto,
+  RejectInfluencerDto,
+  ResubmitInfluencerDto,
 } from './dto/influencer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -98,6 +101,54 @@ export class InfluencerController {
     const customerId = req.user?.customerId || req.user?.id;
     const data = await this.influencerService.toggleFavorite(id, customerId);
     return { statusCode: 200, success: true, data };
+  }
+
+  // =========================================================================
+  // SELF-REGISTRATION & APPLICATION STATUS APIS
+  // =========================================================================
+
+  @Post(['influencers/register', 'customer/influencers/register'])
+  @ApiOperation({ summary: 'Self-register as a new influencer (starts in PENDING status)' })
+  async registerInfluencer(@Body() dto: RegisterInfluencerDto) {
+    const result = await this.influencerService.registerInfluencer(dto);
+    return {
+      statusCode: 201,
+      success: true,
+      message: result.message,
+      status: result.status,
+      data: result.influencer,
+    };
+  }
+
+  @Get(['influencers/application-status', 'customer/influencers/application-status'])
+  @ApiOperation({ summary: 'Check influencer application status by email or ID' })
+  async getApplicationStatus(
+    @Query('email') email?: string,
+    @Query('id') id?: string,
+    @Req() req?: any,
+  ) {
+    const identifier = id || email || req?.user?.email;
+    if (!identifier) {
+      throw new ForbiddenException('Email or application ID required to check status');
+    }
+    const data = await this.influencerService.getApplicationStatus(identifier);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Patch(['influencers/:id/resubmit', 'customer/influencers/:id/resubmit'])
+  @ApiOperation({ summary: 'Resubmit a rejected influencer application' })
+  async resubmitApplication(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ResubmitInfluencerDto,
+  ) {
+    const result = await this.influencerService.resubmitApplication(id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: result.message,
+      status: result.status,
+      data: result.influencer,
+    };
   }
 
   // =========================================================================
@@ -307,6 +358,86 @@ export class InfluencerController {
       success: true,
       message: 'Influencer deleted successfully',
       data,
+    };
+  }
+
+  // =========================================================================
+  // ADMIN APPLICATION REVIEW & APPROVAL APIS
+  // =========================================================================
+
+  @Get('admin/influencers/applications')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get influencer applications filtered by status (Admin)' })
+  async getInfluencerApplicationsAdmin(@Query() query: any) {
+    const result = await this.influencerService.getInfluencerApplicationsAdmin(query);
+    return {
+      statusCode: 200,
+      success: true,
+      data: result.items,
+      counts: result.counts,
+    };
+  }
+
+  @Get('admin/influencers/applications/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get full influencer application profile for review (Admin)' })
+  async getApplicationByIdAdmin(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.getInfluencerById(id, true);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Patch('admin/influencers/:id/approve')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Approve influencer application to make them live in mobile hub (Admin)' })
+  async approveInfluencerAdmin(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const adminId = req.user?.id;
+    const result = await this.influencerService.approveInfluencerAdmin(id, adminId);
+    return {
+      statusCode: 200,
+      success: true,
+      message: result.message,
+      status: result.status,
+      data: result.influencer,
+    };
+  }
+
+  @Patch('admin/influencers/:id/reject')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Reject influencer application with a reason (Admin)' })
+  async rejectInfluencerAdmin(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RejectInfluencerDto,
+    @Req() req: any,
+  ) {
+    const adminId = req.user?.id;
+    const result = await this.influencerService.rejectInfluencerAdmin(id, dto, adminId);
+    return {
+      statusCode: 200,
+      success: true,
+      message: result.message,
+      status: result.status,
+      rejectionReason: result.rejectionReason,
+      data: result.influencer,
+    };
+  }
+
+  @Patch('admin/influencers/:id/suspend')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Suspend an approved influencer (removes from mobile hub) (Admin)' })
+  async suspendInfluencerAdmin(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const adminId = req.user?.id;
+    const result = await this.influencerService.suspendInfluencerAdmin(id, adminId);
+    return {
+      statusCode: 200,
+      success: true,
+      message: result.message,
+      status: result.status,
+      data: result.influencer,
     };
   }
 
