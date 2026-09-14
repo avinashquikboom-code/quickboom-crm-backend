@@ -149,6 +149,29 @@ export class LeadService {
     return lead;
   }
 
+  async getLeadStatus(customerId: number | string, id: number | string) {
+    const lead = await this.getLeadById(customerId, id);
+    let stage = lead.stage;
+    if (!stage && lead.stageId) {
+      stage = await this.leadRepository.findStageById(lead.stageId);
+    }
+    if (!stage && lead.status) {
+      const stages = await this.leadRepository.findStages(customerId);
+      const match = stages.find((s: any) => s.key === lead.status);
+      if (match) {
+        stage = match;
+      }
+    }
+    return {
+      ...lead,
+      leadId: lead.id,
+      status: lead.status,
+      stageId: lead.stageId ?? stage?.id ?? null,
+      stage: stage ?? null,
+      statusHistory: lead.statusHistory ?? [],
+    };
+  }
+
   async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
     await this.getLeadById(customerId, id);
     await this.leadRepository.update(customerId, id, dto);

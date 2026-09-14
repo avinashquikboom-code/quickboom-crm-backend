@@ -154,6 +154,12 @@ export class LeadController {
     return this.leadService.convertLead(customerId, id, userId, dto);
   }
 
+  @Get(':id/status')
+  @ApiOperation({ summary: 'Get lead status and stage details by ID' })
+  async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.getLeadStatus(customerId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
