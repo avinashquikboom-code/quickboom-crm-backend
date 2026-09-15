@@ -383,6 +383,10 @@ export class TeamService {
 
   async remove(customerId: number | string | undefined, id: number | string, permanent = false) {
     const numId = Number(id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException('Valid Team ID is required');
+    }
+
     const where: any = { id: numId };
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
@@ -391,16 +395,47 @@ export class TeamService {
       }
     }
 
-    const team = await this.prisma.team.findFirst({ where });
+    const team = await this.prisma.team.findFirst({
+      where,
+      include: {
+        _count: {
+          select: {
+            members: true,
+            works: true,
+            assignedCustomers: true,
+          },
+        },
+      },
+    });
     if (!team) {
       throw new NotFoundException(`Team with ID ${id} not found in your organization`);
     }
 
     if (permanent) {
-      await this.prisma.team.delete({
-        where: { id: numId },
-      });
-      return { success: true, message: `Team "${team.name}" permanently deleted` };
+      const membersCount = (team as any)._count?.members ?? 0;
+      const worksCount = (team as any)._count?.works ?? 0;
+      const customersCount = (team as any)._count?.assignedCustomers ?? 0;
+      const hasLeader = team.leaderId !== null && team.leaderId !== undefined;
+
+      if (membersCount > 0 || worksCount > 0 || customersCount > 0 || hasLeader) {
+        throw new BadRequestException(
+          'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
+        );
+      }
+
+      try {
+        await this.prisma.team.delete({
+          where: { id: numId },
+        });
+        return { success: true, message: `Team "${team.name}" permanently deleted` };
+      } catch (err: any) {
+        if (err?.code === 'P2003' || err?.code === 'P2014') {
+          throw new BadRequestException(
+            'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
+          );
+        }
+        throw err;
+      }
     }
 
     await this.prisma.team.update({

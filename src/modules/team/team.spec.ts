@@ -222,13 +222,27 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       });
     });
 
-    it('should permanently delete team when permanent is true', async () => {
-      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, name: 'Alpha Team', customerId: 101 });
+    it('should permanently delete team when permanent is true and team has no assigned members or records', async () => {
+      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, name: 'Alpha Team', customerId: 101, leaderId: null, _count: { members: 0, works: 0, assignedCustomers: 0 } });
       mockPrismaService.team.delete.mockResolvedValue({ id: 1 });
 
       const res = await service.remove(101, 1, true);
       expect(res.success).toBe(true);
       expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    });
+
+    it('should throw BadRequestException when deleting a team with assigned members or records', async () => {
+      mockPrismaService.team.findFirst.mockResolvedValue({
+        id: 1,
+        name: 'Alpha Team',
+        customerId: 101,
+        leaderId: 10,
+        _count: { members: 2, works: 0, assignedCustomers: 0 },
+      });
+
+      await expect(service.remove(101, 1, true)).rejects.toThrow(
+        'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
+      );
     });
   });
 
