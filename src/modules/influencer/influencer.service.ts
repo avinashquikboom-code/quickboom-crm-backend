@@ -1389,7 +1389,8 @@ export class InfluencerService {
     };
 
     if (query?.status && query.status.toUpperCase() !== 'ALL') {
-      whereClause.status = query.status.toUpperCase();
+      const statusUpper = query.status.toUpperCase();
+      whereClause.status = statusUpper === 'APPROVED' ? { in: ['APPROVED', 'ACTIVE'] } : statusUpper;
     }
 
     if (query?.category && query.category.toLowerCase() !== 'all') {

@@ -9,9 +9,42 @@ import {
   IsEmail,
   IsNotEmpty,
   IsIn,
+  IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
+
+export enum InfluencerApplicationStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  SUSPENDED = 'SUSPENDED',
+  ALL = 'ALL',
+}
+
+export class FilterInfluencerApplicationsQueryDto {
+  @ApiPropertyOptional({
+    description: 'Filter applications by status',
+    enum: InfluencerApplicationStatus,
+    example: InfluencerApplicationStatus.PENDING,
+  })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase().trim() : value))
+  @IsEnum(InfluencerApplicationStatus, {
+    message: 'status must be one of the following values: PENDING, APPROVED, REJECTED, SUSPENDED, ALL',
+  })
+  status?: InfluencerApplicationStatus;
+
+  @ApiPropertyOptional({ description: 'Filter by category slug or name' })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({ description: 'Search term for name, handle, email, phone, city' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
 
 export class FilterInfluencersQueryDto {
   @ApiPropertyOptional({ description: 'Filter by category slug or name', example: 'fashion' })

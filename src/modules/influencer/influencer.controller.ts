@@ -17,6 +17,7 @@ import { InfluencerService } from './influencer.service';
 import {
   CreateInfluencerDto,
   FilterInfluencersQueryDto,
+  FilterInfluencerApplicationsQueryDto,
   UpdateInfluencerDto,
   CreateInfluencerCategoryDto,
   UpdateInfluencerCategoryDto,
@@ -70,6 +71,21 @@ export class InfluencerController {
     return { statusCode: 200, success: true, data };
   }
 
+  @Get(['influencers/application-status', 'customer/influencers/application-status'])
+  @ApiOperation({ summary: 'Check influencer application status by email or ID' })
+  async getApplicationStatus(
+    @Query('email') email?: string,
+    @Query('id') id?: string,
+    @Req() req?: any,
+  ) {
+    const identifier = id || email || req?.user?.email;
+    if (!identifier) {
+      throw new ForbiddenException('Email or application ID required to check status');
+    }
+    const data = await this.influencerService.getApplicationStatus(identifier);
+    return { statusCode: 200, success: true, data };
+  }
+
   @Get(['influencers/:id', 'customer/influencers/:id'])
   @ApiOperation({ summary: 'Get single influencer details with packages and availability' })
   async getInfluencerById(@Param('id', ParseIntPipe) id: number) {
@@ -118,21 +134,6 @@ export class InfluencerController {
       status: result.status,
       data: result.influencer,
     };
-  }
-
-  @Get(['influencers/application-status', 'customer/influencers/application-status'])
-  @ApiOperation({ summary: 'Check influencer application status by email or ID' })
-  async getApplicationStatus(
-    @Query('email') email?: string,
-    @Query('id') id?: string,
-    @Req() req?: any,
-  ) {
-    const identifier = id || email || req?.user?.email;
-    if (!identifier) {
-      throw new ForbiddenException('Email or application ID required to check status');
-    }
-    const data = await this.influencerService.getApplicationStatus(identifier);
-    return { statusCode: 200, success: true, data };
   }
 
   @Patch(['influencers/:id/resubmit', 'customer/influencers/:id/resubmit'])
@@ -321,6 +322,33 @@ export class InfluencerController {
     };
   }
 
+  // =========================================================================
+  // ADMIN APPLICATION REVIEW & APPROVAL APIS
+  // =========================================================================
+
+  @Get('admin/influencers/applications')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get influencer applications filtered by status (Admin)' })
+  async getInfluencerApplicationsAdmin(@Query() query: FilterInfluencerApplicationsQueryDto) {
+    const result = await this.influencerService.getInfluencerApplicationsAdmin(query);
+    return {
+      statusCode: 200,
+      success: true,
+      data: result.items,
+      counts: result.counts,
+    };
+  }
+
+  @Get('admin/influencers/applications/:id')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get full influencer application profile for review (Admin)' })
+  async getApplicationByIdAdmin(@Param('id', ParseIntPipe) id: number) {
+    const data = await this.influencerService.getInfluencerById(id, true);
+    return { statusCode: 200, success: true, data };
+  }
+
   @Get('admin/influencers/:id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -359,33 +387,6 @@ export class InfluencerController {
       message: 'Influencer deleted successfully',
       data,
     };
-  }
-
-  // =========================================================================
-  // ADMIN APPLICATION REVIEW & APPROVAL APIS
-  // =========================================================================
-
-  @Get('admin/influencers/applications')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @ApiOperation({ summary: 'Get influencer applications filtered by status (Admin)' })
-  async getInfluencerApplicationsAdmin(@Query() query: any) {
-    const result = await this.influencerService.getInfluencerApplicationsAdmin(query);
-    return {
-      statusCode: 200,
-      success: true,
-      data: result.items,
-      counts: result.counts,
-    };
-  }
-
-  @Get('admin/influencers/applications/:id')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @ApiOperation({ summary: 'Get full influencer application profile for review (Admin)' })
-  async getApplicationByIdAdmin(@Param('id', ParseIntPipe) id: number) {
-    const data = await this.influencerService.getInfluencerById(id, true);
-    return { statusCode: 200, success: true, data };
   }
 
   @Patch('admin/influencers/:id/approve')

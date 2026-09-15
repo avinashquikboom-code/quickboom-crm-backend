@@ -95,7 +95,7 @@ describe('InfluencerService - Integrity and Isolation Tests', () => {
 
   describe('Authoritative Pricing & Double Booking Validation', () => {
     it('calculates packageAmount, platform fee, GST and total amount server-side', async () => {
-      prisma.influencer.findFirst.mockResolvedValue({ id: 5, isActive: true });
+      prisma.influencer.findFirst.mockResolvedValue({ id: 5, isActive: true, status: 'APPROVED' });
       prisma.influencerPackage.findFirst.mockResolvedValue({
         id: 12,
         influencerId: 5,
