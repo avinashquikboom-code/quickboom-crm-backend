@@ -19,18 +19,27 @@ export function normalizeLeadStatus(value: any): any {
   const parenMatch = trimmed.match(/\(([^)]+)\)$/);
   const rawKey = parenMatch ? parenMatch[1].trim() : trimmed;
   const upper = rawKey.toUpperCase().replace(/[\s-]+/g, '_');
-  // New 12-stage sequence mappings
+  // Canonical and new 12-stage sequence mappings
+  if (upper === 'NEW') return LeadStatus.NEW;
+  if (upper === 'CONTACTED') return LeadStatus.CONTACTED;
   if (upper === 'CALL_BACK' || upper === 'CALLBACK') return LeadStatus.CALL_BACK;
   if (upper === 'DETAILS_SENT' || upper === 'DETAILSSENT') return LeadStatus.DETAILS_SENT;
+  if (upper === 'FOLLOW_UP' || upper === 'FOLLOWUP') return LeadStatus.FOLLOW_UP;
   if (upper === 'VISIT_SCHEDULED' || upper === 'VISITSCHEDULED') return LeadStatus.VISIT_SCHEDULED;
   if (upper === 'VISIT_DONE' || upper === 'VISITDONE') return LeadStatus.VISIT_DONE;
+  if (upper === 'PROPOSAL_SENT' || upper === 'PROPOSALSENT') return LeadStatus.PROPOSAL_SENT;
+  if (upper === 'NEGOTIATION') return LeadStatus.NEGOTIATION;
+  if (upper === 'FINAL_CALL' || upper === 'FINALCALL') return LeadStatus.FINAL_CALL;
+  if (upper === 'WON') return LeadStatus.WON;
+  if (upper === 'LOST') return LeadStatus.LOST;
   // Legacy compatibility mappings
-  if (upper === 'WON_CONVERTED' || upper === 'CONVERT') return LeadStatus.CONVERTED;
-  if (upper === 'FOLLOWUP' || upper === 'FOLLOW_UP') return LeadStatus.FOLLOW_UP;
-  if (upper === 'PAYMENT_PENDING') return LeadStatus.PAYMENT;
-  if (upper === 'FINALCALL') return LeadStatus.FINAL_CALL;
-  if (upper === 'WORKSTARTED') return LeadStatus.WORK_STARTED;
-  if (upper === 'PROPOSALSENT') return LeadStatus.PROPOSAL_SENT;
+  if (upper === 'VISIT') return LeadStatus.VISIT;
+  if (upper === 'QUALIFIED') return LeadStatus.QUALIFIED;
+  if (upper === 'PROPOSAL') return LeadStatus.PROPOSAL;
+  if (upper === 'PAYMENT' || upper === 'PAYMENT_PENDING') return LeadStatus.PAYMENT;
+  if (upper === 'WORK_STARTED' || upper === 'WORKSTARTED') return LeadStatus.WORK_STARTED;
+  if (upper === 'CANCELLED') return LeadStatus.CANCELLED;
+  if (upper === 'CONVERTED' || upper === 'WON_CONVERTED' || upper === 'CONVERT') return LeadStatus.CONVERTED;
   return upper;
 }
 
@@ -95,11 +104,11 @@ export class CreateLeadDto {
   @IsOptional()
   source?: string;
 
-  @ApiPropertyOptional({ enum: LeadStatus, example: LeadStatus.NEW })
-  @Transform(({ value }) => normalizeLeadStatus(value))
-  @IsEnum(LeadStatus)
+  @ApiPropertyOptional({ example: LeadStatus.NEW })
+  @Transform(({ value }) => (value ? normalizeLeadStatus(value) : undefined))
+  @IsString()
   @IsOptional()
-  status?: LeadStatus;
+  status?: string;
 
   @ApiPropertyOptional({ enum: LeadPriority, example: LeadPriority.HIGH })
   @IsEnum(LeadPriority)
@@ -107,6 +116,7 @@ export class CreateLeadDto {
   priority?: LeadPriority;
 
   @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
   stageId?: number;
@@ -475,13 +485,14 @@ export class StartWorkDto {
 }
 
 export class UpdateLeadStatusDto {
-  @ApiPropertyOptional({ enum: LeadStatus, example: LeadStatus.FOLLOW_UP })
+  @ApiPropertyOptional({ example: LeadStatus.FOLLOW_UP })
   @Transform(({ value }) => (value ? normalizeLeadStatus(value) : undefined))
-  @IsEnum(LeadStatus)
+  @IsString()
   @IsOptional()
-  status?: LeadStatus;
+  status?: string;
 
   @ApiPropertyOptional({ example: 2 })
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
   stageId?: number;

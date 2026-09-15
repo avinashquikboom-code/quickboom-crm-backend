@@ -505,6 +505,8 @@ export class LeadRepository {
     userId: number | string,
     notes?: string,
     stageId?: number,
+    fromStageIdParam?: number | null,
+    stageName?: string,
   ) {
     const numId = Number(id);
     const numCustomerId = Number(customerId);
@@ -530,10 +532,12 @@ export class LeadRepository {
       if (matchStage) resolvedStageId = matchStage.id;
     }
 
-    // Resolve fromStageId from the current lead before update
-    let fromStageId: number | undefined;
-    if (fromStatus && this.prisma.leadStage) {
-      const currentLead = await this.prisma.lead.findUnique({ where: { id: numId }, select: { stageId: true } });
+    // Resolve fromStageId from param or from the current lead before update
+    let fromStageId: number | null = fromStageIdParam !== undefined ? fromStageIdParam : null;
+    if (fromStageId === null && fromStatus && this.prisma.leadStage) {
+      const currentLead = await (this.prisma.lead.findUnique
+        ? this.prisma.lead.findUnique({ where: { id: numId }, select: { stageId: true } })
+        : this.prisma.lead.findFirst({ where: { id: numId } }));
       if (currentLead?.stageId) {
         fromStageId = currentLead.stageId;
       } else {
@@ -571,14 +575,14 @@ export class LeadRepository {
         fromStageId: fromStageId ?? null,
         toStageId: resolvedStageId ?? null,
         changedById: numUserId,
-        notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${toStatus}`,
+        notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${stageName || toStatus}`,
       } as any,
     });
 
     await this.logTimeline(
       numId,
       'STATUS_CHANGED',
-      `Stage updated to ${toStatus}${notes ? ` (${notes})` : ''}`,
+      `Stage updated to ${stageName || toStatus}${notes ? ` (${notes})` : ''}`,
       { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
     );
   }
@@ -960,9 +964,11 @@ export class LeadRepository {
 
     let targetCustomerId: number | null = null;
     if (hasCustomer) {
-      const customerCount = await this.prisma.leadStage.count({
-        where: { customerId: numCustomerId, deletedAt: null },
-      });
+      const customerCount = typeof this.prisma.leadStage?.count === 'function'
+        ? await this.prisma.leadStage.count({
+            where: { customerId: numCustomerId, deletedAt: null },
+          })
+        : 0;
       if (customerCount > 0) {
         targetCustomerId = numCustomerId;
       }
@@ -1124,11 +1130,14 @@ export class LeadRepository {
       { key: 'LOST',            name: 'Lost',             sortOrder: 12, color: '#DC2626', bgColor: '#FFF1F2', borderColor: '#FECDD3' },
     ];
 
-    const existingCount = await this.prisma.leadStage.count({
-      where: { customerId, deletedAt: null },
-    });
+    const existingCount = typeof this.prisma.leadStage?.count === 'function'
+      ? await this.prisma.leadStage.count({
+          where: { customerId, deletedAt: null },
+        })
+      : 0;
 
     if (existingCount > 0) return; // Already has stages — don't overwrite
+    if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
     for (const stage of DEFAULT_STAGES) {
       await this.prisma.leadStage.upsert({

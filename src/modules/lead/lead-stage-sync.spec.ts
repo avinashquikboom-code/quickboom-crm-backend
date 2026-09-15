@@ -83,6 +83,7 @@ describe('Lead Stage / Status Synchronization Tests', () => {
       { id: 13, customerId: null, name: 'Converted', key: 'CONVERTED', color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', sortOrder: 12, isActive: true, isSystem: true, deletedAt: null },
       { id: 14, customerId: null, name: 'Lost', key: 'LOST', color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', sortOrder: 13, isActive: true, isSystem: true, deletedAt: null },
       { id: 15, customerId: null, name: 'Cancelled', key: 'CANCELLED', color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', sortOrder: 14, isActive: true, isSystem: true, deletedAt: null },
+      { id: 16, customerId: null, name: 'Details Sent', key: 'DETAILS_SENT', color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF', sortOrder: 3, isActive: true, isSystem: true, deletedAt: null },
     ];
 
     prisma = {
@@ -446,6 +447,104 @@ describe('Lead Stage / Status Synchronization Tests', () => {
       const errors = await validate(dto);
       expect(errors.length).toBe(0);
       expect(dto.status).toBe(LeadStatus.VISIT);
+    });
+
+    it('Validates stageId without status (authoritative dynamic stage flow)', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const { UpdateLeadStatusDto } = await import('./dto/lead.dto');
+
+      const dto = plainToInstance(UpdateLeadStatusDto, { stageId: 16 });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.stageId).toBe(16);
+      expect(dto.status).toBeUndefined();
+    });
+
+    it('Accepts custom dynamic stage strings without failing with enum validation error', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const { UpdateLeadStatusDto } = await import('./dto/lead.dto');
+
+      const dto = plainToInstance(UpdateLeadStatusDto, { status: 'DOCUMENTS VERIFIED', stageId: 99 });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.status).toBe('DOCUMENTS_VERIFIED');
+    });
+  });
+
+  describe('6. Dynamic Stage Management & Lead Details Transitions', () => {
+    it('Transitions CONTACTED -> DETAILS_SENT using authoritative stageId and creates audit history', async () => {
+      // 1. Move to CONTACTED first
+      await service.updateStatus(1, 101, 999, { stageId: 2 });
+      const contactedLead = await service.getLeadById(1, 101);
+      expect(contactedLead.status).toBe(LeadStatus.CONTACTED);
+      expect(contactedLead.stageId).toBe(2);
+
+      // 2. Select DETAILS SENT (stageId: 16) without passing status
+      const updated = await service.updateStatus(1, 101, 999, { stageId: 16 });
+      expect(updated.stageId).toBe(16);
+      expect(updated.status).toBe(LeadStatus.DETAILS_SENT);
+
+      // 3. Verify history recorded actual stage IDs and statuses
+      const lastHistory = statusHistoryTable[statusHistoryTable.length - 1];
+      expect(lastHistory.fromStageId).toBe(2);
+      expect(lastHistory.toStageId).toBe(16);
+      expect(lastHistory.fromStatus).toBe(LeadStatus.CONTACTED);
+      expect(lastHistory.toStatus).toBe(LeadStatus.DETAILS_SENT);
+    });
+
+    it('Transitions to a custom dynamic stage (DOCUMENTS VERIFIED) without enum errors', async () => {
+      // 1. Move lead to DETAILS_SENT first
+      await service.updateStatus(1, 101, 999, { stageId: 16 });
+      const current = await service.getLeadById(1, 101);
+      expect(current.status).toBe(LeadStatus.DETAILS_SENT);
+
+      // 2. Create a custom dynamic stage in Stage Management
+      const customStage = await service.createStage(1, { id: 999 }, {
+        name: 'Documents Verified',
+        color: '#8B5CF6',
+        sortOrder: 15,
+      });
+      expect(customStage.id).toBeDefined();
+      expect(customStage.name).toBe('Documents Verified');
+      expect(customStage.key).toBe('DOCUMENTS_VERIFIED');
+
+      // 3. Update lead to the custom stage using stageId
+      const updated = await service.updateStatus(1, 101, 999, { stageId: customStage.id });
+      expect(updated.stageId).toBe(customStage.id);
+      // Status remains a valid enum (preserves DETAILS_SENT), does not crash with unknown enum
+      expect(updated.status).toBe(LeadStatus.DETAILS_SENT);
+
+      // 4. Verify history records the custom stage ID
+      const lastHistory = statusHistoryTable[statusHistoryTable.length - 1];
+      expect(lastHistory.fromStageId).toBe(16);
+      expect(lastHistory.toStageId).toBe(customStage.id);
+    });
+
+    it('Enforces tenant isolation: rejects assigning another company’s stage', async () => {
+      // Create stage belonging strictly to Customer 2
+      const customer2Stage = await service.createStage(2, { id: 888 }, {
+        name: 'Customer 2 Exclusive Stage',
+        color: '#10B981',
+      });
+
+      // Customer 1 tries to use Customer 2's stage -> must throw ForbiddenException
+      await expect(
+        service.updateStatus(1, 101, 999, { stageId: customer2Stage.id }),
+      ).rejects.toThrow('Lead stage does not belong to your company/workspace');
+    });
+
+    it('Guards against assigning an inactive stage to a lead', async () => {
+      // Create an inactive stage
+      const inactiveStage = await service.createStage(1, { id: 999 }, {
+        name: 'Deprecated Archived Stage',
+        isActive: false,
+      });
+
+      await expect(
+        service.updateStatus(1, 101, 999, { stageId: inactiveStage.id }),
+      ).rejects.toThrow('Cannot transition lead to inactive stage');
     });
   });
 });

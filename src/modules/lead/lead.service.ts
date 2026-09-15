@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { LeadStatus } from '@prisma/client';
 import { LeadRepository } from './lead.repository';
 import {
   CheckDuplicateDto,
@@ -16,6 +17,7 @@ import {
   UpdateLeadDto,
   UpdateLeadStageDto,
   UpdateLeadStatusDto,
+  normalizeLeadStatus,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -46,6 +48,32 @@ export class LeadService {
     const user = typeof userOrId === 'object' ? userOrId : { id: userOrId };
     const userId = Number(user.id);
 
+    const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
+    const numCustomerId = Number(customerId);
+    let resolvedStageId: number | undefined = dto.stageId ? Number(dto.stageId) : undefined;
+    let resolvedStatus: LeadStatus = LeadStatus.NEW;
+
+    if (resolvedStageId) {
+      const stage = await this.leadRepository.findStageById(resolvedStageId);
+      if (stage) {
+        const normKey = normalizeLeadStatus(stage.key);
+        if (ALL_LEAD_STATUSES.includes(normKey)) {
+          resolvedStatus = normKey as LeadStatus;
+        }
+      }
+    } else if (dto.status) {
+      const normStatus = normalizeLeadStatus(dto.status);
+      if (ALL_LEAD_STATUSES.includes(normStatus)) {
+        resolvedStatus = normStatus as LeadStatus;
+      }
+    }
+
+    const sanitizedDto = {
+      ...dto,
+      status: resolvedStatus,
+      ...(resolvedStageId ? { stageId: resolvedStageId } : {}),
+    };
+
     // Concurrency-safe atomic check and lead creation within a transaction
     const lead = await this.prisma.$transaction(async (tx) => {
       let employeeId: number | null = null;
@@ -53,7 +81,7 @@ export class LeadService {
         const limitRes = await this.leadLimitService.validateAndConsumeLeadLimit(tx, customerId, user);
         employeeId = limitRes.employeeId;
       }
-      return this.leadRepository.create(customerId, userId, dto, employeeId, tx);
+      return this.leadRepository.create(customerId, userId, sanitizedDto as any, employeeId, tx);
     });
 
     await this.leadRepository.logTimeline(
@@ -173,8 +201,39 @@ export class LeadService {
   }
 
   async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
-    await this.getLeadById(customerId, id);
-    await this.leadRepository.update(customerId, id, dto);
+    const lead = await this.getLeadById(customerId, id);
+    const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
+
+    let resolvedStageId: number | undefined = dto.stageId !== undefined ? (dto.stageId ? Number(dto.stageId) : undefined) : undefined;
+    let resolvedStatus: LeadStatus | undefined = undefined;
+
+    if (resolvedStageId) {
+      const stage = await this.leadRepository.findStageById(resolvedStageId);
+      if (stage) {
+        const normKey = normalizeLeadStatus(stage.key);
+        if (ALL_LEAD_STATUSES.includes(normKey)) {
+          resolvedStatus = normKey as LeadStatus;
+        } else {
+          // Custom stage: keep existing lead status
+          resolvedStatus = lead.status as LeadStatus;
+        }
+      }
+    } else if (dto.status) {
+      const normStatus = normalizeLeadStatus(dto.status);
+      if (ALL_LEAD_STATUSES.includes(normStatus)) {
+        resolvedStatus = normStatus as LeadStatus;
+      } else {
+        resolvedStatus = lead.status as LeadStatus;
+      }
+    }
+
+    const sanitizedDto = {
+      ...dto,
+      ...(resolvedStageId !== undefined ? { stageId: resolvedStageId } : {}),
+      ...(resolvedStatus !== undefined ? { status: resolvedStatus } : {}),
+    };
+
+    await this.leadRepository.update(customerId, id, sanitizedDto as any);
     await this.leadRepository.logTimeline(
       id,
       'LEAD_UPDATED',
@@ -185,25 +244,63 @@ export class LeadService {
 
   async updateStatus(customerId: number | string, id: number | string, userId: number | string, dto: UpdateLeadStatusDto) {
     const lead = await this.getLeadById(customerId, id);
+    const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
-    let resolvedStatus = dto.status;
+    let resolvedStageId: number | undefined = dto.stageId ? Number(dto.stageId) : undefined;
+    let resolvedStatus: LeadStatus = lead.status as LeadStatus;
+    let stageName: string | undefined;
 
-    // If status is not provided (custom stage selected), resolve it from the stageId
-    if (!resolvedStatus && dto.stageId) {
-      const stage = await this.leadRepository.findStageById(dto.stageId);
-      const VALID_STATUSES = [
-        'NEW', 'FOLLOW_UP', 'CONTACTED', 'VISIT', 'QUALIFIED', 'PROPOSAL',
-        'PROPOSAL_SENT', 'FINAL_CALL', 'NEGOTIATION', 'PAYMENT',
-        'WORK_STARTED', 'WON', 'LOST', 'CANCELLED', 'CONVERTED',
-      ];
-      if (stage && VALID_STATUSES.includes(stage.key)) {
-        resolvedStatus = stage.key as any;
+    if (resolvedStageId) {
+      // 1. Resolve LeadStage from DB
+      const stage = await this.leadRepository.findStageById(resolvedStageId);
+      if (!stage) {
+        throw new NotFoundException(`Lead stage with ID ${resolvedStageId} not found`);
       }
-    }
 
-    // Fall back to the existing lead status if nothing was resolved
-    if (!resolvedStatus) {
-      resolvedStatus = lead.status as any;
+      stageName = stage.name;
+
+      // 2. Tenant verification (workspace/company/tenant isolation)
+      const numCustomerId = Number(customerId);
+      if (
+        stage.customerId !== null &&
+        !isNaN(numCustomerId) &&
+        numCustomerId > 0 &&
+        Number(stage.customerId) !== numCustomerId
+      ) {
+        throw new ForbiddenException('Lead stage does not belong to your company/workspace');
+      }
+
+      // 3. Prevent assigning inactive stages (unless lead was already on this stage)
+      if (!stage.isActive && lead.stageId !== stage.id) {
+        throw new BadRequestException(`Cannot transition lead to inactive stage "${stage.name}"`);
+      }
+
+      // 4. Map to legacy status ONLY if there is a valid enum match, otherwise keep existing lead.status
+      const normKey = normalizeLeadStatus(stage.key);
+      if (ALL_LEAD_STATUSES.includes(normKey)) {
+        resolvedStatus = normKey as LeadStatus;
+      } else if (dto.status) {
+        const normDtoStatus = normalizeLeadStatus(dto.status);
+        if (ALL_LEAD_STATUSES.includes(normDtoStatus)) {
+          resolvedStatus = normDtoStatus as LeadStatus;
+        }
+      }
+    } else if (dto.status) {
+      // Legacy status update without stageId
+      const normStatus = normalizeLeadStatus(dto.status);
+      if (!ALL_LEAD_STATUSES.includes(normStatus)) {
+        throw new BadRequestException(`Invalid status "${dto.status}". Must be a recognized status or supply a valid stageId.`);
+      }
+      resolvedStatus = normStatus as LeadStatus;
+      // Try to resolve matching stage for this tenant
+      const stages = await this.leadRepository.findStages(customerId);
+      const matchStage = stages.find((s: any) => s.key === resolvedStatus);
+      if (matchStage) {
+        resolvedStageId = matchStage.id;
+        stageName = matchStage.name;
+      }
+    } else {
+      throw new BadRequestException('Either stageId or status must be provided.');
     }
 
     await this.leadRepository.updateStatus(
@@ -213,7 +310,9 @@ export class LeadService {
       resolvedStatus,
       userId,
       dto.notes,
-      dto.stageId,
+      resolvedStageId,
+      lead.stageId,
+      stageName,
     );
     return this.getLeadById(customerId, id);
   }
