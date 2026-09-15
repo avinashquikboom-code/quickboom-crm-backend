@@ -852,17 +852,25 @@ export class InfluencerService {
 
     // Check for offline payment request
     const isOffline =
-      (dto as any).paymentMethod === 'OFFLINE' ||
+      dto.paymentMethod === 'OFFLINE' ||
       dto.razorpaySignature === 'OFFLINE' ||
       dto.razorpayPaymentId?.startsWith('offline_');
 
     if (isOffline) {
+      const refNum = dto.referenceNumber || dto.razorpayPaymentId || `offline_${Date.now()}`;
+      const noteParts: string[] = [];
+      if (booking.notes) noteParts.push(booking.notes);
+      noteParts.push(`[Offline Payment] Reference: ${refNum}`);
+      if (dto.notes) noteParts.push(`Notes: ${dto.notes}`);
+      if (dto.proofUrl) noteParts.push(`Proof: ${dto.proofUrl}`);
+
       const updatedBooking = await this.prisma.influencerBooking.update({
         where: { id: booking.id },
         data: {
-          paymentStatus: 'PENDING',
+          paymentStatus: 'PENDING_VERIFICATION',
           paymentMethod: 'OFFLINE',
-          razorpayPaymentId: dto.razorpayPaymentId || `offline_${Date.now()}`,
+          razorpayPaymentId: refNum,
+          notes: noteParts.join('\n'),
         },
         include: {
           influencer: true,

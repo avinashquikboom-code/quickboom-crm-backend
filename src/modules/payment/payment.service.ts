@@ -1274,6 +1274,14 @@ export class PaymentService {
         razorpayKeyId: data.razorpayEnabled
           ? (data.paymentMode === 'LIVE' ? data.razorpayLiveKeyId : data.razorpayTestKeyId)
           : null,
+        bankDetails: (data as any).bankDetails || {
+          bankName: process.env.OFFLINE_BANK_NAME || 'HDFC Bank',
+          accountNumber: process.env.OFFLINE_ACCOUNT_NUMBER || '50200088991122',
+          ifscCode: process.env.OFFLINE_IFSC_CODE || 'HDFC0000240',
+          accountHolderName: process.env.OFFLINE_ACCOUNT_HOLDER || 'QuickBoom Technologies Pvt Ltd',
+          upiId: process.env.OFFLINE_UPI_ID || 'quickboom@upi',
+          instructions: 'Transfer the amount to the bank account above and enter the UTR / Transaction Reference below.',
+        },
         source: data.source,
       },
     };
