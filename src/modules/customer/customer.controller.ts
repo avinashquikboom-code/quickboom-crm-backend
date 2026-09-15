@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
@@ -21,6 +22,8 @@ import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkService } from '../work/work.service';
+import { AiCreditService } from '../ai-studio/ai-credit.service';
+import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
@@ -30,6 +33,7 @@ export class CustomerController {
   constructor(
     private readonly customerService: CustomerService,
     private readonly workService: WorkService,
+    private readonly aiCreditService: AiCreditService,
   ) {}
 
   @Get(['calendar', '/customer/calendar'])

@@ -443,6 +443,14 @@ export class CustomerService {
               tickets: true,
             },
           },
+          aiWallet: {
+            select: {
+              id: true,
+              balance: true,
+              totalEarned: true,
+              totalSpent: true,
+            },
+          },
         },
       }),
       this.prisma.customer.count({ where }),
@@ -559,6 +567,8 @@ export class CustomerService {
         storageUsed: Number(c.storageUsed || 0),
         storage: `${(Number(c.storageUsed || 0) / (1024 * 1024)).toFixed(1)} MB`,
         mrr,
+        aiCredits: (c as any).aiWallet?.balance ?? 20,
+        aiWallet: (c as any).aiWallet || { balance: 20, totalEarned: 20, totalSpent: 0 },
         lastActivity: c.updatedAt,
         createdAt: c.createdAt,
       };
