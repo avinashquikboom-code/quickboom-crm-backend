@@ -95,7 +95,18 @@ export class EmployeeService {
       ];
     }
     if (department && department !== 'ALL') {
-      where.department = { name: { equals: department, mode: 'insensitive' as Prisma.QueryMode } };
+      const deptCondition = {
+        OR: [
+          { department: { name: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } },
+          { department: { code: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } },
+          { teamMembers: { some: { team: { name: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } } } },
+        ],
+      };
+      if (where.AND) {
+        where.AND.push(deptCondition);
+      } else {
+        where.AND = [deptCondition];
+      }
     }
     if (designation && designation !== 'ALL') {
       where.designation = { name: { equals: designation, mode: 'insensitive' as Prisma.QueryMode } };
@@ -221,6 +232,7 @@ export class EmployeeService {
       return {
         id: e.id,
         customerId: e.customerId,
+        userId: e.userId,
         employeeId: e.employeeCode,
         employeeCode: e.employeeCode,
         name: `${e.firstName} ${e.lastName}`,

@@ -484,7 +484,7 @@ export class LeadRepository {
     });
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
+  async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null }) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     const { notes, ...leadData } = dto;
@@ -492,7 +492,10 @@ export class LeadRepository {
       where: { id: numId, customerId: numCustomerId, deletedAt: null },
       data: {
         ...leadData,
-        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
+        assignedToId: dto.assignedToId !== undefined
+          ? (dto.assignedToId ? Number(dto.assignedToId) : null)
+          : undefined,
+        ...(dto.employeeId !== undefined ? { employeeId: dto.employeeId } : {}),
       } as any,
     });
   }

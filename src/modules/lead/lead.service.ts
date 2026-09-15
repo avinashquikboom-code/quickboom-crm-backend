@@ -40,6 +40,70 @@ export class LeadService {
     return this.leadRepository.convertLead(customerId, leadId, userId, dto);
   }
 
+  private async validateBpoEmployeeAssignment(
+    customerId: number | string,
+    assignedToId?: number | string | null,
+  ): Promise<{ assignedToId: number | null; employeeId: number | null } | undefined> {
+    if (assignedToId === undefined) {
+      return undefined;
+    }
+
+    if (assignedToId === null || assignedToId === '' || assignedToId === 0 || assignedToId === '0') {
+      return { assignedToId: null, employeeId: null };
+    }
+
+    const targetId = Number(assignedToId);
+    if (isNaN(targetId)) {
+      throw new BadRequestException('Invalid employee ID provided for lead assignment');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        OR: [
+          { userId: targetId },
+          { id: targetId },
+        ],
+        customerId: Number(customerId),
+      },
+      include: {
+        department: true,
+        designation: true,
+        teamMembers: {
+          include: { team: true },
+        },
+      },
+    });
+
+    if (!employee) {
+      throw new BadRequestException('Assigned employee does not exist in this workspace');
+    }
+
+    if (employee.status !== 'ACTIVE') {
+      throw new BadRequestException('Cannot assign lead to an inactive employee');
+    }
+
+    const deptStr = `${employee.department?.name || ''} ${employee.department?.code || ''}`.toLowerCase();
+    const desigStr = `${employee.designation?.name || ''} ${employee.designation?.code || ''}`.toLowerCase();
+    const teamStr = (employee.teamMembers || [])
+      .map((tm) => tm.team?.name || '')
+      .join(' ')
+      .toLowerCase();
+
+    const isBpo =
+      deptStr.includes('bpo') ||
+      desigStr.includes('bpo') ||
+      teamStr.includes('bpo');
+
+    if (!isBpo) {
+      throw new BadRequestException('Only BPO employees/representatives can be assigned to leads');
+    }
+
+    return {
+      assignedToId: employee.userId || targetId,
+      employeeId: employee.id,
+    };
+  }
+
   async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
     if (this.planAccessService) {
       await this.planAccessService.checkLeadLimit(customerId);
@@ -68,10 +132,13 @@ export class LeadService {
       }
     }
 
+    const assignment = await this.validateBpoEmployeeAssignment(customerId, dto.assignedToId);
+
     const sanitizedDto = {
       ...dto,
       status: resolvedStatus,
       ...(resolvedStageId ? { stageId: resolvedStageId } : {}),
+      ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
     };
 
     // Concurrency-safe atomic check and lead creation within a transaction
@@ -227,10 +294,13 @@ export class LeadService {
       }
     }
 
+    const assignment = await this.validateBpoEmployeeAssignment(customerId, dto.assignedToId);
+
     const sanitizedDto = {
       ...dto,
       ...(resolvedStageId !== undefined ? { stageId: resolvedStageId } : {}),
       ...(resolvedStatus !== undefined ? { status: resolvedStatus } : {}),
+      ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
     };
 
     await this.leadRepository.update(customerId, id, sanitizedDto as any);
