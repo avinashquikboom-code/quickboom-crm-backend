@@ -653,23 +653,47 @@ export class InfluencerService {
       );
     }
 
-    // 2. Verify package existence and ownership
-    const pkg = await this.prisma.influencerPackage.findFirst({
-      where: {
-        id: dto.packageId,
-        influencerId: dto.influencerId,
-        deletedAt: null,
-        status: 'ACTIVE',
-      },
-    });
-    if (!pkg) {
-      throw new BadRequestException('Selected package does not belong to this influencer or is inactive');
+    // 2. Resolve package & pricing
+    let resolvedPackage: any = null;
+    if (dto.packageId) {
+      resolvedPackage = await this.prisma.influencerPackage.findFirst({
+        where: {
+          id: dto.packageId,
+          influencerId: dto.influencerId,
+          deletedAt: null,
+          status: 'ACTIVE',
+        },
+      });
+    }
+
+    if (!resolvedPackage) {
+      let packages = await this.prisma.influencerPackage.findMany({
+        where: { influencerId: dto.influencerId, deletedAt: null, status: 'ACTIVE' },
+        orderBy: { price: 'asc' },
+      });
+
+      if (packages.length === 0) {
+        await this.seedDefaultPackagesForInfluencer(influencer.id, influencer.pricing || 5000);
+        packages = await this.prisma.influencerPackage.findMany({
+          where: { influencerId: dto.influencerId, deletedAt: null, status: 'ACTIVE' },
+          orderBy: { price: 'asc' },
+        });
+      }
+
+      if (packages.length > 0) {
+        resolvedPackage = packages[0];
+      }
     }
 
     // 3. Date validation & double-booking prevention
-    const campaignDate = new Date(dto.campaignDate);
+    let campaignDate = new Date(dto.campaignDate);
     if (isNaN(campaignDate.getTime())) {
-      throw new BadRequestException('Invalid campaign date provided');
+      const parsed = Date.parse(dto.campaignDate);
+      if (!isNaN(parsed)) {
+        campaignDate = new Date(parsed);
+      } else {
+        throw new BadRequestException('Invalid campaign date provided');
+      }
     }
 
     const dayStart = new Date(campaignDate);
@@ -686,13 +710,22 @@ export class InfluencerService {
       },
     });
     if (conflictingBooking) {
-      throw new BadRequestException(
-        'Influencer is already booked for this date. Please choose another date.',
-      );
+      if (
+        conflictingBooking.customerId === customerId &&
+        conflictingBooking.bookingStatus === 'PENDING' &&
+        conflictingBooking.paymentStatus !== 'PAID'
+      ) {
+        // Customer re-initiating booking for their own unconfirmed pending attempt: remove stale pending booking
+        await this.prisma.influencerBooking.delete({ where: { id: conflictingBooking.id } });
+      } else {
+        throw new BadRequestException(
+          'Influencer is already booked for this date. Please choose another date.',
+        );
+      }
     }
 
     // 4. Authoritative Price Calculations (NEVER trust mobile amounts)
-    const packageAmount = pkg.price;
+    const packageAmount = resolvedPackage?.price ?? (influencer.pricing && influencer.pricing > 0 ? influencer.pricing : 5000.0);
     const platformFee = 500.0;
     const gst = Math.round(packageAmount * 0.18);
     const totalAmount = packageAmount + platformFee + gst;
@@ -726,7 +759,7 @@ export class InfluencerService {
             bookingId,
             customerId: String(customerId),
             influencerId: String(dto.influencerId),
-            packageId: String(dto.packageId),
+            packageId: String(resolvedPackage?.id ?? dto.packageId ?? ''),
           },
         });
         if (rzpOrder?.id) {
@@ -743,7 +776,7 @@ export class InfluencerService {
         bookingId,
         customerId,
         influencerId: dto.influencerId,
-        packageId: dto.packageId,
+        packageId: resolvedPackage ? resolvedPackage.id : null,
         campaignDate: dayStart,
         brandName: dto.brandName,
         contactPerson: dto.contactPerson,

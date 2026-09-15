@@ -578,10 +578,11 @@ export class CreateInfluencerBookingDto {
   @Type(() => Number)
   influencerId: number;
 
-  @ApiProperty({ description: 'Package ID selected by customer' })
+  @ApiPropertyOptional({ description: 'Package ID selected by customer' })
+  @IsOptional()
   @IsInt()
   @Type(() => Number)
-  packageId: number;
+  packageId?: number;
 
   @ApiProperty({ description: 'Campaign date', example: '2026-09-18' })
   @IsString()
@@ -633,20 +634,40 @@ export class VerifyInfluencerPaymentDto {
   @IsNotEmpty()
   bookingId: string | number;
 
-  @ApiProperty({ description: 'Razorpay payment ID', example: 'pay_xxxxxxxx' })
+  @ApiPropertyOptional({ description: 'Razorpay payment ID or offline reference', example: 'pay_xxxxxxxx' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  razorpayPaymentId: string;
+  razorpayPaymentId?: string;
 
-  @ApiProperty({ description: 'Razorpay order ID', example: 'order_xxxxxxxx' })
+  @ApiPropertyOptional({ description: 'Razorpay order ID', example: 'order_xxxxxxxx' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  razorpayOrderId: string;
+  razorpayOrderId?: string;
 
-  @ApiProperty({ description: 'Razorpay signature', example: 'xxxxxxxxxxxxxxxx' })
+  @ApiPropertyOptional({ description: 'Razorpay signature or OFFLINE', example: 'xxxxxxxxxxxxxxxx' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  razorpaySignature: string;
+  razorpaySignature?: string;
+
+  @ApiPropertyOptional({ description: 'Payment method: RAZORPAY or OFFLINE', example: 'RAZORPAY' })
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @ApiPropertyOptional({ description: 'Offline payment reference or UTR number', example: 'UTR123456789' })
+  @IsOptional()
+  @IsString()
+  referenceNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Payment proof URL if uploaded' })
+  @IsOptional()
+  @IsString()
+  proofUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Customer payment notes' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 export class UpdateBookingStatusDto {
