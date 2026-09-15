@@ -144,3 +144,16 @@ export class UpdateAiServiceConfigDto {
   @IsBoolean()
   isActive?: boolean;
 }
+
+export class AdminAdjustCreditsDto {
+  @ApiProperty({ description: 'Number of credits (must be greater than 0)', example: 50 })
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  amount: number;
+
+  @ApiProperty({ description: 'Reason or description for adjustment', example: 'Promotional onboarding grant' })
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}

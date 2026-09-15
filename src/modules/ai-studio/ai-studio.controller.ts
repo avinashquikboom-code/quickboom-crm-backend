@@ -22,9 +22,12 @@ import {
   PurchaseCreditsDto,
   VerifyCreditPurchaseDto,
   UpdateAiServiceConfigDto,
+  AdminAdjustCreditsDto,
 } from './dto/ai-studio.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('AI Studio')
 @Controller()
@@ -212,5 +215,52 @@ export class AiStudioController {
   async getAllTransactionsAdmin(@Query() query: any) {
     const data = await this.aiCreditService.getAllTransactionsAdmin(query);
     return { statusCode: 200, success: true, data };
+  }
+
+  @Get(['admin/customers/:customerId/ai-credits', 'customers/:customerId/ai-credits'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get customer AI credits wallet and history (Admin)' })
+  async getCustomerAiCredits(
+    @Param('customerId') customerId: string,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can view customer AI credits');
+    }
+    const data = await this.aiCreditService.getCustomerWalletAdmin(parseInt(customerId, 10));
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post(['admin/customers/:customerId/ai-credits/add', 'customers/:customerId/ai-credits/add'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Manually add AI credits to customer wallet (Admin)' })
+  async addCreditsAdmin(
+    @Param('customerId') customerId: string,
+    @Body() dto: AdminAdjustCreditsDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can add AI credits');
+    }
+    const data = await this.aiCreditService.addCreditsAdmin(parseInt(customerId, 10), dto, user);
+    return { statusCode: 200, success: true, message: data.message, data };
+  }
+
+  @Post(['admin/customers/:customerId/ai-credits/reduce', 'customers/:customerId/ai-credits/reduce'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Manually reduce AI credits from customer wallet (Admin)' })
+  async reduceCreditsAdmin(
+    @Param('customerId') customerId: string,
+    @Body() dto: AdminAdjustCreditsDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can reduce AI credits');
+    }
+    const data = await this.aiCreditService.reduceCreditsAdmin(parseInt(customerId, 10), dto, user);
+    return { statusCode: 200, success: true, message: data.message, data };
   }
 }

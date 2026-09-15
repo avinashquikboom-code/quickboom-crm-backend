@@ -328,6 +328,271 @@ export class AiCreditService {
     return { items, total };
   }
 
+  /**
+   * Retrieves customer wallet and ledger transactions for Admin inspection
+   */
+  async getCustomerWalletAdmin(customerId: number) {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, name: true, email: true, phone: true, companyName: true },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
+
+    const wallet = await this.getOrCreateWallet(customerId);
+    const rawTransactions = await this.prisma.aiCreditTransaction.findMany({
+      where: { customerId },
+      orderBy: { id: 'desc' },
+      take: 100,
+    });
+
+    const transactions = rawTransactions.map((tx) => {
+      let adminId: number | null = null;
+      let reason: string = tx.notes || '';
+      let balanceBefore: number = tx.balanceAfter - tx.amount;
+
+      // Parse structured notes if stored as JSON
+      if (tx.notes && tx.notes.startsWith('{') && tx.notes.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(tx.notes);
+          if (parsed.reason) reason = parsed.reason;
+          if (parsed.adminId) adminId = parsed.adminId;
+          if (parsed.balanceBefore !== undefined) balanceBefore = parsed.balanceBefore;
+        } catch {}
+      } else if (tx.notes && tx.notes.includes('[Admin #')) {
+        const match = tx.notes.match(/\[Admin #(\d+)\]/);
+        if (match) adminId = parseInt(match[1], 10);
+      }
+
+      return {
+        id: tx.id,
+        walletId: tx.walletId,
+        customerId: tx.customerId,
+        amount: tx.amount,
+        balanceBefore,
+        balanceAfter: tx.balanceAfter,
+        type: tx.type,
+        serviceCode: tx.serviceCode,
+        generationId: tx.generationId,
+        notes: tx.notes,
+        reason,
+        adminId,
+        createdAt: tx.createdAt,
+      };
+    });
+
+    return {
+      customer,
+      wallet,
+      balance: wallet.balance,
+      transactions,
+    };
+  }
+
+  /**
+   * Manually adds credits to a customer's wallet (Admin only)
+   */
+  async addCreditsAdmin(customerId: number, dto: { amount: number; reason: string }, adminUser: any) {
+    const amount = Math.floor(Number(dto?.amount));
+    if (isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('Amount must be a positive integer greater than 0');
+    }
+    const reason = (dto?.reason || '').trim();
+    if (!reason) {
+      throw new BadRequestException('Reason is required for manual credit adjustment');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
+
+    const adminId = adminUser?.id ?? adminUser?.userId ?? null;
+    const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
+
+    return this.prisma.$transaction(async (tx) => {
+      let wallet = await tx.aiCreditWallet.findUnique({
+        where: { customerId },
+      });
+
+      if (!wallet) {
+        wallet = await tx.aiCreditWallet.create({
+          data: {
+            customerId,
+            balance: 20,
+            totalEarned: 20,
+            totalSpent: 0,
+          },
+        });
+      }
+
+      const balanceBefore = wallet.balance;
+      const balanceAfter = balanceBefore + amount;
+
+      const updatedWallet = await tx.aiCreditWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: balanceAfter,
+          totalEarned: wallet.totalEarned + amount,
+        },
+      });
+
+      const structuredNote = JSON.stringify({
+        reason,
+        adminId,
+        adminName,
+        balanceBefore,
+        balanceAfter,
+        action: 'ADD_CREDITS',
+      });
+
+      const transaction = await tx.aiCreditTransaction.create({
+        data: {
+          walletId: wallet.id,
+          customerId,
+          amount,
+          balanceAfter,
+          type: 'CREDIT_GRANT',
+          notes: structuredNote,
+        },
+      });
+
+      this.logger.log(
+        `[ADMIN_ADD_CREDITS] Admin #${adminId} added ${amount} credits to Customer #${customerId}. ` +
+        `Balance: ${balanceBefore} -> ${balanceAfter}. Reason: ${reason}`,
+      );
+
+      return {
+        success: true,
+        message: `Successfully added ${amount} AI credits to customer wallet`,
+        wallet: updatedWallet,
+        balanceBefore,
+        balanceAfter,
+        amount,
+        transaction: {
+          id: transaction.id,
+          walletId: transaction.walletId,
+          customerId: transaction.customerId,
+          amount: transaction.amount,
+          balanceBefore,
+          balanceAfter,
+          type: transaction.type,
+          reason,
+          adminId,
+          createdAt: transaction.createdAt,
+        },
+      };
+    });
+  }
+
+  /**
+   * Manually reduces credits from a customer's wallet (Admin only)
+   */
+  async reduceCreditsAdmin(customerId: number, dto: { amount: number; reason: string }, adminUser: any) {
+    const amount = Math.floor(Number(dto?.amount));
+    if (isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('Amount must be a positive integer greater than 0');
+    }
+    const reason = (dto?.reason || '').trim();
+    if (!reason) {
+      throw new BadRequestException('Reason is required for manual credit adjustment');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
+
+    const adminId = adminUser?.id ?? adminUser?.userId ?? null;
+    const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
+
+    return this.prisma.$transaction(async (tx) => {
+      let wallet = await tx.aiCreditWallet.findUnique({
+        where: { customerId },
+      });
+
+      if (!wallet) {
+        wallet = await tx.aiCreditWallet.create({
+          data: {
+            customerId,
+            balance: 20,
+            totalEarned: 20,
+            totalSpent: 0,
+          },
+        });
+      }
+
+      const balanceBefore = wallet.balance;
+
+      if (balanceBefore < amount) {
+        throw new BadRequestException(
+          `Cannot reduce ${amount} credits: Current balance is only ${balanceBefore} credits. Balance cannot become negative.`,
+        );
+      }
+
+      const balanceAfter = balanceBefore - amount;
+
+      const updatedWallet = await tx.aiCreditWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: balanceAfter,
+          totalSpent: wallet.totalSpent + amount,
+        },
+      });
+
+      const structuredNote = JSON.stringify({
+        reason,
+        adminId,
+        adminName,
+        balanceBefore,
+        balanceAfter,
+        action: 'REDUCE_CREDITS',
+      });
+
+      const transaction = await tx.aiCreditTransaction.create({
+        data: {
+          walletId: wallet.id,
+          customerId,
+          amount: -amount,
+          balanceAfter,
+          type: 'ADMIN_ADJUSTMENT',
+          notes: structuredNote,
+        },
+      });
+
+      this.logger.log(
+        `[ADMIN_REDUCE_CREDITS] Admin #${adminId} reduced ${amount} credits from Customer #${customerId}. ` +
+        `Balance: ${balanceBefore} -> ${balanceAfter}. Reason: ${reason}`,
+      );
+
+      return {
+        success: true,
+        message: `Successfully reduced ${amount} AI credits from customer wallet`,
+        wallet: updatedWallet,
+        balanceBefore,
+        balanceAfter,
+        amount,
+        transaction: {
+          id: transaction.id,
+          walletId: transaction.walletId,
+          customerId: transaction.customerId,
+          amount: transaction.amount,
+          balanceBefore,
+          balanceAfter,
+          type: transaction.type,
+          reason,
+          adminId,
+          createdAt: transaction.createdAt,
+        },
+      };
+    });
+  }
+
   private async seedInitialConfigs() {
     const defaults = [
       {
