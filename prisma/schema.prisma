@@ -83,6 +83,8 @@ model Customer {
   installments             SubscriptionInstallment[]
   trendingContents         TrendingContent[]
   marketingBanners         MarketingBanner[]
+  marketingVideos          MarketingVideo[]
+  marketingVideoViews      CustomerMarketingVideoView[]
   socialMediaHandlers      SocialMediaHandler[]
   roleWorkPermissions      RoleWorkPermission[]
   workAccessRequests       WorkAccessRequest[]
@@ -252,6 +254,7 @@ model User {
   deviceTokens            UserDeviceToken[]
   createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
   createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
+  createdMarketingVideos  MarketingVideo[]  @relation("CreatedMarketingVideos")
 
   @@index([customerId])
   @@index([email])
@@ -2398,6 +2401,60 @@ model MarketingBanner {
   @@index([startAt, endAt])
   @@index([deletedAt])
   @@map("marketing_banners")
+}
+
+model MarketingVideo {
+  id             Int       @id @default(autoincrement())
+  customerId     Int?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title          String
+  subtitle       String?
+  description    String?
+  videoUrl       String
+  videoKey       String?
+  thumbnailUrl   String?
+  thumbnailKey   String?
+  ctaText        String?
+  ctaUrl         String?
+  status         String    @default("ACTIVE") // DRAFT, ACTIVE, INACTIVE, EXPIRED
+  priority           Int       @default(0)
+  isActive           Boolean   @default(true)
+  isPublished        Boolean   @default(true)
+  showOnHome         Boolean   @default(true)
+  showInIntroduction Boolean   @default(false)
+  startAt            DateTime?
+  endAt              DateTime?
+  createdBy          Int?
+  createdByUser      User?     @relation("CreatedMarketingVideos", fields: [createdBy], references: [id], onDelete: SetNull)
+  views              CustomerMarketingVideoView[]
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([customerId, isActive, status])
+  @@index([priority])
+  @@index([showOnHome])
+  @@index([showInIntroduction])
+  @@index([startAt, endAt])
+  @@index([deletedAt])
+  @@map("marketing_videos")
+}
+
+model CustomerMarketingVideoView {
+  id               Int            @id @default(autoincrement())
+  customerId       Int
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  marketingVideoId Int
+  marketingVideo   MarketingVideo @relation(fields: [marketingVideoId], references: [id], onDelete: Cascade)
+  seenAt           DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([customerId, marketingVideoId])
+  @@index([customerId])
+  @@index([marketingVideoId])
+  @@map("customer_marketing_video_views")
 }
 
 model SocialMediaHandler {
