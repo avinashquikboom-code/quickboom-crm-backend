@@ -182,7 +182,8 @@ export class TeamController {
     @Query('permanent') permanent?: string,
   ) {
     const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
-    return this.teamService.remove(targetCustomerId, id, permanent === 'true');
+    const isPermanent = permanent !== 'false';
+    return this.teamService.remove(targetCustomerId, id, isPermanent);
   }
 
   @Post(':id/members')

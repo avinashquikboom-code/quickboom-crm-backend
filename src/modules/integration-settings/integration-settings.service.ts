@@ -1002,7 +1002,7 @@ export class IntegrationSettingsService {
 
     const resolvedCreds: Record<string, any> = { ...activeCreds };
     for (const [k, v] of Object.entries(testCreds)) {
-      if (typeof v === 'string' && !v.includes('***') && v.trim().length > 0) {
+      if (typeof v === 'string' && !v.includes('***') && !v.includes('•') && v.trim() !== '******' && v.trim().length > 0) {
         resolvedCreds[k] = v.trim();
       }
     }
@@ -1167,37 +1167,127 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.MSG91: {
-        const authKey = resolvedCreds.authKey || resolvedCreds.auth_key || resolvedCreds.apiKey;
-        const templateId = resolvedCreds.templateId || resolvedCreds.template_id;
+        const authKey = (
+          resolvedCreds.authKey ||
+          resolvedCreds.auth_key ||
+          resolvedCreds.apiKey ||
+          process.env.MSG91_AUTH_KEY ||
+          ''
+        ).trim();
+        const templateId = (
+          resolvedCreds.templateId ||
+          resolvedCreds.template_id ||
+          process.env.MSG91_TEMPLATE_ID ||
+          ''
+        ).trim();
 
-        if (!authKey || !templateId) {
-          throw new BadRequestException('MSG91 Auth Key and Template ID are required to test connection');
+        if (!authKey) {
+          throw new BadRequestException('MSG91 Auth Key is required to test connection');
         }
 
-        // Validate credentials by calling the MSG91 balance/account info endpoint (no OTP sent)
-        try {
-          const response = await axios.get('https://control.msg91.com/api/v5/balance', {
-            headers: { authkey: authKey },
-            timeout: 8000,
-          });
+        if (!templateId) {
+          throw new BadRequestException('MSG91 Template ID is required to test connection');
+        }
 
-          if (response.status === 200) {
-            return {
-              success: true,
-              provider: 'MSG91',
-              status: 'CONNECTED',
-              message: 'MSG91 credentials verified successfully!',
-              details: {
-                templateId,
-                authKeyPrefix: authKey.substring(0, 8) + '...',
+        // Validate credentials live against MSG91 API without dispatching SMS or consuming credits
+        try {
+          let isAuthenticated = false;
+          let failureReason = '';
+
+          try {
+            const response = await axios.get('https://control.msg91.com/api/v5/widget/getTemplate', {
+              headers: {
+                authkey: authKey,
+                'Content-Type': 'application/json',
               },
-            };
+              timeout: 8000,
+            });
+
+            const data = response.data;
+            if (
+              data?.code === '201' ||
+              data?.code === 201 ||
+              data?.message === 'AuthenticationFailure' ||
+              (data?.type === 'error' && data?.message?.toLowerCase()?.includes('auth'))
+            ) {
+              isAuthenticated = false;
+              failureReason = data?.message || 'Invalid Auth Key';
+            } else if (response.status === 200) {
+              isAuthenticated = true;
+            }
+          } catch (templateErr: any) {
+            const errData = templateErr?.response?.data;
+            if (
+              errData?.code === '201' ||
+              errData?.code === 201 ||
+              errData?.message === 'AuthenticationFailure' ||
+              errData?.message === 'Invalid authkey'
+            ) {
+              isAuthenticated = false;
+              failureReason = errData?.message || 'Invalid Auth Key';
+            } else {
+              // Secondary fallback check using OTP verify endpoint with dummy OTP (does not send SMS)
+              try {
+                const otpCheck = await axios.get(
+                  'https://control.msg91.com/api/v5/otp/verify?otp=000000&mobile=919999999999',
+                  {
+                    headers: { authkey: authKey },
+                    timeout: 8000,
+                  },
+                );
+                const otpData = otpCheck.data;
+                if (
+                  otpData?.code === '201' ||
+                  otpData?.code === 201 ||
+                  otpData?.message === 'Invalid authkey' ||
+                  otpData?.message === 'AuthenticationFailure'
+                ) {
+                  isAuthenticated = false;
+                  failureReason = otpData?.message || 'Invalid Auth Key';
+                } else {
+                  isAuthenticated = true;
+                }
+              } catch (otpErr: any) {
+                const otpErrData = otpErr?.response?.data;
+                if (
+                  otpErrData?.code === '201' ||
+                  otpErrData?.code === 201 ||
+                  otpErrData?.message === 'Invalid authkey' ||
+                  otpErrData?.message === 'AuthenticationFailure'
+                ) {
+                  isAuthenticated = false;
+                  failureReason = otpErrData?.message || 'Invalid Auth Key';
+                } else {
+                  failureReason = otpErrData?.message || otpErr?.message || 'Could not verify MSG91 credentials';
+                }
+              }
+            }
           }
-          throw new Error(`Unexpected response: ${response.status}`);
+
+          if (!isAuthenticated) {
+            throw new BadRequestException(
+              `MSG91 authentication failed: ${failureReason || 'Invalid Auth Key'}`,
+            );
+          }
+
+          return {
+            success: true,
+            provider: 'MSG91',
+            status: 'CONNECTED',
+            message: 'MSG91 credentials verified successfully!',
+            details: {
+              templateId,
+              authKeyPrefix: authKey.substring(0, Math.min(6, authKey.length)) + '...',
+            },
+          };
         } catch (err: any) {
           this.logger.error(`[MSG91_TEST_FAILED] ${err?.message}`);
+          if (err instanceof BadRequestException) {
+            throw err;
+          }
           const errMsg =
             err?.response?.data?.message ||
+            err?.response?.data?.msg ||
             err?.response?.data?.error ||
             err?.message ||
             'Could not authenticate with MSG91';
