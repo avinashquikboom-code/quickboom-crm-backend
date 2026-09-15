@@ -410,6 +410,19 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       expect(unconf.provider).toBe('CUSTOM_UNCONFIGURED_GATEWAY');
     });
   });
+
+  describe('9. MSG91 Integration Live Testing', () => {
+    it('throws BadRequestException when Auth Key or Template ID is missing', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      await expect(
+        service.testIntegration('MSG91', { credentials: { authKey: '', templateId: '' } }),
+      ).rejects.toThrow('MSG91 Auth Key is required to test connection');
+
+      await expect(
+        service.testIntegration('MSG91', { credentials: { authKey: 'test_key', templateId: '' } }),
+      ).rejects.toThrow('MSG91 Template ID is required to test connection');
+    });
+  });
 });
 
 
