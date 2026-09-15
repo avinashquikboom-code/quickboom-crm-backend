@@ -334,7 +334,12 @@ export class S3Service {
       try {
         const url = new URL(trimmed);
         const pathname = url.pathname.replace(/^\/+/, '');
-        const match = pathname.match(/(marketing\/(?:banners|trending|social-media)\/[^\/\?]+)/i);
+        // Matches all known marketing S3 folder conventions:
+        // marketing/banners, marketing/trending, marketing/social-media,
+        // marketing/videos, marketing/thumbnails
+        const match = pathname.match(
+          /(marketing\/(?:banners|trending|social-media|videos|thumbnails)\/[^\/?]+)/i,
+        );
         if (match) {
           return match[1];
         }
@@ -388,6 +393,15 @@ export class S3Service {
         return trimmed;
       }
     }
+  }
+
+  /**
+   * Generates a presigned GET URL specifically for video objects.
+   * Uses a longer expiry (7 days = 604800s) so video URLs remain valid
+   * during Admin preview and Customer playback sessions.
+   */
+  async getVideoPresignedUrl(keyOrUrl?: string | null): Promise<string | null> {
+    return this.getPresignedUrl(keyOrUrl, 604800); // 7 days
   }
 
   /**

@@ -22,22 +22,35 @@ export class VideoService {
   ) {}
 
   /**
-   * Helper to resolve S3 keys into presigned URLs for secure viewing
+   * Helper to resolve S3 keys into presigned URLs for secure viewing.
+   * Videos use a 7-day presigned URL so Admin preview and Customer playback
+   * remain valid across sessions. Thumbnails use the default 1-hour expiry.
    */
   private async resolveVideoMedia(video: any): Promise<any> {
     if (!video) return video;
 
+    // Determine the raw S3 key for the video
     const rawVideoKey = video.videoKey || this.s3Service.extractKey(video.videoUrl);
     let resolvedVideoUrl = video.videoUrl;
-    if (rawVideoKey && (!video.videoUrl || !video.videoUrl.includes('youtube.com') && !video.videoUrl.includes('youtu.be') && !video.videoUrl.includes('vimeo.com'))) {
+
+    // Only generate presigned URL for S3-hosted videos (not YouTube/Vimeo external links)
+    const isExternalVideo =
+      video.videoUrl &&
+      (video.videoUrl.includes('youtube.com') ||
+        video.videoUrl.includes('youtu.be') ||
+        video.videoUrl.includes('vimeo.com'));
+
+    if (rawVideoKey && !isExternalVideo) {
       try {
-        const presigned = await this.s3Service.getPresignedUrl(video.videoUrl || rawVideoKey);
+        // Use 7-day presigned URL for videos so they don't expire during playback
+        const presigned = await this.s3Service.getVideoPresignedUrl(video.videoUrl || rawVideoKey);
         if (presigned) resolvedVideoUrl = presigned;
       } catch {
-        // fallback to original videoUrl
+        // fallback to original videoUrl if presigned generation fails
       }
     }
 
+    // Resolve thumbnail with standard 1-hour presigned URL
     const rawThumbKey = video.thumbnailKey || this.s3Service.extractKey(video.thumbnailUrl);
     let resolvedThumbUrl = video.thumbnailUrl;
     if (rawThumbKey && video.thumbnailUrl) {
@@ -566,5 +579,53 @@ export class VideoService {
 
     this.logger.log(`[INTRODUCTION_VIEWS_RESET] videoId: ${videoId} deletedRecords: ${result.count}`);
     return { success: true, message: `Reset ${result.count} views for marketing video ${videoId}` };
+  }
+
+  /**
+   * Generate a fresh 7-day presigned playback URL for a specific marketing video.
+   * Used by Admin Panel to ensure the video preview always has a valid, playable URL.
+   * Resolves the stored videoKey (or derives it from videoUrl) and generates a new
+   * presigned S3 URL using the existing S3Service infrastructure.
+   */
+  async getPlaybackUrl(
+    id: number,
+    user: { id: number; customerId?: number | null; isSuperAdmin?: boolean },
+  ): Promise<{ id: number; videoUrl: string | null; thumbnailUrl: string | null }> {
+    const video = await this.findOne(id, user);
+
+    // Prefer stored videoKey; fall back to extracting from videoUrl
+    const videoKey = video.videoKey || this.s3Service.extractKey(video.videoUrl);
+    let playbackUrl: string | null = video.videoUrl || null;
+
+    // Only generate presigned URL for S3-hosted videos
+    const isExternalVideo =
+      video.videoUrl &&
+      (video.videoUrl.includes('youtube.com') ||
+        video.videoUrl.includes('youtu.be') ||
+        video.videoUrl.includes('vimeo.com'));
+
+    if (videoKey && !isExternalVideo) {
+      try {
+        const presigned = await this.s3Service.getVideoPresignedUrl(video.videoKey || video.videoUrl);
+        if (presigned) playbackUrl = presigned;
+      } catch (err: any) {
+        this.logger.warn(`[PLAYBACK_URL_WARN] Could not generate presigned URL for video ${id}: ${err?.message}`);
+      }
+    }
+
+    // Also refresh thumbnail URL (1-hour presigned)
+    const thumbKey = video.thumbnailKey || this.s3Service.extractKey(video.thumbnailUrl);
+    let thumbnailUrl: string | null = video.thumbnailUrl || null;
+    if (thumbKey && video.thumbnailUrl) {
+      try {
+        const presigned = await this.s3Service.getPresignedUrl(video.thumbnailUrl || thumbKey);
+        if (presigned) thumbnailUrl = presigned;
+      } catch {
+        // fallback
+      }
+    }
+
+    this.logger.log(`[PLAYBACK_URL_GENERATED] id: ${id} key: ${videoKey}`);
+    return { id, videoUrl: playbackUrl, thumbnailUrl };
   }
 }

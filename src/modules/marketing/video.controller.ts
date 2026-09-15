@@ -239,6 +239,20 @@ export class VideoController {
     return this.videoService.resetIntroductionViews(id, context);
   }
 
+  @Get('admin/marketing/videos/:id/playback-url')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Get a fresh 7-day presigned playback URL for a marketing video (Admin preview)' })
+  async getPlaybackUrl(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    this.checkCompanyAdminAccess(user);
+    const context = this.resolveCustomerContext(customerId, user);
+    return this.videoService.getPlaybackUrl(id, context);
+  }
+
   // ── Customer Endpoints ──────────────────────────────────────────────────────
 
   @Get(['customer/marketing/videos', 'marketing/videos'])
