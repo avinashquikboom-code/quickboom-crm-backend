@@ -1325,6 +1325,12 @@ export class CustomerService {
 
     // PERMANENT CASCADE DELETE
     const result = await this.prisma.$transaction(async (tx) => {
+      // 0. Detach customer self-referencing / assigned employee / team pointers
+      await tx.customer.update({
+        where: { id: numericId },
+        data: { assignedEmployeeId: null, assignedTeamId: null },
+      });
+
       // 1. Delete FK-restricted application records before customer-owned parents
       await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numericId } } });
@@ -1338,7 +1344,7 @@ export class CustomerService {
       await tx.workTask?.deleteMany?.({ where: { work: { customerId: numericId } } });
       await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numericId } } });
 
-      // 2. Billing & Invoices
+      // 2. Billing & Invoices & CRM & Operations
       await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId: numericId } });
       await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId: numericId } } });
       await tx.invoice?.deleteMany?.({ where: { customerId: numericId } });
@@ -1368,20 +1374,60 @@ export class CustomerService {
       await tx.socialAccount?.deleteMany?.({ where: { customerId: numericId } });
       await tx.aiGeneration?.deleteMany?.({ where: { customerId: numericId } });
       await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.aiCreditWallet?.deleteMany?.({ where: { customerId: numericId } });
       await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId: numericId } });
       await tx.paymentHistory?.deleteMany?.({ where: { customerId: numericId } });
       await tx.customPlanOrder?.deleteMany?.({ where: { customerId: numericId } });
       await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numericId } });
       await tx.customerSubscription?.deleteMany?.({ where: { customerId: numericId } });
 
-      // 3. Invalidate auth sessions & tokens
+      // 3. Employee child records & HRMS policies
+      await tx.salaryStructure?.deleteMany?.({ where: { employee: { customerId: numericId } } });
+      await tx.employeeClaim?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.employeeLoan?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.employeeLocation?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.employeeLeaveBalance?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.employeeModuleOverride?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.employeeLeadLimit?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.roleLeadLimit?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.roleWorkPermission?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.workAccessRequest?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.socialMediaHandler?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.marketingVideo?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.marketingBanner?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.trendingContent?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.branchGeofence?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.locationTrackingSetting?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.shiftGuidance?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.shift?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.publicHoliday?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.attendancePolicy?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.claimPolicy?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.leavePolicy?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.salaryPolicy?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.payrollPolicy?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.leadStage?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.pipeline?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.product?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.planEntitlement?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.featureToggle?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
+
+      // 4. Invalidate auth sessions & tokens
+      await tx.userRole?.deleteMany?.({ where: { user: { customerId: numericId } } });
+      await tx.userDeviceToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
       await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
       await tx.session?.deleteMany?.({ where: { user: { customerId: numericId } } });
 
-      // 4. Delete employees, users, and customer row
+      // 5. Delete employees, teams, designations, departments, roles, users, and customer row
       await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numericId } } });
+      await tx.team?.deleteMany?.({ where: { customerId: numericId } });
       await tx.auditLog?.deleteMany?.({ where: { customerId: numericId } });
       await tx.employee?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.designation?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.department?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.role?.deleteMany?.({ where: { customerId: numericId } });
       await tx.user?.deleteMany?.({ where: { customerId: numericId } });
       return tx.customer.delete({ where: { id: numericId } });
     });
