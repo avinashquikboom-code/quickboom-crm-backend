@@ -87,7 +87,12 @@ export class EmployeeService {
       throw new ForbiddenException('customerId is required for employee access');
     }
 
-    if (status && status !== 'ALL') where.status = status;
+    if (status && status !== 'ALL') {
+      where.status = status;
+    } else {
+      // By default, exclude employees moved to Bin (status='DELETED')
+      where.status = { not: 'DELETED' };
+    }
     if (branch && branch !== 'ALL') {
       where.OR = [
         { branch: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } },
@@ -1940,14 +1945,54 @@ export class EmployeeService {
     });
   }
 
-  async remove(params: EmployeeFindOneParams) {
-    const { id, customerId, isSuperAdmin } = params;
+  async remove(params: EmployeeFindOneParams & { hardDelete?: boolean }) {
+    const { id, customerId, isSuperAdmin, hardDelete = false } = params;
     const existing = await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(existing.id);
     const userId = existing?.userId ? Number(existing.userId) : null;
     const empCustomerId = Number(existing.customerId);
 
+    if (!hardDelete) {
+      // ── SOFT-DELETE (Move to Bin) ──────────────────────────────────────────
+      // Preserves ALL employee application data. Only marks employee as DELETED
+      // and deactivates the linked user account.
+      return this.prisma.$transaction(async (tx) => {
+        // Invalidate active sessions & tokens
+        if (userId) {
+          if (tx.refreshToken?.deleteMany) {
+            await tx.refreshToken.deleteMany({ where: { userId } });
+          }
+          if (tx.session?.deleteMany) {
+            await tx.session.deleteMany({ where: { userId } });
+          }
+          if (tx.userDeviceToken?.deleteMany) {
+            await tx.userDeviceToken.deleteMany({ where: { userId } });
+          }
+        }
+
+        // Soft-delete linked User account
+        if (userId && tx.user) {
+          await tx.user.update({
+            where: { id: userId },
+            data: { isActive: false, deletedAt: new Date() },
+          });
+        }
+
+        // Mark employee as DELETED (moved to Bin)
+        await tx.employee.update({
+          where: { id: numId },
+          data: { status: 'DELETED' },
+        });
+
+        return {
+          success: true,
+          message: 'Employee moved to Bin successfully',
+        };
+      });
+    }
+
+    // ── HARD-DELETE (Permanent Delete from Bin) ────────────────────────────
     return this.prisma.$transaction(async (tx) => {
       // 1. Invalidate/delete all active authentication sessions, refresh tokens, and device tokens for linked user
       if (userId) {
