@@ -372,4 +372,56 @@ describe('DataManagementService', () => {
       ).rejects.toThrow(InternalServerErrorException);
     });
   });
+
+  describe('Bin / Trash Management', () => {
+    it('getBinItems returns empty array when no deleted records exist', async () => {
+      prisma.customer.findMany = jest.fn().mockResolvedValue([]);
+      prisma.employee.findMany = jest.fn().mockResolvedValue([]);
+
+      const result = await service.getBinItems();
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(0);
+      expect((result as any).customers).toEqual([]);
+      expect((result as any).employees).toEqual([]);
+      expect((result as any).totalCount).toBe(0);
+    });
+
+    it('getBinItems returns deleted customers and employees from database', async () => {
+      prisma.customer.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 10,
+          name: 'Deleted Corp',
+          companyName: 'Deleted Corp LLC',
+          email: 'deleted@corp.com',
+          isActive: false,
+          deletedAt: new Date('2026-09-01T00:00:00.000Z'),
+          _count: { leads: 3, contacts: 2, deals: 1, tasks: 4, employees: 2 },
+          auditLogs: [{ createdAt: new Date(), user: { firstName: 'Admin', lastName: 'User', email: 'admin@qb.com' } }],
+        },
+      ]);
+      prisma.employee.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 20,
+          firstName: 'John',
+          lastName: 'Smith',
+          email: 'john@smith.com',
+          employeeCode: 'EMP-020',
+          customerId: 1,
+          updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+          department: { name: 'Sales' },
+          designation: { name: 'Executive' },
+          _count: { attendances: 5, leaveRequests: 1, remoteRequests: 0, employeeLocations: 10, payrollItems: 2 },
+          customer: { name: 'Main Corp', companyName: 'Main Corp' },
+        },
+      ]);
+
+      const result = await service.getBinItems();
+      expect(result.length).toBe(2);
+      expect((result as any).totalCount).toBe(2);
+      expect((result as any).customers.length).toBe(1);
+      expect((result as any).employees.length).toBe(1);
+      expect(result[0].type).toBe('CUSTOMER');
+      expect(result[1].type).toBe('EMPLOYEE');
+    });
+  });
 });
