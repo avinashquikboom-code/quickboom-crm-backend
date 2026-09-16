@@ -40,18 +40,8 @@ export class AiStudioController {
     private readonly aiGenerationService: AiGenerationService,
   ) {}
 
-  private resolveCustomerId(req: any): number {
-    const user = req.user;
-    const rawId =
-      user?.customerId ??
-      user?.customer?.id ??
-      (user?.role?.startsWith('CUSTOMER') ? (user?.customerId || user?.id) : undefined) ??
-      req.headers?.['x-customer-id'];
-    const parsed = parseInt(String(rawId), 10);
-    if (isNaN(parsed) || parsed <= 0) {
-      throw new ForbiddenException('Valid customer authentication session is required');
-    }
-    return parsed;
+  private async resolveCustomerId(req: any): Promise<number> {
+    return this.aiCreditService.resolveCustomerId(req.user, req.headers);
   }
 
   // =========================================================================
@@ -74,7 +64,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get current customer AI credit wallet balance' })
   async getWallet(@Req() req: any) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const data = await this.aiCreditService.getOrCreateWallet(customerId);
     return { statusCode: 200, success: true, data };
   }
@@ -84,7 +74,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get credit transaction history for logged-in customer' })
   async getTransactions(@Req() req: any) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const data = await this.aiCreditService.getTransactions(customerId);
     return { statusCode: 200, success: true, data };
   }
@@ -94,7 +84,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Initialize Razorpay order for purchasing AI credits' })
   async purchaseCredits(@Req() req: any, @Body() dto: PurchaseCreditsDto) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const result = await this.aiCreditService.createPurchaseOrder(customerId, dto);
     return { statusCode: 201, success: true, ...result };
   }
@@ -104,7 +94,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Verify payment and credit AI wallet' })
   async verifyCredits(@Req() req: any, @Body() dto: VerifyCreditPurchaseDto) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const result = await this.aiCreditService.verifyPurchase(customerId, dto);
     return { statusCode: 200, success: true, ...result };
   }
@@ -124,7 +114,7 @@ export class AiStudioController {
     @Body() dto: GenerateContentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const productPrompt = (dto.product || dto.prompt || '').trim();
     this.logger.log(
       `[AI_REQUEST] Customer #${customerId} initiated generation: type="${dto.type}", inputPrompt="${productPrompt}"`,
@@ -150,7 +140,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get generation history for current customer' })
   async getMyGenerations(@Req() req: any, @Query('type') type?: string) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const data = await this.aiGenerationService.getMyGenerations(customerId, type);
     return { statusCode: 200, success: true, data };
   }
@@ -160,7 +150,7 @@ export class AiStudioController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get single generation details or poll async render status' })
   async getGenerationStatus(@Req() req: any, @Param('id') id: string) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const data = await this.aiGenerationService.getJobStatus(customerId, id);
     return { statusCode: 200, success: true, data };
   }
@@ -174,7 +164,7 @@ export class AiStudioController {
     @Param('id') id: string,
     @Body() dto: UpdateGenerationDto,
   ) {
-    const customerId = this.resolveCustomerId(req);
+    const customerId = await this.resolveCustomerId(req);
     const data = await this.aiGenerationService.updateGeneration(customerId, id, dto);
     return {
       statusCode: 200,

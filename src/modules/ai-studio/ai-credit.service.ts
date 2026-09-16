@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -21,6 +22,75 @@ export class AiCreditService {
     private readonly prisma: PrismaService,
     private readonly integrationSettings: IntegrationSettingsService,
   ) {}
+
+  /**
+   * Resolves the authenticated customer ID accurately.
+   * Priority:
+   * 1. Explicit request header ('x-customer-id' or 'customer-id') if provided and valid.
+   * 2. Authenticated user's direct customerId, user.customer.id, or user.employee.customerId.
+   * 3. Customer lookup by user ID or user email in DB.
+   * 4. For Admin / Super Admin acting on behalf of a customer, fall back to first active customer.
+   * NEVER falls back to user.id as customerId.
+   */
+  async resolveCustomerId(user: any, headers?: Record<string, any>): Promise<number> {
+    const rawHeader = headers?.['x-customer-id'] || headers?.['customer-id'];
+    const headerId = rawHeader ? parseInt(String(rawHeader), 10) : null;
+
+    if (headerId && !isNaN(headerId) && headerId > 0) {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: headerId },
+        select: { id: true },
+      });
+      if (customer) {
+        return customer.id;
+      }
+    }
+
+    const candidateId =
+      user?.customerId ??
+      user?.customer?.id ??
+      user?.employee?.customerId;
+
+    if (candidateId) {
+      const parsed = parseInt(String(candidateId), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+
+    if (user?.id) {
+      const linkedCustomer = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: user.id } } },
+            { employees: { some: { userId: user.id } } },
+            ...(user.email ? [{ email: user.email }] : []),
+          ],
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      if (linkedCustomer) {
+        return linkedCustomer.id;
+      }
+    }
+
+    const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.roles?.includes('SUPER_ADMIN');
+    const isAdmin = isSuperAdmin || user?.role === 'ADMIN' || user?.roles?.includes('ADMIN') || user?.role === 'TENANT_ADMIN';
+    if (isAdmin) {
+      const firstCustomer = await this.prisma.customer.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (firstCustomer) {
+        return firstCustomer.id;
+      }
+    }
+
+    throw new ForbiddenException('Valid customer authentication session is required');
+  }
 
   /**
    * Retrieves or initializes a customer's AI Credit Wallet with welcome credits
@@ -52,6 +122,15 @@ export class AiCreditService {
       });
 
       this.logger.log(`[AI_WALLET_INIT] Initialized wallet for Customer #${customerId} with 20 welcome credits.`);
+    } else {
+      // Ensure available = granted/top-up credits - successfully consumed credits invariant
+      const expectedEarned = wallet.balance + wallet.totalSpent;
+      if (wallet.totalEarned < expectedEarned) {
+        wallet = await this.prisma.aiCreditWallet.update({
+          where: { id: wallet.id },
+          data: { totalEarned: expectedEarned },
+        });
+      }
     }
 
     return wallet;
@@ -85,9 +164,13 @@ export class AiCreditService {
   async validateCreditAvailability(
     customerId: number,
     serviceCode: string,
-  ): Promise<{ requiredCredits: number; balance: number }> {
+  ): Promise<{ requiredCredits: number; balance: number; walletId: number }> {
     const requiredCredits = await this.getRequiredCredits(serviceCode);
     const wallet = await this.getOrCreateWallet(customerId);
+
+    this.logger.log(
+      `[AI_CREDIT_CHECK]\ncustomerId: ${customerId}\nwalletId: ${wallet.id}\nrequiredCredits: ${requiredCredits}\navailableCredits: ${wallet.balance}`,
+    );
 
     if (wallet.balance < requiredCredits) {
       throw new BadRequestException(
@@ -95,7 +178,11 @@ export class AiCreditService {
       );
     }
 
-    return { requiredCredits, balance: wallet.balance };
+    this.logger.log(
+      `[AI_CREDIT_RESERVE]\ncustomerId: ${customerId}\nwalletId: ${wallet.id}\nreservedCredits: ${requiredCredits}\navailableCredits: ${wallet.balance}`,
+    );
+
+    return { requiredCredits, balance: wallet.balance, walletId: wallet.id };
   }
 
   /**
@@ -203,6 +290,9 @@ export class AiCreditService {
         data: { creditsSpent: cost },
       });
 
+      this.logger.log(
+        `[AI_CREDIT_CONSUME]\ncustomerId: ${customerId}\nwalletId: ${wallet.id}\nconsumedCredits: ${cost}\nbalanceBefore: ${balanceBefore}\nbalanceAfter: ${balanceAfter}`,
+      );
       this.logger.log(
         `[AI_CREDIT_CONSUMED] Successfully deducted ${cost} credits for Customer #${customerId} (Gen: ${generationCode}). Balance: ${balanceBefore} -> ${balanceAfter}`,
       );

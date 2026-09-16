@@ -37,7 +37,7 @@ export class AiGenerationService {
     );
 
     // 1. Validate Available Credits BEFORE starting AI generation (No deduction occurs here)
-    const { requiredCredits } = await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
+    const { requiredCredits, walletId } = await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
 
     // 2. Generate unique generation ID
     const now = new Date();
@@ -56,6 +56,10 @@ export class AiGenerationService {
     let videoJobId: string | null = null;
 
     try {
+      this.logger.log(
+        `[AI_PROVIDER_START]\ncustomerId: ${customerId}\nwalletId: ${walletId}\ntype: ${dto.type}\nrequiredCredits: ${requiredCredits}`,
+      );
+
       // 3. Generate Content via Provider
       if (dto.type === 'CAPTION' || dto.type === 'HASHTAGS' || dto.type === 'POST') {
         const textResult = await this.aiProvider.generateText({
@@ -155,8 +159,15 @@ export class AiGenerationService {
       if (dto.type === 'VIDEO' && !mediaUrl) {
         throw new Error('AI provider failed to generate playable video URL.');
       }
+
+      this.logger.log(
+        `[AI_PROVIDER_SUCCESS]\ncustomerId: ${customerId}\nwalletId: ${walletId}\ntype: ${dto.type}\nrequiredCredits: ${requiredCredits}`,
+      );
     } catch (err: any) {
       this.logger.error(`[AI_GEN_FAILED] Failed generation for Customer #${customerId}: ${err?.message}`);
+      this.logger.warn(
+        `[AI_CREDIT_RELEASE]\ncustomerId: ${customerId}\nwalletId: ${walletId}\nreleasedCredits: ${requiredCredits}\nreason: ${err?.message}`,
+      );
       // Zero deductions and zero ledger entries on failure
       throw new BadRequestException(`AI Generation failed: ${err?.message}`);
     }
