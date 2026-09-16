@@ -21,12 +21,13 @@ export class AiGenerationService {
 
   /**
    * Generates AI Content based on customer selection (Post, Poster, Video, Caption, Hashtags)
+   * Credit deduction happens STRICTLY AFTER successful generation and database storage.
    */
   async generate(customerId: number, dto: GenerateContentDto, file?: Express.Multer.File) {
     const serviceCode = `AI_${dto.type.toUpperCase()}`;
 
-    // 1. Validate & Deduct Credits atomically
-    const creditsSpent = await this.aiCredit.deductCredits(customerId, serviceCode);
+    // 1. Validate Available Credits BEFORE starting AI generation (No deduction occurs here)
+    const { requiredCredits } = await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
 
     // 2. Generate unique generation ID
     const now = new Date();
@@ -106,53 +107,82 @@ export class AiGenerationService {
         hashtags = textResult.hashtags;
       }
 
-      // 4. Save Record in Database
-      const generation = await this.prisma.aiGeneration.create({
-        data: {
-          generationId,
-          customerId,
-          type: dto.type.toUpperCase(),
-          status,
-          product: dto.product,
-          objective: dto.objective,
-          targetAudience: dto.targetAudience,
-          platform: dto.platform?.toUpperCase() || 'INSTAGRAM',
-          language: dto.language || 'English',
-          tone: dto.tone || 'Premium',
-          cta: dto.cta || 'Order Now',
-          instructions: dto.instructions,
-          creditsSpent,
-          caption,
-          hashtags,
-          mediaUrl,
-          mediaType,
-          errorMessage,
-          metadata: videoJobId ? { videoJobId } : undefined,
-        },
-      });
-
-      if (mediaUrl) {
-        await this.prisma.aiGenerationAsset.create({
-          data: {
-            generationId: generation.id,
-            assetType: mediaType,
-            url: mediaUrl,
-          },
-        });
+      // Output Validation: Verify that generation produced actual content
+      if (dto.type === 'POST' && !caption && !mediaUrl) {
+        throw new Error('AI provider returned empty post content.');
       }
-
-      this.logger.log(`[AI_GEN_CREATED] Generated #${generation.id} (${generationId}) for Customer #${customerId}`);
-
-      return {
-        success: true,
-        generation,
-      };
+      if (dto.type === 'POSTER' && !mediaUrl) {
+        throw new Error('AI provider failed to generate poster image.');
+      }
+      if ((dto.type === 'CAPTION' || dto.type === 'HASHTAGS') && !caption && hashtags.length === 0) {
+        throw new Error('AI provider returned empty text content.');
+      }
+      if (dto.type === 'VIDEO' && !videoJobId && !mediaUrl) {
+        throw new Error('AI provider failed to initialize video render.');
+      }
     } catch (err: any) {
       this.logger.error(`[AI_GEN_FAILED] Failed generation for Customer #${customerId}: ${err?.message}`);
-      // Refund credits on unexpected failure
-      await this.aiCredit.refundCredits(customerId, serviceCode, creditsSpent);
+      // Zero deductions and zero ledger entries on failure
       throw new BadRequestException(`AI Generation failed: ${err?.message}`);
     }
+
+    // 4. Save Successful Record in Database FIRST
+    const generation = await this.prisma.aiGeneration.create({
+      data: {
+        generationId,
+        customerId,
+        type: dto.type.toUpperCase(),
+        status,
+        product: dto.product,
+        objective: dto.objective,
+        targetAudience: dto.targetAudience,
+        platform: dto.platform?.toUpperCase() || 'INSTAGRAM',
+        language: dto.language || 'English',
+        tone: dto.tone || 'Premium',
+        cta: dto.cta || 'Order Now',
+        instructions: dto.instructions,
+        creditsSpent: 0, // initially 0 until deducted
+        caption,
+        hashtags,
+        mediaUrl,
+        mediaType,
+        errorMessage,
+        metadata: videoJobId ? { videoJobId } : undefined,
+      },
+    });
+
+    if (mediaUrl) {
+      await this.prisma.aiGenerationAsset.create({
+        data: {
+          generationId: generation.id,
+          assetType: mediaType,
+          url: mediaUrl,
+        },
+      });
+    }
+
+    // 5. Atomically & Idempotently Deduct Credits ONLY AFTER successful generation and save
+    const deduction = await this.aiCredit.deductCreditsOnSuccess({
+      customerId,
+      serviceCode,
+      generationDbId: generation.id,
+      generationCode: generationId,
+      requiredCredits,
+    });
+
+    this.logger.log(
+      `[AI_GEN_COMPLETED] Generated #${generation.id} (${generationId}) for Customer #${customerId}. Deducted ${deduction.creditsSpent} credits. Remaining: ${deduction.newBalance}`,
+    );
+
+    return {
+      success: true,
+      generation: {
+        ...generation,
+        creditsSpent: deduction.creditsSpent,
+      },
+      creditsSpent: deduction.creditsSpent,
+      balance: deduction.newBalance,
+    };
   }
 
   /**

@@ -18,8 +18,13 @@ describe('AiCreditService - Admin Credit Management', () => {
     },
     aiCreditTransaction: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       count: jest.fn(),
+    },
+    aiGeneration: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
     },
     aiServiceConfig: {
       findUnique: jest.fn(),
@@ -281,4 +286,143 @@ describe('AiCreditService - Admin Credit Management', () => {
       expect(res.transactions[0].balanceAfter).toBe(70);
     });
   });
+
+  describe('4. AI Content Generation Credit Timing & Idempotency', () => {
+    it('should validate credit availability without deducting credits or creating transactions', async () => {
+      mockPrisma.aiServiceConfig.findUnique.mockResolvedValue({
+        code: 'AI_POST',
+        creditCost: 1,
+      });
+      mockPrisma.aiCreditWallet.findUnique.mockResolvedValue({
+        id: 5,
+        customerId: 10,
+        balance: 70,
+      });
+
+      const res = await service.validateCreditAvailability(10, 'AI_POST');
+      expect(res.requiredCredits).toBe(1);
+      expect(res.balance).toBe(70);
+      // Ensure no update or transaction creation occurred
+      expect(mockPrisma.aiCreditWallet.update).not.toHaveBeenCalled();
+      expect(mockPrisma.aiCreditTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject generation when wallet has insufficient credits', async () => {
+      mockPrisma.aiServiceConfig.findUnique.mockResolvedValue({
+        code: 'AI_POST',
+        creditCost: 5,
+      });
+      mockPrisma.aiCreditWallet.findUnique.mockResolvedValue({
+        id: 5,
+        customerId: 10,
+        balance: 2,
+      });
+
+      await expect(service.validateCreditAvailability(10, 'AI_POST')).rejects.toThrow(
+        'Insufficient AI credits. This action requires 5 credits, but your balance is 2. Please top up your wallet.',
+      );
+      expect(mockPrisma.aiCreditWallet.update).not.toHaveBeenCalled();
+      expect(mockPrisma.aiCreditTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it('should atomically deduct credits on successful generation and record CONSUMED transaction', async () => {
+      mockPrisma.aiCreditTransaction.findFirst.mockResolvedValue(null);
+      mockPrisma.aiGeneration.findUnique.mockResolvedValue({
+        id: 501,
+        creditsSpent: 0,
+      });
+      mockPrisma.aiServiceConfig.findUnique.mockResolvedValue({
+        code: 'AI_POST',
+        creditCost: 1,
+      });
+      mockPrisma.aiCreditWallet.findUnique.mockResolvedValue({
+        id: 5,
+        customerId: 10,
+        balance: 70,
+        totalSpent: 10,
+      });
+      mockPrisma.aiCreditWallet.update.mockResolvedValue({
+        id: 5,
+        customerId: 10,
+        balance: 69,
+        totalSpent: 11,
+      });
+      mockPrisma.aiCreditTransaction.create.mockResolvedValue({
+        id: 201,
+        walletId: 5,
+        customerId: 10,
+        amount: -1,
+        balanceAfter: 69,
+        type: 'CONSUMED',
+        generationId: 501,
+      });
+      mockPrisma.aiGeneration.update.mockResolvedValue({
+        id: 501,
+        creditsSpent: 1,
+      });
+
+      const res = await service.deductCreditsOnSuccess({
+        customerId: 10,
+        serviceCode: 'AI_POST',
+        generationDbId: 501,
+        generationCode: 'AIGEN-20260916-7530',
+        requiredCredits: 1,
+      });
+
+      expect(res.creditsSpent).toBe(1);
+      expect(res.newBalance).toBe(69);
+      expect(mockPrisma.aiCreditWallet.update).toHaveBeenCalledWith({
+        where: { id: 5 },
+        data: {
+          balance: 69,
+          totalSpent: 11,
+        },
+      });
+      expect(mockPrisma.aiCreditTransaction.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          amount: -1,
+          balanceAfter: 69,
+          type: 'CONSUMED',
+          generationId: 501,
+        }),
+      });
+      expect(mockPrisma.aiGeneration.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { creditsSpent: 1 },
+      });
+    });
+
+    it('should be strictly idempotent: duplicate deduction call for same generation returns existing without extra deduction', async () => {
+      // Existing transaction already found for this generationId
+      mockPrisma.aiCreditTransaction.findFirst.mockResolvedValue({
+        id: 201,
+        walletId: 5,
+        customerId: 10,
+        amount: -1,
+        balanceAfter: 69,
+        type: 'CONSUMED',
+        generationId: 501,
+      });
+      mockPrisma.aiCreditWallet.findUnique.mockResolvedValue({
+        id: 5,
+        customerId: 10,
+        balance: 69,
+      });
+
+      const res = await service.deductCreditsOnSuccess({
+        customerId: 10,
+        serviceCode: 'AI_POST',
+        generationDbId: 501,
+        generationCode: 'AIGEN-20260916-7530',
+        requiredCredits: 1,
+      });
+
+      expect(res.creditsSpent).toBe(1);
+      expect(res.newBalance).toBe(69);
+      // Ensure NO additional update or transaction creation occurred
+      expect(mockPrisma.aiCreditWallet.update).not.toHaveBeenCalled();
+      expect(mockPrisma.aiCreditTransaction.create).not.toHaveBeenCalled();
+    });
+  });
 });
+

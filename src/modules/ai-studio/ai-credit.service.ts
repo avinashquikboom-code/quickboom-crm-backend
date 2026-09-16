@@ -69,14 +69,161 @@ export class AiCreditService {
   }
 
   /**
-   * Validates and deducts credits atomically before an AI generation
+   * Retrieves required credits for a specific AI service code
+   */
+  async getRequiredCredits(serviceCode: string): Promise<number> {
+    const config = await this.prisma.aiServiceConfig.findUnique({
+      where: { code: serviceCode },
+    });
+    return config?.creditCost ?? 1;
+  }
+
+  /**
+   * Checks whether the customer has enough credits to proceed with AI generation,
+   * without deducting any credits or creating any ledger entry.
+   */
+  async validateCreditAvailability(
+    customerId: number,
+    serviceCode: string,
+  ): Promise<{ requiredCredits: number; balance: number }> {
+    const requiredCredits = await this.getRequiredCredits(serviceCode);
+    const wallet = await this.getOrCreateWallet(customerId);
+
+    if (wallet.balance < requiredCredits) {
+      throw new BadRequestException(
+        `Insufficient AI credits. This action requires ${requiredCredits} credits, but your balance is ${wallet.balance}. Please top up your wallet.`,
+      );
+    }
+
+    return { requiredCredits, balance: wallet.balance };
+  }
+
+  /**
+   * Deducts credits atomically and idempotently ONLY after generation completes successfully.
+   */
+  async deductCreditsOnSuccess(params: {
+    customerId: number;
+    serviceCode: string;
+    generationDbId: number;
+    generationCode: string;
+    requiredCredits?: number;
+  }): Promise<{ creditsSpent: number; newBalance: number; transaction: any }> {
+    const { customerId, serviceCode, generationDbId, generationCode } = params;
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Idempotency check: Has this generation already had credits deducted?
+      const existingTx = await tx.aiCreditTransaction.findFirst({
+        where: {
+          customerId,
+          generationId: generationDbId,
+          type: { in: ['CONSUMED', 'USAGE'] },
+        },
+      });
+
+      if (existingTx) {
+        this.logger.warn(
+          `[AI_CREDIT_IDEMPOTENT] Generation #${generationDbId} (${generationCode}) already deducted credits. Skipping duplicate deduction.`,
+        );
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+        return {
+          creditsSpent: Math.abs(existingTx.amount),
+          newBalance: currentWallet?.balance ?? existingTx.balanceAfter,
+          transaction: existingTx,
+        };
+      }
+
+      // Also check if generation record already has creditsSpent > 0
+      const existingGen = await tx.aiGeneration.findUnique({
+        where: { id: generationDbId },
+      });
+      if (existingGen && existingGen.creditsSpent > 0) {
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+        return {
+          creditsSpent: existingGen.creditsSpent,
+          newBalance: currentWallet?.balance ?? 0,
+          transaction: null,
+        };
+      }
+
+      // 2. Resolve required credits
+      let cost = params.requiredCredits;
+      if (cost === undefined) {
+        const config = await tx.aiServiceConfig.findUnique({ where: { code: serviceCode } });
+        cost = config?.creditCost ?? 1;
+      }
+
+      // 3. Get customer wallet and verify balance inside the atomic transaction
+      let wallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+      if (!wallet) {
+        wallet = await tx.aiCreditWallet.create({
+          data: {
+            customerId,
+            balance: 20,
+            totalEarned: 20,
+            totalSpent: 0,
+          },
+        });
+      }
+
+      if (wallet.balance < cost) {
+        throw new BadRequestException(
+          `Insufficient AI credits to finalize generation. Required: ${cost}, Balance: ${wallet.balance}`,
+        );
+      }
+
+      const balanceBefore = wallet.balance;
+      const balanceAfter = balanceBefore - cost;
+
+      // 4. Update wallet balance
+      await tx.aiCreditWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: balanceAfter,
+          totalSpent: wallet.totalSpent + cost,
+        },
+      });
+
+      // 5. Create immutable audit ledger record
+      const creditTx = await tx.aiCreditTransaction.create({
+        data: {
+          walletId: wallet.id,
+          customerId,
+          amount: -cost,
+          balanceAfter,
+          type: 'CONSUMED',
+          serviceCode,
+          generationId: generationDbId,
+          notes: `Used ${cost} credits for ${serviceCode} (${generationCode})`,
+        },
+      });
+
+      // 6. Update generation record with creditsSpent
+      await tx.aiGeneration.update({
+        where: { id: generationDbId },
+        data: { creditsSpent: cost },
+      });
+
+      this.logger.log(
+        `[AI_CREDIT_CONSUMED] Successfully deducted ${cost} credits for Customer #${customerId} (Gen: ${generationCode}). Balance: ${balanceBefore} -> ${balanceAfter}`,
+      );
+
+      return {
+        creditsSpent: cost,
+        newBalance: balanceAfter,
+        transaction: creditTx,
+      };
+    });
+  }
+
+  /**
+   * Validates and deducts credits atomically (legacy support)
    */
   async deductCredits(customerId: number, serviceCode: string, generationId?: number): Promise<number> {
     const config = await this.prisma.aiServiceConfig.findUnique({
       where: { code: serviceCode },
     });
 
-    const requiredCredits = config?.creditCost ?? 5;
+    const requiredCredits = config?.creditCost ?? 1;
 
     const wallet = await this.getOrCreateWallet(customerId);
 
@@ -102,7 +249,7 @@ export class AiCreditService {
         customerId,
         amount: -requiredCredits,
         balanceAfter: newBalance,
-        type: 'USAGE',
+        type: 'CONSUMED',
         serviceCode,
         generationId,
         notes: `Used ${requiredCredits} credits for ${serviceCode}`,
