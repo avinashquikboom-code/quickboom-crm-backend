@@ -205,9 +205,13 @@ Return ONLY a valid JSON object with the following structure:
                   mediaUrl = s3Res.imageUrl;
                 }
               } catch {
-                const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-                fs.mkdirSync(uploadDir, { recursive: true });
-                fs.writeFileSync(path.join(uploadDir, filename), buffer);
+                try {
+                  const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+                  fs.mkdirSync(uploadDir, { recursive: true });
+                  fs.writeFileSync(path.join(uploadDir, filename), buffer);
+                } catch {
+                  mediaUrl = `data:image/png;base64,${buffer.toString('base64')}`;
+                }
               }
 
               return {
@@ -330,9 +334,13 @@ Return ONLY a valid JSON object with the following structure:
       }
     } catch {
       // Local fallback
-      const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-      fs.mkdirSync(uploadDir, { recursive: true });
-      fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      try {
+        const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+        fs.mkdirSync(uploadDir, { recursive: true });
+        fs.writeFileSync(path.join(uploadDir, filename), buffer);
+      } catch {
+        mediaUrl = `data:image/svg+xml;base64,${buffer.toString('base64')}`;
+      }
     }
 
     return {

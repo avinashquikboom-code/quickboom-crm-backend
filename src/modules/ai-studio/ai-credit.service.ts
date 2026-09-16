@@ -599,7 +599,7 @@ export class AiCreditService {
         code: 'AI_POST',
         name: 'AI Social Media Post',
         description: 'Complete post generation: high-impact visual image, caption, hashtags, and CTA.',
-        creditCost: 5,
+        creditCost: 1,
         pricePerCredit: 10.0,
         packPrice: 45.0,
         sortOrder: 1,
