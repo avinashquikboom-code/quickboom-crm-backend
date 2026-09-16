@@ -10,6 +10,7 @@ export interface ImageGenerationResult {
   fileKey?: string;
   width?: number;
   height?: number;
+  mimeType?: string;
 }
 
 export interface VideoGenerationResult {

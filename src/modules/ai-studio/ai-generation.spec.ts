@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AiGenerationService } from './ai-generation.service';
 import { AiProviderService } from './ai-provider.service';
 import { AiCreditService } from './ai-credit.service';
+import { S3Service } from '../s3/s3.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 describe('AiGenerationService - Content Generation & Credit Invariants', () => {
@@ -12,6 +13,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     aiGeneration: {
       create: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
@@ -34,6 +36,14 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     deductCreditsOnSuccess: jest.fn(),
   };
 
+  const mockS3Service = {
+    uploadBuffer: jest.fn(),
+    uploadMedia: jest.fn(),
+    uploadFile: jest.fn(),
+    getPresignedUrl: jest.fn(),
+    extractKey: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -41,6 +51,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: AiProviderService, useValue: mockAiProvider },
         { provide: AiCreditService, useValue: mockAiCredit },
+        { provide: S3Service, useValue: mockS3Service },
       ],
     }).compile();
 
@@ -49,12 +60,21 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
     mockAiCredit.validateCreditAvailability.mockResolvedValue({ requiredCredits: 5, currentBalance: 50 });
     mockAiCredit.deductCreditsOnSuccess.mockResolvedValue({ creditsSpent: 5, newBalance: 45 });
+    mockS3Service.uploadBuffer.mockResolvedValue({
+      imageUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
+      imageKey: 'ai-posters/1/AIGEN-1234.png',
+    });
+    mockS3Service.getPresignedUrl.mockImplementation((keyOrUrl) => Promise.resolve(keyOrUrl));
+    mockS3Service.extractKey.mockImplementation((keyOrUrl) => keyOrUrl);
   });
 
   describe('POSTER Generation', () => {
-    it('should generate poster, save with COMPLETED status, and deduct credits after saving', async () => {
+    it('should generate poster, upload buffer to S3, save with COMPLETED status, and deduct credits after saving', async () => {
       mockAiProvider.generateImage.mockResolvedValue({
-        url: '/uploads/ai-posters/poster-test.svg',
+        buffer: Buffer.from('<svg>test poster</svg>'),
+        mimeType: 'image/svg+xml',
+        width: 1080,
+        height: 1080,
       });
       mockPrisma.aiGeneration.create.mockImplementation(({ data }) =>
         Promise.resolve({ id: 101, ...data }),
@@ -69,13 +89,32 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
       expect(mockAiCredit.validateCreditAvailability).toHaveBeenCalledWith(1, 'AI_POSTER');
       expect(mockAiProvider.generateImage).toHaveBeenCalled();
+      expect(mockS3Service.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'image/svg+xml',
+        expect.stringMatching(/\.svg$/),
+        'ai-posters/1',
+        expect.stringMatching(/^ai-posters\/1\/AIGEN-\d+-\d+\.svg$/),
+      );
       expect(mockPrisma.aiGeneration.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             type: 'POSTER',
             status: 'COMPLETED',
-            mediaUrl: '/uploads/ai-posters/poster-test.svg',
+            mediaUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
             mediaType: 'IMAGE',
+          }),
+        }),
+      );
+      expect(mockPrisma.aiGenerationAsset.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            generationId: 101,
+            assetType: 'IMAGE',
+            url: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
+            fileKey: 'ai-posters/1/AIGEN-1234.png',
+            width: 1080,
+            height: 1080,
           }),
         }),
       );
@@ -87,7 +126,9 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
           requiredCredits: 5,
         }),
       );
-      expect(result.generation.mediaUrl).toBe('/uploads/ai-posters/poster-test.svg');
+      expect(result.generation.mediaUrl).toBe(
+        'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
+      );
       expect(result.generation.status).toBe('COMPLETED');
     });
   });
@@ -149,7 +190,8 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
         hashtags: ['#honey', '#health', '#organic'],
       });
       mockAiProvider.generateImage.mockResolvedValue({
-        url: '/uploads/ai-posters/social-post.svg',
+        buffer: Buffer.from('<svg>social poster</svg>'),
+        mimeType: 'image/svg+xml',
       });
       mockPrisma.aiGeneration.create.mockImplementation(({ data }) =>
         Promise.resolve({ id: 103, ...data }),
@@ -162,8 +204,11 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
       expect(mockAiProvider.generateText).toHaveBeenCalled();
       expect(mockAiProvider.generateImage).toHaveBeenCalled();
+      expect(mockS3Service.uploadBuffer).toHaveBeenCalled();
       expect(result.generation.caption).toBe('Boost your morning with natural sweetness! 🍯');
-      expect(result.generation.mediaUrl).toBe('/uploads/ai-posters/social-post.svg');
+      expect(result.generation.mediaUrl).toBe(
+        'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
+      );
       expect(result.generation.status).toBe('COMPLETED');
       expect(mockAiCredit.deductCreditsOnSuccess).toHaveBeenCalled();
     });
@@ -204,7 +249,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
           type: 'POSTER',
           product: 'Failed Item',
         }),
-      ).rejects.toThrow('AI Generation failed: AI Engine timeout');
+      ).rejects.toThrow('Content generation is temporarily unavailable. Please try again.');
 
       // Generation was aborted before saving or credit deduction
       expect(mockPrisma.aiGeneration.create).not.toHaveBeenCalled();
@@ -224,6 +269,28 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(mockAiProvider.generateImage).not.toHaveBeenCalled();
+      expect(mockPrisma.aiGeneration.create).not.toHaveBeenCalled();
+      expect(mockAiCredit.deductCreditsOnSuccess).not.toHaveBeenCalled();
+    });
+
+    it('should NEVER deduct credits when S3 upload fails', async () => {
+      mockAiProvider.generateImage.mockResolvedValue({
+        buffer: Buffer.from('<svg>mock poster</svg>'),
+        mimeType: 'image/svg+xml',
+      });
+      mockS3Service.uploadBuffer.mockRejectedValue(new Error('S3 Access Denied'));
+      mockPrisma.aiGeneration.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: 106, ...data }),
+      );
+
+      await expect(
+        service.generate(1, {
+          type: 'POSTER',
+          product: 'Failed S3 Poster',
+        }),
+      ).rejects.toThrow('Content generation is temporarily unavailable. Please try again.');
+
+      // Generation was aborted before saving or credit deduction
       expect(mockPrisma.aiGeneration.create).not.toHaveBeenCalled();
       expect(mockAiCredit.deductCreditsOnSuccess).not.toHaveBeenCalled();
     });

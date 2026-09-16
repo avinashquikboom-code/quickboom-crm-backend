@@ -247,6 +247,7 @@ export class S3Service {
     mimetype: string,
     filename = 'image.png',
     folder = 'marketing/banners',
+    customKey?: string,
   ): Promise<S3UploadResult> {
     if (!buffer || buffer.length === 0) {
       throw new BadRequestException('Buffer is required for upload');
@@ -276,7 +277,7 @@ export class S3Service {
 
     const uniqueId = crypto.randomBytes(8).toString('hex');
     const sanitizedName = filename.replace(/[^a-zA-Z0-9.-]/g, '_').toLowerCase();
-    const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
+    const imageKey = customKey || `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
 
     const { client, bucket, region, customDomain } = await this.resolveS3Client();
 
@@ -349,11 +350,11 @@ export class S3Service {
       try {
         const url = new URL(trimmed);
         const pathname = url.pathname.replace(/^\/+/, '');
-        // Matches all known marketing S3 folder conventions:
+        // Matches all known S3 folder conventions:
         // marketing/banners, marketing/trending, marketing/social-media,
-        // marketing/videos, marketing/thumbnails
+        // marketing/videos, marketing/thumbnails, ai-posters, ai-studio
         const match = pathname.match(
-          /(marketing\/(?:banners|trending|social-media|videos|thumbnails)\/[^\/?]+)/i,
+          /((?:marketing\/(?:banners|trending|social-media|videos|thumbnails)|ai-posters(?:\/\d+)?|ai-studio(?:\/[^\/?]+)?)\/[^\/?]+)/i,
         );
         if (match) {
           return match[1];

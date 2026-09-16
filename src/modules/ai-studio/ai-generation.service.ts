@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiProviderService } from './ai-provider.service';
 import { AiCreditService } from './ai-credit.service';
 import { GenerateContentDto, UpdateGenerationDto } from './dto/ai-studio.dto';
+import { S3Service } from '../s3/s3.service';
 
 @Injectable()
 export class AiGenerationService {
@@ -17,6 +18,7 @@ export class AiGenerationService {
     private readonly prisma: PrismaService,
     private readonly aiProvider: AiProviderService,
     private readonly aiCredit: AiCreditService,
+    private readonly s3Service: S3Service,
   ) {}
 
   /**
@@ -50,6 +52,9 @@ export class AiGenerationService {
     let caption: string | null = null;
     let hashtags: string[] = [];
     let mediaUrl: string | null = null;
+    let mediaFileKey: string | null = null;
+    let mediaWidth: number | null = null;
+    let mediaHeight: number | null = null;
     let mediaType = 'TEXT';
     let status = 'COMPLETED';
     let errorMessage: string | null = null;
@@ -79,6 +84,10 @@ export class AiGenerationService {
 
       if (dto.type === 'POST' || dto.type === 'POSTER') {
         mediaType = 'IMAGE';
+        this.logger.log(
+          `[AI_POSTER_GENERATION_START]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\ntype: ${dto.type}\nproduct: "${dto.product}"`,
+        );
+
         const imgResult = await this.aiProvider.generateImage({
           product: dto.product,
           objective: dto.objective,
@@ -89,7 +98,74 @@ export class AiGenerationService {
           referenceImageUrl: dto.referenceImageUrl,
         });
 
-        mediaUrl = imgResult.url || null;
+        if (!imgResult || (!imgResult.buffer && !imgResult.url)) {
+          throw new Error('AI provider failed to generate poster image.');
+        }
+
+        let s3ResUrl: string | null = null;
+        let s3ResKey: string | null = null;
+
+        if (imgResult.buffer && imgResult.buffer.length > 0) {
+          const rawMime = (imgResult.mimeType || 'image/png').toLowerCase();
+          let mimeType = 'image/png';
+          let ext = 'png';
+          if (rawMime.includes('jpeg') || rawMime.includes('jpg')) {
+            mimeType = 'image/jpeg';
+            ext = 'jpg';
+          } else if (rawMime.includes('svg')) {
+            mimeType = 'image/svg+xml';
+            ext = 'svg';
+          } else if (rawMime.includes('webp')) {
+            mimeType = 'image/webp';
+            ext = 'webp';
+          }
+
+          this.logger.log(
+            `[AI_POSTER_PROVIDER_SUCCESS]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nbytes: ${imgResult.buffer.length}\nmimeType: ${mimeType}`,
+          );
+
+          const s3Key = `ai-posters/${customerId}/${generationId}.${ext}`;
+          this.logger.log(
+            `[AI_POSTER_S3_UPLOAD_START]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nkey: ${s3Key}\nmimeType: ${mimeType}`,
+          );
+
+          try {
+            const uploadRes = await this.s3Service.uploadBuffer(
+              imgResult.buffer,
+              mimeType,
+              `${generationId}.${ext}`,
+              `ai-posters/${customerId}`,
+              s3Key,
+            );
+            s3ResUrl = uploadRes.imageUrl;
+            s3ResKey = uploadRes.imageKey;
+            this.logger.log(
+              `[AI_POSTER_S3_UPLOAD_SUCCESS]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nkey: ${s3ResKey}\nurl: ${s3ResUrl}`,
+            );
+          } catch (s3Err: any) {
+            this.logger.error(
+              `[AI_POSTER_S3_UPLOAD_FAILED]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nerror: ${s3Err?.message || s3Err}`,
+            );
+            throw new Error(`S3 upload failed: ${s3Err?.message || s3Err}`);
+          }
+        }
+
+        const candidateUrl = s3ResUrl || imgResult.url;
+        if (!candidateUrl) {
+          throw new Error('AI poster generation did not produce a valid output URL.');
+        }
+
+        const accessibleUrl =
+          (await this.s3Service.getPresignedUrl(candidateUrl, 604800)) || candidateUrl;
+
+        if (!accessibleUrl || accessibleUrl.startsWith('/uploads/') || accessibleUrl.includes('localhost')) {
+          throw new Error(`Invalid accessible S3 URL obtained: ${accessibleUrl}`);
+        }
+
+        mediaUrl = accessibleUrl;
+        mediaFileKey = s3ResKey || imgResult.fileKey || null;
+        mediaWidth = imgResult.width || 1024;
+        mediaHeight = imgResult.height || 1024;
       }
 
       if (dto.type === 'VIDEO') {
@@ -164,12 +240,12 @@ export class AiGenerationService {
         `[AI_PROVIDER_SUCCESS]\ncustomerId: ${customerId}\nwalletId: ${walletId}\ntype: ${dto.type}\nrequiredCredits: ${requiredCredits}`,
       );
     } catch (err: any) {
-      this.logger.error(`[AI_GEN_FAILED] Failed generation for Customer #${customerId}: ${err?.message}`);
+      this.logger.error(`[AI_GEN_FAILED] Failed generation for Customer #${customerId}: ${err?.message}`, err?.stack);
       this.logger.warn(
         `[AI_CREDIT_RELEASE]\ncustomerId: ${customerId}\nwalletId: ${walletId}\nreleasedCredits: ${requiredCredits}\nreason: ${err?.message}`,
       );
-      // Zero deductions and zero ledger entries on failure
-      throw new BadRequestException(`AI Generation failed: ${err?.message}`);
+      // Zero deductions and zero ledger entries on failure - Return safe customer-facing message
+      throw new BadRequestException('Content generation is temporarily unavailable. Please try again.');
     }
 
     this.logger.log(
@@ -205,6 +281,9 @@ export class AiGenerationService {
           generationId: generation.id,
           assetType: mediaType,
           url: mediaUrl,
+          fileKey: mediaFileKey,
+          width: mediaWidth,
+          height: mediaHeight,
         },
       });
     }
@@ -217,6 +296,12 @@ export class AiGenerationService {
       generationCode: generationId,
       requiredCredits,
     });
+
+    if (dto.type === 'POST' || dto.type === 'POSTER') {
+      this.logger.log(
+        `[AI_POSTER_GENERATION_COMPLETED]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nurl: ${mediaUrl}`,
+      );
+    }
 
     this.logger.log(
       `[AI_RESPONSE] Generation #${generation.id} (${generationId}) COMPLETED and saved in DB for Customer #${customerId}. Deducted ${deduction.creditsSpent} credits. Remaining: ${deduction.newBalance}`,
@@ -309,12 +394,29 @@ export class AiGenerationService {
       where.type = type.toUpperCase();
     }
 
-    return this.prisma.aiGeneration.findMany({
+    const items = await this.prisma.aiGeneration.findMany({
       where,
       include: { assets: true },
       orderBy: { id: 'desc' },
       take: 50,
     });
+
+    return Promise.all(
+      items.map(async (item) => {
+        if (item.mediaUrl && !item.mediaUrl.startsWith('data:')) {
+          const keyOrUrl = item.assets?.[0]?.fileKey || item.mediaUrl;
+          const resolved = await this.s3Service.getPresignedUrl(keyOrUrl, 604800);
+          if (resolved) {
+            return {
+              ...item,
+              mediaUrl: resolved,
+              assets: item.assets.map((a) => ({ ...a, url: resolved })),
+            };
+          }
+        }
+        return item;
+      }),
+    );
   }
 
   /**

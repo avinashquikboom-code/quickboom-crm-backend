@@ -7,8 +7,6 @@ import {
 } from './ai-provider.interface';
 import { S3Service } from '../s3/s3.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -290,33 +288,13 @@ Return ONLY a valid JSON object with the following structure:
             const uniqueId = crypto.randomBytes(8).toString('hex');
             const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
 
-            let mediaUrl = `/uploads/ai-posters/${filename}`;
-            try {
-              const s3Res = await this.s3Service.uploadFile(
-                {
-                  buffer,
-                  originalname: filename,
-                  mimetype: 'image/png',
-                  size: buffer.length,
-                } as any,
-                'ai-studio',
-              );
-              if (s3Res?.imageUrl) {
-                mediaUrl = s3Res.imageUrl;
-              }
-            } catch {
-              const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-              fs.mkdirSync(uploadDir, { recursive: true });
-              fs.writeFileSync(path.join(uploadDir, filename), buffer);
-            }
-
             this.logger.log(
-              `[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 generated image: mediaUrl="${mediaUrl}"`,
+              `[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 generated image: size=${buffer.length} bytes`,
             );
 
             return {
               buffer,
-              url: mediaUrl,
+              mimeType: 'image/png',
               fileKey: filename,
               width: 1024,
               height: 1024,
@@ -353,33 +331,13 @@ Return ONLY a valid JSON object with the following structure:
           const uniqueId = crypto.randomBytes(8).toString('hex');
           const filename = `ai-img-${Date.now()}-${uniqueId}.jpg`;
 
-          const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-          fs.mkdirSync(uploadDir, { recursive: true });
-          fs.writeFileSync(path.join(uploadDir, filename), buffer);
-
-          let mediaUrl = `/uploads/ai-posters/${filename}`;
-          try {
-            const s3Res = await this.s3Service.uploadFile(
-              {
-                buffer,
-                originalname: filename,
-                mimetype: 'image/jpeg',
-                size: buffer.length,
-              } as any,
-              'ai-studio',
-            );
-            if (s3Res?.imageUrl) {
-              mediaUrl = s3Res.imageUrl;
-            }
-          } catch {}
-
           this.logger.log(
-            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: url="${mediaUrl}", size=${buffer.length} bytes`,
+            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: size=${buffer.length} bytes`,
           );
 
           return {
             buffer,
-            url: mediaUrl,
+            mimeType: 'image/jpeg',
             fileKey: filename,
             width: 1024,
             height: 1024,
@@ -484,33 +442,13 @@ Return ONLY a valid JSON object with the following structure:
     const uniqueId = crypto.randomBytes(8).toString('hex');
     const filename = `ai-poster-${Date.now()}-${uniqueId}.svg`;
 
-    const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-    fs.mkdirSync(uploadDir, { recursive: true });
-    fs.writeFileSync(path.join(uploadDir, filename), buffer);
-
-    let mediaUrl = `/uploads/ai-posters/${filename}`;
-    try {
-      const s3Res = await this.s3Service.uploadFile(
-        {
-          buffer,
-          originalname: filename,
-          mimetype: 'image/svg+xml',
-          size: buffer.length,
-        } as any,
-        'ai-studio',
-      );
-      if (s3Res?.imageUrl) {
-        mediaUrl = s3Res.imageUrl;
-      }
-    } catch {}
-
     this.logger.log(
-      `[AI_PROVIDER_RESPONSE] Vector SVG image generated: mediaUrl="${mediaUrl}"`,
+      `[AI_PROVIDER_RESPONSE] Vector SVG image generated: size=${buffer.length} bytes`,
     );
 
     return {
       buffer,
-      url: mediaUrl,
+      mimeType: 'image/svg+xml',
       fileKey: filename,
       width: 1080,
       height: 1080,
@@ -544,47 +482,52 @@ Return ONLY a valid JSON object with the following structure:
       cta: params.cta,
     });
 
+    let previewUrl = posterRes.url;
+    let previewKey = posterRes.fileKey;
+
+    if (!previewUrl && posterRes.buffer) {
+      try {
+        const s3Preview = await this.s3Service.uploadBuffer(
+          posterRes.buffer,
+          posterRes.mimeType || 'image/png',
+          posterRes.fileKey || 'preview.png',
+          'ai-studio/previews',
+        );
+        previewUrl = s3Preview.imageUrl;
+        previewKey = s3Preview.imageKey;
+      } catch (err: any) {
+        this.logger.warn(`[AI_VIDEO_PREVIEW_WARN] Could not upload preview to S3: ${err?.message}`);
+      }
+    }
+
     const jobResult: VideoGenerationResult = {
       jobId,
-      url: posterRes.url,
-      fileKey: posterRes.fileKey,
+      url: previewUrl,
+      fileKey: previewKey,
       duration: params.duration || 15,
       status: 'PROCESSING',
     };
 
     this.videoJobs.set(jobId, jobResult);
 
-    // 2. Prepare actual playable MP4 video asset asynchronously
-    const videoUploadDir = path.join(process.cwd(), 'uploads', 'ai-videos');
-    fs.mkdirSync(videoUploadDir, { recursive: true });
-
+    // 2. Prepare actual playable MP4 video asset asynchronously in-memory
     const videoFilename = `ai-vid-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
-    const videoFilePath = path.join(videoUploadDir, videoFilename);
-    const templatePath = path.join(videoUploadDir, 'template-video.mp4');
 
     setTimeout(async () => {
-      let finalVideoUrl = `/uploads/ai-videos/${videoFilename}`;
+      let finalVideoUrl: string | undefined;
       try {
         let videoBuffer: Buffer | null = null;
-        if (fs.existsSync(templatePath)) {
-          videoBuffer = fs.readFileSync(templatePath);
-        } else {
-          try {
-            const res = await fetch('https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4');
-            if (res.ok) {
-              const ab = await res.arrayBuffer();
-              videoBuffer = Buffer.from(ab);
-              fs.writeFileSync(templatePath, videoBuffer);
-            }
-          } catch (e: any) {
-            this.logger.warn(`Could not fetch template video: ${e?.message}`);
+        try {
+          const res = await fetch('https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4');
+          if (res.ok) {
+            const ab = await res.arrayBuffer();
+            videoBuffer = Buffer.from(ab);
           }
+        } catch (e: any) {
+          this.logger.warn(`Could not fetch template video: ${e?.message}`);
         }
 
         if (videoBuffer && videoBuffer.length > 0) {
-          fs.writeFileSync(videoFilePath, videoBuffer);
-
-          // Try uploading to S3 if configured
           try {
             const s3Res = await this.s3Service.uploadMedia(
               {
@@ -599,19 +542,25 @@ Return ONLY a valid JSON object with the following structure:
             if (s3Res?.imageUrl) {
               finalVideoUrl = s3Res.imageUrl;
             }
-          } catch {
-            finalVideoUrl = `/uploads/ai-videos/${videoFilename}`;
+          } catch (s3Err: any) {
+            this.logger.warn(`[AI_VIDEO_S3_WARN] Video upload error: ${s3Err?.message}`);
           }
         }
 
-        jobResult.status = 'COMPLETED';
-        jobResult.url = finalVideoUrl;
-        jobResult.fileKey = videoFilename;
-        this.videoJobs.set(jobId, jobResult);
+        if (finalVideoUrl) {
+          jobResult.status = 'COMPLETED';
+          jobResult.url = finalVideoUrl;
+          jobResult.fileKey = videoFilename;
+          this.videoJobs.set(jobId, jobResult);
 
-        this.logger.log(
-          `[AI_PROVIDER_RESPONSE] Video job ${jobId} COMPLETED with playable video URL: ${finalVideoUrl}`,
-        );
+          this.logger.log(
+            `[AI_PROVIDER_RESPONSE] Video job ${jobId} COMPLETED with playable video URL: ${finalVideoUrl}`,
+          );
+        } else {
+          jobResult.status = 'COMPLETED';
+          jobResult.url = previewUrl;
+          this.videoJobs.set(jobId, jobResult);
+        }
       } catch (err: any) {
         this.logger.error(`[AI_PROVIDER_RESPONSE] Video job ${jobId} FAILED: ${err?.message}`);
         jobResult.status = 'FAILED';
