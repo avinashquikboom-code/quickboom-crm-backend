@@ -27,7 +27,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('AI Studio')
 @Controller()
@@ -242,7 +242,7 @@ export class AiStudioController {
     @Body() dto: AdminAdjustCreditsDto,
     @CurrentUser() user: any,
   ) {
-    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
       throw new ForbiddenException('Only authorized Admin or Super Admin can add AI credits');
     }
     const data = await this.aiCreditService.addCreditsAdmin(parseInt(customerId, 10), dto, user);
@@ -258,7 +258,7 @@ export class AiStudioController {
     @Body() dto: AdminAdjustCreditsDto,
     @CurrentUser() user: any,
   ) {
-    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
       throw new ForbiddenException('Only authorized Admin or Super Admin can reduce AI credits');
     }
     const data = await this.aiCreditService.reduceCreditsAdmin(parseInt(customerId, 10), dto, user);

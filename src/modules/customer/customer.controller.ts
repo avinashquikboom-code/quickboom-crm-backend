@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkService } from '../work/work.service';
 import { AiCreditService } from '../ai-studio/ai-credit.service';
+import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 
 @ApiTags('Customers & Tenant Management')
@@ -314,7 +315,7 @@ export class CustomerController {
   @ApiOperation({ summary: 'Add AI credits to customer wallet (Admin)' })
   async addAiCredits(
     @Param('id') id: string,
-    @Body() dto: { amount: number; reason: string },
+    @Body() dto: AdminAdjustCreditsDto,
     @CurrentUser() user: any,
   ) {
     if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
@@ -328,7 +329,7 @@ export class CustomerController {
   @ApiOperation({ summary: 'Reduce AI credits from customer wallet (Admin)' })
   async reduceAiCredits(
     @Param('id') id: string,
-    @Body() dto: { amount: number; reason: string },
+    @Body() dto: AdminAdjustCreditsDto,
     @CurrentUser() user: any,
   ) {
     if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
