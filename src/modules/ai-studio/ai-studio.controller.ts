@@ -11,6 +11,7 @@ import {
   ForbiddenException,
   UseInterceptors,
   UploadedFile,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -32,6 +33,8 @@ import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/
 @ApiTags('AI Studio')
 @Controller()
 export class AiStudioController {
+  private readonly logger = new Logger(AiStudioController.name);
+
   constructor(
     private readonly aiCreditService: AiCreditService,
     private readonly aiGenerationService: AiGenerationService,
@@ -122,11 +125,18 @@ export class AiStudioController {
     @UploadedFile() file?: Express.Multer.File,
   ) {
     const customerId = this.resolveCustomerId(req);
+    this.logger.log(
+      `[AI_GENERATE_REQUEST] Customer #${customerId} requested type="${dto.type}", product="${dto.product}", platform="${dto.platform || 'INSTAGRAM'}"`,
+    );
     const result = await this.aiGenerationService.generate(customerId, dto, file);
+    this.logger.log(
+      `[AI_GENERATE_RESPONSE] Completed #${result.generation.id} (${result.generation.generationId}) for Customer #${customerId}: status="${result.generation.status}", mediaUrl="${result.generation.mediaUrl || 'none'}", creditsSpent=${result.creditsSpent}`,
+    );
     return {
       statusCode: 201,
       success: true,
       message: 'AI Content generated successfully',
+      data: result.generation,
       ...result,
     };
   }

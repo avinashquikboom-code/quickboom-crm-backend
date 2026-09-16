@@ -85,10 +85,17 @@ export class S3Service {
       throw new BadRequestException('File is required for upload');
     }
 
-    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const allowedMimes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/svg+xml',
+      'image/svg',
+    ];
     if (!allowedMimes.includes(file.mimetype.toLowerCase())) {
       throw new BadRequestException(
-        `Invalid image format "${file.mimetype}". Supported formats: JPG, JPEG, PNG, WEBP`,
+        `Invalid image format "${file.mimetype}". Supported formats: JPG, JPEG, PNG, WEBP, SVG`,
       );
     }
 
@@ -244,11 +251,18 @@ export class S3Service {
       throw new BadRequestException('Buffer is required for upload');
     }
 
-    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const allowedMimes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/svg+xml',
+      'image/svg',
+    ];
     const cleanMime = mimetype.toLowerCase();
     if (!allowedMimes.includes(cleanMime)) {
       throw new BadRequestException(
-        `Invalid image format "${mimetype}". Supported formats: JPG, JPEG, PNG, WEBP`,
+        `Invalid image format "${mimetype}". Supported formats: JPG, JPEG, PNG, WEBP, SVG`,
       );
     }
 

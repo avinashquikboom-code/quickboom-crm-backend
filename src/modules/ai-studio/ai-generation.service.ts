@@ -26,6 +26,10 @@ export class AiGenerationService {
   async generate(customerId: number, dto: GenerateContentDto, file?: Express.Multer.File) {
     const serviceCode = `AI_${dto.type.toUpperCase()}`;
 
+    this.logger.log(
+      `[AI_GENERATION_STATUS] Starting generation for Customer #${customerId}: type="${dto.type}", product="${dto.product}"`,
+    );
+
     // 1. Validate Available Credits BEFORE starting AI generation (No deduction occurs here)
     const { requiredCredits } = await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
 
@@ -80,7 +84,9 @@ export class AiGenerationService {
 
       if (dto.type === 'VIDEO') {
         mediaType = 'VIDEO';
-        status = 'PROCESSING';
+        this.logger.log(
+          `[AI_GENERATION_STATUS] Dispatching video job for Customer #${customerId}...`,
+        );
         const videoResult = await this.aiProvider.startVideoJob({
           product: dto.product,
           objective: dto.objective,
@@ -92,7 +98,30 @@ export class AiGenerationService {
         });
 
         videoJobId = videoResult.jobId;
-        mediaUrl = videoResult.url || null; // Poster frame preview
+
+        // Poll video job until completed or failed
+        let isDone = false;
+        let attempts = 0;
+        const maxAttempts = 20; // 20 * 500ms = 10s maximum wait
+        while (!isDone && attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          attempts++;
+          const currentJob = await this.aiProvider.checkVideoJobStatus(videoJobId);
+          if (currentJob.status === 'COMPLETED') {
+            isDone = true;
+            status = 'COMPLETED';
+            mediaUrl = currentJob.url || null;
+            this.logger.log(
+              `[AI_GENERATION_STATUS] Video job ${videoJobId} finished successfully with URL: ${mediaUrl}`,
+            );
+          } else if (currentJob.status === 'FAILED') {
+            throw new Error(`Video generation job ${videoJobId} failed`);
+          }
+        }
+
+        if (!isDone) {
+          throw new Error(`Video generation job ${videoJobId} timed out after ${maxAttempts * 500}ms`);
+        }
 
         const textResult = await this.aiProvider.generateText({
           product: dto.product,
@@ -117,14 +146,18 @@ export class AiGenerationService {
       if ((dto.type === 'CAPTION' || dto.type === 'HASHTAGS') && !caption && hashtags.length === 0) {
         throw new Error('AI provider returned empty text content.');
       }
-      if (dto.type === 'VIDEO' && !videoJobId && !mediaUrl) {
-        throw new Error('AI provider failed to initialize video render.');
+      if (dto.type === 'VIDEO' && !mediaUrl) {
+        throw new Error('AI provider failed to generate playable video URL.');
       }
     } catch (err: any) {
       this.logger.error(`[AI_GEN_FAILED] Failed generation for Customer #${customerId}: ${err?.message}`);
       // Zero deductions and zero ledger entries on failure
       throw new BadRequestException(`AI Generation failed: ${err?.message}`);
     }
+
+    this.logger.log(
+      `[AI_GENERATION_OUTPUT] Output produced: type="${dto.type}", mediaType="${mediaType}", mediaUrl="${mediaUrl}", captionLength=${caption?.length || 0}, hashtagsCount=${hashtags.length}`,
+    );
 
     // 4. Save Successful Record in Database FIRST
     const generation = await this.prisma.aiGeneration.create({
@@ -150,6 +183,10 @@ export class AiGenerationService {
         metadata: videoJobId ? { videoJobId } : undefined,
       },
     });
+
+    this.logger.log(
+      `[AI_GENERATION_DB] Saved generation record #${generation.id} (${generationId}) in DB with status="${status}", mediaUrl="${mediaUrl}"`,
+    );
 
     if (mediaUrl) {
       await this.prisma.aiGenerationAsset.create({
@@ -209,9 +246,13 @@ export class AiGenerationService {
         if (job.status === 'COMPLETED') {
           await this.prisma.aiGeneration.update({
             where: { id: generation.id },
-            data: { status: 'COMPLETED' },
+            data: {
+              status: 'COMPLETED',
+              ...(job.url && { mediaUrl: job.url }),
+            },
           });
           generation.status = 'COMPLETED';
+          if (job.url) generation.mediaUrl = job.url;
         }
       }
     }
