@@ -23,6 +23,14 @@ import {
     LinkedInProvider,
     TikTokProvider,
   ],
-  exports: [SocialAccountService, SocialPublishService],
+  exports: [
+    SocialAccountService,
+    SocialPublishService,
+    InstagramProvider,
+    FacebookProvider,
+    YouTubeProvider,
+    LinkedInProvider,
+    TikTokProvider,
+  ],
 })
 export class SocialPublishingModule {}
