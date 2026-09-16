@@ -34,7 +34,7 @@ export class DataManagementService {
       return Number(user.customerId);
     }
     const defaultCust = await this.prisma.customer.findFirst({
-      where: { isDeleted: false },
+      where: { deletedAt: null },
       select: { id: true },
       orderBy: { id: 'asc' },
     });
