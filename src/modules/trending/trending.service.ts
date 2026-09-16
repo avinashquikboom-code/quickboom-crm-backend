@@ -42,11 +42,17 @@ export class TrendingService {
     let resolvedThumbnailUrl = item.thumbnailUrl;
 
     if (resolvedMediaUrl && !resolvedMediaUrl.includes('youtube.com') && !resolvedMediaUrl.includes('youtu.be')) {
-      resolvedMediaUrl = (await this.s3Service.getPresignedUrl(resolvedMediaUrl)) || resolvedMediaUrl;
+      if (item.mediaType === 'VIDEO') {
+        resolvedMediaUrl = (await this.s3Service.getVideoPresignedUrl(resolvedMediaUrl)) || resolvedMediaUrl;
+      } else {
+        resolvedMediaUrl = (await this.s3Service.getPresignedUrl(resolvedMediaUrl)) || resolvedMediaUrl;
+      }
     }
 
     if (resolvedThumbnailUrl && !resolvedThumbnailUrl.includes('img.youtube.com')) {
       resolvedThumbnailUrl = (await this.s3Service.getPresignedUrl(resolvedThumbnailUrl)) || resolvedThumbnailUrl;
+    } else if (!resolvedThumbnailUrl && resolvedMediaUrl && item.mediaType === 'IMAGE') {
+      resolvedThumbnailUrl = resolvedMediaUrl;
     }
 
     const meta = (item.metadata && typeof item.metadata === 'object') ? item.metadata : {};

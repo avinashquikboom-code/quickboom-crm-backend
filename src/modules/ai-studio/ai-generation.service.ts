@@ -368,6 +368,14 @@ export class AiGenerationService {
       }
     }
 
+    if (generation.mediaUrl && !generation.mediaUrl.startsWith('data:')) {
+      const fileKey = (generation as any).assets?.[0]?.fileKey || generation.mediaUrl;
+      const resolved = await this.s3Service.getPresignedUrl(fileKey, 604800);
+      if (resolved) {
+        generation.mediaUrl = resolved;
+      }
+    }
+
     return generation;
   }
 
@@ -418,14 +426,14 @@ export class AiGenerationService {
 
     return Promise.all(
       items.map(async (item) => {
-        if (item.mediaUrl && !item.mediaUrl.startsWith('data:') && !item.mediaUrl.startsWith('http://') && !item.mediaUrl.startsWith('https://')) {
+        if (item.mediaUrl && !item.mediaUrl.startsWith('data:')) {
           const keyOrUrl = item.assets?.[0]?.fileKey || item.mediaUrl;
           const resolved = await this.s3Service.getPresignedUrl(keyOrUrl, 604800);
           if (resolved) {
             return {
               ...item,
               mediaUrl: resolved,
-              assets: item.assets.map((a) => ({ ...a, url: resolved })),
+              assets: (item.assets || []).map((a) => ({ ...a, url: resolved })),
             };
           }
         }
@@ -464,6 +472,23 @@ export class AiGenerationService {
       this.prisma.aiGeneration.count({ where }),
     ]);
 
-    return { items, total };
+    const resolvedItems = await Promise.all(
+      items.map(async (item) => {
+        if (item.mediaUrl && !item.mediaUrl.startsWith('data:')) {
+          const keyOrUrl = item.assets?.[0]?.fileKey || item.mediaUrl;
+          const resolved = await this.s3Service.getPresignedUrl(keyOrUrl, 604800);
+          if (resolved) {
+            return {
+              ...item,
+              mediaUrl: resolved,
+              assets: (item.assets || []).map((a) => ({ ...a, url: resolved })),
+            };
+          }
+        }
+        return item;
+      }),
+    );
+
+    return { items: resolvedItems, total };
   }
 }

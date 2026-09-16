@@ -377,15 +377,24 @@ export class S3Service {
     const trimmed = keyOrUrl.trim();
     if (!trimmed) return null;
 
-    // If external non-S3 URL or base64 or local disk upload, return directly
+    // If external non-S3 URL or base64, return directly
     if (
       trimmed.startsWith('data:') ||
-      trimmed.startsWith('/uploads/') ||
       trimmed.startsWith('http://localhost') ||
       trimmed.startsWith('https://images.unsplash.com') ||
       trimmed.startsWith('https://placehold.co')
     ) {
       return trimmed;
+    }
+
+    // Resolve legacy local uploads to absolute reachable backend URL so Admin & Mobile can display them
+    if (trimmed.startsWith('/uploads/')) {
+      const apiHost = (
+        process.env.API_BASE_URL ||
+        process.env.APP_URL ||
+        (process.env.NODE_ENV === 'production' ? 'https://api.qbapp.online' : 'http://localhost:3000')
+      ).replace(/\/+$/, '');
+      return `${apiHost}${trimmed}`;
     }
 
     const key = this.extractKey(trimmed);
