@@ -493,7 +493,7 @@ Return ONLY a valid JSON object with the following structure:
           posterRes.buffer,
           posterRes.mimeType || 'image/png',
           posterRes.fileKey || 'preview.png',
-          'ai-studio/previews',
+          'marketing/banners',
         );
         previewUrl = s3Preview.imageUrl;
         previewKey = s3Preview.imageKey;
@@ -538,7 +538,7 @@ Return ONLY a valid JSON object with the following structure:
                 mimetype: 'video/mp4',
                 size: videoBuffer.length,
               } as any,
-              'ai-studio/videos',
+              'marketing/videos',
               'VIDEO',
             );
             if (s3Res?.imageUrl) {

@@ -103,20 +103,72 @@ export class AiGenerationService {
           throw new Error('AI provider failed to generate poster image.');
         }
 
-        // DIRECT PROVIDER RESULT: Use provider URL or data URI directly.
-        // No local filesystem write, no /app/uploads/ai-posters, no S3 upload.
-        if (imgResult.url) {
+        // REUSE EXISTING IMAGE STORAGE:
+        // Pass generated image data through existing image-storage upload function (S3Service.uploadBuffer)
+        // using the same storage configuration and folder convention ('marketing/banners')
+        let imageBuffer = imgResult.buffer;
+        const mimeType = imgResult.mimeType || 'image/png';
+        const filename = imgResult.fileKey || `ai-poster-${Date.now()}-${generationId}.png`;
+
+        if (!imageBuffer && imgResult.url && imgResult.url.startsWith('http')) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
+            const fetchRes = await fetch(imgResult.url, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (fetchRes.ok) {
+              const ab = await fetchRes.arrayBuffer();
+              imageBuffer = Buffer.from(ab);
+            }
+          } catch (fetchErr: any) {
+            this.logger.warn(`Could not fetch image buffer from provider URL: ${fetchErr?.message}`);
+          }
+        }
+
+        if (imageBuffer && imageBuffer.length > 0) {
+          try {
+            this.logger.log(
+              `[AI_IMAGE_STORAGE_START] Uploading generated image to existing storage: filename=${filename}, mimeType=${mimeType}, size=${imageBuffer.length}`,
+            );
+            const uploadResult = await this.s3Service.uploadBuffer(
+              imageBuffer,
+              mimeType,
+              filename,
+              'marketing/banners',
+            );
+            mediaFileKey = uploadResult.imageKey;
+
+            // Generate accessible URL using existing URL generator
+            const presigned = await this.s3Service.getPresignedUrl(uploadResult.imageKey);
+            mediaUrl = presigned || uploadResult.imageUrl;
+
+            this.logger.log(
+              `[AI_IMAGE_STORAGE_SUCCESS] Stored in existing storage: key=${mediaFileKey}, url=${mediaUrl}`,
+            );
+          } catch (storageErr: any) {
+            this.logger.error(
+              `[AI_IMAGE_STORAGE_ERROR] Existing storage upload failed: ${storageErr?.message}`,
+            );
+            // If storage is unconfigured or fails, fall back to direct provider URL if available
+            if (imgResult.url && !imgResult.url.startsWith('data:')) {
+              this.logger.warn(
+                `[AI_IMAGE_STORAGE_FALLBACK] Falling back to provider URL: ${imgResult.url}`,
+              );
+              mediaUrl = imgResult.url;
+              mediaFileKey = filename;
+            } else {
+              throw new Error(`Image storage failed: ${storageErr?.message || storageErr}`);
+            }
+          }
+        } else if (imgResult.url) {
           mediaUrl = imgResult.url;
-        } else if (imgResult.buffer && imgResult.buffer.length > 0) {
-          const rawMime = imgResult.mimeType || 'image/png';
-          mediaUrl = `data:${rawMime};base64,${imgResult.buffer.toString('base64')}`;
+          mediaFileKey = filename;
         }
 
         if (!mediaUrl) {
-          throw new Error('AI poster generation did not produce a valid output URL or image data.');
+          throw new Error('AI poster generation did not produce a valid output URL.');
         }
 
-        mediaFileKey = imgResult.fileKey || `${generationId}.png`;
         mediaWidth = imgResult.width || 1024;
         mediaHeight = imgResult.height || 1024;
 

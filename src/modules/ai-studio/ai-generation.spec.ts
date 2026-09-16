@@ -61,15 +61,17 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     mockAiCredit.validateCreditAvailability.mockResolvedValue({ requiredCredits: 5, currentBalance: 50 });
     mockAiCredit.deductCreditsOnSuccess.mockResolvedValue({ creditsSpent: 5, newBalance: 45 });
     mockS3Service.uploadBuffer.mockResolvedValue({
-      imageUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/ai-posters/1/AIGEN-1234.png',
-      imageKey: 'ai-posters/1/AIGEN-1234.png',
+      imageUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/marketing/banners/1/AIGEN-1234.png',
+      imageKey: 'marketing/banners/1/AIGEN-1234.png',
     });
-    mockS3Service.getPresignedUrl.mockImplementation((keyOrUrl) => Promise.resolve(keyOrUrl));
+    mockS3Service.getPresignedUrl.mockImplementation((keyOrUrl) =>
+      Promise.resolve(`https://presigned.example.com/${keyOrUrl}`),
+    );
     mockS3Service.extractKey.mockImplementation((keyOrUrl) => keyOrUrl);
   });
 
   describe('POSTER Generation', () => {
-    it('should generate poster, return direct provider URL, save with COMPLETED status, and deduct credits after saving', async () => {
+    it('should generate poster, upload to existing storage, save with COMPLETED status, and deduct credits after saving', async () => {
       mockAiProvider.generateImage.mockResolvedValue({
         url: 'https://image.pollinations.ai/prompt/Organic%20Honey?width=1024&height=1024&nologo=true',
         buffer: Buffer.from('<svg>test poster</svg>'),
@@ -90,12 +92,18 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
       expect(mockAiCredit.validateCreditAvailability).toHaveBeenCalledWith(1, 'AI_POSTER');
       expect(mockAiProvider.generateImage).toHaveBeenCalled();
+      expect(mockS3Service.uploadBuffer).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'image/jpeg',
+        expect.any(String),
+        'marketing/banners',
+      );
       expect(mockPrisma.aiGeneration.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             type: 'POSTER',
             status: 'COMPLETED',
-            mediaUrl: 'https://image.pollinations.ai/prompt/Organic%20Honey?width=1024&height=1024&nologo=true',
+            mediaUrl: 'https://presigned.example.com/marketing/banners/1/AIGEN-1234.png',
             mediaType: 'IMAGE',
           }),
         }),
@@ -105,7 +113,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
           data: expect.objectContaining({
             generationId: 101,
             assetType: 'IMAGE',
-            url: 'https://image.pollinations.ai/prompt/Organic%20Honey?width=1024&height=1024&nologo=true',
+            url: 'https://presigned.example.com/marketing/banners/1/AIGEN-1234.png',
             width: 1024,
             height: 1024,
           }),
@@ -120,7 +128,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
         }),
       );
       expect(result.generation.mediaUrl).toBe(
-        'https://image.pollinations.ai/prompt/Organic%20Honey?width=1024&height=1024&nologo=true',
+        'https://presigned.example.com/marketing/banners/1/AIGEN-1234.png',
       );
       expect(result.generation.status).toBe('COMPLETED');
     });
@@ -184,6 +192,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
       });
       mockAiProvider.generateImage.mockResolvedValue({
         url: 'https://image.pollinations.ai/prompt/Honey?width=1024&height=1024',
+        buffer: Buffer.from('<svg>post image</svg>'),
         mimeType: 'image/jpeg',
       });
       mockPrisma.aiGeneration.create.mockImplementation(({ data }) =>
@@ -199,7 +208,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
       expect(mockAiProvider.generateImage).toHaveBeenCalled();
       expect(result.generation.caption).toBe('Boost your morning with natural sweetness! 🍯');
       expect(result.generation.mediaUrl).toBe(
-        'https://image.pollinations.ai/prompt/Honey?width=1024&height=1024',
+        'https://presigned.example.com/marketing/banners/1/AIGEN-1234.png',
       );
       expect(result.generation.status).toBe('COMPLETED');
       expect(mockAiCredit.deductCreditsOnSuccess).toHaveBeenCalled();
@@ -268,6 +277,8 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     it('should NEVER deduct credits when database save fails', async () => {
       mockAiProvider.generateImage.mockResolvedValue({
         url: 'https://image.pollinations.ai/prompt/Gym?width=1024&height=1024',
+        buffer: Buffer.from('<svg>gym poster</svg>'),
+        mimeType: 'image/jpeg',
         width: 1024,
         height: 1024,
       });
