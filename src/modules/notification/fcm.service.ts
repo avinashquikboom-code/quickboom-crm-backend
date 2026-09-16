@@ -93,7 +93,7 @@ export class FcmService implements OnModuleInit {
         this.logger.log('✅ Firebase Admin SDK successfully initialized.');
       } else {
         this.logger.warn(
-          '⚠️ Firebase Admin credentials not found in environment (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY). Push notifications will be mocked/logged in development.',
+          'Firebase Admin credentials are not configured. Push notifications cannot be dispatched until real Firebase credentials are supplied.',
         );
       }
     } catch (error: any) {

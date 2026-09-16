@@ -91,14 +91,22 @@ export class NotificationController {
 
   @Patch(':id/read')
   @ApiOperation({ summary: 'Mark single notification as read' })
-  async markAsRead(@Param('id') id: string) {
-    return this.notificationService.markAsRead(id);
+  async markAsRead(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: number | string,
+  ) {
+    const targetCustomerId = customerId || 1;
+    return this.notificationService.markAsRead(id, targetCustomerId, userId);
   }
 
   @Patch('read-all')
   @ApiOperation({ summary: 'Mark all notifications as read' })
-  async markAllAsRead(@CurrentCustomer() customerId: number | string | undefined) {
+  async markAllAsRead(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: number | string,
+  ) {
     const targetCustomerId = customerId || 1;
-    return this.notificationService.markAllAsRead(targetCustomerId);
+    return this.notificationService.markAllAsRead(targetCustomerId, userId);
   }
 }

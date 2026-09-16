@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
 import { RegisterDeviceTokenDto } from './dto/device-token.dto';
@@ -83,18 +83,25 @@ export class NotificationService {
     };
   }
 
-  async markAsRead(id: number | string) {
+  async markAsRead(
+    id: number | string,
+    customerId: number | string,
+    userId: number | string,
+  ) {
     const numId = Number(id);
+    const numCustomerId = Number(customerId);
+    const numUserId = Number(userId);
     return this.prisma.notification.updateMany({
-      where: { id: numId },
+      where: { id: numId, customerId: numCustomerId, userId: numUserId },
       data: { isRead: true },
     });
   }
 
-  async markAllAsRead(customerId: number | string) {
+  async markAllAsRead(customerId: number | string, userId: number | string) {
     const numCustomerId = Number(customerId);
+    const numUserId = Number(userId);
     return this.prisma.notification.updateMany({
-      where: { customerId: numCustomerId, isRead: false },
+      where: { customerId: numCustomerId, userId: numUserId, isRead: false },
       data: { isRead: true },
     });
   }
@@ -176,7 +183,10 @@ export class NotificationService {
         where: { id: targetUserId },
         select: { customerId: true },
       });
-      targetCustomerId = user?.customerId || 1;
+      if (!user?.customerId) {
+        throw new BadRequestException('The notification recipient is not associated with a customer.');
+      }
+      targetCustomerId = user.customerId;
     }
 
     // If customerId is given without userId, find customer owner/first user
@@ -187,6 +197,8 @@ export class NotificationService {
       });
       if (firstUser) {
         targetUserId = firstUser.id;
+      } else {
+        throw new BadRequestException('The customer has no active user to receive this notification.');
       }
     }
 
