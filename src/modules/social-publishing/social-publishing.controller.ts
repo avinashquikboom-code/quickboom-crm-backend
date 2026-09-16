@@ -43,7 +43,7 @@ export class SocialPublishingController {
   // CUSTOMER SOCIAL ACCOUNTS APIS
   // =========================================================================
 
-  @Get('social/accounts')
+  @Get(['social/accounts', 'customer/social/accounts'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get all connected social accounts for logged-in customer' })
@@ -53,7 +53,7 @@ export class SocialPublishingController {
     return { statusCode: 200, success: true, data };
   }
 
-  @Post('social/accounts/connect')
+  @Post(['social/accounts/connect', 'customer/social/accounts/connect', 'social/connect', 'customer/social/connect'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Connect social media account (Instagram, Facebook, YouTube, LinkedIn, TikTok)' })
@@ -68,7 +68,8 @@ export class SocialPublishingController {
     };
   }
 
-  @Post('social/accounts/:id/disconnect')
+  @Post(['social/accounts/:id/disconnect', 'customer/social/accounts/:id/disconnect', 'social/disconnect/:id', 'customer/social/disconnect/:id'])
+  @Delete(['social/accounts/:id', 'customer/social/accounts/:id'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Disconnect a social media account' })
@@ -87,7 +88,7 @@ export class SocialPublishingController {
   // CUSTOMER PUBLISHING & SCHEDULING APIS
   // =========================================================================
 
-  @Post('social/publish')
+  @Post(['social/publish', 'customer/social/publish'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Publish or schedule post across connected social media accounts' })
@@ -102,7 +103,7 @@ export class SocialPublishingController {
     };
   }
 
-  @Get('social/publishes')
+  @Get(['social/publishes', 'customer/social/publishes'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get publishing history and scheduled queue for logged-in customer' })
@@ -112,7 +113,7 @@ export class SocialPublishingController {
     return { statusCode: 200, success: true, data };
   }
 
-  @Delete('social/publishes/:id')
+  @Delete(['social/publishes/:id', 'customer/social/publishes/:id'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Cancel a scheduled post' })

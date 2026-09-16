@@ -51,14 +51,24 @@ export class ConnectSocialAccountDto {
 }
 
 export class PublishContentDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Array of connected social account IDs to publish to',
     example: [1, 2],
   })
+  @IsOptional()
   @IsArray()
   @IsInt({ each: true })
   @Type(() => Number)
-  accountIds: number[];
+  accountIds?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Single connected social account ID to publish to',
+    example: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  socialAccountId?: number;
 
   @ApiPropertyOptional({ description: 'Linked AI Generation ID' })
   @IsOptional()

@@ -57,21 +57,25 @@ export class SocialPublishService {
    * Publishes or schedules content across selected connected accounts
    */
   async publishOrSchedule(customerId: number, dto: PublishContentDto) {
-    if (!dto.accountIds || dto.accountIds.length === 0) {
+    const rawIds = dto.accountIds && dto.accountIds.length > 0
+      ? dto.accountIds
+      : (dto.socialAccountId ? [dto.socialAccountId] : []);
+
+    if (rawIds.length === 0) {
       throw new BadRequestException('At least one connected social account must be selected');
     }
 
     // Validate that all accounts belong to this customer
     const accounts = await this.prisma.socialAccount.findMany({
       where: {
-        id: { in: dto.accountIds },
+        id: { in: rawIds },
         customerId,
         deletedAt: null,
         isConnected: true,
       },
     });
 
-    if (accounts.length !== dto.accountIds.length) {
+    if (accounts.length !== rawIds.length) {
       throw new BadRequestException('One or more selected accounts are invalid or disconnected');
     }
 
