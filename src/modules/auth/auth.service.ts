@@ -55,8 +55,12 @@ export class AuthService {
       `[REGISTRATION_REQUEST] Registering customer email=${normalizedEmail} company=${companyOrCustomerName} city=${normalizedCity || 'N/A'}`,
     );
 
+    // Only match non-deleted (active) users. Soft-deleted users (archived customers)
+    // must be allowed to re-register — their user record has deletedAt set by the
+    // Admin archive flow. We keep the auto-heal path below for orphan users.
     const existingUser = await this.prisma.user.findFirst({
       where: {
+        deletedAt: null,
         OR: [
           { email: normalizedEmail },
           ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
@@ -129,6 +133,7 @@ export class AuthService {
         // Create or Link Admin User (auto-heal orphan user if exists)
         let user;
         if (existingUser && !hasActiveCustomer) {
+          // Reuse an active orphan user (no active customer linked)
           user = await tx.user.update({
             where: { id: existingUser.id },
             data: {
@@ -140,20 +145,49 @@ export class AuthService {
               passwordHash: hashedPassword,
               isVerified: true,
               isActive: true,
+              deletedAt: null,
             },
           });
         } else {
-          user = await tx.user.create({
-            data: {
-              customerId: customer.id,
+          // Check for a soft-deleted user with the same email (archived customer scenario).
+          // The outer lookup only finds non-deleted users, so we must check here inside
+          // the transaction to avoid a unique-constraint violation on User.email.
+          const archivedUser = await tx.user.findFirst({
+            where: {
               email: normalizedEmail,
-              phone: normalizedPhone,
-              firstName: firstName,
-              lastName: lastName,
-              passwordHash: hashedPassword,
-              isVerified: true,
+              deletedAt: { not: null },
             },
           });
+
+          if (archivedUser) {
+            // Restore and reassign the archived user to the new customer account
+            user = await tx.user.update({
+              where: { id: archivedUser.id },
+              data: {
+                customerId: customer.id,
+                email: normalizedEmail,
+                phone: normalizedPhone,
+                firstName: firstName,
+                lastName: lastName,
+                passwordHash: hashedPassword,
+                isVerified: true,
+                isActive: true,
+                deletedAt: null,
+              },
+            });
+          } else {
+            user = await tx.user.create({
+              data: {
+                customerId: customer.id,
+                email: normalizedEmail,
+                phone: normalizedPhone,
+                firstName: firstName,
+                lastName: lastName,
+                passwordHash: hashedPassword,
+                isVerified: true,
+              },
+            });
+          }
         }
 
         // Assign Admin Role

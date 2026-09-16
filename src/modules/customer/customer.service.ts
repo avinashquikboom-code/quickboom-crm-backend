@@ -1393,12 +1393,18 @@ export class CustomerService {
         where: { user: { customerId: numericId } },
       });
 
-      // 9. Deactivate users associated with this customer so they cannot log in
+      // 9. Soft-delete users associated with this customer.
+      //    - isActive: false + deletedAt: now() blocks login.
+      //    - phone is cleared to free the @unique phone constraint so a new
+      //      registration with the same phone is not blocked. Email is kept
+      //      so auth.service.ts can find and restore the archived User row
+      //      during re-registration (the archivedUser auto-heal path).
       await tx.user.updateMany({
         where: { customerId: numericId },
         data: {
           isActive: false,
           deletedAt: new Date(),
+          phone: null,          // free the @unique phone slot for re-registration
         },
       });
 

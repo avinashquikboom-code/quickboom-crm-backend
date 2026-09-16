@@ -184,7 +184,9 @@ export class DataManagementService {
 
   /**
    * POST /api/v1/admin/data-management/reset/module
-   * Resets a single transactional module within a Prisma transaction
+   * Resets a single transactional module within a Prisma transaction.
+   * Deletion follows FK-safe order: child records are deleted before referenced
+   * parents to avoid foreign-key constraint violations.
    */
   async resetModule(
     customerId: number | string,
@@ -208,15 +210,58 @@ export class DataManagementService {
     await this.prisma.$transaction(async (tx) => {
       switch (normModule) {
         case 'crm': {
+          // ── Step 1: Deep lead child records ───────────────────────────────────
+          // These all have onDelete: Cascade but we delete explicitly to be safe.
+          await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
           await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
           await tx.leadReminder.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-          await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
+          await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numCustomerId } } });
+
+          // ── Step 2: Task child records (all have onDelete: Cascade) ───────────
+          await tx.taskHistory.deleteMany({ where: { task: { customerId: numCustomerId } } });
+          await tx.taskProof.deleteMany({ where: { task: { customerId: numCustomerId } } });
+          await tx.taskReview.deleteMany({ where: { task: { customerId: numCustomerId } } });
+
+          // ── Step 3: QuotationItems then Quotations ────────────────────────────
+          // ROOT CAUSE FIX: Quotation.dealId, Quotation.contactId, Quotation.leadId
+          // have NO onDelete directive (defaults to Restrict in Prisma/Postgres).
+          // Deleting Lead/Deal/Contact before Quotation causes FK constraint
+          // violations → entire transaction rolls back → nothing gets deleted.
+          // Fix: delete QuotationItems first, then Quotations, BEFORE parents.
+          await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numCustomerId } } });
+          const quotations = await tx.quotation.deleteMany({ where: { customerId: numCustomerId } });
+
+          // ── Step 4: Visits ────────────────────────────────────────────────────
+          // ROOT CAUSE FIX: Visit.leadId, Visit.dealId, Visit.contactId,
+          // Visit.companyId have NO onDelete. Must delete visits BEFORE deleting
+          // leads, deals, contacts, and companies.
+          const visits = await tx.visit.deleteMany({ where: { customerId: numCustomerId } });
+
+          // ── Step 5: Tasks ─────────────────────────────────────────────────────
           const tasks = await tx.task.deleteMany({ where: { customerId: numCustomerId } });
+
+          // ── Step 6: Deals ─────────────────────────────────────────────────────
+          // Deal.contactId and Deal.companyId have NO onDelete → delete deals
+          // before contacts and companies.
           const deals = await tx.deal.deleteMany({ where: { customerId: numCustomerId } });
+
+          // ── Step 7: Contact children then Contacts ────────────────────────────
+          // CommunicationHistory has onDelete: Cascade but delete explicitly.
+          await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numCustomerId } } });
           const contacts = await tx.contact.deleteMany({ where: { customerId: numCustomerId } });
+
+          // ── Step 8: Leads then Companies ──────────────────────────────────────
           const leads = await tx.lead.deleteMany({ where: { customerId: numCustomerId } });
           const companies = await tx.company.deleteMany({ where: { customerId: numCustomerId } });
-          deletedCount = tasks.count + deals.count + contacts.count + leads.count + companies.count;
+
+          deletedCount =
+            quotations.count +
+            visits.count +
+            tasks.count +
+            deals.count +
+            contacts.count +
+            leads.count +
+            companies.count;
           break;
         }
         case 'attendance': {
@@ -243,6 +288,7 @@ export class DataManagementService {
           break;
         }
         case 'payroll': {
+          // SalarySlip.payrollItemId has onDelete: Cascade, but explicit for safety
           const slips = await tx.salarySlip.deleteMany({ where: { customerId: numCustomerId } });
           const items = await tx.payrollItem.deleteMany({ where: { customerId: numCustomerId } });
           const payrolls = await tx.payroll.deleteMany({ where: { customerId: numCustomerId } });
@@ -295,7 +341,8 @@ export class DataManagementService {
 
   /**
    * POST /api/v1/admin/data-management/reset/all
-   * Resets all transactional data for the customer while protecting master data
+   * Resets all transactional data for the customer while protecting master data.
+   * Deletion order is FK-safe: child records deleted before referenced parents.
    */
   async resetAllTransactional(
     customerId: number | string,
@@ -314,49 +361,84 @@ export class DataManagementService {
     let totalDeleted = 0;
 
     await this.prisma.$transaction(async (tx) => {
-      // 1. CRM
+      // ── 1. Deep CRM leaf children (all cascade but explicit) ──────────────────
+      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
       await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
       await tx.leadReminder.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
+      await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numCustomerId } } });
+
+      // Task child records
+      await tx.taskHistory.deleteMany({ where: { task: { customerId: numCustomerId } } });
+      await tx.taskProof.deleteMany({ where: { task: { customerId: numCustomerId } } });
+      await tx.taskReview.deleteMany({ where: { task: { customerId: numCustomerId } } });
+
+      // ── 2. QuotationItems then Quotations ─────────────────────────────────────
+      // CRITICAL FIX: Quotation.dealId / Quotation.contactId / Quotation.leadId
+      // have NO onDelete → Postgres restricts deletion of parents while children
+      // exist. Must purge quotations BEFORE deals, contacts, and leads.
+      await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numCustomerId } } });
+      const quotations = await tx.quotation.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 3. Visits ─────────────────────────────────────────────────────────────
+      // CRITICAL FIX: Visit.leadId / Visit.dealId / Visit.contactId /
+      // Visit.companyId have NO onDelete. Delete visits before their parents.
+      const visits = await tx.visit.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 4. Tasks ──────────────────────────────────────────────────────────────
       const tasks = await tx.task.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 5. Deals ──────────────────────────────────────────────────────────────
+      // Deal.contactId and Deal.companyId have NO onDelete → delete deals before
+      // contacts and companies.
       const deals = await tx.deal.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 6. Contact children then Contacts ────────────────────────────────────
+      await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numCustomerId } } });
       const contacts = await tx.contact.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 7. Leads ──────────────────────────────────────────────────────────────
       const leads = await tx.lead.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 8. Companies ──────────────────────────────────────────────────────────
       const companies = await tx.company.deleteMany({ where: { customerId: numCustomerId } });
 
-      // 2. Attendance & Breaks
+      // ── 9. WorkTask children then Works ───────────────────────────────────────
+      // WorkTask.workId has onDelete: Cascade but we delete explicitly
+      await tx.workTask.deleteMany({ where: { work: { customerId: numCustomerId } } });
+      const works = await tx.work.deleteMany({ where: { customerId: numCustomerId } });
+
+      // ── 10. Attendance & Breaks ───────────────────────────────────────────────
       const breaks = await tx.attendanceBreak.deleteMany({
         where: { attendance: { customerId: numCustomerId } },
       });
       const attendances = await tx.attendance.deleteMany({ where: { customerId: numCustomerId } });
 
-      // 3. Leaves & Remote
+      // ── 11. Leaves & Remote ───────────────────────────────────────────────────
       const leaves = await tx.leaveRequest.deleteMany({ where: { customerId: numCustomerId } });
       const remotes = await tx.remoteRequest.deleteMany({ where: { customerId: numCustomerId } });
 
-      // 4. Visits
-      const visits = await tx.visit.deleteMany({ where: { customerId: numCustomerId } });
-
-      // 5. Payroll
+      // ── 12. Payroll (SalarySlip → PayrollItem cascade, explicit order) ────────
       const slips = await tx.salarySlip.deleteMany({ where: { customerId: numCustomerId } });
       const items = await tx.payrollItem.deleteMany({ where: { customerId: numCustomerId } });
       const payrolls = await tx.payroll.deleteMany({ where: { customerId: numCustomerId } });
 
-      // 6. Notifications & Locations
+      // ── 13. Notifications & Location Logs ─────────────────────────────────────
       const notifications = await tx.notification.deleteMany({ where: { customerId: numCustomerId } });
       const locations = await tx.employeeLocation.deleteMany({ where: { customerId: numCustomerId } });
 
       totalDeleted =
+        quotations.count +
+        visits.count +
         tasks.count +
         deals.count +
         contacts.count +
         leads.count +
         companies.count +
+        works.count +
         breaks.count +
         attendances.count +
         leaves.count +
         remotes.count +
-        visits.count +
         slips.count +
         items.count +
         payrolls.count +
