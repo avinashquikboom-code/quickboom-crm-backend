@@ -1210,7 +1210,7 @@ export class EmployeeService {
       // Employee.userId is @unique — a second create() would throw P2002.
       // We detect and reject it here with a clean 409 BEFORE calling create().
       // ─────────────────────────────────────────────────────────────────────
-      const existingEmployeeForUser = await tx.employee.findFirst({
+      let existingEmployeeForUser = await tx.employee.findFirst({
         where: {
           OR: [
             { userId: user.id },
@@ -1219,6 +1219,13 @@ export class EmployeeService {
         },
         select: { id: true, employeeCode: true, customerId: true },
       });
+
+      if (!existingEmployeeForUser && tx.employee.findUnique) {
+        existingEmployeeForUser = await tx.employee.findUnique({
+          where: { userId: user.id } as any,
+          select: { id: true, employeeCode: true, customerId: true },
+        });
+      }
 
       if (existingEmployeeForUser) {
         throw new ConflictException({
@@ -1416,8 +1423,8 @@ export class EmployeeService {
         officeId,
         shiftId,
         branch: branchName,
-        departmentId: department.id,
-        designationId: designation.id,
+        departmentId: department?.id || null,
+        designationId: designation?.id || null,
         employmentType: dto.employmentType || 'FULL_TIME',
         employeeType: dto.employeeType || 'COMPANY',
         city: dto.city || null,
@@ -1944,100 +1951,156 @@ export class EmployeeService {
     return this.prisma.$transaction(async (tx) => {
       // 1. Invalidate/delete all active authentication sessions, refresh tokens, and device tokens for linked user
       if (userId) {
-        await tx.refreshToken.deleteMany({
-          where: { userId },
-        });
-
-        await tx.session.deleteMany({
-          where: { userId },
-        });
-
-        await tx.userDeviceToken.deleteMany({
-          where: { userId },
-        });
+        if (tx.refreshToken?.deleteMany) {
+          await tx.refreshToken.deleteMany({ where: { userId } });
+        }
+        if (tx.session?.deleteMany) {
+          await tx.session.deleteMany({ where: { userId } });
+        }
+        if (tx.userDeviceToken?.deleteMany) {
+          await tx.userDeviceToken.deleteMany({ where: { userId } });
+        }
       }
 
       // 2. Unlink or delete all foreign key relations referencing this employee
-      await tx.task.updateMany({
-        where: { employeeId: numId },
-        data: { employeeId: null },
-      });
+      if (tx.task?.updateMany) {
+        await tx.task.updateMany({
+          where: { employeeId: numId },
+          data: { employeeId: null },
+        });
+      }
+      if (tx.taskProof?.updateMany) {
+        await tx.taskProof.updateMany({
+          where: { employeeId: numId },
+          data: { employeeId: null },
+        });
+      }
 
-      await tx.work.updateMany({
-        where: { assignedToId: numId },
-        data: { assignedToId: null },
-      });
+      if (tx.work?.updateMany) {
+        await tx.work.updateMany({
+          where: { assignedToId: numId },
+          data: { assignedToId: null },
+        });
+        await tx.work.updateMany({
+          where: { editorId: numId },
+          data: { editorId: null },
+        });
+      }
 
-      await tx.work.updateMany({
-        where: { editorId: numId },
-        data: { editorId: null },
-      });
+      if (tx.workTask?.updateMany) {
+        await tx.workTask.updateMany({
+          where: { assignedToId: numId },
+          data: { assignedToId: null },
+        });
+      }
 
-      await tx.workTask.updateMany({
-        where: { assignedToId: numId },
-        data: { assignedToId: null },
-      });
+      if (tx.workAccessRequest?.deleteMany) {
+        await tx.workAccessRequest.deleteMany({ where: { employeeId: numId } });
+      }
+      if (tx.employeeModuleOverride?.deleteMany) {
+        await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
+      }
+      if (tx.employeeLeadLimit?.deleteMany) {
+        await tx.employeeLeadLimit.deleteMany({ where: { employeeId: numId } });
+      }
+      if (tx.locationTrackingSetting?.deleteMany) {
+        await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.teamMember.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.teamMember?.deleteMany) {
+        await tx.teamMember.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.visit.deleteMany({
-        where: { employeeId: numId },
-      });
+      // Unlink structural leadership assignments to prevent restrict constraint violations
+      if (tx.team?.updateMany) {
+        await tx.team.updateMany({
+          where: { leaderId: numId },
+          data: { leaderId: null },
+        });
+      }
+      if (tx.department?.updateMany) {
+        await tx.department.updateMany({
+          where: { headId: numId },
+          data: { headId: null },
+        });
+      }
+      if (tx.customer?.updateMany) {
+        await tx.customer.updateMany({
+          where: { assignedEmployeeId: numId },
+          data: { assignedEmployeeId: null },
+        });
+      }
+      if (tx.lead?.updateMany) {
+        await tx.lead.updateMany({
+          where: { employeeId: numId },
+          data: { employeeId: null },
+        });
+      }
 
-      await tx.monthlySchedule.updateMany({
-        where: { assignedEmployeeId: numId },
-        data: { assignedEmployeeId: null },
-      });
+      if (tx.visit?.deleteMany) {
+        await tx.visit.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.employeeLocation.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.monthlySchedule?.updateMany) {
+        await tx.monthlySchedule.updateMany({
+          where: { assignedEmployeeId: numId },
+          data: { assignedEmployeeId: null },
+        });
+      }
 
-      await tx.employeeClaim.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.employeeLocation?.deleteMany) {
+        await tx.employeeLocation.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.employeeLoan.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.employeeClaim?.deleteMany) {
+        await tx.employeeClaim.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.remoteRequest.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.employeeLoan?.deleteMany) {
+        await tx.employeeLoan.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.salarySlip.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.remoteRequest?.deleteMany) {
+        await tx.remoteRequest.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.salaryStructure.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.salarySlip?.deleteMany) {
+        await tx.salarySlip.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.payrollItem.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.salaryStructure?.deleteMany) {
+        await tx.salaryStructure.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.leaveAdjustmentHistory.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.payrollItem?.deleteMany) {
+        await tx.payrollItem.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.employeeLeaveBalance.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.leaveAdjustmentHistory?.deleteMany) {
+        await tx.leaveAdjustmentHistory.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.leaveRequest.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.employeeLeaveBalance?.deleteMany) {
+        await tx.employeeLeaveBalance.deleteMany({ where: { employeeId: numId } });
+      }
 
-      await tx.attendance.deleteMany({
-        where: { employeeId: numId },
-      });
+      if (tx.leaveRequest?.deleteMany) {
+        await tx.leaveRequest.deleteMany({ where: { employeeId: numId } });
+      }
 
-      // 3. Record deletion in AuditLog to permanently reserve the employeeCode in audit history
-      if (this.prisma?.auditLog) {
-        this.prisma.auditLog.create({
+      if (tx.attendanceBreak?.deleteMany) {
+        await tx.attendanceBreak.deleteMany({
+          where: { attendance: { employeeId: numId } },
+        });
+      }
+
+      if (tx.attendance?.deleteMany) {
+        await tx.attendance.deleteMany({ where: { employeeId: numId } });
+      }
+
+      // 3. Record deletion in AuditLog
+      if (tx.auditLog?.create) {
+        await tx.auditLog.create({
           data: {
             customerId: empCustomerId,
             userId: userId,
@@ -2049,7 +2112,7 @@ export class EmployeeService {
               email: existing.email,
             },
           },
-        }).catch(() => null);
+        });
       }
 
       // 4. Delete the Employee record completely from the database
@@ -2058,7 +2121,7 @@ export class EmployeeService {
       });
 
       // 5. User safety check & deletion/deactivation
-      if (userId) {
+      if (userId && tx.user) {
         // Check if user is attached to other entities (e.g. is Admin, leads, deals, tickets)
         const isSharedOrAdmin = await tx.user.findFirst({
           where: {
@@ -2078,8 +2141,19 @@ export class EmployeeService {
         });
 
         if (!isSharedOrAdmin) {
-          // Exclusively employee user -> delete user roles & user record
-          await tx.userRole.deleteMany({ where: { userId } });
+          // Nullify audit logs linked to this user before deletion to prevent restrict constraint violation
+          if (tx.auditLog?.updateMany) {
+            await tx.auditLog.updateMany({
+              where: { userId },
+              data: { userId: null },
+            });
+          }
+          if (tx.notification?.deleteMany) {
+            await tx.notification.deleteMany({ where: { userId } });
+          }
+          if (tx.userRole?.deleteMany) {
+            await tx.userRole.deleteMany({ where: { userId } });
+          }
           await tx.user.delete({ where: { id: userId } });
         } else {
           // Shared / Admin user -> permanently deactivate and mark deletedAt
