@@ -57,7 +57,7 @@ export class InfluencerService {
     });
 
     if (categories.length === 0) {
-      await this.seedInitialInfluencers();
+      await this.seedInitialCategories();
       categories = await this.prisma.influencerCategory.findMany({
         where: { deletedAt: null, isActive: true },
         include: {
@@ -155,15 +155,6 @@ export class InfluencerService {
   // =========================================================================
 
   async getActiveInfluencers(query: FilterInfluencersQueryDto) {
-    const count = await this.prisma.influencer.count({
-      where: { deletedAt: null },
-    });
-
-    if (count === 0) {
-      this.logger.log('[INFLUENCER] No influencers found. Auto-seeding initial active creators...');
-      await this.seedInitialInfluencers();
-    }
-
     const whereClause: any = {
       deletedAt: null,
       isActive: true,
@@ -211,6 +202,10 @@ export class InfluencerService {
         packages: {
           where: { deletedAt: null, status: 'ACTIVE' },
           orderBy: { price: 'asc' },
+        },
+        portfolios: {
+          where: { deletedAt: null },
+          orderBy: { sortOrder: 'asc' },
         },
       },
       orderBy: [{ sortOrder: 'asc' }, { id: 'desc' }],
@@ -1238,7 +1233,7 @@ export class InfluencerService {
     }
   }
 
-  private async seedInitialInfluencers() {
+  private async seedInitialCategories() {
     const categoriesData = [
       { name: 'Instagram Influencers', slug: 'instagram', icon: 'instagram', sortOrder: 1 },
       { name: 'YouTube Creators', slug: 'youtube', icon: 'youtube', sortOrder: 2 },
