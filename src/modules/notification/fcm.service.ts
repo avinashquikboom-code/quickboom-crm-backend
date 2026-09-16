@@ -137,14 +137,14 @@ export class FcmService implements OnModuleInit {
     }
 
     if (!this.ready() || !this.firebaseApp) {
-      this.logger.warn(
-        `[FCM Mock Dispatch] Firebase not configured. Simulated push to ${validTokens.length} token(s): "${title}" - "${body}"`,
+      this.logger.error(
+        `[FCM Dispatch Failed] Firebase is not configured; no push was sent to ${validTokens.length} token(s).`,
       );
       return {
-        successCount: validTokens.length,
-        failureCount: 0,
+        successCount: 0,
+        failureCount: validTokens.length,
         invalidTokens: [],
-        messageIds: validTokens.map((_, i) => `mock-msg-${Date.now()}-${i}`),
+        messageIds: [],
       };
     }
 

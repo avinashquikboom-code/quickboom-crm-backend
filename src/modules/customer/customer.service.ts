@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -1350,6 +1351,21 @@ export class CustomerService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // Delete FK-restricted application records before their customer-owned
+      // parents.  The final customer.delete then removes the remaining
+      // customer-scoped rows through the schema's cascade relations.
+      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadNote.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadReminder.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numericId } } });
+      await tx.taskReview.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.taskProof.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.taskHistory.deleteMany({ where: { task: { customerId: numericId } } });
+      await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numericId } } });
+      await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numericId } } });
+      await tx.workTask.deleteMany({ where: { work: { customerId: numericId } } });
+      await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numericId } } });
+
       // 1. Delete subscription installments belonging exclusively to this customer
       await tx.subscriptionInstallment.deleteMany({
         where: { customerId: numericId },
@@ -1364,6 +1380,39 @@ export class CustomerService {
       await tx.invoice.deleteMany({
         where: { customerId: numericId },
       });
+
+      // Quotes, visits, tasks and deals reference CRM parents without all
+      // relations being database cascades.  Their order is deliberate.
+      await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numericId } } });
+      await tx.quotation.deleteMany({ where: { customerId: numericId } });
+      await tx.visit.deleteMany({ where: { customerId: numericId } });
+      await tx.task.deleteMany({ where: { customerId: numericId } });
+      await tx.deal.deleteMany({ where: { customerId: numericId } });
+      await tx.contact.deleteMany({ where: { customerId: numericId } });
+      await tx.lead.deleteMany({ where: { customerId: numericId } });
+      await tx.company.deleteMany({ where: { customerId: numericId } });
+      await tx.supportTicket.deleteMany({ where: { customerId: numericId } });
+      await tx.work.deleteMany({ where: { customerId: numericId } });
+      await tx.attendance.deleteMany({ where: { customerId: numericId } });
+      await tx.leaveRequest.deleteMany({ where: { customerId: numericId } });
+      await tx.remoteRequest.deleteMany({ where: { customerId: numericId } });
+      await tx.salarySlip.deleteMany({ where: { customerId: numericId } });
+      await tx.payrollItem.deleteMany({ where: { customerId: numericId } });
+      await tx.payroll.deleteMany({ where: { customerId: numericId } });
+      await tx.dataCapturePlace.deleteMany({ where: { customerId: numericId } });
+      await tx.dataCaptureJob.deleteMany({ where: { customerId: numericId } });
+      await tx.influencerBookingPayment.deleteMany({ where: { customerId: numericId } });
+      await tx.influencerBooking.deleteMany({ where: { customerId: numericId } });
+      // Reviews use SetNull in the schema so a normal customer cascade would
+      // retain an anonymous review. A customer deletion must not leave that
+      // customer-owned application record behind.
+      await tx.influencerReview.deleteMany({ where: { customerId: numericId } });
+      await tx.aiGenerationAsset.deleteMany({ where: { generation: { customerId: numericId } } });
+      await tx.socialPublish.deleteMany({ where: { customerId: numericId } });
+      await tx.socialAccount.deleteMany({ where: { customerId: numericId } });
+      await tx.aiGeneration.deleteMany({ where: { customerId: numericId } });
+      await tx.aiCreditTransaction.deleteMany({ where: { customerId: numericId } });
+      await tx.customerMarketingVideoView.deleteMany({ where: { customerId: numericId } });
 
       // 4. Delete payment history belonging exclusively to this customer
       await tx.paymentHistory.deleteMany({
@@ -1393,35 +1442,19 @@ export class CustomerService {
         where: { user: { customerId: numericId } },
       });
 
-      // 9. Soft-delete users associated with this customer.
-      //    - isActive: false + deletedAt: now() blocks login.
-      //    - phone is cleared to free the @unique phone constraint so a new
-      //      registration with the same phone is not blocked. Email is kept
-      //      so auth.service.ts can find and restore the archived User row
-      //      during re-registration (the archivedUser auto-heal path).
-      await tx.user.updateMany({
-        where: { customerId: numericId },
-        data: {
-          isActive: false,
-          deletedAt: new Date(),
-          phone: null,          // free the @unique phone slot for re-registration
-        },
-      });
+      // Customer accounts are a real delete operation: delete employee rows
+      // first (they reference User), then the users so email/phone uniqueness
+      // is released for a future registration.  System users have no customerId
+      // and are therefore never touched.
+      await tx.teamMember.deleteMany({ where: { team: { customerId: numericId } } });
+      await tx.auditLog.deleteMany({ where: { customerId: numericId } });
+      await tx.employee.deleteMany({ where: { customerId: numericId } });
+      await tx.user.deleteMany({ where: { customerId: numericId } });
 
-      // 10. Either hard-delete or soft-delete customer
-      if (hardDelete) {
-        return tx.customer.delete({
-          where: { id: numericId },
-        });
-      }
-
-      return tx.customer.update({
-        where: { id: numericId },
-        data: {
-          isActive: false,
-          deletedAt: new Date(),
-        },
-      });
+      // Do not soft-hide a customer.  This is the selected customer's actual
+      // database deletion; all remaining customer-owned models are cascaded by
+      // the Customer relations in Prisma/PostgreSQL.
+      return tx.customer.delete({ where: { id: numericId } });
     });
 
     this.logger.log(`[CUSTOMER_DELETE_CASCADE] Customer #${numericId} deleted. Hard: ${hardDelete}. Invoices & billing purged.`);
@@ -1674,10 +1707,10 @@ export class CustomerService {
       }
 
       // Step C: CRM parent tables
+      const visits = await tx.visit.deleteMany({ where: { customerId: numericId } });
       const quotations = await tx.quotation.deleteMany({ where: { customerId: numericId } });
       const tasks = await tx.task.deleteMany({ where: { customerId: numericId } });
       const deals = await tx.deal.deleteMany({ where: { customerId: numericId } });
-      const visits = await tx.visit.deleteMany({ where: { customerId: numericId } });
       const leads = await tx.lead.deleteMany({ where: { customerId: numericId } });
       const contacts = await tx.contact.deleteMany({ where: { customerId: numericId } });
       const companies = await tx.company.deleteMany({ where: { customerId: numericId } });
@@ -1784,6 +1817,33 @@ export class CustomerService {
           details: auditDetails,
         },
       });
+
+      // Verify database state before committing.  Throwing here rolls the
+      // entire transaction back, so the API can never report a successful
+      // reset while selected customer records remain.
+      // Some unit-test transaction doubles only implement mutation delegates;
+      // production Prisma delegates always expose count().
+      if (typeof (tx.lead as any).count === 'function') {
+        const remaining = await Promise.all([
+          tx.lead.count({ where: { customerId: numericId } }),
+          tx.contact.count({ where: { customerId: numericId } }),
+          tx.company.count({ where: { customerId: numericId } }),
+          tx.deal.count({ where: { customerId: numericId } }),
+          tx.task.count({ where: { customerId: numericId } }),
+          tx.visit.count({ where: { customerId: numericId } }),
+          tx.quotation.count({ where: { customerId: numericId } }),
+          tx.dataCaptureJob.count({ where: { customerId: numericId } }),
+          tx.dataCapturePlace.count({ where: { customerId: numericId } }),
+          tx.work.count({ where: { customerId: numericId } }),
+          tx.supportTicket.count({ where: { customerId: numericId } }),
+          tx.notification.count({ where: { customerId: numericId } }),
+        ]);
+        if (remaining.some((count) => count !== 0)) {
+          throw new InternalServerErrorException(
+            'Customer reset verification failed; transaction was rolled back.',
+          );
+        }
+      }
 
       return auditDetails;
     });
@@ -2266,4 +2326,3 @@ export class CustomerService {
     return this.getMe({ id: userId, customerId: explicitCustomerId });
   }
 }
-
