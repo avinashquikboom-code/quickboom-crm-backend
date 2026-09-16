@@ -225,37 +225,37 @@ describe('Customer-Specific Cascade Delete for Invoices & Billing', () => {
     service = module.get<CustomerService>(CustomerService);
   });
 
-  it('deletes Customer A invoices and billing while preserving Customer B completely', async () => {
+  it('Move to Bin: soft-deletes Customer A, preserves all data, while keeping Customer B completely intact', async () => {
     const superAdmin = { id: 1, role: 'SUPER_ADMIN' };
 
-    // Delete Customer A
+    // Soft-delete Customer A (Move to Bin — default hardDelete=false)
     const result = await service.remove(101, superAdmin);
 
     expect(result).toBeDefined();
 
-    // 1. Verify Customer A is deactivated / marked deletedAt
+    // 1. Verify Customer A is soft-deleted (isActive=false, deletedAt set)
     const custA = customers.find((c) => c.id === 101);
     expect(custA.isActive).toBe(false);
     expect(custA.deletedAt).toBeInstanceOf(Date);
 
-    // 2. Verify Customer A invoices are DELETED
+    // 2. SOFT-DELETE: Customer A invoices are PRESERVED (not deleted — data is recoverable)
     const custAInvoices = invoices.filter((inv) => inv.customerId === 101);
-    expect(custAInvoices).toHaveLength(0);
+    expect(custAInvoices).toHaveLength(2);
 
-    // 3. Verify Customer A invoice items are DELETED
-    expect(invoiceItems.filter((i) => i.invoiceId === 1 || i.invoiceId === 2)).toHaveLength(0);
+    // 3. SOFT-DELETE: Customer A invoice items are PRESERVED
+    expect(invoiceItems.filter((i) => i.invoiceId === 1 || i.invoiceId === 2)).toHaveLength(2);
 
-    // 4. Verify Customer A payments are DELETED
+    // 4. SOFT-DELETE: Customer A payments are PRESERVED
     const custAPayments = payments.filter((p) => p.customerId === 101);
-    expect(custAPayments).toHaveLength(0);
+    expect(custAPayments).toHaveLength(1);
 
-    // 5. Verify Customer A subscriptions, installments, custom orders, schedules are DELETED
-    expect(subscriptions.filter((s) => s.customerId === 101)).toHaveLength(0);
-    expect(installments.filter((i) => i.customerId === 101)).toHaveLength(0);
-    expect(customPlanOrders.filter((o) => o.customerId === 101)).toHaveLength(0);
-    expect(monthlySchedules.filter((s) => s.customerId === 101)).toHaveLength(0);
+    // 5. SOFT-DELETE: Customer A subscriptions, installments, custom orders, schedules are PRESERVED
+    expect(subscriptions.filter((s) => s.customerId === 101)).toHaveLength(1);
+    expect(installments.filter((i) => i.customerId === 101)).toHaveLength(1);
+    expect(customPlanOrders.filter((o) => o.customerId === 101)).toHaveLength(1);
+    expect(monthlySchedules.filter((s) => s.customerId === 101)).toHaveLength(1);
 
-    // 6. Verify Customer A users are deactivated & sessions/tokens purged
+    // 6. User A is deactivated & sessions/tokens are purged
     const userA = users.find((u) => u.id === 11);
     expect(userA.isActive).toBe(false);
     expect(userA.deletedAt).toBeInstanceOf(Date);
@@ -294,6 +294,7 @@ describe('Customer-Specific Cascade Delete for Invoices & Billing', () => {
     expect(refreshTokens.find((r) => r.userId === 22)).toBeDefined();
     expect(sessions.find((s) => s.userId === 22)).toBeDefined();
   });
+
 
   it('enforces tenant isolation: Tenant B admin cannot delete Customer A', async () => {
     const tenantBAdmin = { id: 22, customerId: 202, role: 'COMPANY_ADMIN' };

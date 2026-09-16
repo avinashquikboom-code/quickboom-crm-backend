@@ -162,7 +162,8 @@ describe('EmployeeService — Customer Data Isolation', () => {
 
       expect(prisma.employee.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {},
+          // SuperAdmin with no status filter — DELETED employees are excluded by default
+          where: expect.objectContaining({ status: { not: 'DELETED' } }),
         }),
       );
     });
