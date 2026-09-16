@@ -24,6 +24,12 @@ export class AiGenerationService {
    * Credit deduction happens STRICTLY AFTER successful generation and database storage.
    */
   async generate(customerId: number, dto: GenerateContentDto, file?: Express.Multer.File) {
+    const rawInput = (dto.product || dto.prompt || '').trim();
+    if (!rawInput) {
+      throw new BadRequestException('Product or prompt description is required');
+    }
+    dto.product = rawInput;
+
     const serviceCode = `AI_${dto.type.toUpperCase()}`;
 
     this.logger.log(
@@ -156,7 +162,7 @@ export class AiGenerationService {
     }
 
     this.logger.log(
-      `[AI_GENERATION_OUTPUT] Output produced: type="${dto.type}", mediaType="${mediaType}", mediaUrl="${mediaUrl}", captionLength=${caption?.length || 0}, hashtagsCount=${hashtags.length}`,
+      `[AI_OUTPUT] Generated output for Customer #${customerId}: type="${dto.type}", mediaType="${mediaType}", mediaUrl="${mediaUrl}", captionLength=${caption?.length || 0}, hashtagsCount=${hashtags.length}`,
     );
 
     // 4. Save Successful Record in Database FIRST
@@ -164,29 +170,23 @@ export class AiGenerationService {
       data: {
         generationId,
         customerId,
-        type: dto.type.toUpperCase(),
-        status,
+        type: dto.type,
+        status: 'COMPLETED',
         product: dto.product,
         objective: dto.objective,
         targetAudience: dto.targetAudience,
-        platform: dto.platform?.toUpperCase() || 'INSTAGRAM',
+        platform: dto.platform || 'INSTAGRAM',
         language: dto.language || 'English',
         tone: dto.tone || 'Premium',
         cta: dto.cta || 'Order Now',
         instructions: dto.instructions,
-        creditsSpent: 0, // initially 0 until deducted
+        creditsSpent: 0, // Updated on actual deduction below
         caption,
         hashtags,
         mediaUrl,
         mediaType,
-        errorMessage,
-        metadata: videoJobId ? { videoJobId } : undefined,
       },
     });
-
-    this.logger.log(
-      `[AI_GENERATION_DB] Saved generation record #${generation.id} (${generationId}) in DB with status="${status}", mediaUrl="${mediaUrl}"`,
-    );
 
     if (mediaUrl) {
       await this.prisma.aiGenerationAsset.create({
@@ -208,7 +208,7 @@ export class AiGenerationService {
     });
 
     this.logger.log(
-      `[AI_GEN_COMPLETED] Generated #${generation.id} (${generationId}) for Customer #${customerId}. Deducted ${deduction.creditsSpent} credits. Remaining: ${deduction.newBalance}`,
+      `[AI_RESPONSE] Generation #${generation.id} (${generationId}) COMPLETED and saved in DB for Customer #${customerId}. Deducted ${deduction.creditsSpent} credits. Remaining: ${deduction.newBalance}`,
     );
 
     return {

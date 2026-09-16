@@ -125,12 +125,16 @@ export class AiStudioController {
     @UploadedFile() file?: Express.Multer.File,
   ) {
     const customerId = this.resolveCustomerId(req);
+    const productPrompt = (dto.product || dto.prompt || '').trim();
     this.logger.log(
-      `[AI_GENERATE_REQUEST] Customer #${customerId} requested type="${dto.type}", product="${dto.product}", platform="${dto.platform || 'INSTAGRAM'}"`,
+      `[AI_REQUEST] Customer #${customerId} initiated generation: type="${dto.type}", inputPrompt="${productPrompt}"`,
+    );
+    this.logger.log(
+      `[AI_DTO] Validated DTO: type="${dto.type}", product="${dto.product || ''}", prompt="${dto.prompt || ''}", objective="${dto.objective || ''}", platform="${dto.platform || 'INSTAGRAM'}"`,
     );
     const result = await this.aiGenerationService.generate(customerId, dto, file);
     this.logger.log(
-      `[AI_GENERATE_RESPONSE] Completed #${result.generation.id} (${result.generation.generationId}) for Customer #${customerId}: status="${result.generation.status}", mediaUrl="${result.generation.mediaUrl || 'none'}", creditsSpent=${result.creditsSpent}`,
+      `[AI_RESPONSE] Generation #${result.generation.id} (${result.generation.generationId}) ready for Customer #${customerId}: status="${result.generation.status}", mediaUrl="${result.generation.mediaUrl || 'none'}", creditsSpent=${result.creditsSpent}`,
     );
     return {
       statusCode: 201,

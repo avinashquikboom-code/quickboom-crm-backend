@@ -22,10 +22,15 @@ export class GenerateContentDto {
   @IsIn(['POST', 'POSTER', 'VIDEO', 'CAPTION', 'HASHTAGS'])
   type: string;
 
-  @ApiProperty({ description: 'Product or Service name', example: 'Organic Cold Brew Coffee' })
+  @ApiPropertyOptional({ description: 'Product or Service name', example: 'Organic Cold Brew Coffee' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  product: string;
+  product?: string;
+
+  @ApiPropertyOptional({ description: 'Prompt describing what to generate', example: 'Create a promotional poster for a fitness gym' })
+  @IsOptional()
+  @IsString()
+  prompt?: string;
 
   @ApiPropertyOptional({ description: 'Campaign objective', example: 'Product Launch' })
   @IsOptional()

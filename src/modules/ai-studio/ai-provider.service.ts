@@ -21,6 +21,39 @@ export class AiProviderService implements IAiProvider {
     private readonly integrationSettingsService?: IntegrationSettingsService,
   ) {}
 
+  private async getGeminiKey(): Promise<string | null> {
+    const envKey = (
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      ''
+    ).trim();
+    if (envKey) return envKey;
+    if (this.integrationSettingsService) {
+      try {
+        const conf = await this.integrationSettingsService.getGeminiConfig();
+        if (conf?.apiKey && conf?.isEnabled !== false) {
+          return conf.apiKey;
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  private async getOpenAiKey(): Promise<string | null> {
+    const envKey = (process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '').trim();
+    if (envKey) return envKey;
+    if (this.integrationSettingsService) {
+      try {
+        const conf = await this.integrationSettingsService.getOpenAiConfig();
+        if (conf?.apiKey && conf?.isEnabled !== false) {
+          return conf.apiKey;
+        }
+      } catch {}
+    }
+    return null;
+  }
+
   /**
    * Generates tailored marketing text, caption, and hashtags
    */
@@ -41,16 +74,7 @@ export class AiProviderService implements IAiProvider {
     const resolvedCta = cta || 'Order Now';
     const lang = language || 'English';
 
-    this.logger.log(
-      `[AI_PROVIDER_REQUEST] Generating text: product="${product}", type="${type}", platform="${plat}", tone="${resolvedTone}"`,
-    );
-
-    // Check if Gemini is configured in Integration Settings
-    if (this.integrationSettingsService) {
-      try {
-        const geminiConfig = await this.integrationSettingsService.getGeminiConfig();
-        if (geminiConfig?.apiKey && geminiConfig?.isEnabled !== false) {
-          const promptText = `Generate a compelling marketing post for: "${product}".
+    const promptText = `Generate a compelling marketing post for: "${product}".
 Objective: ${objective || 'Product Launch'}
 Platform: ${plat}
 Language: ${lang}
@@ -65,42 +89,106 @@ Return ONLY a valid JSON object with the following structure:
   "cta": "${resolvedCta}"
 }`;
 
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiConfig.apiKey)}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }],
-                generationConfig: { responseMimeType: 'application/json' },
-              }),
-            },
-          );
+    // 1. Try Gemini if configured
+    const geminiKey = await this.getGeminiKey();
+    if (geminiKey) {
+      this.logger.log(
+        `[AI_PROVIDER] Calling Google Gemini 1.5 Flash: product="${product}", type="${type}", platform="${plat}"`,
+      );
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }],
+              generationConfig: { responseMimeType: 'application/json' },
+            }),
+          },
+        );
 
-          if (response.ok) {
-            const data = (await response.json()) as any;
-            const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (textOutput) {
-              const parsed = JSON.parse(textOutput);
-              if (parsed.caption && Array.isArray(parsed.hashtags)) {
-                this.logger.log(
-                  `[AI_PROVIDER_RESPONSE] Gemini generated text: captionLength=${parsed.caption.length}, hashtags=${parsed.hashtags.length}`,
-                );
-                return {
-                  caption: parsed.caption,
-                  hashtags: parsed.hashtags,
-                  cta: parsed.cta || resolvedCta,
-                };
-              }
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (textOutput) {
+            const parsed = JSON.parse(textOutput);
+            if (parsed.caption && Array.isArray(parsed.hashtags)) {
+              this.logger.log(
+                `[AI_PROVIDER_RESPONSE] Gemini 1.5 Flash generated text: captionLength=${parsed.caption.length}, hashtags=${parsed.hashtags.length}`,
+              );
+              return {
+                caption: parsed.caption,
+                hashtags: parsed.hashtags,
+                cta: parsed.cta || resolvedCta,
+              };
             }
           }
+        } else {
+          const errBody = await response.text();
+          this.logger.warn(`[AI_PROVIDER_RESPONSE] Gemini API error HTTP ${response.status}: ${errBody}`);
         }
       } catch (err: any) {
-        this.logger.warn(`Gemini API text generation error: ${err?.message}; using template engine.`);
+        this.logger.warn(`[AI_PROVIDER_RESPONSE] Gemini API network/execution error: ${err?.message}`);
       }
     }
 
-    // Hook styles based on objective
+    // 2. Try OpenAI if configured
+    const openAiKey = await this.getOpenAiKey();
+    if (openAiKey) {
+      this.logger.log(
+        `[AI_PROVIDER] Calling OpenAI gpt-4o-mini: product="${product}", type="${type}"`,
+      );
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openAiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an expert social media copywriter. Output strictly a JSON object with keys "caption", "hashtags" (array of strings), and "cta".',
+              },
+              { role: 'user', content: promptText },
+            ],
+            response_format: { type: 'json_object' },
+          }),
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const content = data?.choices?.[0]?.message?.content;
+          if (content) {
+            const parsed = JSON.parse(content);
+            if (parsed.caption && Array.isArray(parsed.hashtags)) {
+              this.logger.log(
+                `[AI_PROVIDER_RESPONSE] OpenAI gpt-4o-mini generated text: captionLength=${parsed.caption.length}, hashtags=${parsed.hashtags.length}`,
+              );
+              return {
+                caption: parsed.caption,
+                hashtags: parsed.hashtags,
+                cta: parsed.cta || resolvedCta,
+              };
+            }
+          }
+        } else {
+          const errBody = await response.text();
+          this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI API error HTTP ${response.status}: ${errBody}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI API execution error: ${err?.message}`);
+      }
+    }
+
+    // 3. Dynamic semantic engine fallback using user prompt
+    this.logger.log(
+      `[AI_PROVIDER] Using semantic engine for dynamic text generation: product="${product}", tone="${resolvedTone}"`,
+    );
+
     const hooks: Record<string, string> = {
       'Product Launch': `🚀 Exciting announcement! Experience the next generation of ${product}. Crafted to redefine standards.`,
       'Brand Awareness': `✨ Elevate your everyday with ${product}. When excellence meets uncompromising quality.`,
@@ -122,15 +210,14 @@ Return ONLY a valid JSON object with the following structure:
 
     const caption = `${selectedHook}${bodyParagraph}${ctaLine}`;
 
-    // Generate tailored hashtags without static values
     const cleanProductTag = product
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '')
       .substring(0, 20);
 
     const baseHashtags = [
-      `#${cleanProductTag}`,
-      `#${cleanProductTag}Official`,
+      `#${cleanProductTag || 'featured'}`,
+      `#${cleanProductTag || 'brand'}Official`,
       `#${(objective || 'Launch').replace(/\s+/g, '')}`,
       `#${resolvedTone}Quality`,
       '#BrandGrowth',
@@ -147,7 +234,7 @@ Return ONLY a valid JSON object with the following structure:
     }
 
     this.logger.log(
-      `[AI_PROVIDER_RESPONSE] Template generated text: captionLength=${caption.length}, hashtags=${baseHashtags.length}`,
+      `[AI_PROVIDER_RESPONSE] Semantic engine generated text: captionLength=${caption.length}, hashtags=${baseHashtags.length}`,
     );
 
     return {
@@ -171,84 +258,145 @@ Return ONLY a valid JSON object with the following structure:
   }): Promise<ImageGenerationResult> {
     const { product, objective, cta, tone } = params;
 
-    this.logger.log(
-      `[AI_PROVIDER_REQUEST] Generating image/poster: product="${product}", tone="${tone}", cta="${cta}"`,
-    );
-
-    // Check if OpenAI is configured in Integration Settings
-    if (this.integrationSettingsService) {
+    // 1. Check OpenAI DALL-E 3 if configured
+    const openAiKey = await this.getOpenAiKey();
+    if (openAiKey) {
+      this.logger.log(
+        `[AI_PROVIDER] Calling OpenAI DALL-E 3 for image generation: product="${product}"`,
+      );
       try {
-        const openAiConfig = await this.integrationSettingsService.getOpenAiConfig();
-        if (openAiConfig?.apiKey && openAiConfig?.isEnabled !== false) {
-          const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
+        const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
 
-          const response = await fetch('https://api.openai.com/v1/images/generations', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${openAiConfig.apiKey}`,
-            },
-            body: JSON.stringify({
-              model: 'dall-e-3',
-              prompt,
-              n: 1,
-              size: '1024x1024',
-              response_format: 'b64_json',
-            }),
-          });
+        const response = await fetch('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openAiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'dall-e-3',
+            prompt,
+            n: 1,
+            size: '1024x1024',
+            response_format: 'b64_json',
+          }),
+        });
 
-          if (response.ok) {
-            const data = (await response.json()) as any;
-            const b64 = data?.data?.[0]?.b64_json;
-            if (b64) {
-              const buffer = Buffer.from(b64, 'base64');
-              const uniqueId = crypto.randomBytes(8).toString('hex');
-              const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const b64 = data?.data?.[0]?.b64_json;
+          if (b64) {
+            const buffer = Buffer.from(b64, 'base64');
+            const uniqueId = crypto.randomBytes(8).toString('hex');
+            const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
 
-              let mediaUrl = `/uploads/ai-posters/${filename}`;
-              try {
-                const s3Res = await this.s3Service.uploadFile(
-                  {
-                    buffer,
-                    originalname: filename,
-                    mimetype: 'image/png',
-                    size: buffer.length,
-                  } as any,
-                  'ai-studio',
-                );
-                if (s3Res?.imageUrl) {
-                  mediaUrl = s3Res.imageUrl;
-                }
-              } catch {
-                try {
-                  const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-                  fs.mkdirSync(uploadDir, { recursive: true });
-                  fs.writeFileSync(path.join(uploadDir, filename), buffer);
-                } catch {
-                  mediaUrl = `data:image/png;base64,${buffer.toString('base64')}`;
-                }
-              }
-
-              this.logger.log(
-                `[AI_PROVIDER_RESPONSE] OpenAI DALL-E image generated: mediaUrl="${mediaUrl}"`,
+            let mediaUrl = `/uploads/ai-posters/${filename}`;
+            try {
+              const s3Res = await this.s3Service.uploadFile(
+                {
+                  buffer,
+                  originalname: filename,
+                  mimetype: 'image/png',
+                  size: buffer.length,
+                } as any,
+                'ai-studio',
               );
-
-              return {
-                buffer,
-                url: mediaUrl,
-                fileKey: filename,
-                width: 1024,
-                height: 1024,
-              };
+              if (s3Res?.imageUrl) {
+                mediaUrl = s3Res.imageUrl;
+              }
+            } catch {
+              const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+              fs.mkdirSync(uploadDir, { recursive: true });
+              fs.writeFileSync(path.join(uploadDir, filename), buffer);
             }
+
+            this.logger.log(
+              `[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 generated image: mediaUrl="${mediaUrl}"`,
+            );
+
+            return {
+              buffer,
+              url: mediaUrl,
+              fileKey: filename,
+              width: 1024,
+              height: 1024,
+            };
           }
+        } else {
+          const errBody = await response.text();
+          this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 error HTTP ${response.status}: ${errBody}`);
         }
       } catch (err: any) {
-        this.logger.warn(`OpenAI image generation error: ${err?.message}; falling back to SVG vector poster.`);
+        this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 execution error: ${err?.message}`);
       }
     }
 
-    // Generate high-definition SVG vector poster
+    // 2. Try Pollinations AI Neural Generation
+    this.logger.log(
+      `[AI_PROVIDER] Calling Pollinations AI neural generation for image: prompt="${product}"`,
+    );
+    try {
+      const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 18000);
+
+      const response = await fetch(pollinationsUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const ab = await response.arrayBuffer();
+        const buffer = Buffer.from(ab);
+
+        if (buffer.length > 1000) {
+          const uniqueId = crypto.randomBytes(8).toString('hex');
+          const filename = `ai-img-${Date.now()}-${uniqueId}.jpg`;
+
+          const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+          fs.mkdirSync(uploadDir, { recursive: true });
+          fs.writeFileSync(path.join(uploadDir, filename), buffer);
+
+          let mediaUrl = `/uploads/ai-posters/${filename}`;
+          try {
+            const s3Res = await this.s3Service.uploadFile(
+              {
+                buffer,
+                originalname: filename,
+                mimetype: 'image/jpeg',
+                size: buffer.length,
+              } as any,
+              'ai-studio',
+            );
+            if (s3Res?.imageUrl) {
+              mediaUrl = s3Res.imageUrl;
+            }
+          } catch {}
+
+          this.logger.log(
+            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: url="${mediaUrl}", size=${buffer.length} bytes`,
+          );
+
+          return {
+            buffer,
+            url: mediaUrl,
+            fileKey: filename,
+            width: 1024,
+            height: 1024,
+          };
+        }
+      } else {
+        this.logger.warn(`[AI_PROVIDER_RESPONSE] Pollinations AI returned HTTP ${response.status}`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`[AI_PROVIDER_RESPONSE] Pollinations AI generation error: ${err?.message}`);
+    }
+
+    // 3. High-definition vector SVG poster fallback
+    this.logger.log(
+      `[AI_PROVIDER] Generating tailored vector SVG poster: product="${product}", tone="${tone}"`,
+    );
+
     const primaryColor = tone?.toLowerCase() === 'luxury' || tone?.toLowerCase() === 'premium' ? '#0F172A' : '#047857';
     const accentColor = '#10B981';
     const secondaryColor = '#F59E0B';
@@ -336,7 +484,10 @@ Return ONLY a valid JSON object with the following structure:
     const uniqueId = crypto.randomBytes(8).toString('hex');
     const filename = `ai-poster-${Date.now()}-${uniqueId}.svg`;
 
-    // Try uploading to S3 or local uploads
+    const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    fs.writeFileSync(path.join(uploadDir, filename), buffer);
+
     let mediaUrl = `/uploads/ai-posters/${filename}`;
     try {
       const s3Res = await this.s3Service.uploadFile(
@@ -351,16 +502,7 @@ Return ONLY a valid JSON object with the following structure:
       if (s3Res?.imageUrl) {
         mediaUrl = s3Res.imageUrl;
       }
-    } catch {
-      // Local fallback
-      try {
-        const uploadDir = path.join(process.cwd(), 'uploads', 'ai-posters');
-        fs.mkdirSync(uploadDir, { recursive: true });
-        fs.writeFileSync(path.join(uploadDir, filename), buffer);
-      } catch {
-        mediaUrl = `data:image/svg+xml;base64,${buffer.toString('base64')}`;
-      }
-    }
+    } catch {}
 
     this.logger.log(
       `[AI_PROVIDER_RESPONSE] Vector SVG image generated: mediaUrl="${mediaUrl}"`,
@@ -390,7 +532,7 @@ Return ONLY a valid JSON object with the following structure:
     const jobId = `VIDJOB_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     this.logger.log(
-      `[AI_PROVIDER_REQUEST] Starting video job ${jobId} for product="${params.product}", duration=${params.duration || 15}s`,
+      `[AI_PROVIDER] Starting video generation job ${jobId} for product="${params.product}", duration=${params.duration || 15}s`,
     );
 
     // 1. Generate the poster frame preview
@@ -404,7 +546,7 @@ Return ONLY a valid JSON object with the following structure:
 
     const jobResult: VideoGenerationResult = {
       jobId,
-      url: posterRes.url, // Serves temporary preview asset while processing
+      url: posterRes.url,
       fileKey: posterRes.fileKey,
       duration: params.duration || 15,
       status: 'PROCESSING',

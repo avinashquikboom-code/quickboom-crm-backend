@@ -55,13 +55,14 @@ export class S3Service {
     const region = (config.region || process.env.AWS_REGION || 'ap-south-1').trim();
     const customDomain = (config.customDomain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
 
-    const credentials =
-      config.accessKeyId && config.secretAccessKey
-        ? {
-            accessKeyId: config.accessKeyId,
-            secretAccessKey: config.secretAccessKey,
-          }
-        : undefined;
+    if (!config.isConfigured || !config.isEnabled || !config.accessKeyId || !config.secretAccessKey) {
+      throw new Error('AWS S3 is not configured or enabled');
+    }
+
+    const credentials = {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    };
 
     const client = new S3Client({
       region,
