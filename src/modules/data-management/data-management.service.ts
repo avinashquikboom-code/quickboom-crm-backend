@@ -12,6 +12,7 @@ import {
   ResetAllDto,
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
+  BulkDeleteBinDto,
 } from './dto/data-management.dto';
 
 @Injectable()
@@ -1695,6 +1696,169 @@ export class DataManagementService {
   }
 
   /**
+   * Helper to execute customer-scoped cascade purge inside a Prisma transaction.
+   */
+  private async purgeCustomerInTx(tx: any, numId: number): Promise<void> {
+    await tx.customer.update?.({
+      where: { id: numId },
+      data: { assignedEmployeeId: null, assignedTeamId: null },
+    });
+
+    await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numId } } });
+    await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numId } } });
+    await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numId } } });
+    await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId: numId } } });
+    await tx.taskReview?.deleteMany?.({ where: { task: { customerId: numId } } });
+    await tx.taskProof?.deleteMany?.({ where: { task: { customerId: numId } } });
+    await tx.taskHistory?.deleteMany?.({ where: { task: { customerId: numId } } });
+    await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId: numId } } });
+    await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId: numId } } });
+    await tx.workTask?.deleteMany?.({ where: { work: { customerId: numId } } });
+    await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numId } } });
+    await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId: numId } });
+    await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId: numId } } });
+    await tx.invoice?.deleteMany?.({ where: { customerId: numId } });
+    await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId: numId } } });
+    await tx.quotation?.deleteMany?.({ where: { customerId: numId } });
+    await tx.visit?.deleteMany?.({ where: { customerId: numId } });
+    await tx.task?.deleteMany?.({ where: { customerId: numId } });
+    await tx.deal?.deleteMany?.({ where: { customerId: numId } });
+    await tx.contact?.deleteMany?.({ where: { customerId: numId } });
+    await tx.lead?.deleteMany?.({ where: { customerId: numId } });
+    await tx.company?.deleteMany?.({ where: { customerId: numId } });
+    await tx.supportTicket?.deleteMany?.({ where: { customerId: numId } });
+    await tx.work?.deleteMany?.({ where: { customerId: numId } });
+    await tx.attendance?.deleteMany?.({ where: { customerId: numId } });
+    await tx.leaveRequest?.deleteMany?.({ where: { customerId: numId } });
+    await tx.remoteRequest?.deleteMany?.({ where: { customerId: numId } });
+    await tx.salarySlip?.deleteMany?.({ where: { customerId: numId } });
+    await tx.payrollItem?.deleteMany?.({ where: { customerId: numId } });
+    await tx.payroll?.deleteMany?.({ where: { customerId: numId } });
+    await tx.dataCapturePlace?.deleteMany?.({ where: { customerId: numId } });
+    await tx.dataCaptureJob?.deleteMany?.({ where: { customerId: numId } });
+    await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId: numId } });
+    await tx.influencerBooking?.deleteMany?.({ where: { customerId: numId } });
+    await tx.influencerReview?.deleteMany?.({ where: { customerId: numId } });
+    await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId: numId } } });
+    await tx.socialPublish?.deleteMany?.({ where: { customerId: numId } });
+    await tx.socialAccount?.deleteMany?.({ where: { customerId: numId } });
+    await tx.aiGeneration?.deleteMany?.({ where: { customerId: numId } });
+    await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId: numId } });
+    await tx.aiCreditWallet?.deleteMany?.({ where: { customerId: numId } });
+    await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId: numId } });
+    await tx.paymentHistory?.deleteMany?.({ where: { customerId: numId } });
+    await tx.customPlanOrder?.deleteMany?.({ where: { customerId: numId } });
+    await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numId } });
+    await tx.customerSubscription?.deleteMany?.({ where: { customerId: numId } });
+
+    await tx.salaryStructure?.deleteMany?.({ where: { employee: { customerId: numId } } });
+    await tx.employeeClaim?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employeeLoan?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employeeLocation?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employeeLeaveBalance?.deleteMany?.({ where: { customerId: numId } });
+    await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employeeModuleOverride?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employeeLeadLimit?.deleteMany?.({ where: { customerId: numId } });
+    await tx.roleLeadLimit?.deleteMany?.({ where: { customerId: numId } });
+    await tx.roleWorkPermission?.deleteMany?.({ where: { customerId: numId } });
+    await tx.workAccessRequest?.deleteMany?.({ where: { customerId: numId } });
+    await tx.socialMediaHandler?.deleteMany?.({ where: { customerId: numId } });
+    await tx.marketingVideo?.deleteMany?.({ where: { customerId: numId } });
+    await tx.marketingBanner?.deleteMany?.({ where: { customerId: numId } });
+    await tx.trendingContent?.deleteMany?.({ where: { customerId: numId } });
+    await tx.branchGeofence?.deleteMany?.({ where: { customerId: numId } });
+    await tx.locationTrackingSetting?.deleteMany?.({ where: { customerId: numId } });
+    await tx.shiftGuidance?.deleteMany?.({ where: { customerId: numId } });
+    await tx.shift?.deleteMany?.({ where: { customerId: numId } });
+    await tx.publicHoliday?.deleteMany?.({ where: { customerId: numId } });
+    await tx.attendancePolicy?.deleteMany?.({ where: { customerId: numId } });
+    await tx.claimPolicy?.deleteMany?.({ where: { customerId: numId } });
+    await tx.leavePolicy?.deleteMany?.({ where: { customerId: numId } });
+    await tx.salaryPolicy?.deleteMany?.({ where: { customerId: numId } });
+    await tx.payrollPolicy?.deleteMany?.({ where: { customerId: numId } });
+    await tx.leadStage?.deleteMany?.({ where: { customerId: numId } });
+    await tx.pipeline?.deleteMany?.({ where: { customerId: numId } });
+    await tx.product?.deleteMany?.({ where: { customerId: numId } });
+    await tx.planEntitlement?.deleteMany?.({ where: { customerId: numId } });
+    await tx.featureToggle?.deleteMany?.({ where: { customerId: numId } });
+    await tx.notification?.deleteMany?.({ where: { customerId: numId } });
+
+    await tx.userRole?.deleteMany?.({ where: { user: { customerId: numId } } });
+    await tx.userDeviceToken?.deleteMany?.({ where: { user: { customerId: numId } } });
+    await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numId } } });
+    await tx.session?.deleteMany?.({ where: { user: { customerId: numId } } });
+
+    await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numId } } });
+    await tx.team?.deleteMany?.({ where: { customerId: numId } });
+    await tx.auditLog?.deleteMany?.({ where: { customerId: numId } });
+    await tx.employee?.deleteMany?.({ where: { customerId: numId } });
+    await tx.designation?.deleteMany?.({ where: { customerId: numId } });
+    await tx.department?.deleteMany?.({ where: { customerId: numId } });
+    await tx.role?.deleteMany?.({ where: { customerId: numId } });
+    await tx.user?.deleteMany?.({ where: { customerId: numId } });
+    await tx.customer.delete({ where: { id: numId } });
+  }
+
+  /**
+   * Helper to execute employee-scoped cascade purge inside a Prisma transaction.
+   */
+  private async purgeEmployeeInTx(tx: any, numId: number): Promise<void> {
+    const employee = await tx.employee.findUnique({
+      where: { id: numId },
+      include: { user: { select: { id: true } } },
+    });
+
+    if (!employee) return;
+
+    const userId = employee.userId ? Number(employee.userId) : null;
+    const empCustomerId = Number(employee.customerId);
+
+    if (userId) {
+      await tx.refreshToken?.deleteMany?.({ where: { userId } });
+      await tx.session?.deleteMany?.({ where: { userId } });
+      await tx.userDeviceToken?.deleteMany?.({ where: { userId } });
+    }
+
+    await tx.task?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
+    await tx.taskProof?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
+    await tx.work?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
+    await tx.work?.updateMany?.({ where: { editorId: numId }, data: { editorId: null } });
+    await tx.workTask?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
+    await tx.workAccessRequest?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.employeeModuleOverride?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.employeeLeadLimit?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.locationTrackingSetting?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.teamMember?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.team?.updateMany?.({ where: { leaderId: numId }, data: { leaderId: null } });
+    await tx.department?.updateMany?.({ where: { headId: numId }, data: { headId: null } });
+    await tx.customer?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
+    await tx.lead?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
+    await tx.visit?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.monthlySchedule?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
+    await tx.employeeLocation?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.employeeClaim?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.employeeLoan?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.remoteRequest?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.salarySlip?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.salaryStructure?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.payrollItem?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.employeeLeaveBalance?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.leaveRequest?.deleteMany?.({ where: { employeeId: numId } });
+    await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { employeeId: numId } } });
+    await tx.attendance?.deleteMany?.({ where: { employeeId: numId } });
+
+    await tx.auditLog?.updateMany?.({ where: { customerId: empCustomerId, userId }, data: { userId: null } });
+    await tx.employee.delete({ where: { id: numId } });
+
+    if (userId) {
+      await tx.notification?.deleteMany?.({ where: { userId } });
+      await tx.userRole?.deleteMany?.({ where: { userId } });
+      await tx.user?.delete?.({ where: { id: userId } });
+    }
+  }
+
+  /**
    * Permanently delete a customer from the Bin.
    * Runs a full FK-safe purge atomically in a transaction with post-commit verification.
    */
@@ -1713,58 +1877,7 @@ export class DataManagementService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numId } } });
-      await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numId } } });
-      await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numId } } });
-      await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId: numId } } });
-      await tx.taskReview?.deleteMany?.({ where: { task: { customerId: numId } } });
-      await tx.taskProof?.deleteMany?.({ where: { task: { customerId: numId } } });
-      await tx.taskHistory?.deleteMany?.({ where: { task: { customerId: numId } } });
-      await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId: numId } } });
-      await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId: numId } } });
-      await tx.workTask?.deleteMany?.({ where: { work: { customerId: numId } } });
-      await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numId } } });
-      await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId: numId } });
-      await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId: numId } } });
-      await tx.invoice?.deleteMany?.({ where: { customerId: numId } });
-      await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId: numId } } });
-      await tx.quotation?.deleteMany?.({ where: { customerId: numId } });
-      await tx.visit?.deleteMany?.({ where: { customerId: numId } });
-      await tx.task?.deleteMany?.({ where: { customerId: numId } });
-      await tx.deal?.deleteMany?.({ where: { customerId: numId } });
-      await tx.contact?.deleteMany?.({ where: { customerId: numId } });
-      await tx.lead?.deleteMany?.({ where: { customerId: numId } });
-      await tx.company?.deleteMany?.({ where: { customerId: numId } });
-      await tx.supportTicket?.deleteMany?.({ where: { customerId: numId } });
-      await tx.work?.deleteMany?.({ where: { customerId: numId } });
-      await tx.attendance?.deleteMany?.({ where: { customerId: numId } });
-      await tx.leaveRequest?.deleteMany?.({ where: { customerId: numId } });
-      await tx.remoteRequest?.deleteMany?.({ where: { customerId: numId } });
-      await tx.salarySlip?.deleteMany?.({ where: { customerId: numId } });
-      await tx.payrollItem?.deleteMany?.({ where: { customerId: numId } });
-      await tx.payroll?.deleteMany?.({ where: { customerId: numId } });
-      await tx.dataCapturePlace?.deleteMany?.({ where: { customerId: numId } });
-      await tx.dataCaptureJob?.deleteMany?.({ where: { customerId: numId } });
-      await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId: numId } });
-      await tx.influencerBooking?.deleteMany?.({ where: { customerId: numId } });
-      await tx.influencerReview?.deleteMany?.({ where: { customerId: numId } });
-      await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId: numId } } });
-      await tx.socialPublish?.deleteMany?.({ where: { customerId: numId } });
-      await tx.socialAccount?.deleteMany?.({ where: { customerId: numId } });
-      await tx.aiGeneration?.deleteMany?.({ where: { customerId: numId } });
-      await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId: numId } });
-      await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId: numId } });
-      await tx.paymentHistory?.deleteMany?.({ where: { customerId: numId } });
-      await tx.customPlanOrder?.deleteMany?.({ where: { customerId: numId } });
-      await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numId } });
-      await tx.customerSubscription?.deleteMany?.({ where: { customerId: numId } });
-      await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numId } } });
-      await tx.session?.deleteMany?.({ where: { user: { customerId: numId } } });
-      await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numId } } });
-      await tx.auditLog?.deleteMany?.({ where: { customerId: numId } });
-      await tx.employee?.deleteMany?.({ where: { customerId: numId } });
-      await tx.user?.deleteMany?.({ where: { customerId: numId } });
-      await tx.customer.delete({ where: { id: numId } });
+      await this.purgeCustomerInTx(tx, numId);
     });
 
     const stillExists = await this.prisma.customer.findUnique({ where: { id: numId } });
@@ -1837,53 +1950,8 @@ export class DataManagementService {
       throw new NotFoundException(`Employee #${employeeId} not found.`);
     }
 
-    const userId = employee.userId ? Number(employee.userId) : null;
-    const empCustomerId = Number(employee.customerId);
-
     await this.prisma.$transaction(async (tx) => {
-      if (userId) {
-        await tx.refreshToken?.deleteMany?.({ where: { userId } });
-        await tx.session?.deleteMany?.({ where: { userId } });
-        await tx.userDeviceToken?.deleteMany?.({ where: { userId } });
-      }
-
-      await tx.task?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
-      await tx.taskProof?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
-      await tx.work?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
-      await tx.work?.updateMany?.({ where: { editorId: numId }, data: { editorId: null } });
-      await tx.workTask?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
-      await tx.workAccessRequest?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.employeeModuleOverride?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.employeeLeadLimit?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.locationTrackingSetting?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.teamMember?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.team?.updateMany?.({ where: { leaderId: numId }, data: { leaderId: null } });
-      await tx.department?.updateMany?.({ where: { headId: numId }, data: { headId: null } });
-      await tx.customer?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
-      await tx.lead?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
-      await tx.visit?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.monthlySchedule?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
-      await tx.employeeLocation?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.employeeClaim?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.employeeLoan?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.remoteRequest?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.salarySlip?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.salaryStructure?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.payrollItem?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.employeeLeaveBalance?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.leaveRequest?.deleteMany?.({ where: { employeeId: numId } });
-      await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { employeeId: numId } } });
-      await tx.attendance?.deleteMany?.({ where: { employeeId: numId } });
-
-      await tx.auditLog?.updateMany?.({ where: { customerId: empCustomerId, userId }, data: { userId: null } });
-      await tx.employee.delete({ where: { id: numId } });
-
-      if (userId) {
-        await tx.notification?.deleteMany?.({ where: { userId } });
-        await tx.userRole?.deleteMany?.({ where: { userId } });
-        await tx.user?.delete?.({ where: { id: userId } });
-      }
+      await this.purgeEmployeeInTx(tx, numId);
     });
 
     const stillExists = await this.prisma.employee.findUnique({ where: { id: numId } });
@@ -1894,4 +1962,128 @@ export class DataManagementService {
     this.logger.log(`[BIN_PERMANENT_DELETE_EMPLOYEE] Employee #${numId} permanently deleted and verified removed from database.`);
     return { success: true, message: `Employee #${numId} permanently deleted from database.` };
   }
+
+  /**
+   * Permanently delete multiple items (customers and/or employees) from the Bin.
+   * Runs in a single atomic Prisma transaction with post-commit verification.
+   */
+  async deleteBinBulk(dto: BulkDeleteBinDto) {
+    const rawItems: Array<{ id: number; type: 'CUSTOMER' | 'EMPLOYEE' }> = [];
+
+    if (dto.items && Array.isArray(dto.items)) {
+      for (const it of dto.items) {
+        const numId = Number(it.id);
+        const type = String(it.type).toUpperCase() as 'CUSTOMER' | 'EMPLOYEE';
+        if (!isNaN(numId) && numId > 0 && (type === 'CUSTOMER' || type === 'EMPLOYEE')) {
+          rawItems.push({ id: numId, type });
+        }
+      }
+    }
+
+    if (dto.customerIds && Array.isArray(dto.customerIds)) {
+      for (const id of dto.customerIds) {
+        const numId = Number(id);
+        if (!isNaN(numId) && numId > 0) {
+          rawItems.push({ id: numId, type: 'CUSTOMER' });
+        }
+      }
+    }
+
+    if (dto.employeeIds && Array.isArray(dto.employeeIds)) {
+      for (const id of dto.employeeIds) {
+        const numId = Number(id);
+        if (!isNaN(numId) && numId > 0) {
+          rawItems.push({ id: numId, type: 'EMPLOYEE' });
+        }
+      }
+    }
+
+    // Deduplicate
+    const uniqueMap = new Map<string, { id: number; type: 'CUSTOMER' | 'EMPLOYEE' }>();
+    for (const it of rawItems) {
+      uniqueMap.set(`${it.type}-${it.id}`, it);
+    }
+    const itemsToDelete = Array.from(uniqueMap.values());
+
+    if (itemsToDelete.length === 0) {
+      throw new BadRequestException('No valid items selected for permanent deletion.');
+    }
+
+    const customerIds = itemsToDelete.filter((it) => it.type === 'CUSTOMER').map((it) => it.id);
+    const employeeIds = itemsToDelete.filter((it) => it.type === 'EMPLOYEE').map((it) => it.id);
+
+    // Verify existing records
+    if (customerIds.length > 0) {
+      const foundCustomers = await this.prisma.customer.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true },
+      });
+      const foundCustomerIds = new Set(foundCustomers.map((c) => c.id));
+      for (const cid of customerIds) {
+        if (!foundCustomerIds.has(cid)) {
+          throw new NotFoundException(`Customer #${cid} not found in database.`);
+        }
+      }
+    }
+
+    if (employeeIds.length > 0) {
+      const foundEmployees = await this.prisma.employee.findMany({
+        where: { id: { in: employeeIds } },
+        select: { id: true },
+      });
+      const foundEmployeeIds = new Set(foundEmployees.map((e) => e.id));
+      for (const eid of employeeIds) {
+        if (!foundEmployeeIds.has(eid)) {
+          throw new NotFoundException(`Employee #${eid} not found in database.`);
+        }
+      }
+    }
+
+    // Atomic Prisma transaction
+    await this.prisma.$transaction(async (tx) => {
+      for (const cid of customerIds) {
+        await this.purgeCustomerInTx(tx, cid);
+      }
+      for (const eid of employeeIds) {
+        await this.purgeEmployeeInTx(tx, eid);
+      }
+    });
+
+    // Post-commit verification
+    if (customerIds.length > 0) {
+      const stillCust = await this.prisma.customer.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true },
+      });
+      if (stillCust.length > 0) {
+        throw new InternalServerErrorException(
+          `Bulk permanent deletion verification failed: Customers [${stillCust.map((c) => c.id).join(', ')}] still exist.`,
+        );
+      }
+    }
+
+    if (employeeIds.length > 0) {
+      const stillEmp = await this.prisma.employee.findMany({
+        where: { id: { in: employeeIds } },
+        select: { id: true },
+      });
+      if (stillEmp.length > 0) {
+        throw new InternalServerErrorException(
+          `Bulk permanent deletion verification failed: Employees [${stillEmp.map((e) => e.id).join(', ')}] still exist.`,
+        );
+      }
+    }
+
+    const totalCount = itemsToDelete.length;
+    this.logger.log(`[BIN_BULK_PERMANENT_DELETE] Successfully deleted ${totalCount} records permanently (${customerIds.length} customers, ${employeeIds.length} employees).`);
+
+    return {
+      success: true,
+      count: totalCount,
+      deletedCustomers: customerIds.length,
+      deletedEmployees: employeeIds.length,
+      message: `Successfully deleted ${totalCount} record${totalCount !== 1 ? 's' : ''} permanently from database.`,
+    };
+  }
 }
+

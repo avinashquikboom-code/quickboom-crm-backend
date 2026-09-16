@@ -23,6 +23,7 @@ import {
   ResetAllDto,
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
+  BulkDeleteBinDto,
 } from './dto/data-management.dto';
 
 @ApiTags('Admin Data Management')
@@ -257,4 +258,16 @@ export class DataManagementController {
   async deleteEmployeePermanently(@Param('id') id: string) {
     return this.dataManagementService.deleteEmployeePermanently(id);
   }
+
+  /**
+   * DELETE /api/v1/admin/data-management/bin/bulk
+   * Permanently delete multiple items from the Bin (irreversible)
+   */
+  @Delete('bin/bulk')
+  @Post(['bin/bulk', 'bin/bulk-delete'])
+  @ApiOperation({ summary: 'Permanently delete multiple items (customers and/or employees) from the Bin (irreversible)' })
+  async deleteBinBulk(@Body() dto: BulkDeleteBinDto) {
+    return this.dataManagementService.deleteBinBulk(dto);
+  }
 }
+

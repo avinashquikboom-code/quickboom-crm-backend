@@ -66,3 +66,27 @@ export class EmployeeResetAllDto {
   @IsOptional()
   reason?: string;
 }
+
+export class BulkDeleteBinItemDto {
+  @IsNotEmpty()
+  id: number | string;
+
+  @IsString()
+  @IsNotEmpty()
+  type: 'CUSTOMER' | 'EMPLOYEE';
+}
+
+export class BulkDeleteBinDto {
+  @IsOptional()
+  @IsArray()
+  items?: BulkDeleteBinItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  customerIds?: (number | string)[];
+
+  @IsOptional()
+  @IsArray()
+  employeeIds?: (number | string)[];
+}
+

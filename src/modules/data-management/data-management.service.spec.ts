@@ -11,11 +11,15 @@ describe('DataManagementService', () => {
     customer: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      delete: jest.fn(),
       update: jest.fn(),
     },
     employee: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      delete: jest.fn(),
       count: jest.fn(),
     },
     lead: { count: jest.fn() },
@@ -423,5 +427,54 @@ describe('DataManagementService', () => {
       expect(result[0].type).toBe('CUSTOMER');
       expect(result[1].type).toBe('EMPLOYEE');
     });
+
+    describe('deleteBinBulk', () => {
+      it('throws BadRequestException when no valid items provided', async () => {
+        await expect(service.deleteBinBulk({ items: [] })).rejects.toThrow(BadRequestException);
+      });
+
+      it('throws NotFoundException when customer does not exist', async () => {
+        prisma.customer.findMany.mockResolvedValue([]);
+        await expect(
+          service.deleteBinBulk({ items: [{ id: 999, type: 'CUSTOMER' }] }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('successfully deletes selected records permanently and returns counts', async () => {
+        prisma.customer.findMany
+          .mockResolvedValueOnce([{ id: 10 }]) // existence check
+          .mockResolvedValueOnce([]); // verification check (must be empty)
+        prisma.employee.findMany
+          .mockResolvedValueOnce([{ id: 20 }]) // existence check
+          .mockResolvedValueOnce([]); // verification check (must be empty)
+        prisma.customer.delete.mockResolvedValue({ id: 10 });
+        prisma.employee.delete.mockResolvedValue({ id: 20 });
+        prisma.employee.findUnique.mockResolvedValue({ id: 20, customerId: 10, userId: null });
+
+        const result = await service.deleteBinBulk({
+          items: [
+            { id: 10, type: 'CUSTOMER' },
+            { id: 20, type: 'EMPLOYEE' },
+          ],
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.count).toBe(2);
+        expect(result.deletedCustomers).toBe(1);
+        expect(result.deletedEmployees).toBe(1);
+      });
+
+      it('throws InternalServerErrorException and rolls back if record still exists post-transaction', async () => {
+        prisma.customer.findMany
+          .mockResolvedValueOnce([{ id: 10 }]) // existence check
+          .mockResolvedValueOnce([{ id: 10 }]); // verification check finds record still exists!
+        prisma.customer.delete.mockResolvedValue({ id: 10 });
+
+        await expect(
+          service.deleteBinBulk({ items: [{ id: 10, type: 'CUSTOMER' }] }),
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+    });
   });
 });
+
