@@ -39,11 +39,8 @@ export class DataManagementController {
    */
   @Get('summary')
   @ApiOperation({ summary: 'Get real database record counts for all customer modules' })
-  async getSummary(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-  ) {
-    return this.dataManagementService.getSummary(customerId, user);
+  async getSummary(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getSummary(customerId);
   }
 
   /**
@@ -52,11 +49,8 @@ export class DataManagementController {
    */
   @Get('history')
   @ApiOperation({ summary: 'Get data reset audit history' })
-  async getHistory(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-  ) {
-    return this.dataManagementService.getResetHistory(customerId, user);
+  async getHistory(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getResetHistory(customerId);
   }
 
   /**
@@ -70,14 +64,12 @@ export class DataManagementController {
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Body() dto: ModuleResetDto,
-    @CurrentUser() user: any,
   ) {
     return this.dataManagementService.resetModule(
       customerId,
       userId,
       userRole,
       dto,
-      user,
     );
   }
 
@@ -92,14 +84,12 @@ export class DataManagementController {
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
     @Body() dto: ResetAllDto,
-    @CurrentUser() user: any,
   ) {
     return this.dataManagementService.resetAllTransactional(
       customerId,
       userId,
       userRole,
       dto,
-      user,
     );
   }
 
@@ -112,9 +102,8 @@ export class DataManagementController {
   async getEmployeeSummary(
     @CurrentCustomer() customerId: string,
     @Param('employeeId') employeeId: string,
-    @CurrentUser() user: any,
   ) {
-    return this.dataManagementService.getEmployeeSummary(customerId, employeeId, user);
+    return this.dataManagementService.getEmployeeSummary(customerId, employeeId);
   }
 
   /**
@@ -129,7 +118,6 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Param('employeeId') employeeId: string,
     @Body() dto: EmployeeModuleResetDto,
-    @CurrentUser() user: any,
   ) {
     return this.dataManagementService.resetEmployeeModule(
       customerId,
@@ -137,7 +125,6 @@ export class DataManagementController {
       userRole,
       employeeId,
       dto,
-      user,
     );
   }
 
@@ -153,7 +140,6 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Param('employeeId') employeeId: string,
     @Body() dto: EmployeeResetAllDto,
-    @CurrentUser() user: any,
   ) {
     return this.dataManagementService.resetEmployeeAllTransactional(
       customerId,
@@ -161,7 +147,6 @@ export class DataManagementController {
       userRole,
       employeeId,
       dto,
-      user,
     );
   }
 }

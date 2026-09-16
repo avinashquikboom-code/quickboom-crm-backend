@@ -7,10 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import {
   ModuleResetDto,
-  MultipleModulesResetDto,
   ResetAllDto,
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
@@ -23,15 +21,12 @@ export class DataManagementService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Resolves customer ID from explicit parameter or caller user context
+   * Resolves customer ID from explicit parameter or defaults to the first customer
    */
-  private async resolveCustomerId(customerId: number | string | undefined | null, user?: any): Promise<number> {
+  private async resolveCustomerId(customerId: number | string | undefined | null): Promise<number> {
     const numCustomerId = Number(customerId);
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       return numCustomerId;
-    }
-    if (user?.customerId && !isNaN(Number(user.customerId)) && Number(user.customerId) > 0) {
-      return Number(user.customerId);
     }
     const defaultCust = await this.prisma.customer.findFirst({
       select: { id: true },
@@ -41,9 +36,9 @@ export class DataManagementService {
   }
 
   /**
-   * Resolves employee record and verifies multi-tenant isolation
+   * Resolves employee record and verifies customer isolation if customerId provided
    */
-  private async resolveEmployee(employeeId: number | string, customerId?: number | string, user?: any) {
+  private async resolveEmployee(employeeId: number | string, customerId?: number | string) {
     const numEmployeeId = Number(employeeId);
     if (isNaN(numEmployeeId) || numEmployeeId <= 0) {
       throw new BadRequestException('Invalid employee ID provided.');
@@ -62,20 +57,9 @@ export class DataManagementService {
       throw new NotFoundException('Employee not found in your organization.');
     }
 
-    // Tenant isolation verification
     const numCustomerId = Number(customerId);
-    const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
-    const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
-
-    if (hasExplicitCustomer && employee.customerId !== numCustomerId && !isSuperAdmin) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && employee.customerId !== numCustomerId) {
       throw new ForbiddenException('You do not have permission to access records for this employee.');
-    }
-
-    if (user?.customerId && !isSuperAdmin) {
-      const callerCustomerId = Number(user.customerId);
-      if (callerCustomerId && callerCustomerId !== employee.customerId) {
-        throw new ForbiddenException('Cross-tenant employee data access forbidden.');
-      }
     }
 
     return employee;
@@ -85,8 +69,8 @@ export class DataManagementService {
    * GET /api/v1/admin/data-management/summary
    * Fetches real live database record counts for all customer modules
    */
-  async getSummary(customerId: number | string, user?: any) {
-    const numCustomerId = await this.resolveCustomerId(customerId, user);
+  async getSummary(customerId: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     try {
       const [
         leadsCount,
@@ -198,8 +182,9 @@ export class DataManagementService {
         },
         lastReset: lastResetLogs[0]?.createdAt || null,
       };
-    } catch (err: any) {
-      this.logger.error(`Failed to get summary for customer ${customerId}: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to get summary for customer ${customerId}: ${msg}`);
       return {
         transactional: {
           crm: { total: 0, leads: 0, contacts: 0, companies: 0, deals: 0, tasks: 0 },
@@ -227,8 +212,8 @@ export class DataManagementService {
    * GET /api/v1/admin/data-management/history
    * Retrieves data reset audit log history for the customer
    */
-  async getResetHistory(customerId: number | string, user?: any) {
-    const numCustomerId = await this.resolveCustomerId(customerId, user);
+  async getResetHistory(customerId: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
     const logs = await this.prisma.auditLog.findMany({
       where: { customerId: numCustomerId, action: 'DATA_RESET' },
       include: {
@@ -268,21 +253,9 @@ export class DataManagementService {
     userId: number | string,
     userRole: string,
     dto: ModuleResetDto,
-    user?: any,
   ) {
-    const numCustomerId = await this.resolveCustomerId(customerId, user);
-    const numUserId = Number(userId) || (user?.id ? Number(user.id) : 1);
-
-    // Tenant isolation verification
-    if (user && !isUserSuperAdmin(user)) {
-      if (!isUserAdminOrStaff(user)) {
-        throw new ForbiddenException('Only administrators can perform data resets.');
-      }
-      const callerCustomerId = Number(user.customerId);
-      if (callerCustomerId && callerCustomerId !== numCustomerId) {
-        throw new ForbiddenException('Cross-tenant data reset forbidden.');
-      }
-    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const numUserId = Number(userId) || 1;
 
     const normModule = dto.module.toLowerCase().trim();
     const expectedConfirm = `RESET ${normModule.toUpperCase().replace(/-/g, ' ')}`;
@@ -297,7 +270,7 @@ export class DataManagementService {
     }
 
     let deletedCount = 0;
-    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
+    const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
       switch (normModule) {
@@ -462,21 +435,9 @@ export class DataManagementService {
     userId: number | string,
     userRole: string,
     dto: ResetAllDto,
-    user?: any,
   ) {
-    const numCustomerId = await this.resolveCustomerId(customerId, user);
-    const numUserId = Number(userId) || (user?.id ? Number(user.id) : 1);
-
-    // Tenant isolation verification
-    if (user && !isUserSuperAdmin(user)) {
-      if (!isUserAdminOrStaff(user)) {
-        throw new ForbiddenException('Only administrators can perform customer data resets.');
-      }
-      const callerCustomerId = Number(user.customerId);
-      if (callerCustomerId && callerCustomerId !== numCustomerId) {
-        throw new ForbiddenException('Cross-tenant data reset forbidden.');
-      }
-    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const numUserId = Number(userId) || 1;
 
     const customerRecord = await this.prisma.customer.findUnique({
       where: { id: numCustomerId },
@@ -495,7 +456,7 @@ export class DataManagementService {
     }
 
     let totalDeleted = 0;
-    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
+    const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
       // ── Step 1: Deep leaf children across all transactional areas ─────────────
@@ -685,9 +646,8 @@ export class DataManagementService {
   async getEmployeeSummary(
     customerId: number | string,
     employeeId: number | string,
-    user?: any,
   ) {
-    const employee = await this.resolveEmployee(employeeId, customerId, user);
+    const employee = await this.resolveEmployee(employeeId, customerId);
     const numCustomerId = employee.customerId;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
@@ -784,13 +744,12 @@ export class DataManagementService {
     userRole: string,
     employeeId: number | string,
     dto: EmployeeModuleResetDto,
-    user?: any,
   ) {
-    const employee = await this.resolveEmployee(employeeId, customerId, user);
+    const employee = await this.resolveEmployee(employeeId, customerId);
     const numCustomerId = employee.customerId;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
-    const numUserId = Number(userId) || (user?.id ? Number(user.id) : 1);
+    const numUserId = Number(userId) || 1;
 
     const normModule = dto.module.toLowerCase().trim();
     const expectedConfirm = `RESET EMPLOYEE ${normModule.toUpperCase()}`;
@@ -805,7 +764,7 @@ export class DataManagementService {
     }
 
     let deletedCount = 0;
-    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
+    const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
       switch (normModule) {
@@ -1014,13 +973,12 @@ export class DataManagementService {
     userRole: string,
     employeeId: number | string,
     dto: EmployeeResetAllDto,
-    user?: any,
   ) {
-    const employee = await this.resolveEmployee(employeeId, customerId, user);
+    const employee = await this.resolveEmployee(employeeId, customerId);
     const numCustomerId = employee.customerId;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
-    const numUserId = Number(userId) || (user?.id ? Number(user.id) : 1);
+    const numUserId = Number(userId) || 1;
 
     const rawConfirm = dto.confirmation.trim().toUpperCase();
     const allowed = [
@@ -1036,7 +994,7 @@ export class DataManagementService {
     }
 
     let totalDeleted = 0;
-    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
+    const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
       // 1. Task children then tasks

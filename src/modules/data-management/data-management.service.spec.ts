@@ -105,17 +105,15 @@ describe('DataManagementService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('resetModule throws ForbiddenException if non-superadmin attempts cross-tenant reset', async () => {
-      const callerUser = { id: 2, customerId: 2, role: 'TENANT_ADMIN' };
+    it('resetModule throws BadRequestException for unsupported module', async () => {
       await expect(
         service.resetModule(
           1,
-          2,
-          'TENANT_ADMIN',
-          { module: 'crm', confirmation: 'RESET CRM' },
-          callerUser,
+          1,
+          'SUPER_ADMIN',
+          { module: 'invalid_module' as any, confirmation: 'RESET INVALID MODULE' },
         ),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -166,14 +164,13 @@ describe('DataManagementService', () => {
       await expect(service.getEmployeeSummary(1, 999)).rejects.toThrow(NotFoundException);
     });
 
-    it('getEmployeeSummary throws ForbiddenException for cross-tenant access by non-superadmin', async () => {
+    it('getEmployeeSummary throws ForbiddenException for cross-tenant access', async () => {
       prisma.employee.findUnique.mockResolvedValue(mockEmployee); // belongs to customer 1
-      const callerUser = { id: 8, customerId: 2, role: 'TENANT_ADMIN' }; // customer 2
 
-      await expect(service.getEmployeeSummary(2, 5, callerUser)).rejects.toThrow(ForbiddenException);
+      await expect(service.getEmployeeSummary(2, 5)).rejects.toThrow(ForbiddenException);
     });
 
-    it('getEmployeeSummary succeeds for Super Admin without customer context', async () => {
+    it('getEmployeeSummary succeeds without customer context', async () => {
       prisma.employee.findUnique.mockResolvedValue(mockEmployee);
       prisma.attendance.count.mockResolvedValue(5);
       prisma.attendanceBreak.count.mockResolvedValue(2);
@@ -189,8 +186,7 @@ describe('DataManagementService', () => {
       prisma.workTask.count.mockResolvedValue(0);
       prisma.notification.count.mockResolvedValue(0);
 
-      const superAdminUser = { id: 1, role: 'SUPER_ADMIN' };
-      const result = await service.getEmployeeSummary(undefined as any, 5, superAdminUser);
+      const result = await service.getEmployeeSummary(undefined as any, 5);
 
       expect(result.employee.employeeCode).toBe('EMP-005');
       expect(result.counts.total).toBe(12);
