@@ -252,21 +252,13 @@ export class CustomerController {
     return this.customerService.assignTeam(id, targetTeamId, user);
   }
 
-  @Post(':id/restore')
-  @ApiOperation({ summary: 'Restore / reactivate customer' })
-  async restore(@Param('id') id: string) {
-    return this.customerService.restore(id);
-  }
-
   @Delete(':id')
-  @ApiOperation({ summary: 'Deactivate / delete customer with customer-specific cascade delete for invoices & billing' })
+  @ApiOperation({ summary: 'Permanently delete customer and all customer-owned data' })
   async remove(
     @Param('id') id: string,
     @CurrentUser() user: any,
-    @Query('hard') hard?: string,
   ) {
-    const isHard = hard === 'true' || hard === '1';
-    return this.customerService.remove(id, user, isHard);
+    return this.customerService.remove(id, user);
   }
 
   @Get([':id/reset-summary', 'admin/customers/:id/reset-summary'])

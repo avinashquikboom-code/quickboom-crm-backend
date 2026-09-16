@@ -1300,65 +1300,12 @@ export class CustomerService {
   }
 
   /**
-   * Restore / reactivate soft-deleted customer
-   */
-  /**
-   * Restore a soft-deleted (binned) customer and reactivate their linked User accounts.
-   * Data and child records are preserved as-is during Move-to-Bin, so restore returns them to active.
-   */
-  async restore(id: number | string) {
-    const numericId = this.parseCustomerId(id);
-    const existing = await this.prisma.customer.findUnique({
-      where: { id: numericId },
-    });
-
-    if (!existing) {
-      throw new NotFoundException(`Customer #${id} not found.`);
-    }
-
-    const restored = await this.prisma.$transaction(async (tx) => {
-      // Reactivate all linked User accounts
-      await tx.user?.updateMany?.({
-        where: { customerId: numericId },
-        data: {
-          isActive: true,
-          deletedAt: null,
-        },
-      });
-
-      // Reactivate the customer record
-      return tx.customer.update({
-        where: { id: numericId },
-        data: {
-          isActive: true,
-          deletedAt: null,
-        },
-      });
-    });
-
-    this.logger.log(`[CUSTOMER_RESTORE] Customer #${numericId} restored from Bin. User accounts reactivated.`);
-
-    return this.serializeBigInt(restored);
-  }
-
-  /**
-   * Move customer to Bin (soft-delete) or permanently delete from the database (hard-delete).
-   *
-   * Soft-delete (Move to Bin — hardDelete=false):
-   *   - Invalidates sessions & refresh tokens for all linked users.
-   *   - Soft-deletes all linked User accounts (isActive=false, deletedAt=now).
-   *   - Soft-deletes the Customer record (isActive=false, deletedAt=now).
-   *   - ALL child application data (leads, contacts, deals, tasks, etc.) is preserved intact.
-   *     The customer can be fully restored from Bin with all data recovered.
-   *
-   * Hard-delete (Permanent Delete from Bin — hardDelete=true):
-   *   - Purges all FK-constrained child records first (invoices, CRM, payroll, etc.).
-   *   - Then deletes employees, users, and finally the customer row atomically.
-   *   - This operation is IRREVERSIBLE.
-   *
+   * Permanently delete customer from database (hard-delete).
+   * Irreversibly cascades across all child records and deletes the customer row.
+   * Atomic Prisma transaction with post-commit verification.
    * Tenant isolation: non-super-admin can only delete their own customer.
    */
-  async remove(id: number | string, user?: any, hardDelete = false) {
+  async remove(id: number | string, user?: any, _hardDelete = true) {
     const numericId = this.parseCustomerId(id);
     const existing = await this.prisma.customer.findUnique({
       where: { id: numericId },
@@ -1376,47 +1323,9 @@ export class CustomerService {
       }
     }
 
-    if (!hardDelete) {
-      // ── SOFT-DELETE (Move to Bin) ──────────────────────────────────────────
-      // Preserves ALL child application data. Only deactivates sessions, users, and customer.
-      const result = await this.prisma.$transaction(async (tx) => {
-        // Invalidate all active sessions & refresh tokens for customer's users
-        await tx.refreshToken?.deleteMany?.({
-          where: { user: { customerId: numericId } },
-        });
-        await tx.session?.deleteMany?.({
-          where: { user: { customerId: numericId } },
-        });
-
-        // Soft-delete all linked User accounts (deactivate login)
-        await tx.user?.updateMany?.({
-          where: { customerId: numericId },
-          data: {
-            isActive: false,
-            deletedAt: new Date(),
-            phone: null,
-          },
-        });
-
-        // Soft-delete the Customer record
-        return tx.customer.update({
-          where: { id: numericId },
-          data: {
-            isActive: false,
-            deletedAt: new Date(),
-          },
-        });
-      });
-
-      this.logger.log(`[CUSTOMER_MOVE_TO_BIN] Customer #${numericId} moved to Bin. All child records preserved.`);
-      return this.serializeBigInt(result);
-    }
-
-    // ── HARD-DELETE (Permanent Delete from Bin) ────────────────────────────
-    // Full cascade deletion of all child records, then the customer row itself.
+    // PERMANENT CASCADE DELETE
     const result = await this.prisma.$transaction(async (tx) => {
-      // Delete FK-restricted application records before their customer-owned
-      // parents. The order is deliberate to satisfy FK constraints.
+      // 1. Delete FK-restricted application records before customer-owned parents
       await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numericId } } });
@@ -1429,6 +1338,7 @@ export class CustomerService {
       await tx.workTask?.deleteMany?.({ where: { work: { customerId: numericId } } });
       await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numericId } } });
 
+      // 2. Billing & Invoices
       await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId: numericId } });
       await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId: numericId } } });
       await tx.invoice?.deleteMany?.({ where: { customerId: numericId } });
@@ -1464,17 +1374,25 @@ export class CustomerService {
       await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numericId } });
       await tx.customerSubscription?.deleteMany?.({ where: { customerId: numericId } });
 
-      // Invalidate all active sessions & refresh tokens for customer's users
+      // 3. Invalidate auth sessions & tokens
       await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
       await tx.session?.deleteMany?.({ where: { user: { customerId: numericId } } });
 
-      // Delete employees, users, and finally the customer row
+      // 4. Delete employees, users, and customer row
       await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numericId } } });
       await tx.auditLog?.deleteMany?.({ where: { customerId: numericId } });
       await tx.employee?.deleteMany?.({ where: { customerId: numericId } });
       await tx.user?.deleteMany?.({ where: { customerId: numericId } });
       return tx.customer.delete({ where: { id: numericId } });
     });
+
+    // 5. Post-commit verification
+    const stillExists = await this.prisma.customer.findUnique({ where: { id: numericId } });
+    if (stillExists) {
+      throw new InternalServerErrorException(
+        `Permanent deletion verification failed: Customer #${numericId} still exists in database.`,
+      );
+    }
 
     this.logger.log(`[CUSTOMER_PERMANENT_DELETE] Customer #${numericId} permanently deleted from database.`);
     return this.serializeBigInt(result);

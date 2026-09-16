@@ -152,56 +152,55 @@ export class DataManagementController {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BIN / TRASH ENDPOINTS
+  // CUSTOMER-WISE RESET ENDPOINTS
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * GET /api/v1/admin/data-management/bin
-   * List all soft-deleted customers and employees currently in the Bin
+   * GET /api/v1/admin/data-management/customers/:customerId/summary
+   * Get transactional summary for a specific customer
    */
-  @Get('bin')
-  @ApiOperation({ summary: 'List all records in the Bin (soft-deleted customers and employees)' })
-  async getBin() {
-    return this.dataManagementService.getBinItems();
+  @Get('customers/:customerId/summary')
+  @ApiOperation({ summary: 'Get live customer record summary for data reset' })
+  async getCustomerSummary(@Param('customerId') customerId: string) {
+    return this.dataManagementService.getCustomerSummary(customerId);
   }
 
   /**
-   * POST /api/v1/admin/data-management/bin/customer/:id/restore
-   * Restore a soft-deleted customer from the Bin
+   * POST /api/v1/admin/data-management/customers/:customerId/reset
+   * Reset all application data for a specific customer
    */
-  @Post('bin/customer/:id/restore')
-  @ApiOperation({ summary: 'Restore a customer from the Bin back to active status' })
-  async restoreCustomer(@Param('id') id: string) {
-    return this.dataManagementService.restoreCustomerFromBin(id);
+  @Post('customers/:customerId/reset')
+  @ApiOperation({ summary: 'Reset all application data for a specific customer' })
+  async resetCustomer(
+    @Param('customerId') customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') userRole: string,
+    @Body() dto: ResetAllDto,
+  ) {
+    return this.dataManagementService.resetCustomerData(
+      customerId,
+      userId,
+      userRole,
+      dto,
+    );
   }
 
   /**
-   * DELETE /api/v1/admin/data-management/bin/customer/:id
-   * Permanently delete a customer from the Bin (irreversible)
+   * POST /api/v1/admin/data-management/reset/customer
+   * Alias: Reset all application data for a specific customer (body contains customerId)
    */
-  @Delete('bin/customer/:id')
-  @ApiOperation({ summary: 'Permanently delete a customer from the Bin (irreversible)' })
-  async deleteCustomerPermanently(@Param('id') id: string) {
-    return this.dataManagementService.deleteCustomerPermanently(id);
-  }
-
-  /**
-   * POST /api/v1/admin/data-management/bin/employee/:id/restore
-   * Restore a soft-deleted employee from the Bin
-   */
-  @Post('bin/employee/:id/restore')
-  @ApiOperation({ summary: 'Restore an employee from the Bin back to active status' })
-  async restoreEmployee(@Param('id') id: string) {
-    return this.dataManagementService.restoreEmployeeFromBin(id);
-  }
-
-  /**
-   * DELETE /api/v1/admin/data-management/bin/employee/:id
-   * Permanently delete an employee from the Bin (irreversible)
-   */
-  @Delete('bin/employee/:id')
-  @ApiOperation({ summary: 'Permanently delete an employee from the Bin (irreversible)' })
-  async deleteEmployeePermanently(@Param('id') id: string) {
-    return this.dataManagementService.deleteEmployeePermanently(id);
+  @Post('reset/customer')
+  @ApiOperation({ summary: 'Reset all application data for a customer' })
+  async resetCustomerBody(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') userRole: string,
+    @Body() dto: { customerId: string | number; confirmation?: string; reason?: string },
+  ) {
+    return this.dataManagementService.resetCustomerData(
+      dto.customerId,
+      userId,
+      userRole,
+      dto,
+    );
   }
 }

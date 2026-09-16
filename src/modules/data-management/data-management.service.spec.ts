@@ -115,6 +115,71 @@ describe('DataManagementService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('getCustomerSummary returns customer profile and module counts', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 1,
+        name: 'ACME Corp',
+        companyName: 'ACME Industries',
+        email: 'admin@acme.com',
+        phone: '1234567890',
+        isActive: true,
+      });
+
+      prisma.lead.count.mockResolvedValue(10);
+      prisma.contact.count.mockResolvedValue(5);
+      prisma.company.count.mockResolvedValue(2);
+      prisma.deal.count.mockResolvedValue(3);
+      prisma.task.count.mockResolvedValue(7);
+      prisma.attendance.count.mockResolvedValue(20);
+      prisma.attendanceBreak.count.mockResolvedValue(15);
+      prisma.leaveRequest.count.mockResolvedValue(4);
+      prisma.remoteRequest.count.mockResolvedValue(1);
+      prisma.visit.count.mockResolvedValue(6);
+      prisma.payroll.count.mockResolvedValue(2);
+      prisma.salarySlip.count.mockResolvedValue(8);
+      prisma.notification.count.mockResolvedValue(12);
+      prisma.employeeLocation.count.mockResolvedValue(100);
+      prisma.work.count.mockResolvedValue(9);
+      prisma.monthlySchedule.count.mockResolvedValue(3);
+      prisma.supportTicket.count.mockResolvedValue(2);
+      prisma.employeeClaim.count.mockResolvedValue(1);
+      prisma.employeeLoan.count.mockResolvedValue(0);
+      prisma.employee.count.mockResolvedValue(5);
+      prisma.department.count.mockResolvedValue(2);
+      prisma.designation.count.mockResolvedValue(3);
+      prisma.user.count.mockResolvedValue(6);
+      prisma.auditLog.findMany.mockResolvedValue([]);
+
+      const result = await service.getCustomerSummary(1);
+      expect(result.customer.id).toBe(1);
+      expect(result.customer.companyName).toBe('ACME Industries');
+      expect(result.transactional.crm.total).toBe(27);
+    });
+
+    it('resetCustomerData performs atomic reset of all customer application data', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 1,
+        name: 'ACME Corp',
+        companyName: 'ACME Industries',
+        email: 'admin@acme.com',
+      });
+      prisma.customer.update = jest.fn().mockResolvedValue({});
+      prisma.auditLog = { create: jest.fn().mockResolvedValue({ id: 1 }) };
+      prisma.lead = {
+        deleteMany: jest.fn().mockResolvedValue({ count: 10 }),
+        count: jest.fn().mockResolvedValue(0),
+      };
+      prisma.attendance = {
+        deleteMany: jest.fn().mockResolvedValue({ count: 20 }),
+        count: jest.fn().mockResolvedValue(0),
+      };
+
+      const result = await service.resetCustomerData(1, '1', 'SUPER_ADMIN');
+      expect(result.success).toBe(true);
+      expect(result.customerId).toBe(1);
+      expect(result.message).toContain('Successfully reset all application data');
+    });
   });
 
   describe('Employee Data Management', () => {

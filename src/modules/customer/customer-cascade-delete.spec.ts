@@ -116,6 +116,11 @@ describe('Customer-Specific Cascade Delete for Invoices & Billing', () => {
           }),
         },
         user: {
+          deleteMany: jest.fn(({ where }) => {
+            const initial = users.length;
+            users = users.filter((u) => u.customerId !== where.customerId);
+            return Promise.resolve({ count: initial - users.length });
+          }),
           updateMany: jest.fn(({ where, data }) => {
             let count = 0;
             users.forEach((u) => {
@@ -225,40 +230,38 @@ describe('Customer-Specific Cascade Delete for Invoices & Billing', () => {
     service = module.get<CustomerService>(CustomerService);
   });
 
-  it('Move to Bin: soft-deletes Customer A, preserves all data, while keeping Customer B completely intact', async () => {
+  it('permanently deletes Customer A and all application data, while keeping Customer B completely intact', async () => {
     const superAdmin = { id: 1, role: 'SUPER_ADMIN' };
 
-    // Soft-delete Customer A (Move to Bin — default hardDelete=false)
+    // Delete Customer A permanently
     const result = await service.remove(101, superAdmin);
 
     expect(result).toBeDefined();
 
-    // 1. Verify Customer A is soft-deleted (isActive=false, deletedAt set)
+    // 1. Verify Customer A is permanently deleted from database
     const custA = customers.find((c) => c.id === 101);
-    expect(custA.isActive).toBe(false);
-    expect(custA.deletedAt).toBeInstanceOf(Date);
+    expect(custA).toBeUndefined();
 
-    // 2. SOFT-DELETE: Customer A invoices are PRESERVED (not deleted — data is recoverable)
+    // 2. Customer A invoices are permanently deleted
     const custAInvoices = invoices.filter((inv) => inv.customerId === 101);
-    expect(custAInvoices).toHaveLength(2);
+    expect(custAInvoices).toHaveLength(0);
 
-    // 3. SOFT-DELETE: Customer A invoice items are PRESERVED
-    expect(invoiceItems.filter((i) => i.invoiceId === 1 || i.invoiceId === 2)).toHaveLength(2);
+    // 3. Customer A invoice items are permanently deleted
+    expect(invoiceItems.filter((i) => i.invoiceId === 1 || i.invoiceId === 2)).toHaveLength(0);
 
-    // 4. SOFT-DELETE: Customer A payments are PRESERVED
+    // 4. Customer A payments are permanently deleted
     const custAPayments = payments.filter((p) => p.customerId === 101);
-    expect(custAPayments).toHaveLength(1);
+    expect(custAPayments).toHaveLength(0);
 
-    // 5. SOFT-DELETE: Customer A subscriptions, installments, custom orders, schedules are PRESERVED
-    expect(subscriptions.filter((s) => s.customerId === 101)).toHaveLength(1);
-    expect(installments.filter((i) => i.customerId === 101)).toHaveLength(1);
-    expect(customPlanOrders.filter((o) => o.customerId === 101)).toHaveLength(1);
-    expect(monthlySchedules.filter((s) => s.customerId === 101)).toHaveLength(1);
+    // 5. Customer A subscriptions, installments, custom orders, schedules are permanently deleted
+    expect(subscriptions.filter((s) => s.customerId === 101)).toHaveLength(0);
+    expect(installments.filter((i) => i.customerId === 101)).toHaveLength(0);
+    expect(customPlanOrders.filter((o) => o.customerId === 101)).toHaveLength(0);
+    expect(monthlySchedules.filter((s) => s.customerId === 101)).toHaveLength(0);
 
-    // 6. User A is deactivated & sessions/tokens are purged
+    // 6. User A is deleted & sessions/tokens are purged
     const userA = users.find((u) => u.id === 11);
-    expect(userA.isActive).toBe(false);
-    expect(userA.deletedAt).toBeInstanceOf(Date);
+    expect(userA).toBeUndefined();
     expect(refreshTokens.find((r) => r.userId === 11)).toBeUndefined();
     expect(sessions.find((s) => s.userId === 11)).toBeUndefined();
 
