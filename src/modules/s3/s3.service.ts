@@ -43,7 +43,7 @@ export class S3Service {
    * Priority: Admin Settings (DB with 5-min cache) → ENV fallback.
    * Uses forcePathStyle: true to ensure standard TLS certificate validation for all buckets.
    */
-  private async resolveS3Client(): Promise<{
+  private async resolveS3Client(forUpload = false): Promise<{
     client: S3Client;
     bucket: string;
     region: string;
@@ -55,8 +55,12 @@ export class S3Service {
     const region = (config.region || process.env.AWS_REGION || 'ap-south-1').trim();
     const customDomain = (config.customDomain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
 
-    if (!config.isConfigured || !config.isEnabled || !config.accessKeyId || !config.secretAccessKey) {
-      throw new Error('AWS S3 is not configured or enabled');
+    if (!config.accessKeyId || !config.secretAccessKey) {
+      throw new Error('AWS S3 credentials are not configured');
+    }
+
+    if (forUpload && (!config.isConfigured || !config.isEnabled)) {
+      throw new Error('AWS S3 upload is not enabled in settings');
     }
 
     const credentials = {
@@ -113,7 +117,7 @@ export class S3Service {
       .toLowerCase();
     const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
 
-    const { client, bucket, region, customDomain } = await this.resolveS3Client();
+    const { client, bucket, region, customDomain } = await this.resolveS3Client(true);
 
     this.logger.log(
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
@@ -211,7 +215,7 @@ export class S3Service {
       .toLowerCase();
     const imageKey = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
 
-    const { client, bucket, region, customDomain } = await this.resolveS3Client();
+    const { client, bucket, region, customDomain } = await this.resolveS3Client(true);
 
     this.logger.log(
       `[MEDIA_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
@@ -279,7 +283,7 @@ export class S3Service {
     const sanitizedName = filename.replace(/[^a-zA-Z0-9.-]/g, '_').toLowerCase();
     const imageKey = customKey || `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
 
-    const { client, bucket, region, customDomain } = await this.resolveS3Client();
+    const { client, bucket, region, customDomain } = await this.resolveS3Client(true);
 
     this.logger.log(
       `[BANNER_S3_DEBUG]\nbucket: ${bucket}\nkey: ${imageKey}\nuploadStarted: true`,
@@ -388,13 +392,14 @@ export class S3Service {
     }
 
     // Resolve legacy local uploads to absolute reachable backend URL so Admin & Mobile can display them
-    if (trimmed.startsWith('/uploads/')) {
+    if (trimmed.startsWith('/uploads/') || trimmed.startsWith('uploads/')) {
       const apiHost = (
         process.env.API_BASE_URL ||
         process.env.APP_URL ||
         (process.env.NODE_ENV === 'production' ? 'https://api.qbapp.online' : 'http://localhost:3000')
       ).replace(/\/+$/, '');
-      return `${apiHost}${trimmed}`;
+      const pathPart = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+      return `${apiHost}${pathPart}`;
     }
 
     const key = this.extractKey(trimmed);
