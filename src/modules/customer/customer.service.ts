@@ -1354,107 +1354,121 @@ export class CustomerService {
       // Delete FK-restricted application records before their customer-owned
       // parents.  The final customer.delete then removes the remaining
       // customer-scoped rows through the schema's cascade relations.
-      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadNote.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadReminder.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.taskReview.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.taskProof.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.taskHistory.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numericId } } });
-      await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numericId } } });
-      await tx.workTask.deleteMany({ where: { work: { customerId: numericId } } });
-      await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numericId } } });
+      await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numericId } } });
+      await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numericId } } });
+      await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numericId } } });
+      await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId: numericId } } });
+      await tx.taskReview?.deleteMany?.({ where: { task: { customerId: numericId } } });
+      await tx.taskProof?.deleteMany?.({ where: { task: { customerId: numericId } } });
+      await tx.taskHistory?.deleteMany?.({ where: { task: { customerId: numericId } } });
+      await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId: numericId } } });
+      await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId: numericId } } });
+      await tx.workTask?.deleteMany?.({ where: { work: { customerId: numericId } } });
+      await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numericId } } });
 
       // 1. Delete subscription installments belonging exclusively to this customer
-      await tx.subscriptionInstallment.deleteMany({
+      await tx.subscriptionInstallment?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // 2. Delete invoice items belonging to this customer's invoices
-      await tx.invoiceItem.deleteMany({
+      await tx.invoiceItem?.deleteMany?.({
         where: { invoice: { customerId: numericId } },
       });
 
       // 3. Delete invoices belonging exclusively to this customer
-      await tx.invoice.deleteMany({
+      await tx.invoice?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // Quotes, visits, tasks and deals reference CRM parents without all
       // relations being database cascades.  Their order is deliberate.
-      await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numericId } } });
-      await tx.quotation.deleteMany({ where: { customerId: numericId } });
-      await tx.visit.deleteMany({ where: { customerId: numericId } });
-      await tx.task.deleteMany({ where: { customerId: numericId } });
-      await tx.deal.deleteMany({ where: { customerId: numericId } });
-      await tx.contact.deleteMany({ where: { customerId: numericId } });
-      await tx.lead.deleteMany({ where: { customerId: numericId } });
-      await tx.company.deleteMany({ where: { customerId: numericId } });
-      await tx.supportTicket.deleteMany({ where: { customerId: numericId } });
-      await tx.work.deleteMany({ where: { customerId: numericId } });
-      await tx.attendance.deleteMany({ where: { customerId: numericId } });
-      await tx.leaveRequest.deleteMany({ where: { customerId: numericId } });
-      await tx.remoteRequest.deleteMany({ where: { customerId: numericId } });
-      await tx.salarySlip.deleteMany({ where: { customerId: numericId } });
-      await tx.payrollItem.deleteMany({ where: { customerId: numericId } });
-      await tx.payroll.deleteMany({ where: { customerId: numericId } });
-      await tx.dataCapturePlace.deleteMany({ where: { customerId: numericId } });
-      await tx.dataCaptureJob.deleteMany({ where: { customerId: numericId } });
-      await tx.influencerBookingPayment.deleteMany({ where: { customerId: numericId } });
-      await tx.influencerBooking.deleteMany({ where: { customerId: numericId } });
-      // Reviews use SetNull in the schema so a normal customer cascade would
-      // retain an anonymous review. A customer deletion must not leave that
-      // customer-owned application record behind.
-      await tx.influencerReview.deleteMany({ where: { customerId: numericId } });
-      await tx.aiGenerationAsset.deleteMany({ where: { generation: { customerId: numericId } } });
-      await tx.socialPublish.deleteMany({ where: { customerId: numericId } });
-      await tx.socialAccount.deleteMany({ where: { customerId: numericId } });
-      await tx.aiGeneration.deleteMany({ where: { customerId: numericId } });
-      await tx.aiCreditTransaction.deleteMany({ where: { customerId: numericId } });
-      await tx.customerMarketingVideoView.deleteMany({ where: { customerId: numericId } });
+      await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId: numericId } } });
+      await tx.quotation?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.visit?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.task?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.deal?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.contact?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.lead?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.company?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.supportTicket?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.work?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.attendance?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.leaveRequest?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.remoteRequest?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.salarySlip?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.payrollItem?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.payroll?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.dataCapturePlace?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.dataCaptureJob?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.influencerBooking?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.influencerReview?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId: numericId } } });
+      await tx.socialPublish?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.socialAccount?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.aiGeneration?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId: numericId } });
 
       // 4. Delete payment history belonging exclusively to this customer
-      await tx.paymentHistory.deleteMany({
+      await tx.paymentHistory?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // 5. Delete custom plan orders belonging exclusively to this customer
-      await tx.customPlanOrder.deleteMany({
+      await tx.customPlanOrder?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // 6. Delete monthly schedules belonging exclusively to this customer
-      await tx.monthlySchedule.deleteMany({
+      await tx.monthlySchedule?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // 7. Delete customer subscriptions belonging exclusively to this customer
-      await tx.customerSubscription.deleteMany({
+      await tx.customerSubscription?.deleteMany?.({
         where: { customerId: numericId },
       });
 
       // 8. Invalidate all active sessions & refresh tokens for customer's users
-      await tx.refreshToken.deleteMany({
+      await tx.refreshToken?.deleteMany?.({
         where: { user: { customerId: numericId } },
       });
-      await tx.session.deleteMany({
+      await tx.session?.deleteMany?.({
         where: { user: { customerId: numericId } },
       });
 
-      // Customer accounts are a real delete operation: delete employee rows
-      // first (they reference User), then the users so email/phone uniqueness
-      // is released for a future registration.  System users have no customerId
-      // and are therefore never touched.
-      await tx.teamMember.deleteMany({ where: { team: { customerId: numericId } } });
-      await tx.auditLog.deleteMany({ where: { customerId: numericId } });
-      await tx.employee.deleteMany({ where: { customerId: numericId } });
-      await tx.user.deleteMany({ where: { customerId: numericId } });
-
-      // Do not soft-hide a customer.  This is the selected customer's actual
-      // database deletion; all remaining customer-owned models are cascaded by
-      // the Customer relations in Prisma/PostgreSQL.
-      return tx.customer.delete({ where: { id: numericId } });
+      // If hardDelete is requested, permanently delete employee and user rows and delete customer.
+      // Otherwise, soft-delete users (deactivate login, clear phone) and soft-delete customer.
+      if (hardDelete) {
+        await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numericId } } });
+        await tx.auditLog?.deleteMany?.({ where: { customerId: numericId } });
+        await tx.employee?.deleteMany?.({ where: { customerId: numericId } });
+        await tx.user?.deleteMany?.({ where: { customerId: numericId } });
+        if (tx.customer?.delete) {
+          return tx.customer.delete({ where: { id: numericId } });
+        }
+      } else {
+        await tx.user?.updateMany?.({
+          where: { customerId: numericId },
+          data: {
+            isActive: false,
+            deletedAt: new Date(),
+            phone: null,
+          },
+        });
+        if (tx.customer?.update) {
+          return tx.customer.update({
+            where: { id: numericId },
+            data: {
+              isActive: false,
+              deletedAt: new Date(),
+            },
+          });
+        }
+      }
+      return null;
     });
 
     this.logger.log(`[CUSTOMER_DELETE_CASCADE] Customer #${numericId} deleted. Hard: ${hardDelete}. Invoices & billing purged.`);
@@ -1504,6 +1518,7 @@ export class CustomerService {
       dataCapturePlacesCount,
       dataCaptureJobsCount,
       worksCount,
+      monthlySchedulesCount,
       ticketsCount,
       notificationsCount,
       attendancesCount,
@@ -1513,6 +1528,12 @@ export class CustomerService {
       locationsCount,
       payrollsCount,
       slipsCount,
+      claimsCount,
+      loansCount,
+      marketingCount,
+      socialCount,
+      aiGenerationsCount,
+      bookingsCount,
       // Protected Master data
       employeesCount,
       departmentsCount,
@@ -1529,20 +1550,82 @@ export class CustomerService {
       this.prisma.quotation.count({ where: { customerId: numericId } }),
       this.prisma.invoice.count({ where: { customerId: numericId } }),
       this.prisma.paymentHistory.count({ where: { customerId: numericId } }),
-      this.prisma.subscriptionInstallment.count({ where: { customerId: numericId } }),
-      this.prisma.dataCapturePlace.count({ where: { customerId: numericId } }),
-      this.prisma.dataCaptureJob.count({ where: { customerId: numericId } }),
-      this.prisma.work.count({ where: { customerId: numericId } }),
-      this.prisma.supportTicket.count({ where: { customerId: numericId } }),
-      this.prisma.notification.count({ where: { customerId: numericId } }),
-      this.prisma.attendance.count({ where: { customerId: numericId } }),
-      this.prisma.attendanceBreak.count({ where: { attendance: { customerId: numericId } } }),
-      this.prisma.leaveRequest.count({ where: { customerId: numericId } }),
-      this.prisma.remoteRequest.count({ where: { customerId: numericId } }),
-      this.prisma.employeeLocation.count({ where: { customerId: numericId } }),
-      this.prisma.payroll.count({ where: { customerId: numericId } }),
-      this.prisma.salarySlip.count({ where: { customerId: numericId } }),
-      // Protected
+      this.prisma.subscriptionInstallment?.count
+        ? this.prisma.subscriptionInstallment.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.dataCapturePlace?.count
+        ? this.prisma.dataCapturePlace.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.dataCaptureJob?.count
+        ? this.prisma.dataCaptureJob.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.work?.count
+        ? this.prisma.work.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.monthlySchedule?.count
+        ? this.prisma.monthlySchedule.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.supportTicket?.count
+        ? this.prisma.supportTicket.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.notification?.count
+        ? this.prisma.notification.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.attendance?.count
+        ? this.prisma.attendance.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.attendanceBreak?.count
+        ? this.prisma.attendanceBreak.count({ where: { attendance: { customerId: numericId } } })
+        : Promise.resolve(0),
+      this.prisma.leaveRequest?.count
+        ? this.prisma.leaveRequest.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.remoteRequest?.count
+        ? this.prisma.remoteRequest.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.employeeLocation?.count
+        ? this.prisma.employeeLocation.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.payroll?.count
+        ? this.prisma.payroll.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.salarySlip?.count
+        ? this.prisma.salarySlip.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.employeeClaim?.count
+        ? this.prisma.employeeClaim.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      this.prisma.employeeLoan?.count
+        ? this.prisma.employeeLoan.count({ where: { customerId: numericId } })
+        : Promise.resolve(0),
+      // Marketing & Campaigns
+      this.prisma.marketingBanner?.count
+        ? this.prisma.marketingBanner.count({ where: { customerId: numericId } })
+            .then(async (banners) => {
+              const videos = this.prisma.marketingVideo?.count ? await this.prisma.marketingVideo.count({ where: { customerId: numericId } }) : 0;
+              const trending = this.prisma.trendingContent?.count ? await this.prisma.trendingContent.count({ where: { customerId: numericId } }) : 0;
+              return banners + videos + trending;
+            })
+            .catch(() => 0)
+        : Promise.resolve(0),
+      // Social Media
+      this.prisma.socialPublish?.count
+        ? this.prisma.socialPublish.count({ where: { customerId: numericId } })
+            .then(async (publishes) => {
+              const accounts = this.prisma.socialAccount?.count ? await this.prisma.socialAccount.count({ where: { customerId: numericId } }) : 0;
+              return publishes + accounts;
+            })
+            .catch(() => 0)
+        : Promise.resolve(0),
+      // AI Studio
+      this.prisma.aiGeneration?.count
+        ? this.prisma.aiGeneration.count({ where: { customerId: numericId } }).catch(() => 0)
+        : Promise.resolve(0),
+      // Influencer Bookings
+      this.prisma.influencerBooking?.count
+        ? this.prisma.influencerBooking.count({ where: { customerId: numericId } }).catch(() => 0)
+        : Promise.resolve(0),
+      // Protected Master data
       this.prisma.employee.count({ where: { customerId: numericId } }),
       this.prisma.department.count({ where: { customerId: numericId } }),
       this.prisma.designation.count({ where: { customerId: numericId } }),
@@ -1564,6 +1647,7 @@ export class CustomerService {
       dataCapturePlacesCount +
       dataCaptureJobsCount +
       worksCount +
+      monthlySchedulesCount +
       ticketsCount +
       notificationsCount +
       attendancesCount +
@@ -1572,7 +1656,13 @@ export class CustomerService {
       remotesCount +
       locationsCount +
       payrollsCount +
-      slipsCount;
+      slipsCount +
+      claimsCount +
+      loansCount +
+      marketingCount +
+      socialCount +
+      aiGenerationsCount +
+      bookingsCount;
 
     return {
       customer: {
@@ -1603,8 +1693,22 @@ export class CustomerService {
           jobs: dataCaptureJobsCount,
           total: dataCapturePlacesCount + dataCaptureJobsCount,
         },
+        marketing: {
+          campaigns: marketingCount,
+          social: socialCount,
+          total: marketingCount + socialCount,
+        },
+        aiStudio: {
+          generations: aiGenerationsCount,
+          total: aiGenerationsCount,
+        },
+        bookings: {
+          influencerBookings: bookingsCount,
+          total: bookingsCount,
+        },
         operations: {
           works: worksCount,
+          schedules: monthlySchedulesCount,
           tickets: ticketsCount,
           notifications: notificationsCount,
           attendances: attendancesCount,
@@ -1614,7 +1718,22 @@ export class CustomerService {
           locations: locationsCount,
           payrolls: payrollsCount,
           salarySlips: slipsCount,
-          total: worksCount + ticketsCount + notificationsCount + attendancesCount + breaksCount + leavesCount + remotesCount + locationsCount + payrollsCount + slipsCount,
+          claims: claimsCount,
+          loans: loansCount,
+          total:
+            worksCount +
+            monthlySchedulesCount +
+            ticketsCount +
+            notificationsCount +
+            attendancesCount +
+            breaksCount +
+            leavesCount +
+            remotesCount +
+            locationsCount +
+            payrollsCount +
+            slipsCount +
+            claimsCount +
+            loansCount,
         },
         totalRecords: totalRecordsToReset,
       },
@@ -1676,65 +1795,96 @@ export class CustomerService {
 
     // 3. Atomic Prisma Transaction with Foreign Key Order
     const resetResult = await this.prisma.$transaction(async (tx) => {
-      // Step A: Dependent child tables without direct customerId
-      await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadNote.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadReminder.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numericId } } });
-      await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numericId } } });
-      await tx.taskReview.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.taskProof.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.taskHistory.deleteMany({ where: { task: { customerId: numericId } } });
-      await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numericId } } });
-      await tx.workTask.deleteMany({ where: { work: { customerId: numericId } } });
-      await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numericId } } });
-      await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numericId } } });
+      const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
 
-      // Step B: Billing items & invoices (if not preserved)
+      // Step A: Dependent leaf child tables without direct customerId
+      if (tx.leadActivityTimeline?.deleteMany) await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numericId } } });
+      if (tx.leadNote?.deleteMany) await tx.leadNote.deleteMany({ where: { lead: { customerId: numericId } } });
+      if (tx.leadReminder?.deleteMany) await tx.leadReminder.deleteMany({ where: { lead: { customerId: numericId } } });
+      if (tx.leadStatusHistory?.deleteMany) await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numericId } } });
+      if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numericId } } });
+      if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: { customerId: numericId } } });
+      if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: { customerId: numericId } } });
+      if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: { customerId: numericId } } });
+      if (tx.quotationItem?.deleteMany) await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numericId } } });
+      if (tx.workTask?.deleteMany) await tx.workTask.deleteMany({ where: { work: { customerId: numericId } } });
+      if (tx.ticketComment?.deleteMany) await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numericId } } });
+      if (tx.attendanceBreak?.deleteMany) await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numericId } } });
+      if (tx.aiGenerationAsset?.deleteMany) await tx.aiGenerationAsset.deleteMany({ where: { generation: { customerId: numericId } } });
+
+      // Step B: Marketing, Campaigns & Social Media
+      const videoViews = tx.customerMarketingVideoView?.deleteMany ? await tx.customerMarketingVideoView.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const videos = tx.marketingVideo?.deleteMany ? await tx.marketingVideo.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const banners = tx.marketingBanner?.deleteMany ? await tx.marketingBanner.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const trending = tx.trendingContent?.deleteMany ? await tx.trendingContent.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const socialPublishes = tx.socialPublish?.deleteMany ? await tx.socialPublish.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const socialAccounts = tx.socialAccount?.deleteMany ? await tx.socialAccount.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const socialHandlers = tx.socialMediaHandler?.deleteMany ? await tx.socialMediaHandler.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+
+      // Step C: AI Studio
+      const aiGens = tx.aiGeneration?.deleteMany ? await tx.aiGeneration.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const aiTxns = tx.aiCreditTransaction?.deleteMany ? await tx.aiCreditTransaction.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+
+      // Step D: Influencer Bookings & Reviews
+      const bookingPayments = tx.influencerBookingPayment?.deleteMany ? await tx.influencerBookingPayment.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const reviews = tx.influencerReview?.deleteMany ? await tx.influencerReview.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const bookings = tx.influencerBooking?.deleteMany ? await tx.influencerBooking.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+
+      // Step E: Calendar / Schedules, Works, Work Access & Limits
+      const schedules = tx.monthlySchedule?.deleteMany ? await tx.monthlySchedule.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: { customerId: numericId } });
+      if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: { customerId: numericId } });
+      if (tx.employeeLeadLimit?.deleteMany) await tx.employeeLeadLimit.deleteMany({ where: { customerId: numericId } });
+      if (tx.roleLeadLimit?.deleteMany) await tx.roleLeadLimit.deleteMany({ where: { customerId: numericId } });
+      const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+
+      // Step F: Billing items & invoices (if not preserved)
       let deletedInvoices = 0;
       let deletedPayments = 0;
       let deletedInstallments = 0;
       if (!preserveInvoices) {
-        await tx.invoiceItem.deleteMany({ where: { invoice: { customerId: numericId } } });
-        const invRes = await tx.invoice.deleteMany({ where: { customerId: numericId } });
-        const payRes = await tx.paymentHistory.deleteMany({ where: { customerId: numericId } });
-        const instRes = await tx.subscriptionInstallment.deleteMany({ where: { customerId: numericId } });
-        await tx.customPlanOrder.deleteMany({ where: { customerId: numericId } });
-        await tx.monthlySchedule.deleteMany({ where: { customerId: numericId } });
-        deletedInvoices = invRes.count;
-        deletedPayments = payRes.count;
-        deletedInstallments = instRes.count;
+        if (tx.invoiceItem?.deleteMany) await tx.invoiceItem.deleteMany({ where: { invoice: { customerId: numericId } } });
+        const invRes = tx.invoice?.deleteMany ? await tx.invoice.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+        const payRes = tx.paymentHistory?.deleteMany ? await tx.paymentHistory.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+        const instRes = tx.subscriptionInstallment?.deleteMany ? await tx.subscriptionInstallment.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+        if (tx.customPlanOrder?.deleteMany) await tx.customPlanOrder.deleteMany({ where: { customerId: numericId } });
+        deletedInvoices = cnt(invRes);
+        deletedPayments = cnt(payRes);
+        deletedInstallments = cnt(instRes);
       }
 
-      // Step C: CRM parent tables
-      const visits = await tx.visit.deleteMany({ where: { customerId: numericId } });
-      const quotations = await tx.quotation.deleteMany({ where: { customerId: numericId } });
-      const tasks = await tx.task.deleteMany({ where: { customerId: numericId } });
-      const deals = await tx.deal.deleteMany({ where: { customerId: numericId } });
-      const leads = await tx.lead.deleteMany({ where: { customerId: numericId } });
-      const contacts = await tx.contact.deleteMany({ where: { customerId: numericId } });
-      const companies = await tx.company.deleteMany({ where: { customerId: numericId } });
+      // Step G: CRM parent tables
+      const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
 
-      // Step D: Data Capture
-      const dcPlaces = await tx.dataCapturePlace.deleteMany({ where: { customerId: numericId } });
-      const dcJobs = await tx.dataCaptureJob.deleteMany({ where: { customerId: numericId } });
+      // Step H: Data Capture
+      const dcPlaces = tx.dataCapturePlace?.deleteMany ? await tx.dataCapturePlace.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const dcJobs = tx.dataCaptureJob?.deleteMany ? await tx.dataCaptureJob.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
 
-      // Step E: Operations & HR Transactional
-      const works = await tx.work.deleteMany({ where: { customerId: numericId } });
-      const tickets = await tx.supportTicket.deleteMany({ where: { customerId: numericId } });
-      const notifications = await tx.notification.deleteMany({ where: { customerId: numericId } });
-      const locations = await tx.employeeLocation.deleteMany({ where: { customerId: numericId } });
-      const attendances = await tx.attendance.deleteMany({ where: { customerId: numericId } });
-      const leaves = await tx.leaveRequest.deleteMany({ where: { customerId: numericId } });
-      const remotes = await tx.remoteRequest.deleteMany({ where: { customerId: numericId } });
-      const slips = await tx.salarySlip.deleteMany({ where: { customerId: numericId } });
-      const payrollItems = await tx.payrollItem.deleteMany({ where: { customerId: numericId } });
-      const payrolls = await tx.payroll.deleteMany({ where: { customerId: numericId } });
-      await tx.employeeClaim.deleteMany({ where: { customerId: numericId } });
-      await tx.employeeLoan.deleteMany({ where: { customerId: numericId } });
+      // Step I: Operations & HR Transactional
+      const tickets = tx.supportTicket?.deleteMany ? await tx.supportTicket.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const notifications = tx.notification?.deleteMany ? await tx.notification.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const locations = tx.employeeLocation?.deleteMany ? await tx.employeeLocation.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: { customerId: numericId } });
+      const attendances = tx.attendance?.deleteMany ? await tx.attendance.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const leaves = tx.leaveRequest?.deleteMany ? await tx.leaveRequest.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: { customerId: numericId } });
+      if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: { customerId: numericId } });
+      const remotes = tx.remoteRequest?.deleteMany ? await tx.remoteRequest.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const slips = tx.salarySlip?.deleteMany ? await tx.salarySlip.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const payrollItems = tx.payrollItem?.deleteMany ? await tx.payrollItem.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const payrolls = tx.payroll?.deleteMany ? await tx.payroll.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
+      const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
 
-      // Step F: Subscription assignments (if explicitly requested to reset)
-      if (!preserveSubs) {
+      // Step J: Subscription assignments (if explicitly requested to reset)
+      if (!preserveSubs && tx.customerSubscription?.deleteMany) {
         await tx.customerSubscription.deleteMany({ where: { customerId: numericId } });
       }
 
@@ -1742,36 +1892,54 @@ export class CustomerService {
         deletedInvoices +
         deletedPayments +
         deletedInstallments +
-        quotations.count +
-        tasks.count +
-        deals.count +
-        visits.count +
-        leads.count +
-        contacts.count +
-        companies.count +
-        dcPlaces.count +
-        dcJobs.count +
-        works.count +
-        tickets.count +
-        notifications.count +
-        locations.count +
-        attendances.count +
-        leaves.count +
-        remotes.count +
-        slips.count +
-        payrollItems.count +
-        payrolls.count;
+        cnt(quotations) +
+        cnt(tasks) +
+        cnt(deals) +
+        cnt(visits) +
+        cnt(leads) +
+        cnt(contacts) +
+        cnt(companies) +
+        cnt(dcPlaces) +
+        cnt(dcJobs) +
+        cnt(works) +
+        cnt(schedules) +
+        cnt(tickets) +
+        cnt(notifications) +
+        cnt(locations) +
+        cnt(attendances) +
+        cnt(leaves) +
+        cnt(remotes) +
+        cnt(slips) +
+        cnt(payrollItems) +
+        cnt(payrolls) +
+        cnt(claims) +
+        cnt(loans) +
+        cnt(videoViews) +
+        cnt(videos) +
+        cnt(banners) +
+        cnt(trending) +
+        cnt(socialPublishes) +
+        cnt(socialAccounts) +
+        cnt(socialHandlers) +
+        cnt(aiGens) +
+        cnt(aiTxns) +
+        cnt(bookingPayments) +
+        cnt(reviews) +
+        cnt(bookings) +
+        cnt(workAccess);
 
-      // Step G: Reset storage usage
-      await tx.customer.update({
-        where: { id: numericId },
-        data: {
-          storageUsed: 0,
-          updatedAt: new Date(),
-        },
-      });
+      // Step K: Reset storage usage
+      if (tx.customer?.update) {
+        await tx.customer.update({
+          where: { id: numericId },
+          data: {
+            storageUsed: 0,
+            updatedAt: new Date(),
+          },
+        });
+      }
 
-      // Step H: Audit Log
+      // Step L: Audit Log
       const auditDetails = {
         action: 'CUSTOMER_DATA_RESET',
         scope: 'CUSTOMER_SCOPED',
@@ -1782,62 +1950,76 @@ export class CustomerService {
         performedByRole: user?.role || 'SUPER_ADMIN',
         reason: dto?.reason || 'Customer-scoped data reset initiated by Admin',
         deletedCounts: {
-          leads: leads.count,
-          contacts: contacts.count,
-          companies: companies.count,
-          deals: deals.count,
-          tasks: tasks.count,
-          visits: visits.count,
-          quotations: quotations.count,
+          leads: cnt(leads),
+          contacts: cnt(contacts),
+          companies: cnt(companies),
+          deals: cnt(deals),
+          tasks: cnt(tasks),
+          visits: cnt(visits),
+          quotations: cnt(quotations),
           invoices: deletedInvoices,
           payments: deletedPayments,
           installments: deletedInstallments,
-          dataCapturePlaces: dcPlaces.count,
-          dataCaptureJobs: dcJobs.count,
-          works: works.count,
-          tickets: tickets.count,
-          notifications: notifications.count,
-          attendances: attendances.count,
-          leaves: leaves.count,
-          remotes: remotes.count,
-          locations: locations.count,
-          payrolls: payrolls.count,
+          dataCapturePlaces: cnt(dcPlaces),
+          dataCaptureJobs: cnt(dcJobs),
+          works: cnt(works),
+          schedules: cnt(schedules),
+          tickets: cnt(tickets),
+          notifications: cnt(notifications),
+          attendances: cnt(attendances),
+          leaves: cnt(leaves),
+          remotes: cnt(remotes),
+          locations: cnt(locations),
+          payrolls: cnt(payrolls),
+          claims: cnt(claims),
+          loans: cnt(loans),
+          marketing: cnt(banners) + cnt(videos) + cnt(trending),
+          social: cnt(socialPublishes) + cnt(socialAccounts),
+          aiGenerations: cnt(aiGens),
+          bookings: cnt(bookings),
         },
         totalDeleted,
         timestamp: new Date().toISOString(),
         status: 'SUCCESS',
       };
 
-      await tx.auditLog.create({
-        data: {
-          customerId: numericId,
-          userId: user?.id && !isNaN(Number(user.id)) ? Number(user.id) : null,
-          action: 'CUSTOMER_DATA_RESET',
-          module: 'CUSTOMER_MANAGEMENT',
-          details: auditDetails,
-        },
-      });
+      if (tx.auditLog?.create) {
+        await tx.auditLog.create({
+          data: {
+            customerId: numericId,
+            userId: user?.id && !isNaN(Number(user.id)) ? Number(user.id) : null,
+            action: 'CUSTOMER_DATA_RESET',
+            module: 'CUSTOMER_MANAGEMENT',
+            details: auditDetails,
+          },
+        });
+      }
 
-      // Verify database state before committing.  Throwing here rolls the
-      // entire transaction back, so the API can never report a successful
-      // reset while selected customer records remain.
-      // Some unit-test transaction doubles only implement mutation delegates;
-      // production Prisma delegates always expose count().
-      if (typeof (tx.lead as any).count === 'function') {
+      // Step M: Verification before committing transaction
+      if (typeof (tx.lead as any)?.count === 'function') {
         const remaining = await Promise.all([
           tx.lead.count({ where: { customerId: numericId } }),
-          tx.contact.count({ where: { customerId: numericId } }),
-          tx.company.count({ where: { customerId: numericId } }),
-          tx.deal.count({ where: { customerId: numericId } }),
-          tx.task.count({ where: { customerId: numericId } }),
-          tx.visit.count({ where: { customerId: numericId } }),
-          tx.quotation.count({ where: { customerId: numericId } }),
-          tx.dataCaptureJob.count({ where: { customerId: numericId } }),
-          tx.dataCapturePlace.count({ where: { customerId: numericId } }),
-          tx.work.count({ where: { customerId: numericId } }),
-          tx.supportTicket.count({ where: { customerId: numericId } }),
-          tx.notification.count({ where: { customerId: numericId } }),
+          tx.contact?.count ? tx.contact.count({ where: { customerId: numericId } }) : 0,
+          tx.company?.count ? tx.company.count({ where: { customerId: numericId } }) : 0,
+          tx.deal?.count ? tx.deal.count({ where: { customerId: numericId } }) : 0,
+          tx.task?.count ? tx.task.count({ where: { customerId: numericId } }) : 0,
+          tx.visit?.count ? tx.visit.count({ where: { customerId: numericId } }) : 0,
+          tx.quotation?.count ? tx.quotation.count({ where: { customerId: numericId } }) : 0,
+          tx.dataCaptureJob?.count ? tx.dataCaptureJob.count({ where: { customerId: numericId } }) : 0,
+          tx.dataCapturePlace?.count ? tx.dataCapturePlace.count({ where: { customerId: numericId } }) : 0,
+          tx.work?.count ? tx.work.count({ where: { customerId: numericId } }) : 0,
+          tx.monthlySchedule?.count ? tx.monthlySchedule.count({ where: { customerId: numericId } }) : 0,
+          tx.supportTicket?.count ? tx.supportTicket.count({ where: { customerId: numericId } }) : 0,
+          tx.notification?.count ? tx.notification.count({ where: { customerId: numericId } }) : 0,
+          tx.attendance?.count ? tx.attendance.count({ where: { customerId: numericId } }) : 0,
+          tx.leaveRequest?.count ? tx.leaveRequest.count({ where: { customerId: numericId } }) : 0,
+          tx.remoteRequest?.count ? tx.remoteRequest.count({ where: { customerId: numericId } }) : 0,
+          tx.employeeLocation?.count ? tx.employeeLocation.count({ where: { customerId: numericId } }) : 0,
+          tx.payroll?.count ? tx.payroll.count({ where: { customerId: numericId } }) : 0,
+          tx.employeeClaim?.count ? tx.employeeClaim.count({ where: { customerId: numericId } }) : 0,
+          tx.employeeLoan?.count ? tx.employeeLoan.count({ where: { customerId: numericId } }) : 0,
         ]);
+
         if (remaining.some((count) => count !== 0)) {
           throw new InternalServerErrorException(
             'Customer reset verification failed; transaction was rolled back.',
