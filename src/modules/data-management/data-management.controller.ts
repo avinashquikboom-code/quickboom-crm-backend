@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -148,5 +149,59 @@ export class DataManagementController {
       employeeId,
       dto,
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BIN / TRASH ENDPOINTS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/admin/data-management/bin
+   * List all soft-deleted customers and employees currently in the Bin
+   */
+  @Get('bin')
+  @ApiOperation({ summary: 'List all records in the Bin (soft-deleted customers and employees)' })
+  async getBin() {
+    return this.dataManagementService.getBinItems();
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/bin/customer/:id/restore
+   * Restore a soft-deleted customer from the Bin
+   */
+  @Post('bin/customer/:id/restore')
+  @ApiOperation({ summary: 'Restore a customer from the Bin back to active status' })
+  async restoreCustomer(@Param('id') id: string) {
+    return this.dataManagementService.restoreCustomerFromBin(id);
+  }
+
+  /**
+   * DELETE /api/v1/admin/data-management/bin/customer/:id
+   * Permanently delete a customer from the Bin (irreversible)
+   */
+  @Delete('bin/customer/:id')
+  @ApiOperation({ summary: 'Permanently delete a customer from the Bin (irreversible)' })
+  async deleteCustomerPermanently(@Param('id') id: string) {
+    return this.dataManagementService.deleteCustomerPermanently(id);
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/bin/employee/:id/restore
+   * Restore a soft-deleted employee from the Bin
+   */
+  @Post('bin/employee/:id/restore')
+  @ApiOperation({ summary: 'Restore an employee from the Bin back to active status' })
+  async restoreEmployee(@Param('id') id: string) {
+    return this.dataManagementService.restoreEmployeeFromBin(id);
+  }
+
+  /**
+   * DELETE /api/v1/admin/data-management/bin/employee/:id
+   * Permanently delete an employee from the Bin (irreversible)
+   */
+  @Delete('bin/employee/:id')
+  @ApiOperation({ summary: 'Permanently delete an employee from the Bin (irreversible)' })
+  async deleteEmployeePermanently(@Param('id') id: string) {
+    return this.dataManagementService.deleteEmployeePermanently(id);
   }
 }

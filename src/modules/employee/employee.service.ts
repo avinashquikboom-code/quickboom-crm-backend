@@ -2216,6 +2216,51 @@ export class EmployeeService {
     });
   }
 
+  /**
+   * Restore a soft-deleted (binned) employee back to active status.
+   * Reactivates the employee record and the linked User account.
+   * All application data (attendance, leaves, tasks, etc.) remains intact as it was preserved during Move-to-Bin.
+   */
+  async restoreFromBin(params: EmployeeFindOneParams): Promise<{ success: boolean; message: string }> {
+    const numId = Number(params.id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException('Invalid employee ID');
+    }
+
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: numId },
+      include: { user: { select: { id: true } } },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee #${params.id} not found.`);
+    }
+
+    if (employee.status !== 'DELETED') {
+      throw new BadRequestException('Employee is not in the Bin.');
+    }
+
+    const userId = employee.userId ? Number(employee.userId) : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Reactivate the employee record
+      await tx.employee.update({
+        where: { id: numId },
+        data: { status: 'ACTIVE' },
+      });
+
+      // Reactivate the linked User account if it exists
+      if (userId && tx.user) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { isActive: true, deletedAt: null },
+        });
+      }
+    });
+
+    return { success: true, message: 'Employee restored from Bin successfully' };
+  }
+
   async getLeaves(customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
