@@ -332,10 +332,11 @@ Return ONLY a valid JSON object with the following structure:
           const filename = `ai-img-${Date.now()}-${uniqueId}.jpg`;
 
           this.logger.log(
-            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: size=${buffer.length} bytes`,
+            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: size=${buffer.length} bytes, url=${pollinationsUrl}`,
           );
 
           return {
+            url: pollinationsUrl,
             buffer,
             mimeType: 'image/jpeg',
             fileKey: filename,
@@ -440,16 +441,17 @@ Return ONLY a valid JSON object with the following structure:
 
     const buffer = Buffer.from(svgPoster, 'utf-8');
     const uniqueId = crypto.randomBytes(8).toString('hex');
-    const filename = `ai-poster-${Date.now()}-${uniqueId}.svg`;
+    const dataUri = `data:image/svg+xml;base64,${buffer.toString('base64')}`;
 
     this.logger.log(
-      `[AI_PROVIDER_RESPONSE] Vector SVG image generated: size=${buffer.length} bytes`,
+      `[AI_PROVIDER_RESPONSE] Vector SVG image generated: size=${buffer.length} bytes, dataUriLength=${dataUri.length}`,
     );
 
     return {
+      url: dataUri,
       buffer,
       mimeType: 'image/svg+xml',
-      fileKey: filename,
+      fileKey: `ai-poster-${uniqueId}.svg`,
       width: 1080,
       height: 1080,
     };
