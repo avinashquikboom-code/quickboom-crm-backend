@@ -530,6 +530,9 @@ export class AuthService {
       appType = targetApp;
     }
 
+    const upperExpectedRole = (appType || '').trim().toUpperCase();
+    const isEmployeeLogin = ['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole);
+
     const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
     const phoneDigits = rawInput.replace(/\D/g, '');
@@ -538,53 +541,199 @@ export class AuthService {
       { phone: rawInput },
       { employee: { phone: rawInput } },
     ];
+    const empWhere: any[] = [
+      { employeeCode: { equals: rawInput, mode: 'insensitive' } },
+      { email: { equals: normalizedEmail, mode: 'insensitive' } },
+      { phone: rawInput },
+    ];
+
     if (phoneDigits.length >= 10) {
       const last10 = phoneDigits.slice(-10);
-      phoneConditions.push(
-        { phone: { endsWith: last10 } },
-        { phone: { contains: last10 } },
-        { employee: { phone: { endsWith: last10 } } },
-        { employee: { phone: { contains: last10 } } },
-      );
-    }
-
-    let user = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: { equals: normalizedEmail, mode: 'insensitive' } },
-          { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
-          { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
-          ...phoneConditions,
-        ],
-      },
-      include: {
-        customer: true,
-        employee: {
-          include: {
-            department: true,
-            designation: true,
-          },
-        },
-        userRoles: {
-          include: { role: true },
-        },
-      },
-    });
-
-    if (!user) {
-      const empWhere: any[] = [
-        { employeeCode: { equals: rawInput, mode: 'insensitive' } },
-        { email: { equals: normalizedEmail, mode: 'insensitive' } },
-        { phone: rawInput },
+      const p1 = last10.slice(0, 5);
+      const p2 = last10.slice(5);
+      const phoneVariants = [
+        last10,
+        `+91${last10}`,
+        `+91 ${last10}`,
+        `+91 ${p1} ${p2}`,
+        `${p1} ${p2}`,
+        `${p1}-${p2}`,
+        `+91-${last10}`,
       ];
-      if (phoneDigits.length >= 10) {
-        const last10 = phoneDigits.slice(-10);
+      for (const variant of phoneVariants) {
+        phoneConditions.push(
+          { phone: { equals: variant, mode: 'insensitive' } },
+          { phone: { contains: variant, mode: 'insensitive' } },
+          { employee: { phone: { equals: variant, mode: 'insensitive' } } },
+          { employee: { phone: { contains: variant, mode: 'insensitive' } } },
+        );
         empWhere.push(
-          { phone: { endsWith: last10 } },
-          { phone: { contains: last10 } },
+          { phone: { equals: variant, mode: 'insensitive' } },
+          { phone: { contains: variant, mode: 'insensitive' } },
         );
       }
+    }
 
+    let user: any = null;
+
+    if (isEmployeeLogin) {
+      // 1. Prioritize User account with an active linked Employee
+      user = await this.prisma.user.findFirst({
+        where: {
+          employee: { isNot: null },
+          OR: [
+            { email: { equals: normalizedEmail, mode: 'insensitive' } },
+            { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
+            { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
+            ...phoneConditions,
+          ],
+        },
+        include: {
+          customer: true,
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+            },
+          },
+          userRoles: {
+            include: { role: true },
+          },
+        },
+      });
+
+      // 2. If not found, lookup directly in Employee table to avoid customer-account collision
+      if (!user) {
+        const matchedEmployee = await this.prisma.employee.findFirst({
+          where: {
+            OR: empWhere,
+          },
+          include: {
+            customer: true,
+            department: true,
+            designation: true,
+            user: {
+              include: {
+                customer: true,
+                employee: {
+                  include: {
+                    department: true,
+                    designation: true,
+                  },
+                },
+                userRoles: {
+                  include: { role: true },
+                },
+              },
+            },
+          },
+        });
+
+        if (matchedEmployee?.user) {
+          user = matchedEmployee.user;
+          if (!user.employee) {
+            user.employee = matchedEmployee;
+          }
+        } else if (matchedEmployee) {
+          // Auto-heal: Employee exists in Employee Master but has no linked User account
+          const existingUserForEmp = await this.prisma.user.findUnique({
+            where: { email: matchedEmployee.email.toLowerCase() },
+            include: {
+              customer: true,
+              userRoles: { include: { role: true } },
+            },
+          });
+
+          if (existingUserForEmp) {
+            await this.prisma.employee.update({
+              where: { id: matchedEmployee.id },
+              data: { userId: existingUserForEmp.id },
+            });
+            if (!existingUserForEmp.customerId && matchedEmployee.customerId) {
+              await this.prisma.user.update({
+                where: { id: existingUserForEmp.id },
+                data: { customerId: matchedEmployee.customerId },
+              });
+              existingUserForEmp.customerId = matchedEmployee.customerId;
+            }
+            user = {
+              ...existingUserForEmp,
+              employee: matchedEmployee,
+            } as any;
+          } else {
+            const rawPassword = password || 'Password@123';
+            const passwordHash = await bcrypt.hash(rawPassword, 10);
+            const createdUser = await this.prisma.user.create({
+              data: {
+                customerId: matchedEmployee.customerId,
+                email: matchedEmployee.email.toLowerCase(),
+                phone: matchedEmployee.phone || null,
+                firstName: matchedEmployee.firstName,
+                lastName: matchedEmployee.lastName,
+                passwordHash,
+                isActive: matchedEmployee.status === 'ACTIVE',
+                isVerified: true,
+              },
+              include: {
+                customer: true,
+                userRoles: { include: { role: true } },
+              },
+            });
+            await this.prisma.employee.update({
+              where: { id: matchedEmployee.id },
+              data: { userId: createdUser.id },
+            });
+
+            // Ensure Employee role
+            const empRole = await this.prisma.role.findFirst({
+              where: {
+                OR: [
+                  { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
+                  { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
+                ],
+              },
+            });
+            if (empRole) {
+              await this.prisma.userRole.create({
+                data: { userId: createdUser.id, roleId: empRole.id },
+              }).catch(() => null);
+            }
+
+            user = {
+              ...createdUser,
+              employee: matchedEmployee,
+            } as any;
+          }
+        }
+      }
+    }
+
+    if (!user) {
+      user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: { equals: normalizedEmail, mode: 'insensitive' } },
+            { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
+            { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
+            ...phoneConditions,
+          ],
+        },
+        include: {
+          customer: true,
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+            },
+          },
+          userRoles: {
+            include: { role: true },
+          },
+        },
+      });
+    }
+
+    if (!user) {
       const matchedEmployee = await this.prisma.employee.findFirst({
         where: {
           OR: empWhere,
@@ -612,6 +761,9 @@ export class AuthService {
 
       if (matchedEmployee?.user) {
         user = matchedEmployee.user;
+        if (!user.employee) {
+          user.employee = matchedEmployee;
+        }
       } else if (matchedEmployee) {
         // Auto-heal: Employee exists in Employee Master but has no linked User account
         const existingUserForEmp = await this.prisma.user.findUnique({
@@ -892,7 +1044,6 @@ export class AuthService {
     }
 
     const rawApp = (appType || '').trim().toLowerCase();
-    const upperExpectedRole = (appType || '').trim().toUpperCase();
 
     // If logging into Employee portal and has active employee record, ensure userRole is EMPLOYEE
     if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole) && user.employee && user.employee.status === 'ACTIVE') {

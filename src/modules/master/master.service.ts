@@ -308,18 +308,38 @@ export class MasterService {
   }
 
   async getPaymentMethods(customerId?: number | string) {
-    const paymentSetting = await this.prisma.paymentSetting.findFirst({
-      where: { singletonKey: 'DEFAULT' },
-    });
-
-    const counts: any[] = await (this.prisma.paymentHistory as any).groupBy({
-      by: ['method'],
-      _count: { id: true },
-    });
+    let paymentSetting: any = null;
+    try {
+      paymentSetting = await this.prisma.paymentSetting.findFirst({
+        where: { singletonKey: 'DEFAULT' },
+      });
+    } catch {
+      paymentSetting = null;
+    }
 
     const countMap: Record<string, number> = {};
-    for (const c of counts) {
-      if (c.method) countMap[c.method] = c._count.id;
+    try {
+      const whereClause: any = { deletedAt: null };
+      if (customerId) {
+        const numCustId = Number(customerId);
+        if (!isNaN(numCustId) && numCustId > 0) {
+          whereClause.customerId = numCustId;
+        }
+      }
+
+      const counts = await this.prisma.paymentHistory.groupBy({
+        by: ['paymentMethod'],
+        where: whereClause,
+        _count: { id: true },
+      });
+
+      for (const c of counts) {
+        if (c.paymentMethod) {
+          countMap[c.paymentMethod] = c._count.id;
+        }
+      }
+    } catch {
+      // Safe fallback if table is empty or unpopulated
     }
 
     const methods = [

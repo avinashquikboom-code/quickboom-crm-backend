@@ -1202,7 +1202,7 @@ export class EmployeeService {
 
       // Find or create linked User account
       let user = await tx.user.findFirst({
-        where: { email: normalizedEmail },
+        where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
       });
 
       if (!user) {
@@ -1252,7 +1252,7 @@ export class EmployeeService {
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
           isVerified: true,
           deletedAt: null,
-          ...(hasExplicitPassword ? { passwordHash } : {}),
+          ...(hasExplicitPassword || !user.passwordHash ? { passwordHash } : {}),
         };
         if (user.customerId !== null && user.customerId !== numCustomerId) {
           throw new ConflictException({
