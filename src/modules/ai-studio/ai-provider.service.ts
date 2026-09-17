@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import {
   IAiProvider,
   TextGenerationResult,
@@ -20,18 +20,11 @@ export class AiProviderService implements IAiProvider {
   ) {}
 
   private async getGeminiKey(): Promise<string | null> {
-    const envKey = (
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY ||
-      ''
-    ).trim();
-    if (envKey) return envKey;
     if (this.integrationSettingsService) {
       try {
         const conf = await this.integrationSettingsService.getGeminiConfig();
         if (conf?.apiKey && conf?.isEnabled !== false) {
-          return conf.apiKey;
+          return conf.apiKey.trim();
         }
       } catch {}
     }
@@ -39,13 +32,11 @@ export class AiProviderService implements IAiProvider {
   }
 
   private async getOpenAiKey(): Promise<string | null> {
-    const envKey = (process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '').trim();
-    if (envKey) return envKey;
     if (this.integrationSettingsService) {
       try {
         const conf = await this.integrationSettingsService.getOpenAiConfig();
         if (conf?.apiKey && conf?.isEnabled !== false) {
-          return conf.apiKey;
+          return conf.apiKey.trim();
         }
       } catch {}
     }
@@ -94,7 +85,7 @@ Special Instructions: ${instructions || 'None'}`;
       promptUser = `Write a viral, high-energy 15-30 second video script for: "${product}". Platform: ${plat}. Tone: ${resolvedTone}. Language: ${lang}. CTA: ${resolvedCta}.`;
     }
 
-    // 1. Try Google Gemini if configured
+    // 1. Try Google Gemini if configured in Admin Integration
     const geminiKey = await this.getGeminiKey();
     if (geminiKey) {
       this.logger.log(
@@ -148,7 +139,7 @@ Special Instructions: ${instructions || 'None'}`;
       }
     }
 
-    // 2. Try OpenAI if configured
+    // 2. Try OpenAI if configured in Admin Integration
     const openAiKey = await this.getOpenAiKey();
     if (openAiKey) {
       this.logger.log(
@@ -198,7 +189,7 @@ Special Instructions: ${instructions || 'None'}`;
       }
     }
 
-    // 3. Try Pollinations Live AI LLM (Always available, anonymous, real LLM with JSON mode)
+    // 3. Fallback to Pollinations Live AI LLM if neither Gemini nor OpenAI are set
     this.logger.log(
       `[AI_REQUEST_SENT] Calling Pollinations live AI LLM: product="${product}", type="${type}"`,
     );
@@ -238,12 +229,12 @@ Special Instructions: ${instructions || 'None'}`;
       this.logger.error(`[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`);
     }
 
-    // If all providers failed, throw explicit error (NO placeholder or generic fallback)
     throw new Error('AI text generation failed: Could not receive content from AI providers.');
   }
 
   /**
-   * Generates a branded marketing poster/image using real AI image generation models
+   * Generates a marketing poster/image using OpenAI ONLY.
+   * Single source of truth: Admin Panel -> Integration -> OpenAI.
    */
   async generateImage(params: {
     product: string;
@@ -254,109 +245,120 @@ Special Instructions: ${instructions || 'None'}`;
     instructions?: string;
     referenceImageUrl?: string;
   }): Promise<ImageGenerationResult> {
-    const { product, objective, cta, tone, instructions } = params;
+    const { product, objective, tone, instructions } = params;
 
-    const fullPrompt = `Professional commercial advertising photo of ${product}. ${objective ? `Campaign: ${objective}. ` : ''}${tone ? `Aesthetic: ${tone}. ` : ''}High quality studio lighting, 4K product photography, sharp focus, vibrant colors. ${instructions || ''}`.trim();
+    if (!this.integrationSettingsService) {
+      throw new BadRequestException('Integration settings service is not available');
+    }
 
-    // 1. Check OpenAI DALL-E 3 if configured
-    const openAiKey = await this.getOpenAiKey();
-    if (openAiKey) {
-      this.logger.log(
-        `[AI_REQUEST_SENT] Calling OpenAI DALL-E 3: prompt="${fullPrompt}"`,
+    // Retrieve OpenAI configuration from Admin Integration
+    const openAiConfig = await this.integrationSettingsService.getOpenAiConfig();
+
+    if (!openAiConfig?.isConfigured || !openAiConfig.apiKey) {
+      throw new BadRequestException(
+        'OpenAI is not configured. Please configure your OpenAI API Key in Admin Panel -> Integrations.',
       );
-      try {
-        const response = await fetch('https://api.openai.com/v1/images/generations', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${openAiKey}`,
-          },
-          body: JSON.stringify({
-            model: 'dall-e-3',
-            prompt: fullPrompt,
-            n: 1,
-            size: '1024x1024',
-            response_format: 'b64_json',
-          }),
-        });
-
-        if (response.ok) {
-          const data = (await response.json()) as any;
-          this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI DALL-E 3 returned image data.`);
-          const b64 = data?.data?.[0]?.b64_json;
-          if (b64) {
-            const buffer = Buffer.from(b64, 'base64');
-            const uniqueId = crypto.randomBytes(8).toString('hex');
-            const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
-
-            this.logger.log(
-              `[AI_RESPONSE_PARSED] OpenAI DALL-E 3 generated image: size=${buffer.length} bytes`,
-            );
-
-            return {
-              buffer,
-              mimeType: 'image/png',
-              fileKey: filename,
-              width: 1024,
-              height: 1024,
-            };
-          }
-        } else {
-          const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI DALL-E 3 error HTTP ${response.status}: ${errBody}`);
-        }
-      } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI DALL-E 3 error: ${err?.message}`);
-      }
     }
 
-    // 2. Pollinations AI Neural Diffusion Model
+    if (!openAiConfig.isEnabled) {
+      throw new BadRequestException(
+        'OpenAI integration is currently disabled in Admin Panel -> Integrations.',
+      );
+    }
+
+    const openAiKey = openAiConfig.apiKey.trim();
+    const fullPrompt = `Professional commercial advertising photo of ${product}. ${
+      objective ? `Campaign: ${objective}. ` : ''
+    }${tone ? `Aesthetic: ${tone}. ` : ''}High quality studio lighting, 4K product photography, sharp focus, vibrant colors. ${
+      instructions || ''
+    }`.trim();
+
     this.logger.log(
-      `[AI_REQUEST_SENT] Calling Pollinations AI neural generation for image: prompt="${product}"`,
+      `[AI_REQUEST_SENT] Calling OpenAI Images API (DALL-E 3): prompt="${product}"`,
     );
+
+    let response: Response;
     try {
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1024&height=1024&nologo=true`;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout
-
-      const response = await fetch(pollinationsUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const ab = await response.arrayBuffer();
-        const buffer = Buffer.from(ab);
-
-        if (buffer.length > 2000) {
-          const uniqueId = crypto.randomBytes(8).toString('hex');
-          const filename = `ai-img-${Date.now()}-${uniqueId}.jpg`;
-
-          this.logger.log(
-            `[AI_RESPONSE_PARSED] Pollinations AI generated real image: size=${buffer.length} bytes, url=${pollinationsUrl}`,
-          );
-
-          return {
-            url: pollinationsUrl,
-            buffer,
-            mimeType: 'image/jpeg',
-            fileKey: filename,
-            width: 1024,
-            height: 1024,
-          };
-        }
-      } else {
-        this.logger.warn(`[AI_PROVIDER_ERROR] Pollinations AI returned HTTP ${response.status}`);
-      }
-    } catch (err: any) {
-      this.logger.error(`[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`);
+      response = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: fullPrompt,
+          n: 1,
+          size: '1024x1024',
+          response_format: 'b64_json',
+        }),
+      });
+    } catch (netErr: any) {
+      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI connection failed: ${netErr?.message}`);
+      throw new BadRequestException(`OpenAI connection failed: ${netErr?.message}`);
     }
 
-    // No hardcoded SVG/mock output: expose real failure state
-    throw new Error('AI image generation failed: AI provider could not generate image.');
+    if (!response.ok) {
+      let errDetail = '';
+      try {
+        const errJson = await response.json();
+        errDetail = errJson?.error?.message || JSON.stringify(errJson);
+      } catch {
+        errDetail = await response.text();
+      }
+      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status}: ${errDetail}`);
+      throw new BadRequestException(`OpenAI image generation failed: ${errDetail}`);
+    }
+
+    const data = (await response.json()) as any;
+    const b64 = data?.data?.[0]?.b64_json;
+    if (!b64) {
+      throw new BadRequestException('OpenAI returned invalid or empty image data.');
+    }
+
+    const buffer = Buffer.from(b64, 'base64');
+    const uniqueId = crypto.randomBytes(8).toString('hex');
+    const filename = `ai-poster-${Date.now()}-${uniqueId}.png`;
+
+    this.logger.log(
+      `[AI_RESPONSE_RECEIVED] OpenAI DALL-E 3 returned image data: size=${buffer.length} bytes`,
+    );
+
+    // Upload using existing S3 service
+    let mediaUrl: string;
+    let fileKey: string = filename;
+    try {
+      this.logger.log(
+        `[AI_STORAGE_UPLOAD] Uploading generated OpenAI image to existing storage: ${filename}`,
+      );
+      const uploadResult = await this.s3Service.uploadBuffer(
+        buffer,
+        'image/png',
+        filename,
+        'marketing/banners',
+      );
+      fileKey = uploadResult.imageKey;
+      const presigned = await this.s3Service.getPresignedUrl(uploadResult.imageKey);
+      mediaUrl = presigned || uploadResult.imageUrl;
+      this.logger.log(`[AI_STORAGE_UPLOAD] Stored OpenAI image in S3: ${mediaUrl}`);
+    } catch (storageErr: any) {
+      this.logger.error(`[AI_STORAGE_UPLOAD] S3 upload error: ${storageErr?.message}`);
+      throw new BadRequestException(`Image storage failed: ${storageErr?.message}`);
+    }
+
+    return {
+      url: mediaUrl,
+      buffer,
+      mimeType: 'image/png',
+      fileKey,
+      width: 1024,
+      height: 1024,
+    };
   }
 
   /**
-   * Starts an asynchronous video generation job
+   * Starts an asynchronous video generation job using Google Gemini ONLY.
+   * Single source of truth: Admin Panel -> Integration -> Gemini.
    */
   async startVideoJob(params: {
     product: string;
@@ -369,198 +371,219 @@ Special Instructions: ${instructions || 'None'}`;
   }): Promise<VideoGenerationResult> {
     const jobId = `VIDJOB_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
+    if (!this.integrationSettingsService) {
+      throw new BadRequestException('Integration settings service is not available');
+    }
+
+    // Retrieve Gemini configuration from Admin Integration
+    const geminiConfig = await this.integrationSettingsService.getGeminiConfig();
+
+    if (!geminiConfig?.isConfigured || !geminiConfig.apiKey) {
+      throw new BadRequestException(
+        'Google Gemini is not configured. Please configure your Gemini API Key in Admin Panel -> Integrations.',
+      );
+    }
+
+    if (!geminiConfig.isEnabled) {
+      throw new BadRequestException(
+        'Google Gemini integration is currently disabled in Admin Panel -> Integrations.',
+      );
+    }
+
+    const geminiKey = geminiConfig.apiKey.trim();
+    const fullPrompt = `${params.product}. ${
+      params.objective ? `Goal: ${params.objective}. ` : ''
+    }${params.tone ? `Style: ${params.tone}. ` : ''}High production quality, commercial video advertising clip.`.trim();
+
     this.logger.log(
-      `[AI_REQUEST_SENT] Starting video generation job ${jobId} for product="${params.product}", duration=${params.duration || 15}s`,
+      `[AI_REQUEST_SENT] Calling Google Gemini video generation: prompt="${params.product}"`,
     );
 
-    // 1. Generate the poster frame preview
-    let previewUrl: string | undefined;
-    let previewKey: string | undefined;
-    try {
-      const posterRes = await this.generateImage({
-        product: params.product,
-        objective: params.objective,
-        platform: params.platform,
-        tone: params.tone,
-        cta: params.cta,
-      });
+    // Call Google Gemini long-running video generation endpoint (Veo models on Generative Language API)
+    const candidateModels = [
+      'veo-2.0-generate-001',
+      'veo-3.1-generate-preview',
+      'veo-2.0',
+    ];
 
-      previewUrl = posterRes.url;
-      previewKey = posterRes.fileKey;
+    let operationName: string | null = null;
+    let usedModel = candidateModels[0];
+    let lastError: string = '';
 
-      if (!previewUrl && posterRes.buffer) {
-        try {
-          const s3Preview = await this.s3Service.uploadBuffer(
-            posterRes.buffer,
-            posterRes.mimeType || 'image/png',
-            posterRes.fileKey || 'preview.png',
-            'marketing/banners',
-          );
-          previewUrl = s3Preview.imageUrl;
-          previewKey = s3Preview.imageKey;
-        } catch (err: any) {
-          this.logger.warn(`[AI_STORAGE_UPLOAD] Could not upload preview to S3: ${err?.message}`);
+    for (const model of candidateModels) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': geminiKey,
+          },
+          body: JSON.stringify({
+            instances: [
+              {
+                prompt: fullPrompt,
+              },
+            ],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: '9:16',
+              durationSeconds: params.duration || 8,
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          if (data.name) {
+            operationName = data.name;
+            usedModel = model;
+            this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini video generation started: operation=${operationName}`);
+            break;
+          }
+        } else {
+          const errText = await res.text();
+          lastError = errText;
+          this.logger.warn(`[AI_PROVIDER_WARN] Gemini model ${model} returned HTTP ${res.status}: ${errText}`);
+          if (res.status === 404) continue;
+          throw new Error(errText);
+        }
+      } catch (err: any) {
+        lastError = err?.message || lastError;
+        if (!err?.message?.includes('404')) {
+          break;
         }
       }
-    } catch (err: any) {
-      this.logger.warn(`[AI_PROVIDER_ERROR] Could not generate preview poster: ${err?.message}`);
+    }
+
+    if (!operationName) {
+      let parsedMsg = lastError;
+      try {
+        const p = JSON.parse(lastError);
+        parsedMsg = p?.error?.message || lastError;
+      } catch {}
+      this.logger.error(`[AI_PROVIDER_ERROR] Gemini video generation failed: ${parsedMsg}`);
+      throw new BadRequestException(`Gemini video generation failed: ${parsedMsg || 'Could not initiate video operation'}`);
     }
 
     const jobResult: VideoGenerationResult = {
       jobId,
       url: undefined,
       fileKey: undefined,
-      duration: params.duration || 15,
+      duration: params.duration || 8,
       status: 'PROCESSING',
     };
 
+    (jobResult as any).operationName = operationName;
+    (jobResult as any).geminiApiKey = geminiKey;
+    (jobResult as any).model = usedModel;
     this.videoJobs.set(jobId, jobResult);
-
-    // 2. Fetch or generate authentic, playable video clip matching prompt
-    const videoFilename = `ai-vid-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
-
-    setTimeout(async () => {
-      try {
-        const videoClipUrl = await this.findRelevantVideoClip(params.product);
-        let finalVideoUrl: string | undefined = videoClipUrl;
-
-        if (videoClipUrl) {
-          this.logger.log(`[AI_RESPONSE_RECEIVED] Found relevant video clip: ${videoClipUrl}`);
-
-          // Try downloading buffer and uploading to existing S3 storage
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20000);
-            const vRes = await fetch(videoClipUrl, { signal: controller.signal });
-            clearTimeout(timeout);
-
-            if (vRes.ok) {
-              const ab = await vRes.arrayBuffer();
-              const videoBuffer = Buffer.from(ab);
-
-              if (videoBuffer.length > 5000) {
-                const s3Res = await this.s3Service.uploadMedia(
-                  {
-                    buffer: videoBuffer,
-                    originalname: videoFilename,
-                    mimetype: 'video/mp4',
-                    size: videoBuffer.length,
-                  } as any,
-                  'marketing/videos',
-                  'VIDEO',
-                );
-                if (s3Res?.imageUrl) {
-                  finalVideoUrl = s3Res.imageUrl;
-                  this.logger.log(`[AI_STORAGE_UPLOAD] Stored video in S3: ${finalVideoUrl}`);
-                }
-              }
-            }
-          } catch (s3Err: any) {
-            this.logger.warn(`[AI_STORAGE_UPLOAD_FALLBACK] S3 upload error: ${s3Err?.message}. Using direct video URL.`);
-          }
-        }
-
-        if (finalVideoUrl) {
-          jobResult.status = 'COMPLETED';
-          jobResult.url = finalVideoUrl;
-          jobResult.fileKey = videoFilename;
-          this.videoJobs.set(jobId, jobResult);
-
-          this.logger.log(
-            `[AI_RESPONSE_PARSED] Video job ${jobId} COMPLETED with playable video URL: ${finalVideoUrl}`,
-          );
-        } else {
-          jobResult.status = 'FAILED';
-          this.videoJobs.set(jobId, jobResult);
-          this.logger.error(`[AI_PROVIDER_ERROR] Video job ${jobId} FAILED: No playable video found.`);
-        }
-      } catch (err: any) {
-        this.logger.error(`[AI_PROVIDER_ERROR] Video job ${jobId} FAILED: ${err?.message}`);
-        jobResult.status = 'FAILED';
-        this.videoJobs.set(jobId, jobResult);
-      }
-    }, 1000);
 
     return jobResult;
   }
 
   /**
-   * Searches for a real playable video matching the product keywords
-   */
-  private async findRelevantVideoClip(prompt: string): Promise<string | null> {
-    const stopWords = new Set([
-      'create', 'promotional', 'reel', 'post', 'for', 'new', 'our', 'and', 'the', 'with', 'video', 'short', 'clip', 'marketing', 'make', 'generate', 'write',
-    ]);
-    const words = prompt
-      .replace(/[^a-zA-Z0-9 ]/g, '')
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 2 && !stopWords.has(w));
-
-    const queries = [
-      words.slice(0, 2).join(' '),
-      words[0] || '',
-      'commercial promotional',
-    ].filter((q) => q.trim().length > 0);
-
-    for (const q of queries) {
-      try {
-        const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q)}%20filetype:video&prop=imageinfo&iiprop=url|mime&format=json`;
-        const res = await fetch(searchUrl, {
-          headers: { 'User-Agent': 'QuickBoomCRM/1.0 (ai-video-search)' },
-        });
-        if (!res.ok) continue;
-        const data = (await res.json()) as any;
-        const pages = data.query?.pages ? Object.values(data.query.pages) : [];
-
-        for (const p of pages as any[]) {
-          const title = p.title;
-          const origUrl = p.imageinfo?.[0]?.url;
-          if (!origUrl) continue;
-
-          // Check transcode status for MP4/WebM
-          const tUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=transcodestatus&format=json`;
-          const tRes = await fetch(tUrl, {
-            headers: { 'User-Agent': 'QuickBoomCRM/1.0' },
-          });
-          const tData = (await tRes.json()) as any;
-          const tPage = Object.values(tData.query?.pages || {})[0] as any;
-          const status = tPage?.transcodestatus || {};
-
-          const preferred = ['360p.mpeg4.mov', '720p.vp9.webm', '360p.vp9.webm', '240p.vp9.webm'];
-          for (const pref of preferred) {
-            if (status[pref] && status[pref].state === '4') {
-              const m = origUrl.match(/wikipedia\/commons\/([a-z0-9]\/[a-z0-9]{2})\/([^?]+)/);
-              if (m) {
-                const transcodeUrl = `https://upload.wikimedia.org/wikipedia/commons/transcoded/${m[1]}/${m[2]}/${m[2]}.${pref}`;
-                return transcodeUrl;
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        this.logger.warn(`[AI_VIDEO_SEARCH_WARN] Query "${q}" failed: ${err?.message}`);
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Polls job status
+   * Polls job status for Gemini video generation and uploads to S3 upon completion.
    */
   async checkVideoJobStatus(jobId: string): Promise<VideoGenerationResult> {
     const job = this.videoJobs.get(jobId);
     if (!job) {
-      this.logger.warn(`[AI_GENERATION_STATUS] Video job ${jobId} not found in provider.`);
       return {
         jobId,
         status: 'FAILED',
       };
     }
-    this.logger.log(
-      `[AI_GENERATION_STATUS] Video job ${jobId} status: ${job.status}, url: ${job.url || 'none'}`,
-    );
-    return job;
+
+    if (job.status === 'COMPLETED' || job.status === 'FAILED') {
+      return job;
+    }
+
+    const operationName = (job as any).operationName;
+    const geminiKey = (job as any).geminiApiKey;
+
+    if (!operationName || !geminiKey) {
+      job.status = 'FAILED';
+      return job;
+    }
+
+    try {
+      const opUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${encodeURIComponent(geminiKey)}`;
+      const opRes = await fetch(opUrl, {
+        headers: {
+          'x-goog-api-key': geminiKey,
+        },
+      });
+
+      if (!opRes.ok) {
+        const errBody = await opRes.text();
+        this.logger.warn(`[AI_GENERATION_STATUS] Gemini operation check returned HTTP ${opRes.status}: ${errBody}`);
+        return job;
+      }
+
+      const opData = (await opRes.json()) as any;
+      if (!opData.done) {
+        this.logger.log(`[AI_GENERATION_STATUS] Gemini video operation ${operationName} still processing...`);
+        return job;
+      }
+
+      if (opData.error) {
+        this.logger.error(`[AI_PROVIDER_ERROR] Gemini video operation failed: ${opData.error?.message}`);
+        job.status = 'FAILED';
+        return job;
+      }
+
+      const videoUri =
+        opData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
+        opData.response?.generatedSamples?.[0]?.video?.uri;
+
+      if (!videoUri) {
+        this.logger.error('[AI_PROVIDER_ERROR] Gemini video operation completed without video URI');
+        job.status = 'FAILED';
+        return job;
+      }
+
+      this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini video completed. Downloading video from: ${videoUri}`);
+
+      const vRes = await fetch(videoUri, {
+        headers: {
+          'x-goog-api-key': geminiKey,
+        },
+      });
+
+      if (!vRes.ok) {
+        throw new Error(`Failed to download Gemini video: HTTP ${vRes.status}`);
+      }
+
+      const ab = await vRes.arrayBuffer();
+      const videoBuffer = Buffer.from(ab);
+      const filename = `ai-video-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
+
+      this.logger.log(
+        `[AI_STORAGE_UPLOAD] Uploading Gemini video (${videoBuffer.length} bytes) to existing S3 storage`,
+      );
+      const s3Res = await this.s3Service.uploadMedia(
+        {
+          buffer: videoBuffer,
+          originalname: filename,
+          mimetype: 'video/mp4',
+          size: videoBuffer.length,
+        } as any,
+        'marketing/videos',
+        'VIDEO',
+      );
+
+      const finalUrl = s3Res.imageUrl;
+      job.status = 'COMPLETED';
+      job.url = finalUrl;
+      job.fileKey = filename;
+      this.videoJobs.set(jobId, job);
+
+      this.logger.log(`[AI_STORAGE_UPLOAD] Stored Gemini video in S3: ${finalUrl}`);
+      return job;
+    } catch (err: any) {
+      this.logger.error(`[AI_PROVIDER_ERROR] Gemini video polling error: ${err?.message}`);
+      return job;
+    }
   }
 
   private parseJsonSafely(text: string): any {
