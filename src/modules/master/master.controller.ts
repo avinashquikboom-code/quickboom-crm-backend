@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { MasterService } from './master.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -129,4 +129,42 @@ export class MasterController {
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getPaymentMethods(targetCustomerId);
   }
+
+  @Post('items')
+  @ApiOperation({ summary: 'Create a new master item record' })
+  async createItem(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
+    return this.masterService.createMasterItem(targetCustomerId, dto);
+  }
+
+  @Patch('items/:id')
+  @ApiOperation({ summary: 'Update an existing master item record' })
+  async updateItem(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
+    return this.masterService.updateMasterItem(id, targetCustomerId, dto);
+  }
+
+  @Delete('items/:id')
+  @ApiOperation({ summary: 'Delete a master item record' })
+  async deleteItem(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.masterService.deleteMasterItem(id, targetCustomerId);
+  }
 }
+

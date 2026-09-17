@@ -102,6 +102,7 @@ model Customer {
   aiGenerations            AiGeneration[]
   socialAccounts           SocialAccount[]
   socialPublishes          SocialPublish[]
+  masterItems              MasterItem[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -3000,6 +3001,30 @@ model SocialPublish {
   @@index([status])
   @@index([scheduledFor])
   @@map("social_publishes")
+}
+
+model MasterItem {
+  id          Int      @id @default(autoincrement())
+  customerId  Int?
+  type        String   // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "LEAD_SOURCE", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
+  code        String
+  name        String
+  category    String?
+  description String?
+  color       String?
+  icon        String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  isSystem    Boolean  @default(false)
+  meta        Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([type, code, customerId])
+  @@index([type, customerId])
+  @@map("master_items")
 }
 
 
