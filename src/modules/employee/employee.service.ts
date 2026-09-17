@@ -29,6 +29,7 @@ export interface FindAllEmployeesParams {
   date?: string;
   page?: number;
   limit?: number;
+  excludeAdmins?: boolean;
 }
 
 export interface EmployeeFindOneParams {
@@ -98,6 +99,43 @@ export class EmployeeService {
         { branch: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } },
         { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
       ];
+    }
+
+    if (params.excludeAdmins) {
+      const excludeAdminCondition = {
+        NOT: [
+          {
+            user: {
+              userRoles: {
+                some: {
+                  role: {
+                    OR: [
+                      { type: RoleType.SUPER_ADMIN },
+                      { type: RoleType.CUSTOMER_ADMIN },
+                      { type: RoleType.TENANT_ADMIN },
+                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN'] } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            OR: [
+              { firstName: { equals: 'Super', mode: 'insensitive' as Prisma.QueryMode }, lastName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+              { firstName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+              { firstName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+              { lastName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+              { designation: { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Platform Administrator', 'System Administrator'] } } },
+            ],
+          },
+        ],
+      };
+      if (where.AND) {
+        where.AND.push(excludeAdminCondition);
+      } else {
+        where.AND = [excludeAdminCondition];
+      }
     }
     if (department && department !== 'ALL') {
       const deptCondition = {

@@ -9,6 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RoleType } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -299,6 +300,7 @@ export class CustomerService {
     limit?: number;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
+    excludeAdmins?: boolean;
   }) {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
@@ -307,6 +309,38 @@ export class CustomerService {
     const where: any = {
       deletedAt: null,
     };
+
+    if (query.excludeAdmins) {
+      where.NOT = [
+        {
+          users: {
+            some: {
+              userRoles: {
+                some: {
+                  role: {
+                    OR: [
+                      { type: RoleType.SUPER_ADMIN },
+                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        { customerType: { in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'] } },
+        {
+          OR: [
+            { name: { equals: 'Super Admin', mode: 'insensitive' } },
+            { name: { equals: 'SUPER_ADMIN', mode: 'insensitive' } },
+            { name: { equals: 'Admin', mode: 'insensitive' } },
+            { companyName: { equals: 'Super Admin', mode: 'insensitive' } },
+            { companyName: { equals: 'SUPER_ADMIN', mode: 'insensitive' } },
+            { companyName: { equals: 'Admin', mode: 'insensitive' } },
+          ],
+        },
+      ];
+    }
 
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;

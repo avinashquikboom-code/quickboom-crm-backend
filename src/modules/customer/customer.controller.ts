@@ -141,6 +141,7 @@ export class CustomerController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'sortBy', required: false })
   @ApiQuery({ name: 'sortOrder', required: false })
+  @ApiQuery({ name: 'excludeAdmins', required: false })
   async findAll(
     @Query('search') search?: string,
     @Query('status') status?: string,
@@ -156,6 +157,7 @@ export class CustomerController {
     @Query('limit') limit?: string,
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('excludeAdmins') excludeAdmins?: string,
   ) {
     const activeBool = isActive !== undefined ? isActive === 'true' : undefined;
     return this.customerService.findAll({
@@ -172,6 +174,7 @@ export class CustomerController {
       limit: limit ? parseInt(limit, 10) : 20,
       sortBy,
       sortOrder,
+      excludeAdmins: excludeAdmins === 'true',
     });
   }
 

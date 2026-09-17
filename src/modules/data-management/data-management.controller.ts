@@ -5,11 +5,12 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   ValidationPipe,
   UsePipes,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -96,6 +97,29 @@ export class DataManagementController {
   }
 
   /**
+   * GET /api/v1/admin/data-management/employees
+   * List actual employees for Data Management (strictly excludes Super Admin & Admin)
+   */
+  @Get('employees')
+  @ApiOperation({ summary: 'List actual employees for Data Management (strictly excludes Super Admin & Admin)' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  async getEmployees(
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+    @Query('page') page?: string,
+    @CurrentCustomer() customerId?: string,
+  ) {
+    return this.dataManagementService.getEmployees({
+      search,
+      limit: limit ? parseInt(limit, 10) : 20,
+      page: page ? parseInt(page, 10) : 1,
+      customerId,
+    });
+  }
+
+  /**
    * GET /api/v1/admin/data-management/employees/:employeeId/summary
    * Individual employee transactional record summary
    */
@@ -155,6 +179,27 @@ export class DataManagementController {
   // ─────────────────────────────────────────────────────────────────────────
   // CUSTOMER-WISE RESET ENDPOINTS
   // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/admin/data-management/customers
+   * List real customer accounts for Data Management (strictly excludes Super Admin, Admin & system accounts)
+   */
+  @Get('customers')
+  @ApiOperation({ summary: 'List real customer accounts for Data Management (strictly excludes Super Admin, Admin & system accounts)' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  async getCustomers(
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+    @Query('page') page?: string,
+  ) {
+    return this.dataManagementService.getCustomers({
+      search,
+      limit: limit ? parseInt(limit, 10) : 20,
+      page: page ? parseInt(page, 10) : 1,
+    });
+  }
 
   /**
    * GET /api/v1/admin/data-management/customers/:customerId/summary

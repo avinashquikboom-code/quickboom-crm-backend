@@ -14,6 +14,10 @@ describe('DataManagementService', () => {
       findMany: jest.fn(),
       delete: jest.fn(),
       update: jest.fn(),
+      count: jest.fn(),
+    },
+    userRole: {
+      findFirst: jest.fn(),
     },
     employee: {
       findFirst: jest.fn(),
@@ -473,6 +477,103 @@ describe('DataManagementService', () => {
         await expect(
           service.deleteBinBulk({ items: [{ id: 10, type: 'CUSTOMER' }] }),
         ).rejects.toThrow(InternalServerErrorException);
+      });
+    });
+  });
+
+  describe('Data Management Customer & Employee Filtering (Hide Super Admin)', () => {
+    describe('getCustomers', () => {
+      it('returns real customer accounts and excludes Super Admin and Admin accounts', async () => {
+        const mockRealCustomers = [
+          { id: 10, name: 'Real Customer A', companyName: 'Acme Corp', email: 'a@acme.com', isActive: true },
+          { id: 11, name: 'Real Customer B', companyName: 'Beta LLC', email: 'b@beta.com', isActive: true },
+        ];
+        prisma.customer.findMany.mockResolvedValue(mockRealCustomers);
+        prisma.customer.count.mockResolvedValue(2);
+
+        const result = await service.getCustomers({ search: '', limit: 10, page: 1 });
+
+        expect(result.customers).toHaveLength(2);
+        expect(result.customers[0].name).toBe('Real Customer A');
+        expect(result.customers[1].name).toBe('Real Customer B');
+
+        // Verify that prisma.customer.findMany query includes NOT filter for Super Admin and Admin
+        const findManyCall = prisma.customer.findMany.mock.calls[0][0];
+        expect(findManyCall.where.deletedAt).toBeNull();
+        expect(findManyCall.where.NOT).toBeDefined();
+        expect(Array.isArray(findManyCall.where.NOT)).toBe(true);
+      });
+
+      it('search results cannot return Super Admin or Admin', async () => {
+        prisma.customer.findMany.mockResolvedValue([]);
+        prisma.customer.count.mockResolvedValue(0);
+
+        const result = await service.getCustomers({ search: 'Super Admin', limit: 10, page: 1 });
+
+        expect(result.customers).toHaveLength(0);
+        expect(result.total).toBe(0);
+
+        const findManyCall = prisma.customer.findMany.mock.calls[0][0];
+        expect(findManyCall.where.NOT).toBeDefined();
+      });
+
+      it('getCustomerSummary rejects Super Admin account with ForbiddenException', async () => {
+        prisma.customer.findUnique.mockResolvedValue({
+          id: 1,
+          name: 'Super Admin Customer',
+          companyName: 'Super Admin Org',
+          users: [{ id: 1 }],
+        });
+
+        await expect(service.getCustomerSummary(1)).rejects.toThrow(ForbiddenException);
+      });
+    });
+
+    describe('getEmployees', () => {
+      it('returns actual employees and excludes Super Admin', async () => {
+        const mockRealEmployees = [
+          { id: 1, firstName: 'Employee', lastName: 'A', email: 'a@company.com', employeeCode: 'EMP-001', status: 'ACTIVE' },
+          { id: 2, firstName: 'Employee', lastName: 'B', email: 'b@company.com', employeeCode: 'EMP-002', status: 'ACTIVE' },
+        ];
+        prisma.employee.findMany.mockResolvedValue(mockRealRealEmployees(mockRealEmployees));
+        prisma.employee.count.mockResolvedValue(2);
+
+        const result = await service.getEmployees({ search: '', limit: 10, page: 1 });
+
+        expect(result.employees).toHaveLength(2);
+        expect(result.employees[0].firstName).toBe('Employee');
+
+        const findManyCall = prisma.employee.findMany.mock.calls[0][0];
+        expect(findManyCall.where.status).toEqual({ not: 'DELETED' });
+        expect(findManyCall.where.NOT).toBeDefined();
+        expect(Array.isArray(findManyCall.where.NOT)).toBe(true);
+      });
+
+      function mockRealRealEmployees(emps: any[]) {
+        return emps;
+      }
+
+      it('search results for Super Admin return empty for employees', async () => {
+        prisma.employee.findMany.mockResolvedValue([]);
+        prisma.employee.count.mockResolvedValue(0);
+
+        const result = await service.getEmployees({ search: 'Super Admin', limit: 10, page: 1 });
+
+        expect(result.employees).toHaveLength(0);
+        expect(result.total).toBe(0);
+      });
+
+      it('rejects modifying Super Admin as an employee', async () => {
+        prisma.employee.findUnique.mockResolvedValue({
+          id: 99,
+          firstName: 'Super',
+          lastName: 'Admin',
+          customerId: 1,
+          user: { id: 1 },
+        });
+        prisma.userRole.findFirst.mockResolvedValue({ userId: 1, role: { type: 'SUPER_ADMIN' } });
+
+        await expect(service.getEmployeeSummary(1, 99)).rejects.toThrow(ForbiddenException);
       });
     });
   });

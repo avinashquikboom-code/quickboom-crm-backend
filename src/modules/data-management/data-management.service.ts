@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { RoleType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ModuleResetDto,
@@ -56,6 +57,24 @@ export class DataManagementService {
 
     if (!employee) {
       throw new NotFoundException('Employee not found in your organization.');
+    }
+
+    // Super Admin must NOT appear or be operated on as an employee
+    if (employee.user) {
+      const isSuperAdminUser = await this.prisma.userRole.findFirst({
+        where: {
+          userId: employee.user.id,
+          role: {
+            OR: [
+              { type: RoleType.SUPER_ADMIN },
+              { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+            ],
+          },
+        },
+      });
+      if (isSuperAdminUser) {
+        throw new ForbiddenException('Super Admin cannot be modified as an employee.');
+      }
     }
 
     const numCustomerId = Number(customerId);
@@ -1260,6 +1279,263 @@ export class DataManagementService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
+   * GET /api/v1/admin/data-management/customers
+   * Returns list of real customer accounts for Data Management.
+   * Strictly excludes:
+   * - Super Admin accounts and users
+   * - Admin users
+   * - System / internal non-customer accounts
+   */
+  async getCustomers(query: { search?: string; limit?: number; page?: number }) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.CustomerWhereInput = {
+      deletedAt: null,
+      NOT: [
+        // Exclude accounts linked to Super Admin or Admin users
+        {
+          users: {
+            some: {
+              userRoles: {
+                some: {
+                  role: {
+                    OR: [
+                      { type: RoleType.SUPER_ADMIN },
+                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        // Exclude non-customer system accounts
+        {
+          customerType: {
+            in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'],
+          },
+        },
+        // Exclude customer accounts explicitly named Super Admin or Admin
+        {
+          OR: [
+            { name: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { name: { equals: 'SUPER_ADMIN', mode: 'insensitive' as Prisma.QueryMode } },
+            { name: { equals: 'Super Administrator', mode: 'insensitive' as Prisma.QueryMode } },
+            { name: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { name: { equals: 'System Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { companyName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { companyName: { equals: 'SUPER_ADMIN', mode: 'insensitive' as Prisma.QueryMode } },
+            { companyName: { equals: 'Super Administrator', mode: 'insensitive' as Prisma.QueryMode } },
+            { companyName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { companyName: { equals: 'System Admin', mode: 'insensitive' as Prisma.QueryMode } },
+          ],
+        },
+      ],
+    };
+
+    if (query.search && query.search.trim().length > 0) {
+      const s = query.search.trim();
+      const searchCondition: Prisma.CustomerWhereInput = {
+        OR: [
+          { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+          { companyName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+          { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+          { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+          {
+            users: {
+              some: {
+                AND: [
+                  { deletedAt: null },
+                  {
+                    OR: [
+                      { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                      { firstName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                      { lastName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                      { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                    ],
+                  },
+                  {
+                    NOT: {
+                      userRoles: {
+                        some: {
+                          role: {
+                            OR: [
+                              { type: RoleType.SUPER_ADMIN },
+                              { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      };
+
+      if (where.AND) {
+        (where.AND as any[]).push(searchCondition);
+      } else {
+        where.AND = [searchCondition];
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.customer.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          companyName: true,
+          email: true,
+          phone: true,
+          city: true,
+          customerType: true,
+          isActive: true,
+          createdAt: true,
+          _count: {
+            select: {
+              leads: true,
+              contacts: true,
+              deals: true,
+              tasks: true,
+              employees: true,
+            },
+          },
+        },
+      }),
+      this.prisma.customer.count({ where }),
+    ]);
+
+    return {
+      customers: items,
+      data: items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * GET /api/v1/admin/data-management/employees
+   * Returns list of actual employees for Data Management.
+   * Strictly excludes:
+   * - Super Admin (must NOT appear as an employee)
+   * - Admin users
+   * - Deleted employees
+   */
+  async getEmployees(query: {
+    customerId?: number | string;
+    search?: string;
+    limit?: number;
+    page?: number;
+  }) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.EmployeeWhereInput = {
+      status: { not: 'DELETED' },
+      NOT: [
+        // Exclude employees with user role SUPER_ADMIN, CUSTOMER_ADMIN, TENANT_ADMIN or ADMIN
+        {
+          user: {
+            userRoles: {
+              some: {
+                role: {
+                  OR: [
+                    { type: RoleType.SUPER_ADMIN },
+                    { type: RoleType.CUSTOMER_ADMIN },
+                    { type: RoleType.TENANT_ADMIN },
+                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN'] } },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        // Exclude employees explicitly named Super Admin or Admin
+        {
+          OR: [
+            { firstName: { equals: 'Super', mode: 'insensitive' as Prisma.QueryMode }, lastName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { lastName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { designation: { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Platform Administrator', 'System Administrator'] } } },
+          ],
+        },
+      ],
+    };
+
+    if (query.customerId !== undefined && query.customerId !== null) {
+      const numCustomerId = Number(query.customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
+
+    if (query.search && query.search.trim().length > 0) {
+      const s = query.search.trim();
+      const searchConditions: Prisma.EmployeeWhereInput[] = [
+        { firstName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { lastName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { employeeCode: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { department: { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } } },
+        { designation: { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } } },
+      ];
+
+      if (where.AND) {
+        (where.AND as any[]).push({ OR: searchConditions });
+      } else {
+        where.AND = [{ OR: searchConditions }];
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.employee.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          department: { select: { name: true } },
+          designation: { select: { name: true } },
+          user: {
+            select: {
+              id: true,
+              email: true,
+              phone: true,
+              userRoles: {
+                include: { role: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.employee.count({ where }),
+    ]);
+
+    return {
+      employees: items,
+      data: items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
    * GET live summary of customer data and record counts
    */
   async getCustomerSummary(customerId: number | string) {
@@ -1273,11 +1549,35 @@ export class DataManagementService {
         email: true,
         phone: true,
         isActive: true,
+        users: {
+          where: {
+            userRoles: {
+              some: {
+                role: {
+                  OR: [
+                    { type: RoleType.SUPER_ADMIN },
+                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                  ],
+                },
+              },
+            },
+          },
+          select: { id: true },
+        },
       },
     });
 
     if (!customer) {
       throw new NotFoundException(`Customer #${customerId} not found.`);
+    }
+
+    // Protection: Disallow data reset summary on Super Admin accounts
+    if (
+      customer.users?.length > 0 ||
+      customer.name?.toLowerCase().includes('super admin') ||
+      customer.companyName?.toLowerCase().includes('super admin')
+    ) {
+      throw new ForbiddenException('Cannot access or reset Super Admin system accounts.');
     }
 
     const summary = await this.getSummary(numCustomerId);
@@ -1538,9 +1838,31 @@ export class DataManagementService {
    * Returns empty array if no records are deleted
    */
   async getBinItems() {
-    // Soft-deleted customers: deletedAt is not null
+    // Soft-deleted customers: deletedAt is not null, excluding Super Admin / Admin accounts
     const deletedCustomers = await this.prisma.customer.findMany({
-      where: { deletedAt: { not: null } },
+      where: {
+        deletedAt: { not: null },
+        NOT: [
+          {
+            users: {
+              some: {
+                userRoles: {
+                  some: {
+                    role: {
+                      OR: [
+                        { type: RoleType.SUPER_ADMIN },
+                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          { customerType: { in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'] } },
+          { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Super Administrator', 'Admin'] } },
+        ],
+      },
       select: {
         id: true,
         name: true,
@@ -1570,9 +1892,29 @@ export class DataManagementService {
       orderBy: { deletedAt: 'desc' },
     });
 
-    // Soft-deleted employees: status = 'DELETED'
+    // Soft-deleted employees: status = 'DELETED', excluding Super Admin / Admin
     const deletedEmployees = await this.prisma.employee.findMany({
-      where: { status: 'DELETED' },
+      where: {
+        status: 'DELETED',
+        NOT: [
+          {
+            user: {
+              userRoles: {
+                some: {
+                  role: {
+                    OR: [
+                      { type: RoleType.SUPER_ADMIN },
+                      { type: RoleType.CUSTOMER_ADMIN },
+                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          { firstName: { in: ['Super', 'Super Admin', 'Admin'] } },
+        ],
+      },
       select: {
         id: true,
         firstName: true,

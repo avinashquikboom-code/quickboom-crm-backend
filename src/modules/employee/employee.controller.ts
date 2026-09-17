@@ -43,6 +43,7 @@ export class EmployeeController {
   @ApiQuery({ name: 'employmentType', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'excludeAdmins', required: false })
   async findAll(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
@@ -55,6 +56,7 @@ export class EmployeeController {
     @Query('employmentType') employmentType?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('excludeAdmins') excludeAdmins?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
@@ -74,6 +76,7 @@ export class EmployeeController {
       employmentType,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
+      excludeAdmins: excludeAdmins === 'true',
     });
   }
 
