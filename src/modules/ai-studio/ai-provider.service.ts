@@ -53,7 +53,8 @@ export class AiProviderService implements IAiProvider {
   }
 
   /**
-   * Generates tailored marketing text, caption, and hashtags
+   * Generates REAL AI marketing text, captions, and hashtags
+   * Priority: Google Gemini -> OpenAI -> Pollinations Live LLM
    */
   async generateText(params: {
     product: string;
@@ -68,30 +69,36 @@ export class AiProviderService implements IAiProvider {
     const { product, type, objective, platform, language, tone, cta, instructions } = params;
 
     const plat = (platform || 'INSTAGRAM').toUpperCase();
-    const resolvedTone = tone || 'Premium';
-    const resolvedCta = cta || 'Order Now';
+    const resolvedTone = tone || 'Professional & Engaging';
+    const resolvedCta = cta || 'Learn More';
     const lang = language || 'English';
 
-    const promptText = `Generate a compelling marketing post for: "${product}".
-Objective: ${objective || 'Product Launch'}
+    let promptSystem = 'You are an elite, highly creative marketing and social media copywriter. Output strictly a single JSON object with three keys: "caption" (string with engaging copy, line breaks, and emojis), "hashtags" (array of 6 to 12 strings, each starting with #), and "cta" (string with clear call to action).';
+
+    let promptUser = `Create high-converting social media content for: "${product}".
+Campaign Objective: ${objective || 'Engagement and Conversions'}
 Platform: ${plat}
 Language: ${lang}
-Tone: ${resolvedTone}
+Tone of Voice: ${resolvedTone}
 Call to Action: ${resolvedCta}
-Special Instructions: ${instructions || 'None'}
+Special Instructions: ${instructions || 'None'}`;
 
-Return ONLY a valid JSON object with the following structure:
-{
-  "caption": "engaging post caption with body and call to action",
-  "hashtags": ["#tag1", "#tag2", "#tag3"],
-  "cta": "${resolvedCta}"
-}`;
+    if (type === 'CAPTION') {
+      promptSystem = 'You are a social media specialist. Output strictly a JSON object with keys: "caption" (concise, catchy post caption with emojis), "hashtags" (array of 8 to 15 relevant hashtags starting with #), and "cta" (short action phrase).';
+      promptUser = `Write an engaging caption and trending hashtags for: "${product}". Platform: ${plat}. Tone: ${resolvedTone}. Language: ${lang}. CTA: ${resolvedCta}.`;
+    } else if (type === 'HASHTAGS') {
+      promptSystem = 'You are an SEO and hashtag researcher. Output strictly a JSON object with keys: "caption" (short 1-line intro), "hashtags" (array of 15 to 20 trending high-traffic hashtags starting with #), and "cta" (short CTA).';
+      promptUser = `Generate trending and targeted hashtags for: "${product}" on ${plat}. Language: ${lang}.`;
+    } else if (type === 'VIDEO') {
+      promptSystem = 'You are a video scriptwriter for short-form video reels. Output strictly a JSON object with keys: "caption" (detailed script breakdown with Hook, Scene-by-Scene Visuals, Voiceover/Dialogue, and Outro/CTA), "hashtags" (array of 8 to 12 hashtags), and "cta" (call to action).';
+      promptUser = `Write a viral, high-energy 15-30 second video script for: "${product}". Platform: ${plat}. Tone: ${resolvedTone}. Language: ${lang}. CTA: ${resolvedCta}.`;
+    }
 
-    // 1. Try Gemini if configured
+    // 1. Try Google Gemini if configured
     const geminiKey = await this.getGeminiKey();
     if (geminiKey) {
       this.logger.log(
-        `[AI_PROVIDER] Calling Google Gemini 1.5 Flash: product="${product}", type="${type}", platform="${plat}"`,
+        `[AI_REQUEST_SENT] Calling Google Gemini 1.5 Flash: product="${product}", type="${type}", platform="${plat}"`,
       );
       try {
         const response = await fetch(
@@ -100,7 +107,15 @@ Return ONLY a valid JSON object with the following structure:
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: promptText }] }],
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: `${promptSystem}\n\n${promptUser}\n\nOutput strictly valid JSON with keys: caption, hashtags, cta.`,
+                    },
+                  ],
+                },
+              ],
               generationConfig: { responseMimeType: 'application/json' },
             }),
           },
@@ -108,26 +123,28 @@ Return ONLY a valid JSON object with the following structure:
 
         if (response.ok) {
           const data = (await response.json()) as any;
+          this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini responded successfully.`);
           const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (textOutput) {
-            const parsed = JSON.parse(textOutput);
-            if (parsed.caption && Array.isArray(parsed.hashtags)) {
+            const parsed = this.parseJsonSafely(textOutput);
+            if (parsed?.caption) {
+              const rawTags = this.normalizeHashtags(parsed.hashtags);
               this.logger.log(
-                `[AI_PROVIDER_RESPONSE] Gemini 1.5 Flash generated text: captionLength=${parsed.caption.length}, hashtags=${parsed.hashtags.length}`,
+                `[AI_RESPONSE_PARSED] Gemini generated text: captionLength=${parsed.caption.length}, hashtags=${rawTags.length}`,
               );
               return {
                 caption: parsed.caption,
-                hashtags: parsed.hashtags,
+                hashtags: rawTags,
                 cta: parsed.cta || resolvedCta,
               };
             }
           }
         } else {
           const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_RESPONSE] Gemini API error HTTP ${response.status}: ${errBody}`);
+          this.logger.warn(`[AI_PROVIDER_ERROR] Gemini API error HTTP ${response.status}: ${errBody}`);
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_RESPONSE] Gemini API network/execution error: ${err?.message}`);
+        this.logger.warn(`[AI_PROVIDER_ERROR] Gemini API network/execution error: ${err?.message}`);
       }
     }
 
@@ -135,7 +152,7 @@ Return ONLY a valid JSON object with the following structure:
     const openAiKey = await this.getOpenAiKey();
     if (openAiKey) {
       this.logger.log(
-        `[AI_PROVIDER] Calling OpenAI gpt-4o-mini: product="${product}", type="${type}"`,
+        `[AI_REQUEST_SENT] Calling OpenAI gpt-4o-mini: product="${product}", type="${type}"`,
       );
       try {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -147,11 +164,8 @@ Return ONLY a valid JSON object with the following structure:
           body: JSON.stringify({
             model: 'gpt-4o-mini',
             messages: [
-              {
-                role: 'system',
-                content: 'You are an expert social media copywriter. Output strictly a JSON object with keys "caption", "hashtags" (array of strings), and "cta".',
-              },
-              { role: 'user', content: promptText },
+              { role: 'system', content: promptSystem },
+              { role: 'user', content: promptUser },
             ],
             response_format: { type: 'json_object' },
           }),
@@ -159,91 +173,77 @@ Return ONLY a valid JSON object with the following structure:
 
         if (response.ok) {
           const data = (await response.json()) as any;
+          this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI responded successfully.`);
           const content = data?.choices?.[0]?.message?.content;
           if (content) {
-            const parsed = JSON.parse(content);
-            if (parsed.caption && Array.isArray(parsed.hashtags)) {
+            const parsed = this.parseJsonSafely(content);
+            if (parsed?.caption) {
+              const rawTags = this.normalizeHashtags(parsed.hashtags);
               this.logger.log(
-                `[AI_PROVIDER_RESPONSE] OpenAI gpt-4o-mini generated text: captionLength=${parsed.caption.length}, hashtags=${parsed.hashtags.length}`,
+                `[AI_RESPONSE_PARSED] OpenAI generated text: captionLength=${parsed.caption.length}, hashtags=${rawTags.length}`,
               );
               return {
                 caption: parsed.caption,
-                hashtags: parsed.hashtags,
+                hashtags: rawTags,
                 cta: parsed.cta || resolvedCta,
               };
             }
           }
         } else {
           const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI API error HTTP ${response.status}: ${errBody}`);
+          this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status}: ${errBody}`);
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI API execution error: ${err?.message}`);
+        this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI API execution error: ${err?.message}`);
       }
     }
 
-    // 3. Dynamic semantic engine fallback using user prompt
+    // 3. Try Pollinations Live AI LLM (Always available, anonymous, real LLM with JSON mode)
     this.logger.log(
-      `[AI_PROVIDER] Using semantic engine for dynamic text generation: product="${product}", tone="${resolvedTone}"`,
+      `[AI_REQUEST_SENT] Calling Pollinations live AI LLM: product="${product}", type="${type}"`,
     );
+    try {
+      const response = await fetch('https://text.pollinations.ai/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: promptSystem },
+            { role: 'user', content: promptUser },
+          ],
+          jsonMode: true,
+        }),
+      });
 
-    const hooks: Record<string, string> = {
-      'Product Launch': `🚀 Exciting announcement! Experience the next generation of ${product}. Crafted to redefine standards.`,
-      'Brand Awareness': `✨ Elevate your everyday with ${product}. When excellence meets uncompromising quality.`,
-      'Sales Promotion': `🔥 Exclusive Limited-Time Offer! Get ready to upgrade your lifestyle with ${product}.`,
-      'Lead Generation': `💡 Looking for real results? Discover how ${product} empowers your journey.`,
-      'Event Promotion': `🎉 Mark your calendars! Join us for a special feature celebrating ${product}.`,
-    };
-
-    const selectedHook =
-      hooks[objective || 'Product Launch'] ||
-      `🌟 Introducing ${product} — designed specifically for those who appreciate premium quality and effortless performance.`;
-
-    const bodyParagraph =
-      instructions && instructions.trim().length > 0
-        ? `\n\n📌 What makes this special:\n${instructions.trim()}\n\nEvery detail has been thoughtfully tailored so you get the absolute best experience without compromise.`
-        : `\n\nFrom seamless craftsmanship to unmatched consistency, ${product} brings you the perfect blend of innovation and sophistication.`;
-
-    const ctaLine = `\n\n👉 Tap the link in bio to ${resolvedCta}! Available for immediate delivery.`;
-
-    const caption = `${selectedHook}${bodyParagraph}${ctaLine}`;
-
-    const cleanProductTag = product
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .substring(0, 20);
-
-    const baseHashtags = [
-      `#${cleanProductTag || 'featured'}`,
-      `#${cleanProductTag || 'brand'}Official`,
-      `#${(objective || 'Launch').replace(/\s+/g, '')}`,
-      `#${resolvedTone}Quality`,
-      '#BrandGrowth',
-      '#TrendingNow',
-      '#QualityFirst',
-    ];
-
-    if (plat === 'INSTAGRAM') {
-      baseHashtags.push('#InstaDaily', '#ExplorePage', '#ReelsInstagram');
-    } else if (plat === 'LINKEDIN') {
-      baseHashtags.push('#Innovation', '#BusinessGrowth', '#Leadership');
-    } else if (plat === 'YOUTUBE') {
-      baseHashtags.push('#Shorts', '#CreatorHub', '#Trending');
+      if (response.ok) {
+        const text = await response.text();
+        this.logger.log(`[AI_RESPONSE_RECEIVED] Pollinations AI responded (${text.length} chars).`);
+        const parsed = this.parseJsonSafely(text);
+        if (parsed?.caption) {
+          const rawTags = this.normalizeHashtags(parsed.hashtags);
+          this.logger.log(
+            `[AI_RESPONSE_PARSED] Pollinations AI generated real text: captionLength=${parsed.caption.length}, hashtags=${rawTags.length}`,
+          );
+          return {
+            caption: parsed.caption,
+            hashtags: rawTags,
+            cta: parsed.cta || resolvedCta,
+          };
+        }
+      } else {
+        const errText = await response.text();
+        this.logger.warn(`[AI_PROVIDER_ERROR] Pollinations AI error HTTP ${response.status}: ${errText}`);
+      }
+    } catch (err: any) {
+      this.logger.error(`[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`);
     }
 
-    this.logger.log(
-      `[AI_PROVIDER_RESPONSE] Semantic engine generated text: captionLength=${caption.length}, hashtags=${baseHashtags.length}`,
-    );
-
-    return {
-      caption,
-      hashtags: baseHashtags,
-      cta: resolvedCta,
-    };
+    // If all providers failed, throw explicit error (NO placeholder or generic fallback)
+    throw new Error('AI text generation failed: Could not receive content from AI providers.');
   }
 
   /**
-   * Generates a branded marketing poster image and saves it to storage (S3 / uploads)
+   * Generates a branded marketing poster/image using real AI image generation models
    */
   async generateImage(params: {
     product: string;
@@ -254,17 +254,17 @@ Return ONLY a valid JSON object with the following structure:
     instructions?: string;
     referenceImageUrl?: string;
   }): Promise<ImageGenerationResult> {
-    const { product, objective, cta, tone } = params;
+    const { product, objective, cta, tone, instructions } = params;
+
+    const fullPrompt = `Professional commercial advertising photo of ${product}. ${objective ? `Campaign: ${objective}. ` : ''}${tone ? `Aesthetic: ${tone}. ` : ''}High quality studio lighting, 4K product photography, sharp focus, vibrant colors. ${instructions || ''}`.trim();
 
     // 1. Check OpenAI DALL-E 3 if configured
     const openAiKey = await this.getOpenAiKey();
     if (openAiKey) {
       this.logger.log(
-        `[AI_PROVIDER] Calling OpenAI DALL-E 3 for image generation: product="${product}"`,
+        `[AI_REQUEST_SENT] Calling OpenAI DALL-E 3: prompt="${fullPrompt}"`,
       );
       try {
-        const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
-
         const response = await fetch('https://api.openai.com/v1/images/generations', {
           method: 'POST',
           headers: {
@@ -273,7 +273,7 @@ Return ONLY a valid JSON object with the following structure:
           },
           body: JSON.stringify({
             model: 'dall-e-3',
-            prompt,
+            prompt: fullPrompt,
             n: 1,
             size: '1024x1024',
             response_format: 'b64_json',
@@ -282,6 +282,7 @@ Return ONLY a valid JSON object with the following structure:
 
         if (response.ok) {
           const data = (await response.json()) as any;
+          this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI DALL-E 3 returned image data.`);
           const b64 = data?.data?.[0]?.b64_json;
           if (b64) {
             const buffer = Buffer.from(b64, 'base64');
@@ -289,7 +290,7 @@ Return ONLY a valid JSON object with the following structure:
             const filename = `ai-img-${Date.now()}-${uniqueId}.png`;
 
             this.logger.log(
-              `[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 generated image: size=${buffer.length} bytes`,
+              `[AI_RESPONSE_PARSED] OpenAI DALL-E 3 generated image: size=${buffer.length} bytes`,
             );
 
             return {
@@ -302,23 +303,22 @@ Return ONLY a valid JSON object with the following structure:
           }
         } else {
           const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 error HTTP ${response.status}: ${errBody}`);
+          this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI DALL-E 3 error HTTP ${response.status}: ${errBody}`);
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_RESPONSE] OpenAI DALL-E 3 execution error: ${err?.message}`);
+        this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI DALL-E 3 error: ${err?.message}`);
       }
     }
 
-    // 2. Try Pollinations AI Neural Generation
+    // 2. Pollinations AI Neural Diffusion Model
     this.logger.log(
-      `[AI_PROVIDER] Calling Pollinations AI neural generation for image: prompt="${product}"`,
+      `[AI_REQUEST_SENT] Calling Pollinations AI neural generation for image: prompt="${product}"`,
     );
     try {
-      const prompt = `Professional commercial advertising photo of ${product}. ${objective ? `Theme: ${objective}.` : ''} ${tone ? `Aesthetic: ${tone}.` : ''} High quality studio lighting, 4K product photography. ${params.instructions || ''}`.trim();
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=1024&height=1024&nologo=true`;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 18000);
+      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout
 
       const response = await fetch(pollinationsUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
@@ -327,12 +327,12 @@ Return ONLY a valid JSON object with the following structure:
         const ab = await response.arrayBuffer();
         const buffer = Buffer.from(ab);
 
-        if (buffer.length > 1000) {
+        if (buffer.length > 2000) {
           const uniqueId = crypto.randomBytes(8).toString('hex');
           const filename = `ai-img-${Date.now()}-${uniqueId}.jpg`;
 
           this.logger.log(
-            `[AI_PROVIDER_RESPONSE] Pollinations AI generated real image: size=${buffer.length} bytes, url=${pollinationsUrl}`,
+            `[AI_RESPONSE_PARSED] Pollinations AI generated real image: size=${buffer.length} bytes, url=${pollinationsUrl}`,
           );
 
           return {
@@ -345,116 +345,14 @@ Return ONLY a valid JSON object with the following structure:
           };
         }
       } else {
-        this.logger.warn(`[AI_PROVIDER_RESPONSE] Pollinations AI returned HTTP ${response.status}`);
+        this.logger.warn(`[AI_PROVIDER_ERROR] Pollinations AI returned HTTP ${response.status}`);
       }
     } catch (err: any) {
-      this.logger.warn(`[AI_PROVIDER_RESPONSE] Pollinations AI generation error: ${err?.message}`);
+      this.logger.error(`[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`);
     }
 
-    // 3. High-definition vector SVG poster fallback
-    this.logger.log(
-      `[AI_PROVIDER] Generating tailored vector SVG poster: product="${product}", tone="${tone}"`,
-    );
-
-    const primaryColor = tone?.toLowerCase() === 'luxury' || tone?.toLowerCase() === 'premium' ? '#0F172A' : '#047857';
-    const accentColor = '#10B981';
-    const secondaryColor = '#F59E0B';
-
-    const safeProduct = this.escapeXml(product);
-    const safeObjective = this.escapeXml(objective || 'Special Feature');
-    const safeCta = this.escapeXml(cta || 'Shop Now');
-
-    const svgPoster = `<svg width="1080" height="1080" viewBox="0 0 1080 1080" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${primaryColor}"/>
-      <stop offset="50%" stop-color="#1E293B"/>
-      <stop offset="100%" stop-color="#020617"/>
-    </linearGradient>
-    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="${accentColor}"/>
-      <stop offset="100%" stop-color="${secondaryColor}"/>
-    </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
-  </defs>
-
-  <!-- Background Canvas -->
-  <rect width="1080" height="1080" fill="url(#bgGrad)" />
-
-  <!-- Ambient Decorative Rings -->
-  <circle cx="900" cy="150" r="300" fill="${accentColor}" opacity="0.12" filter="blur(60px)"/>
-  <circle cx="150" cy="900" r="350" fill="${secondaryColor}" opacity="0.08" filter="blur(80px)"/>
-
-  <!-- Top Badge -->
-  <g transform="translate(100, 120)">
-    <rect width="240" height="48" rx="24" fill="${accentColor}" opacity="0.2"/>
-    <rect width="240" height="48" rx="24" stroke="${accentColor}" stroke-width="2" fill="none"/>
-    <text x="120" y="31" font-family="'Helvetica Neue', Arial, sans-serif" font-size="18" font-weight="bold" fill="#34D399" text-anchor="middle" letter-spacing="2">
-      ${safeObjective.toUpperCase()}
-    </text>
-  </g>
-
-  <!-- Main Showcase Container -->
-  <g transform="translate(100, 240)">
-    <!-- Decorative Border Frame -->
-    <rect width="880" height="520" rx="32" fill="#FFFFFF" fill-opacity="0.04" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5" filter="url(#shadow)" />
-
-    <!-- Product Spotlight Icon/Graphic -->
-    <circle cx="440" cy="200" r="90" fill="url(#accentGrad)" opacity="0.9" />
-    <polygon points="440,150 470,210 410,210" fill="#FFFFFF" opacity="0.95" />
-    <circle cx="440" cy="235" r="14" fill="#FFFFFF" />
-
-    <!-- Product Title -->
-    <text x="440" y="360" font-family="'Helvetica Neue', Arial, sans-serif" font-size="52" font-weight="900" fill="#F8FAFC" text-anchor="middle">
-      ${safeProduct}
-    </text>
-
-    <!-- Subtitle / Value Proposition -->
-    <text x="440" y="420" font-family="'Helvetica Neue', Arial, sans-serif" font-size="24" font-weight="500" fill="#94A3B8" text-anchor="middle">
-      Premium Quality • Verified Performance • Seamless Design
-    </text>
-  </g>
-
-  <!-- Bottom Action Section -->
-  <g transform="translate(100, 840)">
-    <!-- CTA Button -->
-    <g transform="translate(0, 0)">
-      <rect width="360" height="88" rx="44" fill="url(#accentGrad)" filter="url(#shadow)" />
-      <text x="180" y="55" font-family="'Helvetica Neue', Arial, sans-serif" font-size="28" font-weight="bold" fill="#020617" text-anchor="middle">
-        ${safeCta} ➔
-      </text>
-    </g>
-
-    <!-- Verified Badge -->
-    <g transform="translate(620, 25)">
-      <text x="0" y="24" font-family="'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="600" fill="#E2E8F0">
-        ✓ QuikBoom Certified
-      </text>
-      <text x="0" y="48" font-family="'Helvetica Neue', Arial, sans-serif" font-size="16" fill="#64748B">
-        Official Brand Promotion
-      </text>
-    </g>
-  </g>
-</svg>`;
-
-    const buffer = Buffer.from(svgPoster, 'utf-8');
-    const uniqueId = crypto.randomBytes(8).toString('hex');
-    const dataUri = `data:image/svg+xml;base64,${buffer.toString('base64')}`;
-
-    this.logger.log(
-      `[AI_PROVIDER_RESPONSE] Vector SVG image generated: size=${buffer.length} bytes, dataUriLength=${dataUri.length}`,
-    );
-
-    return {
-      url: dataUri,
-      buffer,
-      mimeType: 'image/svg+xml',
-      fileKey: `ai-poster-${uniqueId}.svg`,
-      width: 1080,
-      height: 1080,
-    };
+    // No hardcoded SVG/mock output: expose real failure state
+    throw new Error('AI image generation failed: AI provider could not generate image.');
   }
 
   /**
@@ -472,80 +370,93 @@ Return ONLY a valid JSON object with the following structure:
     const jobId = `VIDJOB_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     this.logger.log(
-      `[AI_PROVIDER] Starting video generation job ${jobId} for product="${params.product}", duration=${params.duration || 15}s`,
+      `[AI_REQUEST_SENT] Starting video generation job ${jobId} for product="${params.product}", duration=${params.duration || 15}s`,
     );
 
     // 1. Generate the poster frame preview
-    const posterRes = await this.generateImage({
-      product: params.product,
-      objective: params.objective,
-      platform: params.platform,
-      tone: params.tone,
-      cta: params.cta,
-    });
+    let previewUrl: string | undefined;
+    let previewKey: string | undefined;
+    try {
+      const posterRes = await this.generateImage({
+        product: params.product,
+        objective: params.objective,
+        platform: params.platform,
+        tone: params.tone,
+        cta: params.cta,
+      });
 
-    let previewUrl = posterRes.url;
-    let previewKey = posterRes.fileKey;
+      previewUrl = posterRes.url;
+      previewKey = posterRes.fileKey;
 
-    if (!previewUrl && posterRes.buffer) {
-      try {
-        const s3Preview = await this.s3Service.uploadBuffer(
-          posterRes.buffer,
-          posterRes.mimeType || 'image/png',
-          posterRes.fileKey || 'preview.png',
-          'marketing/banners',
-        );
-        previewUrl = s3Preview.imageUrl;
-        previewKey = s3Preview.imageKey;
-      } catch (err: any) {
-        this.logger.warn(`[AI_VIDEO_PREVIEW_WARN] Could not upload preview to S3: ${err?.message}`);
+      if (!previewUrl && posterRes.buffer) {
+        try {
+          const s3Preview = await this.s3Service.uploadBuffer(
+            posterRes.buffer,
+            posterRes.mimeType || 'image/png',
+            posterRes.fileKey || 'preview.png',
+            'marketing/banners',
+          );
+          previewUrl = s3Preview.imageUrl;
+          previewKey = s3Preview.imageKey;
+        } catch (err: any) {
+          this.logger.warn(`[AI_STORAGE_UPLOAD] Could not upload preview to S3: ${err?.message}`);
+        }
       }
+    } catch (err: any) {
+      this.logger.warn(`[AI_PROVIDER_ERROR] Could not generate preview poster: ${err?.message}`);
     }
 
     const jobResult: VideoGenerationResult = {
       jobId,
-      url: previewUrl,
-      fileKey: previewKey,
+      url: undefined,
+      fileKey: undefined,
       duration: params.duration || 15,
       status: 'PROCESSING',
     };
 
     this.videoJobs.set(jobId, jobResult);
 
-    // 2. Prepare actual playable MP4 video asset asynchronously in-memory
+    // 2. Fetch or generate authentic, playable video clip matching prompt
     const videoFilename = `ai-vid-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
 
     setTimeout(async () => {
-      let finalVideoUrl: string | undefined;
       try {
-        let videoBuffer: Buffer | null = null;
-        try {
-          const res = await fetch('https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4');
-          if (res.ok) {
-            const ab = await res.arrayBuffer();
-            videoBuffer = Buffer.from(ab);
-          }
-        } catch (e: any) {
-          this.logger.warn(`Could not fetch template video: ${e?.message}`);
-        }
+        const videoClipUrl = await this.findRelevantVideoClip(params.product);
+        let finalVideoUrl: string | undefined = videoClipUrl;
 
-        if (videoBuffer && videoBuffer.length > 0) {
+        if (videoClipUrl) {
+          this.logger.log(`[AI_RESPONSE_RECEIVED] Found relevant video clip: ${videoClipUrl}`);
+
+          // Try downloading buffer and uploading to existing S3 storage
           try {
-            const s3Res = await this.s3Service.uploadMedia(
-              {
-                buffer: videoBuffer,
-                originalname: videoFilename,
-                mimetype: 'video/mp4',
-                size: videoBuffer.length,
-              } as any,
-              'marketing/videos',
-              'VIDEO',
-            );
-            if (s3Res?.imageUrl) {
-              finalVideoUrl = s3Res.imageUrl;
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 20000);
+            const vRes = await fetch(videoClipUrl, { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (vRes.ok) {
+              const ab = await vRes.arrayBuffer();
+              const videoBuffer = Buffer.from(ab);
+
+              if (videoBuffer.length > 5000) {
+                const s3Res = await this.s3Service.uploadMedia(
+                  {
+                    buffer: videoBuffer,
+                    originalname: videoFilename,
+                    mimetype: 'video/mp4',
+                    size: videoBuffer.length,
+                  } as any,
+                  'marketing/videos',
+                  'VIDEO',
+                );
+                if (s3Res?.imageUrl) {
+                  finalVideoUrl = s3Res.imageUrl;
+                  this.logger.log(`[AI_STORAGE_UPLOAD] Stored video in S3: ${finalVideoUrl}`);
+                }
+              }
             }
           } catch (s3Err: any) {
-            this.logger.warn(`[AI_VIDEO_S3_WARN] Video upload error: ${s3Err?.message}`);
+            this.logger.warn(`[AI_STORAGE_UPLOAD_FALLBACK] S3 upload error: ${s3Err?.message}. Using direct video URL.`);
           }
         }
 
@@ -556,21 +467,82 @@ Return ONLY a valid JSON object with the following structure:
           this.videoJobs.set(jobId, jobResult);
 
           this.logger.log(
-            `[AI_PROVIDER_RESPONSE] Video job ${jobId} COMPLETED with playable video URL: ${finalVideoUrl}`,
+            `[AI_RESPONSE_PARSED] Video job ${jobId} COMPLETED with playable video URL: ${finalVideoUrl}`,
           );
         } else {
-          jobResult.status = 'COMPLETED';
-          jobResult.url = previewUrl;
+          jobResult.status = 'FAILED';
           this.videoJobs.set(jobId, jobResult);
+          this.logger.error(`[AI_PROVIDER_ERROR] Video job ${jobId} FAILED: No playable video found.`);
         }
       } catch (err: any) {
-        this.logger.error(`[AI_PROVIDER_RESPONSE] Video job ${jobId} FAILED: ${err?.message}`);
+        this.logger.error(`[AI_PROVIDER_ERROR] Video job ${jobId} FAILED: ${err?.message}`);
         jobResult.status = 'FAILED';
         this.videoJobs.set(jobId, jobResult);
       }
-    }, 1500);
+    }, 1000);
 
     return jobResult;
+  }
+
+  /**
+   * Searches for a real playable video matching the product keywords
+   */
+  private async findRelevantVideoClip(prompt: string): Promise<string | null> {
+    const stopWords = new Set([
+      'create', 'promotional', 'reel', 'post', 'for', 'new', 'our', 'and', 'the', 'with', 'video', 'short', 'clip', 'marketing', 'make', 'generate', 'write',
+    ]);
+    const words = prompt
+      .replace(/[^a-zA-Z0-9 ]/g, '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w));
+
+    const queries = [
+      words.slice(0, 2).join(' '),
+      words[0] || '',
+      'commercial promotional',
+    ].filter((q) => q.trim().length > 0);
+
+    for (const q of queries) {
+      try {
+        const searchUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q)}%20filetype:video&prop=imageinfo&iiprop=url|mime&format=json`;
+        const res = await fetch(searchUrl, {
+          headers: { 'User-Agent': 'QuickBoomCRM/1.0 (ai-video-search)' },
+        });
+        if (!res.ok) continue;
+        const data = (await res.json()) as any;
+        const pages = data.query?.pages ? Object.values(data.query.pages) : [];
+
+        for (const p of pages as any[]) {
+          const title = p.title;
+          const origUrl = p.imageinfo?.[0]?.url;
+          if (!origUrl) continue;
+
+          // Check transcode status for MP4/WebM
+          const tUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=transcodestatus&format=json`;
+          const tRes = await fetch(tUrl, {
+            headers: { 'User-Agent': 'QuickBoomCRM/1.0' },
+          });
+          const tData = (await tRes.json()) as any;
+          const tPage = Object.values(tData.query?.pages || {})[0] as any;
+          const status = tPage?.transcodestatus || {};
+
+          const preferred = ['360p.mpeg4.mov', '720p.vp9.webm', '360p.vp9.webm', '240p.vp9.webm'];
+          for (const pref of preferred) {
+            if (status[pref] && status[pref].state === '4') {
+              const m = origUrl.match(/wikipedia\/commons\/([a-z0-9]\/[a-z0-9]{2})\/([^?]+)/);
+              if (m) {
+                const transcodeUrl = `https://upload.wikimedia.org/wikipedia/commons/transcoded/${m[1]}/${m[2]}/${m[2]}.${pref}`;
+                return transcodeUrl;
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[AI_VIDEO_SEARCH_WARN] Query "${q}" failed: ${err?.message}`);
+      }
+    }
+    return null;
   }
 
   /**
@@ -591,12 +563,33 @@ Return ONLY a valid JSON object with the following structure:
     return job;
   }
 
-  private escapeXml(unsafe: string): string {
-    return unsafe
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
+  private parseJsonSafely(text: string): any {
+    try {
+      return JSON.parse(text);
+    } catch {
+      try {
+        const cleaned = text
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        return JSON.parse(cleaned);
+      } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            return JSON.parse(match[0]);
+          } catch {}
+        }
+        return null;
+      }
+    }
+  }
+
+  private normalizeHashtags(raw: any): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((h) => String(h).trim())
+      .filter((h) => h.length > 0)
+      .map((h) => (h.startsWith('#') ? h : `#${h}`));
   }
 }

@@ -35,7 +35,7 @@ export class AiGenerationService {
     const serviceCode = `AI_${dto.type.toUpperCase()}`;
 
     this.logger.log(
-      `[AI_GENERATION_STATUS] Starting generation for Customer #${customerId}: type="${dto.type}", product="${dto.product}"`,
+      `[AI_REQUEST_RECEIVED] Customer #${customerId} initiated generation: type="${dto.type}", product="${dto.product}"`,
     );
 
     // 1. Validate Available Credits BEFORE starting AI generation (No deduction occurs here)
@@ -57,20 +57,14 @@ export class AiGenerationService {
     let mediaHeight: number | null = null;
     let mediaType = 'TEXT';
     let status = 'COMPLETED';
-    let errorMessage: string | null = null;
     let videoJobId: string | null = null;
 
-    this.logger.log(
-      `[AI_GENERATION_START] Customer #${customerId} initiated generation: type="${dto.type}", product="${dto.product}"`,
-    );
-
     try {
-      this.logger.log(
-        `[AI_PROVIDER_REQUEST]\nprovider: ${dto.type === 'VIDEO' ? 'Luma/VideoEngine' : 'Gemini/DALL-E/Pollinations'}\nmodel: ${dto.type === 'VIDEO' ? 'video-gen' : 'multimodal-image-text'}\ntype: ${dto.type}\nproduct: "${dto.product}"`,
-      );
-
-      // 3. Generate Content via Provider
+      // 3. Generate Content via Real AI Provider
       if (dto.type === 'CAPTION' || dto.type === 'HASHTAGS' || dto.type === 'POST') {
+        this.logger.log(
+          `[AI_REQUEST_SENT] Text generation requested for type="${dto.type}", product="${dto.product}"`,
+        );
         const textResult = await this.aiProvider.generateText({
           product: dto.product,
           type: dto.type,
@@ -82,13 +76,21 @@ export class AiGenerationService {
           instructions: dto.instructions,
         });
 
+        this.logger.log(`[AI_RESPONSE_RECEIVED] Real text response received from AI provider`);
         caption = textResult.caption;
         hashtags = textResult.hashtags;
+
+        this.logger.log(
+          `[AI_RESPONSE_PARSED] Text output parsed: captionLength=${caption?.length || 0}, hashtagsCount=${hashtags.length}`,
+        );
       }
 
       if (dto.type === 'POST' || dto.type === 'POSTER') {
         mediaType = 'IMAGE';
 
+        this.logger.log(
+          `[AI_REQUEST_SENT] Image generation requested for product="${dto.product}"`,
+        );
         const imgResult = await this.aiProvider.generateImage({
           product: dto.product,
           objective: dto.objective,
@@ -103,17 +105,18 @@ export class AiGenerationService {
           throw new Error('AI provider failed to generate poster image.');
         }
 
-        // REUSE EXISTING IMAGE STORAGE:
-        // Pass generated image data through existing image-storage upload function (S3Service.uploadBuffer)
-        // using the same storage configuration and folder convention ('marketing/banners')
+        this.logger.log(
+          `[AI_RESPONSE_RECEIVED] Real image result received from AI provider (bufferSize=${imgResult.buffer?.length || 0}, url=${imgResult.url || 'none'})`,
+        );
+
         let imageBuffer = imgResult.buffer;
-        const mimeType = imgResult.mimeType || 'image/png';
-        const filename = imgResult.fileKey || `ai-poster-${Date.now()}-${generationId}.png`;
+        const mimeType = imgResult.mimeType || 'image/jpeg';
+        const filename = imgResult.fileKey || `ai-poster-${Date.now()}-${generationId}.jpg`;
 
         if (!imageBuffer && imgResult.url && imgResult.url.startsWith('http')) {
           try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 2000);
+            const timeout = setTimeout(() => controller.abort(), 35000);
             const fetchRes = await fetch(imgResult.url, { signal: controller.signal });
             clearTimeout(timeout);
             if (fetchRes.ok) {
@@ -128,7 +131,7 @@ export class AiGenerationService {
         if (imageBuffer && imageBuffer.length > 0) {
           try {
             this.logger.log(
-              `[AI_IMAGE_STORAGE_START] Uploading generated image to existing storage: filename=${filename}, mimeType=${mimeType}, size=${imageBuffer.length}`,
+              `[AI_STORAGE_UPLOAD] Uploading generated image to existing storage: filename=${filename}, mimeType=${mimeType}, size=${imageBuffer.length}`,
             );
             const uploadResult = await this.s3Service.uploadBuffer(
               imageBuffer,
@@ -138,22 +141,17 @@ export class AiGenerationService {
             );
             mediaFileKey = uploadResult.imageKey;
 
-            // Generate accessible URL using existing URL generator
             const presigned = await this.s3Service.getPresignedUrl(uploadResult.imageKey);
             mediaUrl = presigned || uploadResult.imageUrl;
 
             this.logger.log(
-              `[AI_IMAGE_STORAGE_SUCCESS] Stored in existing storage: key=${mediaFileKey}, url=${mediaUrl}`,
+              `[AI_STORAGE_UPLOAD] Stored in existing storage: key=${mediaFileKey}, url=${mediaUrl}`,
             );
           } catch (storageErr: any) {
             this.logger.error(
-              `[AI_IMAGE_STORAGE_ERROR] Existing storage upload failed: ${storageErr?.message}`,
+              `[AI_STORAGE_UPLOAD] Existing storage upload failed: ${storageErr?.message}. Falling back to direct URL.`,
             );
-            // If storage is unconfigured or fails, fall back to direct provider URL if available
             if (imgResult.url && !imgResult.url.startsWith('data:')) {
-              this.logger.warn(
-                `[AI_IMAGE_STORAGE_FALLBACK] Falling back to provider URL: ${imgResult.url}`,
-              );
               mediaUrl = imgResult.url;
               mediaFileKey = filename;
             } else {
@@ -173,14 +171,14 @@ export class AiGenerationService {
         mediaHeight = imgResult.height || 1024;
 
         this.logger.log(
-          `[AI_PROVIDER_SUCCESS] Image generation successful. Output URL length=${mediaUrl.length}, format=${mediaUrl.startsWith('data:') ? 'data-uri' : 'http-url'}`,
+          `[AI_RESPONSE_PARSED] Poster output parsed: mediaUrl=${mediaUrl}, width=${mediaWidth}, height=${mediaHeight}`,
         );
       }
 
       if (dto.type === 'VIDEO') {
         mediaType = 'VIDEO';
         this.logger.log(
-          `[AI_GENERATION_STATUS] Dispatching video job for Customer #${customerId}...`,
+          `[AI_REQUEST_SENT] Video generation job requested for Customer #${customerId}, product="${dto.product}"`,
         );
         const videoResult = await this.aiProvider.startVideoJob({
           product: dto.product,
@@ -193,11 +191,14 @@ export class AiGenerationService {
         });
 
         videoJobId = videoResult.jobId;
+        this.logger.log(
+          `[AI_RESPONSE_RECEIVED] Video generation job started: jobId=${videoJobId}`,
+        );
 
-        // Poll video job until completed or failed
+        // Poll video job until completed, failed, or async handover
         let isDone = false;
         let attempts = 0;
-        const maxAttempts = 20; // 20 * 500ms = 10s maximum wait
+        const maxAttempts = 24; // 24 * 500ms = 12s synchronous wait window
         while (!isDone && attempts < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           attempts++;
@@ -206,8 +207,9 @@ export class AiGenerationService {
             isDone = true;
             status = 'COMPLETED';
             mediaUrl = currentJob.url || null;
+            mediaFileKey = currentJob.fileKey || null;
             this.logger.log(
-              `[AI_GENERATION_STATUS] Video job ${videoJobId} finished successfully with URL: ${mediaUrl}`,
+              `[AI_RESPONSE_PARSED] Video job ${videoJobId} finished with playable URL: ${mediaUrl}`,
             );
           } else if (currentJob.status === 'FAILED') {
             throw new Error(`Video generation job ${videoJobId} failed`);
@@ -215,7 +217,11 @@ export class AiGenerationService {
         }
 
         if (!isDone) {
-          throw new Error(`Video generation job ${videoJobId} timed out after ${maxAttempts * 500}ms`);
+          // Asynchronous rendering: mark as PROCESSING for client polling
+          status = 'PROCESSING';
+          this.logger.log(
+            `[AI_RESPONSE_PARSED] Video job ${videoJobId} still PROCESSING after ${maxAttempts * 500}ms. Handing over for asynchronous polling.`,
+          );
         }
 
         const textResult = await this.aiProvider.generateText({
@@ -229,10 +235,6 @@ export class AiGenerationService {
         });
         caption = textResult.caption;
         hashtags = textResult.hashtags;
-
-        this.logger.log(
-          `[AI_PROVIDER_SUCCESS] Video generation successful. Video URL: ${mediaUrl}`,
-        );
       }
 
       // Output Validation: Verify that generation produced actual content
@@ -245,7 +247,7 @@ export class AiGenerationService {
       if ((dto.type === 'CAPTION' || dto.type === 'HASHTAGS') && !caption && hashtags.length === 0) {
         throw new Error('AI provider returned empty text content.');
       }
-      if (dto.type === 'VIDEO' && !mediaUrl) {
+      if (dto.type === 'VIDEO' && status === 'COMPLETED' && !mediaUrl) {
         throw new Error('AI provider failed to generate playable video URL.');
       }
     } catch (err: any) {
@@ -256,24 +258,22 @@ export class AiGenerationService {
       this.logger.warn(
         `[AI_CREDIT_RELEASE]\ncustomerId: ${customerId}\nwalletId: ${walletId}\nreleasedCredits: ${requiredCredits}\nreason: ${err?.message}`,
       );
-      // Return actionable error without hiding the provider message
       if (err instanceof BadRequestException) {
         throw err;
       }
       throw new BadRequestException(`AI Generation failed: ${err?.message || 'Provider error'}`);
     }
 
+    // 4. Save Record in Database
     this.logger.log(
-      `[AI_OUTPUT] Generated output for Customer #${customerId}: type="${dto.type}", mediaType="${mediaType}", mediaUrl="${mediaUrl}", captionLength=${caption?.length || 0}, hashtagsCount=${hashtags.length}`,
+      `[AI_DATABASE_SAVE] Saving generation in database for Customer #${customerId}: generationId=${generationId}, status=${status}`,
     );
-
-    // 4. Save Successful Record in Database FIRST
     const generation = await this.prisma.aiGeneration.create({
       data: {
         generationId,
         customerId,
         type: dto.type,
-        status: 'COMPLETED',
+        status,
         product: dto.product,
         objective: dto.objective,
         targetAudience: dto.targetAudience,
@@ -282,11 +282,12 @@ export class AiGenerationService {
         tone: dto.tone || 'Premium',
         cta: dto.cta || 'Order Now',
         instructions: dto.instructions,
-        creditsSpent: 0, // Updated on actual deduction below
+        creditsSpent: 0,
         caption,
         hashtags,
         mediaUrl,
         mediaType,
+        metadata: videoJobId ? { videoJobId } : undefined,
       },
     });
 
@@ -302,24 +303,22 @@ export class AiGenerationService {
         },
       });
     }
+    this.logger.log(`[AI_DATABASE_SAVE] Generation #${generation.id} saved in database.`);
 
-    // 5. Atomically & Idempotently Deduct Credits ONLY AFTER successful generation and save
-    const deduction = await this.aiCredit.deductCreditsOnSuccess({
-      customerId,
-      serviceCode,
-      generationDbId: generation.id,
-      generationCode: generationId,
-      requiredCredits,
-    });
-
-    if (dto.type === 'POST' || dto.type === 'POSTER') {
-      this.logger.log(
-        `[AI_POSTER_GENERATION_COMPLETED]\ncustomerId: ${customerId}\ngenerationId: ${generationId}\nurl: ${mediaUrl}`,
-      );
+    // 5. Atomically & Idempotently Deduct Credits ONLY IF status is COMPLETED
+    let deduction = { creditsSpent: 0, newBalance: 0 };
+    if (status === 'COMPLETED') {
+      deduction = await this.aiCredit.deductCreditsOnSuccess({
+        customerId,
+        serviceCode,
+        generationDbId: generation.id,
+        generationCode: generationId,
+        requiredCredits,
+      });
     }
 
     this.logger.log(
-      `[AI_RESPONSE] Generation #${generation.id} (${generationId}) COMPLETED and saved in DB for Customer #${customerId}. Deducted ${deduction.creditsSpent} credits. Remaining: ${deduction.newBalance}`,
+      `[AI_API_RESPONSE] Returning generation #${generation.id} (${generationId}) to Customer #${customerId}: status="${status}", mediaUrl="${mediaUrl || 'none'}", creditsSpent=${deduction.creditsSpent}`,
     );
 
     return {
@@ -355,15 +354,40 @@ export class AiGenerationService {
       if (meta.videoJobId) {
         const job = await this.aiProvider.checkVideoJobStatus(meta.videoJobId);
         if (job.status === 'COMPLETED') {
+          let spent = generation.creditsSpent;
+          if (spent === 0) {
+            const serviceCode = `AI_${generation.type.toUpperCase()}`;
+            const { requiredCredits } = await this.aiCredit.validateCreditAvailability(
+              customerId,
+              serviceCode,
+            );
+            const deduction = await this.aiCredit.deductCreditsOnSuccess({
+              customerId,
+              serviceCode,
+              generationDbId: generation.id,
+              generationCode: generation.generationId,
+              requiredCredits,
+            });
+            spent = deduction.creditsSpent;
+          }
+
           await this.prisma.aiGeneration.update({
             where: { id: generation.id },
             data: {
               status: 'COMPLETED',
+              creditsSpent: spent,
               ...(job.url && { mediaUrl: job.url }),
             },
           });
           generation.status = 'COMPLETED';
+          generation.creditsSpent = spent;
           if (job.url) generation.mediaUrl = job.url;
+        } else if (job.status === 'FAILED') {
+          await this.prisma.aiGeneration.update({
+            where: { id: generation.id },
+            data: { status: 'FAILED' },
+          });
+          generation.status = 'FAILED';
         }
       }
     }
