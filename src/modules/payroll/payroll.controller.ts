@@ -55,11 +55,15 @@ export class PayrollController {
   async generate(
     @CurrentUser() user: any,
     @CurrentCustomer() currentCustomer: any,
-    @Body() body: { customerId?: string | number; payrollId?: string | number }
+    @Body() body: { customerId?: string | number; payrollId?: string | number; month?: number; year?: number; employeeId?: number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
-    return this.payrollService.generatePayroll(customerId, body?.payrollId);
+    return this.payrollService.generatePayroll(customerId, body?.payrollId, {
+      month: body?.month ? Number(body.month) : undefined,
+      year: body?.year ? Number(body.year) : undefined,
+      employeeId: body?.employeeId ? Number(body.employeeId) : undefined,
+    });
   }
 
   @Post('disburse')

@@ -104,24 +104,134 @@ export class PayrollService {
     }
   }
 
+  /**
+   * Calculates actual calendar working days for a given month & year
+   * taking into account company AttendancePolicy or employee Shift working days.
+   */
+  calculateWorkingDays(year: number, month: number, workingDaysPerWeek = 5, shiftDays?: string[]): number {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    let workingDays = 0;
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month - 1, day);
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+      if (shiftDays && Array.isArray(shiftDays) && shiftDays.length > 0) {
+        const dayName = dayNames[dayOfWeek];
+        if (shiftDays.some((sd) => sd.toLowerCase() === dayName.toLowerCase())) {
+          workingDays++;
+        }
+      } else if (workingDaysPerWeek === 6) {
+        // Mon-Sat
+        if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+          workingDays++;
+        }
+      } else if (workingDaysPerWeek === 7) {
+        workingDays++;
+      } else {
+        // Default 5-day work week: Monday to Friday
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+          workingDays++;
+        }
+      }
+    }
+    return workingDays;
+  }
+
+  private formatSalarySlip(slip: any) {
+    if (!slip) return null;
+    const pi = slip.payrollItem;
+    const p = pi?.payroll;
+
+    const FULL_MONTH_NAMES = [
+      '',
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    let month = p?.month;
+    let year = p?.year;
+
+    if (!month || !year) {
+      const parts = (slip.payPeriod || '').split(' ');
+      if (parts.length >= 2) {
+        const mStr = parts[0].toLowerCase();
+        const yNum = parseInt(parts[1], 10);
+        if (!isNaN(yNum)) year = yNum;
+        const foundMonthIdx = FULL_MONTH_NAMES.findIndex((m) => m.toLowerCase().startsWith(mStr.slice(0, 3)));
+        if (foundMonthIdx > 0) month = foundMonthIdx;
+      }
+    }
+
+    const monthName = month ? (FULL_MONTH_NAMES[month] || `Month ${month}`) : 'Current Month';
+    const payPeriod = month && year ? `${monthName} ${year}` : (slip.payPeriod || 'Current Period');
+    const daysInMonth = month && year ? new Date(year, month, 0).getDate() : 30;
+    const formattedDate = slip.generatedAt
+      ? slip.generatedAt.toISOString().split('T')[0]
+      : (month && year ? `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}` : new Date().toISOString().split('T')[0]);
+
+    return {
+      ...slip,
+      month,
+      year,
+      monthName,
+      payPeriod,
+      date: formattedDate,
+      workingDays: pi?.workingDays ?? 0,
+      presentDays: pi?.presentDays ?? 0,
+      absentDays: pi?.absentDays ?? 0,
+      halfDays: pi?.halfDays ?? 0,
+      paidLeaveDays: pi?.paidLeaveDays ?? 0,
+      unpaidLeaveDays: pi?.unpaidLeaveDays ?? 0,
+      wfhDays: pi?.wfhDays ?? 0,
+      basicSalary: pi?.basicSalary ?? slip.grossSalary,
+      hra: pi?.hra ?? 0,
+      allowances: (pi?.allowances ?? 0) + (pi?.specialAllowance ?? 0),
+      specialAllowance: pi?.specialAllowance ?? 0,
+      bonus: pi?.bonus ?? 0,
+      commission: pi?.commission ?? 0,
+      overtime: pi?.overtime ?? 0,
+      reimbursement: pi?.reimbursement ?? 0,
+      pf: pi?.pf ?? 0,
+      esi: pi?.esi ?? 0,
+      professionalTax: pi?.professionalTax ?? 0,
+      tds: pi?.tds ?? 0,
+      otherDeductions: pi?.otherDeductions ?? 0,
+      loanDeduction: pi?.loanDeduction ?? 0,
+      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? 0,
+    };
+  }
+
   async calculatePayroll(customerId: number | string | undefined, month: number, year: number, departmentId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numDeptId = departmentId && !isNaN(Number(departmentId)) ? Number(departmentId) : undefined;
 
-    // Period date bounds
-    const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const periodEnd = new Date(year, month, 0, 23, 59, 59, 999);
+    // Period date bounds (strictly covers the selected calendar month)
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const periodStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const periodEnd = new Date(Date.UTC(year, month - 1, daysInMonth, 23, 59, 59, 999));
 
     // Auto-checkout any open attendance records in or before this period
     await this.autoCheckOutOpenAttendances(numCustomerId, periodEnd);
 
     // 1. Fetch Policy for Customer
-    const [payrollPolicy, salaryPolicy] = await Promise.all([
+    const [payrollPolicy, salaryPolicy, attendancePolicy] = await Promise.all([
       this.prisma.payrollPolicy.findUnique({ where: { customerId: numCustomerId } }),
       this.prisma.salaryPolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
+      this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
     ]);
 
-    const workingDaysConfig = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || 30;
     const pfPctConfig = payrollPolicy?.pfPercent ?? salaryPolicy?.pfPercent ?? 12.0;
     const esiPctConfig = payrollPolicy?.esiPercent ?? salaryPolicy?.esiPercent ?? 0.75;
     const commissionEnabled = salaryPolicy?.commissionEnabled ?? false;
@@ -143,6 +253,7 @@ export class PayrollService {
         },
         department: true,
         designation: true,
+        shift: true,
       },
     });
 
@@ -189,6 +300,14 @@ export class PayrollService {
           commission = Math.round((basic * commissionPctConfig) / 100);
         }
 
+        // ── Dynamic Working Days Calculation ──
+        const workingDaysConfig = this.calculateWorkingDays(
+          year,
+          month,
+          attendancePolicy?.workingDaysPerWeek || 5,
+          emp.shift?.workingDays,
+        );
+
         // ── Attendance Integration ──
         const attendances = await tx.attendance.findMany({
           where: {
@@ -201,9 +320,19 @@ export class PayrollService {
           },
         });
 
-        const presentCount = attendances.filter((a) => a.status === 'PRESENT' || a.status === 'LATE').length;
+        const presentCount = attendances.filter(
+          (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'REMOTE',
+        ).length;
         const halfDayCount = attendances.filter((a) => a.status === 'HALF_DAY').length;
-        const wfhCount = attendances.filter((a) => a.workMode === 'WFH' || a.workMode === 'REMOTE').length;
+        const wfhCount = attendances.filter(
+          (a) => a.workMode === 'WFH' || a.workMode === 'REMOTE',
+        ).length;
+
+        // Actual present days (integer aligned to DB schema)
+        const presentDays = Math.min(
+          workingDaysConfig,
+          Math.round(presentCount + halfDayCount * 0.5),
+        );
 
         // ── Leave Integration ──
         const approvedLeaves = await tx.leaveRequest.findMany({
@@ -219,8 +348,8 @@ export class PayrollService {
           },
         });
 
-        let paidLeaveDays = 0;
-        let unpaidLeaveDays = 0;
+        let rawPaidLeaveDays = 0;
+        let rawUnpaidLeaveDays = 0;
 
         for (const lr of approvedLeaves) {
           const code = lr.leaveType?.code?.toUpperCase() || '';
@@ -232,21 +361,38 @@ export class PayrollService {
             name.includes('loss of pay') ||
             name.includes('lop');
 
-          if (isUnpaid) {
-            unpaidLeaveDays += lr.days || 1;
+          const lFrom = new Date(Math.max(new Date(lr.fromDate).getTime(), periodStart.getTime()));
+          const lTo = new Date(Math.min(new Date(lr.toDate).getTime(), periodEnd.getTime()));
+          let daysInPeriod = 0;
+          if (lFrom <= lTo) {
+            const totalLeaveDays = lr.days || 1;
+            const diffDays = Math.round((lTo.getTime() - lFrom.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            daysInPeriod = Math.min(totalLeaveDays, Math.max(1, diffDays));
           } else {
-            paidLeaveDays += lr.days || 1;
+            daysInPeriod = lr.days || 1;
+          }
+
+          if (isUnpaid) {
+            rawUnpaidLeaveDays += daysInPeriod;
+          } else {
+            rawPaidLeaveDays += daysInPeriod;
           }
         }
 
-        // Compute total effective attended / payable days
-        const effectivePresentDays = Math.min(
-          workingDaysConfig,
-          Math.round(presentCount + halfDayCount * 0.5 + paidLeaveDays + wfhCount),
+        const paidLeaveDays = Math.min(workingDaysConfig - presentDays, Math.round(rawPaidLeaveDays));
+        const unpaidLeaveDays = Math.min(
+          Math.max(0, workingDaysConfig - presentDays - paidLeaveDays),
+          Math.round(rawUnpaidLeaveDays),
         );
-        const absentDays = Math.max(0, workingDaysConfig - effectivePresentDays - unpaidLeaveDays);
 
-        // Unpaid leave deduction
+        // Reconcile Absent Days
+        // Approved paid leaves are NOT absent. Working days = present + absent + paid leave + unpaid leave
+        const absentDays = Math.max(
+          0,
+          workingDaysConfig - presentDays - paidLeaveDays - unpaidLeaveDays,
+        );
+
+        // Unpaid leave deduction (Loss of Pay)
         const perDayRate = basic / workingDaysConfig;
         const unpaidLeaveDeduction = Math.round(unpaidLeaveDays * perDayRate);
 
@@ -344,7 +490,7 @@ export class PayrollService {
           totalDeductions: deductions,
           netSalary: net,
           workingDays: workingDaysConfig,
-          presentDays: effectivePresentDays,
+          presentDays,
           absentDays,
           halfDays: halfDayCount,
           paidLeaveDays,
@@ -490,7 +636,11 @@ export class PayrollService {
     };
   }
 
-  async generatePayroll(customerId: number | string | undefined, payrollId?: number | string) {
+  async generatePayroll(
+    customerId: number | string | undefined,
+    payrollId?: number | string,
+    options?: { month?: number; year?: number; employeeId?: number },
+  ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numPayrollId = Number(payrollId);
 
@@ -500,6 +650,18 @@ export class PayrollService {
         where: { id: numPayrollId, customerId: numCustomerId },
         include: { items: true },
       });
+    } else if (options?.month && options?.year) {
+      payroll = await this.prisma.payroll.findFirst({
+        where: { customerId: numCustomerId, month: options.month, year: options.year },
+        include: { items: true },
+      });
+      if (!payroll) {
+        payroll = await this.calculatePayroll(numCustomerId, options.month, options.year);
+        payroll = await this.prisma.payroll.findFirst({
+          where: { id: payroll.id },
+          include: { items: true },
+        });
+      }
     } else {
       payroll = await this.prisma.payroll.findFirst({
         where: { customerId: numCustomerId },
@@ -512,11 +674,31 @@ export class PayrollService {
       throw new NotFoundException('Payroll record not found. Please calculate payroll first.');
     }
 
-    const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const payPeriod = `${monthNames[payroll.month] || `M${payroll.month}`} ${payroll.year}`;
+    const FULL_MONTH_NAMES = [
+      '',
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    const payPeriod = `${FULL_MONTH_NAMES[payroll.month] || `Month ${payroll.month}`} ${payroll.year}`;
+    const daysInMonth = new Date(payroll.year, payroll.month, 0).getDate();
+    const slipDate = new Date(Date.UTC(payroll.year, payroll.month - 1, daysInMonth, 12, 0, 0));
+
+    const targetItems = options?.employeeId
+      ? payroll.items.filter((it: any) => it.employeeId === Number(options.employeeId))
+      : payroll.items;
 
     return this.prisma.$transaction(async (tx) => {
-      for (const item of payroll.items) {
+      for (const item of targetItems) {
         const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
 
         const existing = await tx.salarySlip.findFirst({
@@ -534,6 +716,7 @@ export class PayrollService {
               grossSalary: item.grossSalary,
               totalDeductions: item.totalDeductions,
               netSalary: item.netSalary,
+              generatedAt: slipDate,
               status: 'GENERATED',
             },
           });
@@ -541,9 +724,11 @@ export class PayrollService {
           await tx.salarySlip.update({
             where: { id: existing.id },
             data: {
+              payPeriod,
               grossSalary: item.grossSalary,
               totalDeductions: item.totalDeductions,
               netSalary: item.netSalary,
+              generatedAt: slipDate,
               status: 'GENERATED',
             },
           });
@@ -567,7 +752,7 @@ export class PayrollService {
 
       return {
         success: true,
-        message: `Salary slips generated for payroll #${payroll.id}`,
+        message: `Salary slips generated for ${payPeriod} (Payroll #${payroll.id})`,
         data: updated,
       };
     });
@@ -800,7 +985,7 @@ export class PayrollService {
       };
     }
 
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       this.prisma.salarySlip.findMany({
         where,
         orderBy: { generatedAt: 'desc' },
@@ -813,12 +998,17 @@ export class PayrollService {
               designation: true,
             },
           },
-          payrollItem: true,
+          payrollItem: {
+            include: {
+              payroll: true,
+            },
+          },
         },
       }),
       this.prisma.salarySlip.count({ where }),
     ]);
 
+    const items = rawItems.map((slip) => this.formatSalarySlip(slip));
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
@@ -842,7 +1032,7 @@ export class PayrollService {
   async getSalarySlipById(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    return this.prisma.salarySlip.findFirst({
+    const slip = await this.prisma.salarySlip.findFirst({
       where: { id: numId, customerId: numCustomerId },
       include: {
         employee: {
@@ -851,9 +1041,14 @@ export class PayrollService {
             designation: true,
           },
         },
-        payrollItem: true,
+        payrollItem: {
+          include: {
+            payroll: true,
+          },
+        },
       },
     });
+    return this.formatSalarySlip(slip);
   }
 
   async getPayrollHistory(customerId?: number | string) {
