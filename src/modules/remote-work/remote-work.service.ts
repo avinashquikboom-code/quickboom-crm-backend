@@ -13,7 +13,7 @@ import {
   RejectRemoteRequestDto,
   RemoteRequestQueryDto,
 } from './dto/remote-work.dto';
-import { RequestStatus } from '@prisma/client';
+import { Prisma, RequestStatus } from '@prisma/client';
 import {
   isRemoteWorkActiveNow,
   getBusinessDayRange,
@@ -92,7 +92,7 @@ export class RemoteWorkService {
     };
   }
 
-  async findAll(customerId: number | string | undefined, query?: RemoteRequestQueryDto) {
+  async findAll(user: any, customerId: number | string | undefined, query?: RemoteRequestQueryDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const page = Math.max(1, Number(query?.page) || 1);
@@ -100,6 +100,22 @@ export class RemoteWorkService {
     const skip = (page - 1) * limit;
 
     const where: any = { customerId: numCustomerId };
+
+    // Scope to employee identity if caller is an employee
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    if (isEmpUser) {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as Prisma.QueryMode } }] : []),
+          ],
+        },
+      }));
+      if (emp) {
+        where.employeeId = emp.id;
+      }
+    }
 
     if (query?.status && query.status !== 'ALL') {
       where.status = query.status as RequestStatus;

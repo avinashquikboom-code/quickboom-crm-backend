@@ -2239,7 +2239,7 @@ export class EmployeeService {
   }
 
 
-  async getLeaves(customerId?: number | string, isSuperAdmin = false) {
+  async getLeaves(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
@@ -2247,6 +2247,21 @@ export class EmployeeService {
       where.customerId = numCustomerId;
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for leaves access');
+    }
+
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    if (isEmpUser) {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as Prisma.QueryMode } }] : []),
+          ],
+        },
+      }));
+      if (emp) {
+        where.employeeId = emp.id;
+      }
     }
 
     const leaves = await this.prisma.leaveRequest.findMany({
@@ -2270,7 +2285,7 @@ export class EmployeeService {
     }));
   }
 
-  async getRemoteRequests(customerId?: number | string, isSuperAdmin = false) {
+  async getRemoteRequests(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
@@ -2278,6 +2293,21 @@ export class EmployeeService {
       where.customerId = numCustomerId;
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for remote requests access');
+    }
+
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    if (isEmpUser) {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as Prisma.QueryMode } }] : []),
+          ],
+        },
+      }));
+      if (emp) {
+        where.employeeId = emp.id;
+      }
     }
 
     const requests = await this.prisma.remoteRequest.findMany({

@@ -20,7 +20,7 @@ import {
   UpsertSalaryPolicyDto,
   UpsertClaimPolicyDto,
 } from './dto/policy.dto';
-import { AttendanceStatus, RequestStatus } from '@prisma/client';
+import { AttendanceStatus, RequestStatus, Prisma } from '@prisma/client';
 import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
@@ -261,6 +261,89 @@ export class LeaveService {
         isActive: lt.isActive,
       })),
     };
+  }
+
+  async createLeaveType(
+    customerId: number | string | undefined,
+    dto: { name: string; code: string; daysAllowedPerYear?: number; isCarryForward?: boolean; isActive?: boolean },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const code = (dto.code || dto.name.substring(0, 4)).trim().toUpperCase();
+    const existing = await this.prisma.leaveType.findFirst({
+      where: {
+        customerId: numCustomerId,
+        OR: [
+          { code },
+          { name: { equals: dto.name.trim(), mode: 'insensitive' as Prisma.QueryMode } },
+        ],
+      },
+    });
+    if (existing) {
+      throw new ConflictException(`Leave type '${dto.name}' or code '${code}' already exists`);
+    }
+
+    return this.prisma.leaveType.create({
+      data: {
+        customerId: numCustomerId,
+        name: dto.name.trim(),
+        code,
+        daysAllowedPerYear: dto.daysAllowedPerYear !== undefined ? Number(dto.daysAllowedPerYear) : 12,
+        isCarryForward: dto.isCarryForward !== undefined ? Boolean(dto.isCarryForward) : false,
+        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+      },
+    });
+  }
+
+  async updateLeaveType(
+    id: number,
+    customerId: number | string | undefined,
+    dto: { name?: string; code?: string; daysAllowedPerYear?: number; isCarryForward?: boolean; isActive?: boolean },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const existing = await this.prisma.leaveType.findFirst({
+      where: { id, customerId: numCustomerId },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Leave type #${id} not found`);
+    }
+
+    const data: any = {};
+    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.code !== undefined) data.code = dto.code.trim().toUpperCase();
+    if (dto.daysAllowedPerYear !== undefined) data.daysAllowedPerYear = Number(dto.daysAllowedPerYear);
+    if (dto.isCarryForward !== undefined) data.isCarryForward = Boolean(dto.isCarryForward);
+    if (dto.isActive !== undefined) data.isActive = Boolean(dto.isActive);
+
+    return this.prisma.leaveType.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async deleteLeaveType(id: number, customerId: number | string | undefined) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const existing = await this.prisma.leaveType.findFirst({
+      where: { id, customerId: numCustomerId },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Leave type #${id} not found`);
+    }
+
+    // Safety dependency check: verify no LeaveRequest or EmployeeLeaveBalance references this leaveType
+    const [requestCount, balanceCount] = await Promise.all([
+      this.prisma.leaveRequest.count({ where: { leaveTypeId: id } }),
+      this.prisma.employeeLeaveBalance.count({ where: { leaveTypeId: id } }),
+    ]);
+
+    if (requestCount > 0 || balanceCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete leave type '${existing.name}'. It is currently referenced by ${requestCount} leave application(s) and ${balanceCount} employee balance(s). You can deactivate it instead.`,
+      );
+    }
+
+    return this.prisma.leaveType.delete({
+      where: { id },
+    });
   }
 
   // ==========================================

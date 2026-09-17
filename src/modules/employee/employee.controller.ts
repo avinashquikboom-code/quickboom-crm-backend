@@ -176,7 +176,7 @@ export class EmployeeController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getLeaves(targetCustomerId, isSuperAdmin);
+    return this.employeeService.getLeaves(user, targetCustomerId, isSuperAdmin);
   }
 
   @Get('hrm/remote-requests')
@@ -189,7 +189,7 @@ export class EmployeeController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getRemoteRequests(targetCustomerId, isSuperAdmin);
+    return this.employeeService.getRemoteRequests(user, targetCustomerId, isSuperAdmin);
   }
 
   @Get('hrm/attendance')

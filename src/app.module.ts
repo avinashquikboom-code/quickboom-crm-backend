@@ -45,6 +45,7 @@ import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { InfluencerModule } from './modules/influencer/influencer.module';
 import { AiStudioModule } from './modules/ai-studio/ai-studio.module';
 import { SocialPublishingModule } from './modules/social-publishing/social-publishing.module';
+import { MasterModule } from './modules/master/master.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -98,6 +99,7 @@ import { AppController } from './app.controller';
     InfluencerModule,
     AiStudioModule,
     SocialPublishingModule,
+    MasterModule,
   ],
   controllers: [AppController],
 })

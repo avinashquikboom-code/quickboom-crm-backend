@@ -30,10 +30,11 @@ export class RemoteWorkController {
   @Get()
   @ApiOperation({ summary: 'Get all remote work requests with summary counts and filters' })
   async findAll(
+    @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Query() query?: RemoteRequestQueryDto,
   ) {
-    return this.remoteWorkService.findAll(customerId, query);
+    return this.remoteWorkService.findAll(user, customerId, query);
   }
 
   @Get('summary')

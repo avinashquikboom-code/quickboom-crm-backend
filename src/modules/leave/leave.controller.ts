@@ -64,6 +64,46 @@ export class LeaveController {
     return this.getLeaveTypes(user, customerId, customerIdQuery);
   }
 
+  @Post('types')
+  @ApiOperation({ summary: 'Create new Leave Type' })
+  async createLeaveType(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.createLeaveType(targetCustomerId, dto);
+  }
+
+  @Patch('types/:id')
+  @ApiOperation({ summary: 'Update existing Leave Type' })
+  async updateLeaveType(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id') id: string,
+    @Body() dto: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.updateLeaveType(Number(id), targetCustomerId, dto);
+  }
+
+  @Delete('types/:id')
+  @ApiOperation({ summary: 'Delete Leave Type with dependency safety check' })
+  async deleteLeaveType(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id') id: string,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.deleteLeaveType(Number(id), targetCustomerId);
+  }
+
   // =========================================================
   // 1. TODAY'S WORKFORCE AVAILABILITY
   // =========================================================
