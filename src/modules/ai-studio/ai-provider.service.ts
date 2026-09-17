@@ -290,7 +290,6 @@ Special Instructions: ${instructions || 'None'}`;
           prompt: fullPrompt,
           n: 1,
           size: '1024x1024',
-          response_format: 'b64_json',
         }),
       });
     } catch (netErr: any) {
@@ -311,17 +310,43 @@ Special Instructions: ${instructions || 'None'}`;
     }
 
     const data = (await response.json()) as any;
-    const b64 = data?.data?.[0]?.b64_json;
-    if (!b64) {
+    const item = data?.data?.[0];
+    const b64 = item?.b64_json;
+    const imageUrl = item?.url;
+
+    if (!b64 && !imageUrl) {
       throw new BadRequestException('OpenAI returned invalid or empty image data.');
     }
 
-    const buffer = Buffer.from(b64, 'base64');
+    let buffer: Buffer;
+    let mimeType = 'image/png';
+
+    if (b64) {
+      buffer = Buffer.from(b64, 'base64');
+    } else {
+      // If OpenAI returned a downloadable image URL, fetch the image buffer to upload to existing S3
+      this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI returned image URL, downloading to buffer for S3 upload...`);
+      try {
+        const fetchImgRes = await fetch(imageUrl);
+        if (!fetchImgRes.ok) {
+          throw new Error(`Failed to fetch image from OpenAI URL: HTTP ${fetchImgRes.status}`);
+        }
+        const arrayBuf = await fetchImgRes.arrayBuffer();
+        buffer = Buffer.from(arrayBuf);
+        const ct = fetchImgRes.headers.get('content-type');
+        if (ct) mimeType = ct;
+      } catch (dlErr: any) {
+        this.logger.error(`[AI_PROVIDER_ERROR] Failed downloading image from OpenAI URL: ${dlErr?.message}`);
+        throw new BadRequestException(`Failed downloading OpenAI image: ${dlErr?.message}`);
+      }
+    }
+
     const uniqueId = crypto.randomBytes(8).toString('hex');
-    const filename = `ai-poster-${Date.now()}-${uniqueId}.png`;
+    const extension = mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'png';
+    const filename = `ai-poster-${Date.now()}-${uniqueId}.${extension}`;
 
     this.logger.log(
-      `[AI_RESPONSE_RECEIVED] OpenAI DALL-E 3 returned image data: size=${buffer.length} bytes`,
+      `[AI_RESPONSE_RECEIVED] OpenAI image data ready for S3: size=${buffer.length} bytes, format=${extension}`,
     );
 
     // Upload using existing S3 service
@@ -333,7 +358,7 @@ Special Instructions: ${instructions || 'None'}`;
       );
       const uploadResult = await this.s3Service.uploadBuffer(
         buffer,
-        'image/png',
+        mimeType,
         filename,
         'marketing/banners',
       );
@@ -349,7 +374,7 @@ Special Instructions: ${instructions || 'None'}`;
     return {
       url: mediaUrl,
       buffer,
-      mimeType: 'image/png',
+      mimeType,
       fileKey,
       width: 1024,
       height: 1024,
