@@ -94,64 +94,65 @@ export class EmployeeService {
       // By default, exclude employees moved to Bin (status='DELETED')
       where.status = { not: 'DELETED' };
     }
-    if (branch && branch !== 'ALL') {
-      where.OR = [
-        { branch: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } },
-        { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
-      ];
-    }
-
     const shouldExcludeAdmins = params.excludeAdmins !== false;
     if (shouldExcludeAdmins) {
-      const excludeAdminCondition = {
-        NOT: [
-          {
-            user: {
-              userRoles: {
-                some: {
-                  role: {
-                    OR: [
-                      { type: RoleType.SUPER_ADMIN },
-                      { type: RoleType.CUSTOMER_ADMIN },
-                      { type: RoleType.TENANT_ADMIN },
-                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN'] } },
-                    ],
+      where.NOT = [
+        {
+          user: {
+            OR: [
+              {
+                userRoles: {
+                  some: {
+                    role: {
+                      OR: [
+                        { type: RoleType.SUPER_ADMIN },
+                        { type: RoleType.CUSTOMER_ADMIN },
+                        { type: RoleType.TENANT_ADMIN },
+                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'System Admin'] } },
+                      ],
+                    },
                   },
                 },
               },
-            },
-          },
-          {
-            OR: [
-              { firstName: { equals: 'Super', mode: 'insensitive' as Prisma.QueryMode }, lastName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
-              { firstName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
-              { firstName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
-              { lastName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
-              { designation: { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Platform Administrator', 'System Administrator'] } } },
+              { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
             ],
           },
-        ],
-      };
-      if (where.AND) {
-        where.AND.push(excludeAdminCondition);
-      } else {
-        where.AND = [excludeAdminCondition];
-      }
+        },
+        {
+          OR: [
+            { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
+            { email: { contains: 'superadmin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Super', mode: 'insensitive' as Prisma.QueryMode }, lastName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { lastName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { designation: { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Platform Administrator', 'System Administrator'] } } },
+          ],
+        },
+      ];
     }
+
+    const andConditions: any[] = [];
+
+    if (branch && branch !== 'ALL') {
+      andConditions.push({
+        OR: [
+          { branch: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } },
+          { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
+        ],
+      });
+    }
+
     if (department && department !== 'ALL') {
-      const deptCondition = {
+      andConditions.push({
         OR: [
           { department: { name: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } },
           { department: { code: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } },
           { teamMembers: { some: { team: { name: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } } } },
         ],
-      };
-      if (where.AND) {
-        where.AND.push(deptCondition);
-      } else {
-        where.AND = [deptCondition];
-      }
+      });
     }
+
     if (designation && designation !== 'ALL') {
       where.designation = { name: { equals: designation, mode: 'insensitive' as Prisma.QueryMode } };
     }
@@ -159,26 +160,22 @@ export class EmployeeService {
 
     if (search && search.trim().length > 0) {
       const trimmedSearch = search.trim();
-      const searchConditions = [
-        { firstName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { lastName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { email: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { phone: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { employeeCode: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { branch: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
-        { department: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
-        { designation: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
-      ];
+      andConditions.push({
+        OR: [
+          { firstName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { lastName: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { email: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { phone: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { employeeCode: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { branch: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } },
+          { department: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
+          { designation: { name: { contains: trimmedSearch, mode: 'insensitive' as Prisma.QueryMode } } },
+        ],
+      });
+    }
 
-      if (where.OR) {
-        where.AND = [
-          { OR: where.OR },
-          { OR: searchConditions },
-        ];
-        delete where.OR;
-      } else {
-        where.OR = searchConditions;
-      }
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     // Determine target date window (midnight to 23:59:59)
@@ -652,7 +649,32 @@ export class EmployeeService {
     branchFilter?: string,
     dateFilter?: string,
   ) {
-    const whereEmp: any = { status: 'ACTIVE' };
+    const whereEmp: any = {
+      status: 'ACTIVE',
+      NOT: [
+        {
+          user: {
+            userRoles: {
+              some: {
+                role: {
+                  OR: [
+                    { type: RoleType.SUPER_ADMIN },
+                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {
+          OR: [
+            { firstName: { equals: 'Super', mode: 'insensitive' as Prisma.QueryMode }, lastName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { firstName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
+            { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
+          ],
+        },
+      ],
+    };
     const whereCust: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
