@@ -21,7 +21,7 @@ import { ClaimStatus } from '@prisma/client';
 @ApiTags('HRM Expense Claims')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('claims')
+@Controller(['claims', 'admin/claims'])
 export class ClaimController {
   constructor(private readonly claimService: ClaimService) {}
 

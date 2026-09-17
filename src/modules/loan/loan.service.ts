@@ -58,21 +58,36 @@ export class LoanService {
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: cid };
+    const where: any = {};
+    if (customerId && Number(customerId) > 0) {
+      where.customerId = Number(customerId);
+    } else {
+      where.customerId = cid;
+    }
 
-    // If calling user is an Employee role, auto-scope to their own employee ID
-    if (query?.user && (String(query.user.role).toUpperCase() === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
-      const emp = await this.prisma.employee.findFirst({
-        where: {
-          customerId: cid,
-          OR: [
-            { userId: query.user.id },
-            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
-          ],
-        },
-      });
-      if (emp) {
-        where.employeeId = emp.id;
+    // Role-based employee scoping:
+    // If authenticated user is an Employee (not Super Admin / Tenant Admin), scope to their own employee ID
+    const isEmployee =
+      query?.user &&
+      !['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(String(query.user.role).toUpperCase()) &&
+      (String(query.user.role).toUpperCase() === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE' || query.user.employee != null);
+
+    if (isEmployee) {
+      const empId = query.user.employee?.id;
+      if (empId) {
+        where.employeeId = empId;
+      } else {
+        const emp = await this.prisma.employee.findFirst({
+          where: {
+            OR: [
+              { userId: query.user.id },
+              ...(query.user.email ? [{ email: { equals: query.user.email.trim().toLowerCase(), mode: 'insensitive' as const } }] : []),
+            ],
+          },
+        });
+        if (emp) {
+          where.employeeId = emp.id;
+        }
       }
     } else if (query?.employeeId) {
       where.employeeId = Number(query.employeeId);
@@ -144,9 +159,13 @@ export class LoanService {
   }
 
   async findOne(customerId: any, id: string | number) {
-    const cid = this.resolveCustomerId(customerId);
-    const loan = await this.prisma.employeeLoan.findFirst({
-      where: { id: Number(id), customerId: cid },
+    const numId = Number(id);
+    if (!numId || isNaN(numId)) {
+      throw new NotFoundException(`Invalid loan ID`);
+    }
+
+    const loan = await this.prisma.employeeLoan.findUnique({
+      where: { id: numId },
       include: {
         employee: {
           select: {
@@ -176,21 +195,23 @@ export class LoanService {
   }
 
   async create(customerId: any, dto: CreateLoanDto, user?: any) {
-    const cid = this.resolveCustomerId(customerId);
-    let employeeId = dto.employeeId;
+    let cid = this.resolveCustomerId(customerId);
+    let employeeId = dto.employeeId ? Number(dto.employeeId) : user?.employee?.id;
 
     if (!employeeId && user) {
       const emp = await this.prisma.employee.findFirst({
         where: {
-          customerId: cid,
           OR: [
             { userId: user.id },
-            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as const } }] : []),
           ],
         },
       });
       if (emp) {
         employeeId = emp.id;
+        if (!customerId && emp.customerId) {
+          cid = emp.customerId;
+        }
       }
     }
 
@@ -198,30 +219,41 @@ export class LoanService {
       throw new BadRequestException('Employee ID is required to submit a loan request');
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, customerId: cid },
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
     });
 
     if (!employee) {
       throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
-    const termMonths = dto.termMonths || 12;
-    const monthlyEmi = dto.monthlyEmi || Math.round((dto.loanAmount / termMonths) * 100) / 100;
+    if (employee.customerId) {
+      cid = employee.customerId;
+    }
+
+    const loanAmount = Number(dto.loanAmount);
+    if (!loanAmount || isNaN(loanAmount) || loanAmount <= 0) {
+      throw new BadRequestException('Valid positive loan amount is required');
+    }
+
+    const termMonths = Number(dto.termMonths) > 0 ? Number(dto.termMonths) : 12;
+    const monthlyEmi = dto.monthlyEmi && dto.monthlyEmi > 0
+      ? dto.monthlyEmi
+      : Math.round((loanAmount / termMonths) * 100) / 100;
 
     return this.prisma.employeeLoan.create({
       data: {
         customerId: cid,
         employeeId,
-        loanAmount: dto.loanAmount,
-        reason: dto.reason,
+        loanAmount,
+        reason: dto.reason?.trim() || 'Employee loan request',
         termMonths,
         monthlyEmi,
         interestRate: dto.interestRate || 0.0,
-        remainingBalance: dto.loanAmount,
+        remainingBalance: loanAmount,
         status: LoanStatus.PENDING,
         documents: dto.documents || [],
-        notes: dto.notes,
+        notes: dto.notes || null,
       },
       include: {
         employee: {
@@ -265,7 +297,7 @@ export class LoanService {
     const approvedAmount = dto.approvedAmount || existing.loanAmount;
     const termMonths = dto.termMonths || existing.termMonths || 12;
     const monthlyEmi = dto.monthlyEmi || Math.round((approvedAmount / termMonths) * 100) / 100;
-    const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
+    const startDate = dto.startDate && !isNaN(Date.parse(dto.startDate)) ? new Date(dto.startDate) : new Date();
 
     const updated = await this.prisma.employeeLoan.update({
       where: { id: Number(id) },

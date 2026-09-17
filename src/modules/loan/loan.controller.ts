@@ -21,7 +21,7 @@ import { LoanStatus } from '@prisma/client';
 @ApiTags('HRM Loans')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('loans')
+@Controller(['loans', 'admin/loans'])
 export class LoanController {
   constructor(private readonly loanService: LoanService) {}
 

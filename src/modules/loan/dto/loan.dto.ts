@@ -3,10 +3,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LoanStatus } from '@prisma/client';
 
 export class CreateLoanDto {
-  @ApiProperty({ description: 'Employee ID' })
+  @ApiPropertyOptional({ description: 'Employee ID (optional if authenticated as employee)' })
   @IsNumber()
-  @IsNotEmpty()
-  employeeId: number;
+  @IsOptional()
+  employeeId?: number;
 
   @ApiProperty({ description: 'Requested loan amount' })
   @IsNumber()
@@ -77,10 +77,10 @@ export class UpdateLoanDto {
 }
 
 export class ApproveLoanDto {
-  @ApiProperty({ description: 'Approved loan amount' })
+  @ApiPropertyOptional({ description: 'Approved loan amount' })
   @IsNumber()
-  @Min(1)
-  approvedAmount: number;
+  @IsOptional()
+  approvedAmount?: number;
 
   @ApiPropertyOptional({ description: 'Monthly EMI' })
   @IsNumber()

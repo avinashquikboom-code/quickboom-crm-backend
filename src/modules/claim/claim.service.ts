@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateClaimDto, UpdateClaimDto, ApproveClaimDto, RejectClaimDto, PayClaimDto } from './dto/claim.dto';
 import { ClaimStatus } from '@prisma/client';
@@ -70,20 +70,36 @@ export class ClaimService {
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: cid };
+    const where: any = {};
+    if (customerId && Number(customerId) > 0) {
+      where.customerId = Number(customerId);
+    } else {
+      where.customerId = cid;
+    }
 
-    // If calling user is an Employee role, auto-scope to their own employee ID
-    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
-      const emp = await this.prisma.employee.findFirst({
-        where: {
-          OR: [
-            { userId: query.user.id },
-            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
-          ],
-        },
-      });
-      if (emp) {
-        where.employeeId = emp.id;
+    // Role-based employee scoping:
+    // If authenticated user is an Employee (not Super Admin / Tenant Admin), scope to their own employee ID
+    const isEmployee =
+      query?.user &&
+      !['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(String(query.user.role).toUpperCase()) &&
+      (String(query.user.role).toUpperCase() === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE' || query.user.employee != null);
+
+    if (isEmployee) {
+      const empId = query.user.employee?.id;
+      if (empId) {
+        where.employeeId = empId;
+      } else {
+        const emp = await this.prisma.employee.findFirst({
+          where: {
+            OR: [
+              { userId: query.user.id },
+              ...(query.user.email ? [{ email: { equals: query.user.email.trim().toLowerCase(), mode: 'insensitive' as const } }] : []),
+            ],
+          },
+        });
+        if (emp) {
+          where.employeeId = emp.id;
+        }
       }
     } else if (query?.employeeId) {
       where.employeeId = Number(query.employeeId);
@@ -155,9 +171,13 @@ export class ClaimService {
   }
 
   async findOne(customerId: any, id: string | number) {
-    const cid = this.resolveCustomerId(customerId);
-    const claim = await this.prisma.employeeClaim.findFirst({
-      where: { id: Number(id), customerId: cid },
+    const numId = Number(id);
+    if (!numId || isNaN(numId)) {
+      throw new NotFoundException(`Invalid claim ID`);
+    }
+
+    const claim = await this.prisma.employeeClaim.findUnique({
+      where: { id: numId },
       include: {
         employee: {
           select: {
@@ -187,46 +207,61 @@ export class ClaimService {
   }
 
   async create(customerId: any, dto: CreateClaimDto, user?: any) {
-    const cid = this.resolveCustomerId(customerId);
+    let cid = this.resolveCustomerId(customerId);
 
-    let employeeId = dto.employeeId;
+    let employeeId = dto.employeeId ? Number(dto.employeeId) : user?.employee?.id;
     if (!employeeId && user) {
       const emp = await this.prisma.employee.findFirst({
         where: {
           OR: [
             { userId: user.id },
-            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as const } }] : []),
           ],
         },
       });
       if (emp) {
         employeeId = emp.id;
+        if (!customerId && emp.customerId) {
+          cid = emp.customerId;
+        }
       }
     }
 
     if (!employeeId) {
-      throw new NotFoundException('Employee ID is required to submit a claim');
+      throw new BadRequestException('Employee ID is required to submit an expense claim');
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, customerId: cid },
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
     });
 
     if (!employee) {
       throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
-    const claimDate = dto.claimDate ? new Date(dto.claimDate) : new Date();
+    if (employee.customerId) {
+      cid = employee.customerId;
+    }
+
+    const amount = Number(dto.amount);
+    if (!amount || isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('Valid positive claim amount is required');
+    }
+
+    let claimDate = new Date();
+    if (dto.claimDate && !isNaN(Date.parse(dto.claimDate))) {
+      claimDate = new Date(dto.claimDate);
+    }
 
     return this.prisma.employeeClaim.create({
       data: {
         customerId: cid,
         employeeId: employeeId,
-        category: (dto.category || 'GENERAL').toUpperCase(),
-        amount: dto.amount,
-        description: dto.description,
+        category: (dto.category || 'GENERAL').toUpperCase().trim(),
+        amount,
+        description: dto.description?.trim() || 'Expense claim',
         claimDate,
-        receiptUrl: dto.receiptUrl,
+        receiptUrl: dto.receiptUrl || null,
         status: ClaimStatus.PENDING,
         paymentStatus: 'UNPAID',
       },

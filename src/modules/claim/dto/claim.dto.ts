@@ -3,10 +3,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ClaimStatus } from '@prisma/client';
 
 export class CreateClaimDto {
-  @ApiProperty({ description: 'Employee ID' })
+  @ApiPropertyOptional({ description: 'Employee ID (optional if authenticated as employee)' })
   @IsNumber()
-  @IsNotEmpty()
-  employeeId: number;
+  @IsOptional()
+  employeeId?: number;
 
   @ApiProperty({ description: 'Expense category', example: 'TRAVEL' })
   @IsString()
@@ -67,10 +67,10 @@ export class UpdateClaimDto {
 }
 
 export class ApproveClaimDto {
-  @ApiProperty({ description: 'Approved claim reimbursement amount' })
+  @ApiPropertyOptional({ description: 'Approved claim reimbursement amount' })
   @IsNumber()
-  @Min(1)
-  approvedAmount: number;
+  @IsOptional()
+  approvedAmount?: number;
 
   @ApiPropertyOptional({ description: 'Approval comments/notes' })
   @IsString()
