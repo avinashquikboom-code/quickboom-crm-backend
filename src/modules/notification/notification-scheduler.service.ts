@@ -1,0 +1,232 @@
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from './notification.service';
+import { SubscriptionStatus, WorkStatus } from '@prisma/client';
+
+/**
+ * Returns UTC Date range matching start and end of day in Indian Standard Time (IST: UTC+5:30)
+ */
+function getIstDayWindow(dayOffset: number): { start: Date; end: Date } {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowUtc = new Date();
+  const nowIst = new Date(nowUtc.getTime() + IST_OFFSET_MS);
+
+  // Advance by dayOffset in IST
+  const targetIst = new Date(nowIst.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+  const year = targetIst.getUTCFullYear();
+  const month = targetIst.getUTCMonth();
+  const date = targetIst.getUTCDate();
+
+  // Construct start and end of target IST day in UTC
+  const startIst = new Date(Date.UTC(year, month, date, 0, 0, 0, 0));
+  const endIst = new Date(Date.UTC(year, month, date, 23, 59, 59, 999));
+
+  return {
+    start: new Date(startIst.getTime() - IST_OFFSET_MS),
+    end: new Date(endIst.getTime() - IST_OFFSET_MS),
+  };
+}
+
+@Injectable()
+export class NotificationSchedulerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(NotificationSchedulerService.name);
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
+
+  onModuleInit() {
+    // Warmup delay (10s) to allow app bootstrap before first check
+    setTimeout(() => {
+      this.runAllScheduledChecks().catch((err) => {
+        this.logger.error(`Initial scheduled check error: ${err?.message}`, err?.stack);
+      });
+    }, 10000);
+
+    // Periodic check every 1 hour (3600000 ms)
+    this.timer = setInterval(() => {
+      this.runAllScheduledChecks().catch((err) => {
+        this.logger.error(`Periodic scheduled check error: ${err?.message}`, err?.stack);
+      });
+    }, 60 * 60 * 1000);
+  }
+
+  onModuleDestroy() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /**
+   * Run all automated notifications:
+   * 1. 3-day subscription expiry reminders (Customer)
+   * 2. Tomorrow's calendar activity reminders (Customer + Employee)
+   */
+  async runAllScheduledChecks() {
+    this.logger.log('Starting automated notification scheduler cycle...');
+
+    const subCount = await this.checkSubscriptionExpiries();
+    const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
+
+    this.logger.log(
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount}`,
+    );
+
+    return {
+      subscriptionsNotified: subCount,
+      customerCalendarNotified: customerCount,
+      employeeCalendarNotified: employeeCount,
+    };
+  }
+
+  /**
+   * Check for active subscriptions expiring in exactly 3 days
+   */
+  async checkSubscriptionExpiries(dayOffset = 3): Promise<number> {
+    const { start, end } = getIstDayWindow(dayOffset);
+    let notifiedCount = 0;
+
+    try {
+      const expiringSubs = await this.prisma.customerSubscription.findMany({
+        where: {
+          status: SubscriptionStatus.ACTIVE,
+          deletedAt: null,
+          endDate: { gte: start, lte: end },
+        },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              companyName: true,
+              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
+            },
+          },
+          plan: { select: { id: true, name: true } },
+        },
+      });
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      for (const sub of expiringSubs) {
+        // Prevent duplicate notification within 7 days
+        const alreadyNotified = await this.prisma.notification.findFirst({
+          where: {
+            customerId: sub.customerId,
+            type: 'SUBSCRIPTION_EXPIRING_SOON',
+            createdAt: { gte: sevenDaysAgo },
+          },
+        });
+
+        if (alreadyNotified) {
+          continue;
+        }
+
+        const res = await this.notificationService.sendSubscriptionExpiringNotification(
+          sub.customerId,
+          sub,
+          dayOffset,
+        );
+
+        if (res) {
+          notifiedCount++;
+          this.logger.log(
+            `Sent 3-day subscription expiry notification to customer #${sub.customerId} for plan "${sub.plan?.name}"`,
+          );
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Error in checkSubscriptionExpiries: ${err?.message}`, err?.stack);
+    }
+
+    return notifiedCount;
+  }
+
+  /**
+   * Check for calendar schedules occurring tomorrow (Day offset = 1)
+   */
+  async checkTomorrowCalendarSchedules(): Promise<{ customerCount: number; employeeCount: number }> {
+    const { start: tomorrowStart, end: tomorrowEnd } = getIstDayWindow(1);
+    let customerCount = 0;
+    let employeeCount = 0;
+
+    try {
+      const upcomingWorks = await this.prisma.work.findMany({
+        where: {
+          scheduledDate: { gte: tomorrowStart, lte: tomorrowEnd },
+          status: { notIn: [WorkStatus.CANCELLED, WorkStatus.COMPLETED] },
+        },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              companyName: true,
+              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
+            },
+          },
+          assignedTo: {
+            select: { id: true, userId: true, firstName: true, lastName: true },
+          },
+        },
+      });
+
+      const todayStart = getIstDayWindow(0).start;
+
+      for (const work of upcomingWorks) {
+        // 1. Notify Customer
+        const customerUser = work.customer?.users?.[0];
+        if (customerUser) {
+          const alreadyNotifiedCustomer = await this.prisma.notification.findFirst({
+            where: {
+              customerId: work.customerId,
+              userId: customerUser.id,
+              type: 'CALENDAR_SCHEDULE_REMINDER',
+              createdAt: { gte: todayStart },
+            },
+          });
+
+          if (!alreadyNotifiedCustomer) {
+            const res = await this.notificationService.sendCalendarReminderNotification({
+              recipientType: 'CUSTOMER',
+              userId: customerUser.id,
+              customerId: work.customerId,
+              work,
+            });
+            if (res) customerCount++;
+          }
+        }
+
+        // 2. Notify Assigned Employee
+        if (work.assignedTo && work.assignedTo.userId) {
+          const employeeUserId = work.assignedTo.userId;
+
+          const alreadyNotifiedEmp = await this.prisma.notification.findFirst({
+            where: {
+              userId: employeeUserId,
+              type: 'CALENDAR_SCHEDULE_REMINDER',
+              createdAt: { gte: todayStart },
+            },
+          });
+
+          if (!alreadyNotifiedEmp) {
+            const res = await this.notificationService.sendCalendarReminderNotification({
+              recipientType: 'EMPLOYEE',
+              userId: employeeUserId,
+              customerId: work.customerId,
+              work,
+            });
+            if (res) employeeCount++;
+          }
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Error in checkTomorrowCalendarSchedules: ${err?.message}`, err?.stack);
+    }
+
+    return { customerCount, employeeCount };
+  }
+}

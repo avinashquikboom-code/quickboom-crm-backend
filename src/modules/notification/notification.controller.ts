@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
+import { NotificationSchedulerService } from './notification-scheduler.service';
 import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -22,7 +23,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('notifications')
 export class NotificationController {
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly notificationSchedulerService: NotificationSchedulerService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get paginated notifications list' })
@@ -87,6 +91,12 @@ export class NotificationController {
       type: dto.type || 'GENERAL',
       data: dto.data,
     });
+  }
+
+  @Post('triggers/run-scheduled-checks')
+  @ApiOperation({ summary: 'Run all automated notification checks (3-day subscription expiry & tomorrow calendar)' })
+  async runScheduledChecks() {
+    return this.notificationSchedulerService.runAllScheduledChecks();
   }
 
   @Patch(':id/read')

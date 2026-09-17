@@ -6,11 +6,13 @@ import { WorkService } from './work.service';
 import { WorkPermissionService } from './work-permission.service';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [PrismaModule, JwtModule.register({}), ConfigModule],
+  imports: [PrismaModule, JwtModule.register({}), ConfigModule, NotificationModule],
   controllers: [WorkController],
   providers: [WorkService, WorkPermissionService, PlanScheduleGateway],
   exports: [WorkService, WorkPermissionService, PlanScheduleGateway],
 })
 export class WorkModule {}
+

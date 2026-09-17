@@ -18,6 +18,7 @@ import {
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class WorkService {
@@ -27,6 +28,7 @@ export class WorkService {
     private readonly prisma: PrismaService,
     private readonly workPermissionService: WorkPermissionService,
     @Optional() private readonly planScheduleGateway?: PlanScheduleGateway,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   /**
@@ -517,6 +519,15 @@ export class WorkService {
       planId: result.subscriptionId,
       date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
     });
+
+    // Immediate Push Notification to Assigned Employee
+    if (this.notificationService && result.assignedToId) {
+      this.notificationService
+        .sendWorkAssignmentNotification(result.assignedToId, result, false)
+        .catch((err) => {
+          this.logger.error(`Failed to send work assignment notification: ${err?.message}`);
+        });
+    }
 
     return result;
   }

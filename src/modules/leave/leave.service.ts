@@ -4,6 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -19,10 +21,16 @@ import {
   UpsertClaimPolicyDto,
 } from './dto/policy.dto';
 import { AttendanceStatus, RequestStatus } from '@prisma/client';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class LeaveService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(LeaveService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     if (customerId !== undefined && customerId !== null) {
@@ -724,6 +732,23 @@ export class LeaveService {
         },
       };
     });
+
+    // Dispatch Push Notification to Employee (Outside app / system notification)
+    if (this.notificationService && result?.data) {
+      const leaveData = result.data;
+      const isHalfDay =
+        Number(leaveData.days) === 0.5 ||
+        (leaveData.reason && leaveData.reason.toLowerCase().includes('half')) ||
+        Number(leaveData.days) < 1;
+
+      this.notificationService
+        .sendLeaveApprovalNotification(leaveData.employeeId, leaveData, isHalfDay)
+        .catch((err) => {
+          this.logger.error(`Failed to send leave approval push notification: ${err?.message}`);
+        });
+    }
+
+    return result;
   }
 
   async rejectLeave(

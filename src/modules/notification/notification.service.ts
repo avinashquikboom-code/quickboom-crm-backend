@@ -331,4 +331,178 @@ export class NotificationService {
       data,
     });
   }
+
+  /**
+   * Send Leave Approval Notification (Full-day or Half-day) to Employee
+   */
+  async sendLeaveApprovalNotification(employeeId: number, leave: any, isHalfDay = false) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send leave notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      const leaveTypeName = leave.leaveType?.name || 'Leave';
+      const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
+      const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
+      const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+
+      const title = isHalfDay ? 'Half-Day Leave Approved' : 'Leave Request Approved';
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been approved.`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: 'LEAVE_APPROVED',
+        data: {
+          type: 'LEAVE',
+          leaveId: String(leave.id),
+          leaveType: leaveTypeName,
+          status: 'APPROVED',
+          isHalfDay: String(isHalfDay),
+          dates: dateText,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending leave approval notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Work Assignment Notification to Employee
+   */
+  async sendWorkAssignmentNotification(employeeId: number, work: any, isReassignment = false) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send work assignment notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      // Fetch customer / company info
+      let companyName = 'Customer Workspace';
+      if (work.customerId) {
+        const cust = await this.prisma.customer.findUnique({
+          where: { id: work.customerId },
+          select: { companyName: true, name: true },
+        });
+        if (cust) {
+          companyName = cust.companyName || cust.name || 'Customer Workspace';
+        }
+      }
+
+      const workTitle = work.title || 'Scheduled Activity';
+      const dateStr = work.scheduledDate ? new Date(work.scheduledDate).toISOString().split('T')[0] : '';
+      const timeStr = work.scheduledTime ? ` at ${work.scheduledTime}` : '';
+
+      const title = isReassignment ? `Work Reassigned: ${workTitle}` : `New Work Assigned: ${workTitle}`;
+      const body = `You have been assigned to "${workTitle}" for ${companyName}${dateStr ? ` scheduled for ${dateStr}${timeStr}` : ''}.`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: 'WORK_ASSIGNMENT',
+        data: {
+          type: 'WORK',
+          workId: String(work.id),
+          customerId: String(work.customerId),
+          title: workTitle,
+          company: companyName,
+          scheduledDate: dateStr,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending work assignment notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Subscription Expiry Notification to Customer
+   */
+  async sendSubscriptionExpiringNotification(customerId: number, subscription: any, daysRemaining = 3) {
+    try {
+      const planName = subscription.plan?.name || 'Subscription Plan';
+      const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'soon';
+
+      const title = `Subscription Expiring in ${daysRemaining} Days`;
+      const body = `Your plan "${planName}" will expire on ${endDate}. Renew now to maintain uninterrupted access.`;
+
+      return await this.sendPushNotification({
+        customerId,
+        title,
+        body,
+        type: 'SUBSCRIPTION_EXPIRING_SOON',
+        data: {
+          type: 'SUBSCRIPTION',
+          subscriptionId: String(subscription.id),
+          customerId: String(customerId),
+          planName,
+          expiryDate: endDate,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending subscription expiry notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Tomorrow's Calendar Schedule Reminder
+   */
+  async sendCalendarReminderNotification(params: {
+    recipientType: 'CUSTOMER' | 'EMPLOYEE';
+    userId: number;
+    customerId: number;
+    work: any;
+  }) {
+    try {
+      const { recipientType, userId, customerId, work } = params;
+      const workTitle = work.title || 'Scheduled Activity';
+      const timeStr = work.scheduledTime ? ` at ${work.scheduledTime}` : '';
+
+      let companyName = 'Customer Workspace';
+      if (work.customer) {
+        companyName = work.customer.companyName || work.customer.name || 'Customer Workspace';
+      }
+
+      const title = `Tomorrow's Schedule: ${workTitle}`;
+      const body =
+        recipientType === 'CUSTOMER'
+          ? `Reminder: You have "${workTitle}" scheduled for tomorrow${timeStr}.`
+          : `Reminder: You are scheduled for "${workTitle}" for ${companyName} tomorrow${timeStr}.`;
+
+      return await this.sendPushNotification({
+        userId,
+        customerId,
+        title,
+        body,
+        type: 'CALENDAR_SCHEDULE_REMINDER',
+        data: {
+          type: 'CALENDAR',
+          workId: String(work.id),
+          customerId: String(customerId),
+          title: workTitle,
+          recipientType,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending calendar reminder notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
 }
