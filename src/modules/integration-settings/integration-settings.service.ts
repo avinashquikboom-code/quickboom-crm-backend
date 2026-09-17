@@ -52,6 +52,7 @@ export function normalizeProvider(provider: string): string {
 
 export interface OpenAiDynamicConfig {
   apiKey: string;
+  imageModel?: string;
   isEnabled: boolean;
   isConfigured: boolean;
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
@@ -602,12 +603,14 @@ export class IntegrationSettingsService {
   async getOpenAiConfig(): Promise<OpenAiDynamicConfig> {
     const conf = await this.getIntegrationConfig(IntegrationProvider.OPENAI);
     const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
     const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.OPENAI_API_KEY || ''));
+    const imageModel = String(cfg.imageModel || cfg.model || creds.imageModel || creds.model || process.env.OPENAI_IMAGE_MODEL || '').trim() || undefined;
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
-    return { apiKey, isEnabled, isConfigured, source };
+    return { apiKey, imageModel, isEnabled, isConfigured, source };
   }
 
   /**

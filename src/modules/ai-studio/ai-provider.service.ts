@@ -273,28 +273,69 @@ Special Instructions: ${instructions || 'None'}`;
       instructions || ''
     }`.trim();
 
+    const requestedModel = openAiConfig.imageModel || 'dall-e-3';
     this.logger.log(
-      `[AI_REQUEST_SENT] Calling OpenAI Images API (DALL-E 3): prompt="${product}"`,
+      `[AI_REQUEST_SENT] Calling OpenAI Images API (${requestedModel}): prompt="${product}"`,
     );
 
-    let response: Response;
-    try {
-      response = await fetch('https://api.openai.com/v1/images/generations', {
+    async function callOpenAiImages(modelName: string): Promise<Response> {
+      return fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openAiKey}`,
         },
         body: JSON.stringify({
-          model: 'dall-e-3',
+          model: modelName,
           prompt: fullPrompt,
           n: 1,
           size: '1024x1024',
         }),
       });
+    }
+
+    let response: Response;
+    let activeModel = requestedModel;
+
+    try {
+      response = await callOpenAiImages(activeModel);
     } catch (netErr: any) {
       this.logger.error(`[AI_PROVIDER_ERROR] OpenAI connection failed: ${netErr?.message}`);
       throw new BadRequestException(`OpenAI connection failed: ${netErr?.message}`);
+    }
+
+    // If dall-e-3 is not enabled or available for this API key/tier, automatically fallback to dall-e-2
+    if (!response.ok && activeModel === 'dall-e-3') {
+      let errDetail = '';
+      try {
+        const cloned = response.clone();
+        const errJson = await cloned.json();
+        errDetail = errJson?.error?.message || JSON.stringify(errJson);
+      } catch {
+        try {
+          const cloned = response.clone();
+          errDetail = await cloned.text();
+        } catch {
+          errDetail = '';
+        }
+      }
+
+      if (errDetail.toLowerCase().includes('does not exist') || errDetail.toLowerCase().includes('not found') || errDetail.toLowerCase().includes('model')) {
+        this.logger.warn(`[AI_PROVIDER_FALLBACK] '${activeModel}' is not enabled for this OpenAI account (${errDetail}). Retrying with 'dall-e-2'...`);
+        try {
+          const fallbackRes = await callOpenAiImages('dall-e-2');
+          if (fallbackRes.ok) {
+            response = fallbackRes;
+            activeModel = 'dall-e-2';
+            this.logger.log(`[AI_PROVIDER_FALLBACK] Successfully generated image using fallback model 'dall-e-2'`);
+          } else {
+            // Keep original or fallback response
+            response = fallbackRes;
+          }
+        } catch (fallbackErr: any) {
+          this.logger.warn(`[AI_PROVIDER_FALLBACK] Fallback to dall-e-2 failed: ${fallbackErr?.message}`);
+        }
+      }
     }
 
     if (!response.ok) {
@@ -305,7 +346,7 @@ Special Instructions: ${instructions || 'None'}`;
       } catch {
         errDetail = await response.text();
       }
-      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status}: ${errDetail}`);
+      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status} (model=${activeModel}): ${errDetail}`);
       throw new BadRequestException(`OpenAI image generation failed: ${errDetail}`);
     }
 
