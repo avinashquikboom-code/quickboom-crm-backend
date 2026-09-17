@@ -247,10 +247,194 @@ export class AttendanceService {
     };
   }
 
+  /**
+   * Applies the "Forgot Punch-Out" / "Auto Check-out" rule to a single open attendance record.
+   * Sets punchOut to scheduled shift/office end time (or standard hours) without creating duplicate records.
+   * If punch in was on time, preserves status: PRESENT and isLate: false (NO Late Mark).
+   */
+  async applyAutoCheckOutForRecord(tx: any, attendance: any, policy?: any, shift?: any) {
+    if (!attendance || !attendance.punchIn || attendance.punchOut) {
+      return attendance;
+    }
+
+    const client = tx || this.prisma;
+    const punchInDate = new Date(attendance.punchIn);
+    const now = new Date();
+
+    const activePolicy = policy || (await this.getActiveAttendancePolicy(attendance.customerId, attendance.officeId));
+
+    let activeShift = shift;
+    if (!activeShift && attendance.employeeId) {
+      const emp = await client.employee.findUnique({
+        where: { id: attendance.employeeId },
+        include: { shift: true },
+      });
+      activeShift = emp?.shift;
+    }
+
+    // Determine scheduled checkout time on the date of punchIn
+    const { dateStr } = getBusinessDayRange(punchInDate);
+    const [year, month, day] = dateStr.split('-').map(Number);
+
+    const endTimeStr = activeShift?.endTime || activePolicy.officeEndTime || '18:30';
+    const [endHour, endMin] = endTimeStr.split(':').map(Number);
+
+    let scheduledEndTime = new Date(year, month - 1, day, endHour || 18, endMin || 30, 0, 0);
+
+    // If scheduled end time is at or before punchIn, fallback to standard working hours from punchIn
+    if (scheduledEndTime.getTime() <= punchInDate.getTime()) {
+      const standardHours = activePolicy.workingHoursPerDay || 8.0;
+      scheduledEndTime = new Date(punchInDate.getTime() + standardHours * 60 * 60 * 1000);
+    }
+
+    // Do not set a checkout time in the future beyond now
+    if (scheduledEndTime.getTime() > now.getTime()) {
+      scheduledEndTime = now;
+    }
+
+    // Fetch breaks for this attendance record
+    const breaks = await client.attendanceBreak.findMany({
+      where: { attendanceId: attendance.id },
+      orderBy: { breakStart: 'asc' },
+    });
+
+    // Close any running breaks
+    let totalBreakMinutes = 0;
+    for (const b of breaks) {
+      if (!b.breakEnd) {
+        let bEnd = new Date(new Date(b.breakStart).getTime() + (activePolicy.maxBreakDurationMins || 60) * 60 * 1000);
+        if (bEnd.getTime() > scheduledEndTime.getTime()) {
+          bEnd = scheduledEndTime;
+        }
+        if (bEnd.getTime() < new Date(b.breakStart).getTime()) {
+          bEnd = new Date(b.breakStart);
+        }
+        const bDuration = Math.max(0, Math.round((bEnd.getTime() - new Date(b.breakStart).getTime()) / (1000 * 60)));
+        await client.attendanceBreak.update({
+          where: { id: b.id },
+          data: {
+            breakEnd: bEnd,
+            duration: bDuration,
+          },
+        });
+        totalBreakMinutes += bDuration;
+      } else {
+        const bDuration =
+          b.duration ||
+          Math.max(0, Math.round((new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60)));
+        totalBreakMinutes += bDuration;
+      }
+    }
+
+    const totalBreakHours = Math.round((totalBreakMinutes / 60) * 100) / 100;
+
+    // Gross and Net working minutes
+    const grossElapsedMs = scheduledEndTime.getTime() - punchInDate.getTime();
+    const grossElapsedMinutes = Math.max(0, Math.round(grossElapsedMs / (1000 * 60)));
+    const netWorkingMinutes = Math.max(0, grossElapsedMinutes - totalBreakMinutes);
+    const actualWorkingHours = Math.round((netWorkingMinutes / 60) * 100) / 100;
+
+    // Status Determination:
+    // IMPORTANT: Keep Late Arrival Grace Period ONLY for late punch in.
+    // If employee punched in on time, missing punch-out must NOT trigger a late mark.
+    const wasPunchInLate = Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE);
+    let finalStatus: AttendanceStatus;
+
+    if (wasPunchInLate) {
+      if (actualWorkingHours < (activePolicy.minWorkingHoursForHalfDay || 4.0)) {
+        finalStatus = AttendanceStatus.HALF_DAY;
+      } else {
+        finalStatus = AttendanceStatus.LATE;
+      }
+    } else {
+      if (actualWorkingHours >= (activePolicy.minWorkingHoursForHalfDay || 4.0)) {
+        finalStatus = AttendanceStatus.PRESENT;
+      } else if (actualWorkingHours > 0) {
+        finalStatus = AttendanceStatus.HALF_DAY;
+      } else {
+        finalStatus = AttendanceStatus.PRESENT;
+      }
+    }
+
+    const updated = await client.attendance.update({
+      where: { id: attendance.id },
+      data: {
+        punchOut: scheduledEndTime,
+        workingHours: actualWorkingHours,
+        workingMinutes: netWorkingMinutes,
+        breakDuration: totalBreakHours,
+        status: finalStatus,
+        isLate: wasPunchInLate,
+        lateMinutes: wasPunchInLate ? (attendance.lateMinutes || 0) : 0,
+        locationOut: 'Auto Check-out (Forgot Punch-Out)',
+      },
+    });
+
+    console.log(`[ATTENDANCE AUTO_CHECKOUT]
+employeeId: ${attendance.employeeId}
+attendanceId: ${attendance.id}
+punchIn: ${punchInDate.toISOString()}
+autoPunchOut: ${scheduledEndTime.toISOString()}
+workingHours: ${actualWorkingHours}
+status: ${finalStatus}
+wasLate: ${wasPunchInLate}`);
+
+    return updated;
+  }
+
+  /**
+   * Processes all unclosed attendances that either:
+   * 1. Belong to a past business day (date < todayStart), OR
+   * 2. Have exceeded the safety hours window (default: 12 hours)
+   */
+  async processAutoCheckOuts(options?: { customerId?: number; employeeId?: number; upToDate?: Date }) {
+    const now = options?.upToDate || new Date();
+    const { start: todayStart } = getBusinessDayRange(now);
+
+    const safetyHours = 12; // Safety hours threshold
+    const safetyThresholdDate = new Date(now.getTime() - safetyHours * 60 * 60 * 1000);
+
+    const openAttendances = await this.prisma.attendance.findMany({
+      where: {
+        ...(options?.customerId ? { customerId: options.customerId } : {}),
+        ...(options?.employeeId ? { employeeId: options.employeeId } : {}),
+        punchIn: { not: null },
+        punchOut: null,
+        OR: [
+          { date: { lt: todayStart } },
+          { punchIn: { lte: safetyThresholdDate } },
+        ],
+      },
+      include: {
+        breaks: true,
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    if (!openAttendances || openAttendances.length === 0) {
+      return [];
+    }
+
+    const updatedRecords: any[] = [];
+    for (const att of openAttendances) {
+      try {
+        const res = await this.applyAutoCheckOutForRecord(this.prisma, att);
+        updatedRecords.push(res);
+      } catch (err: any) {
+        console.error(`[AUTO_CHECKOUT_ERROR] Error processing attendance ${att.id}:`, err?.message);
+      }
+    }
+
+    return updatedRecords;
+  }
+
   async checkIn(user: any, customerId: number | string | undefined, dto: PunchAttendanceDto) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
     const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
+
+    // Gracefully handle previous day's or expired open punch records via Auto Check-out
+    await this.processAutoCheckOuts({ employeeId: employee.id });
 
     // Validate GPS inputs
     if (
@@ -344,8 +528,10 @@ isRemoteActive: ${isRemoteActive}`);
       });
     }
 
-    // Determine status based on Policy
+    // Determine status based on Policy: Late arrival grace period strictly applies to punch-in
     let attendanceStatus: AttendanceStatus = AttendanceStatus.PRESENT;
+    let isLatePunchIn = false;
+    let lateMinutesCount = 0;
     try {
       const [startHour, startMin] = (policy.officeStartTime || '09:30').split(':').map(Number);
       const scheduledStartTime = new Date(now);
@@ -358,6 +544,8 @@ isRemoteActive: ${isRemoteActive}`);
       const lateLimit = new Date(scheduledStartTime.getTime() + lateThresholdMinutes * 60 * 1000);
 
       if (now > graceLimit) {
+        isLatePunchIn = true;
+        lateMinutesCount = Math.max(0, Math.round((now.getTime() - scheduledStartTime.getTime()) / (1000 * 60)));
         if (now > lateLimit && policy.lateRuleAction === 'HALF_DAY') {
           attendanceStatus = AttendanceStatus.HALF_DAY;
         } else {
@@ -392,6 +580,8 @@ isRemoteActive: ${isRemoteActive}`);
             punchIn: now,
             punchOut: null,
             status: attendanceStatus,
+            isLate: isLatePunchIn,
+            lateMinutes: lateMinutesCount,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -411,6 +601,8 @@ isRemoteActive: ${isRemoteActive}`);
             date: now,
             punchIn: now,
             status: attendanceStatus,
+            isLate: isLatePunchIn,
+            lateMinutes: lateMinutesCount,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -586,6 +778,8 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           workingMinutes: netWorkingMinutes,
           breakDuration: totalBreakHours,
           status: finalStatus,
+          isLate: Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE),
+          lateMinutes: attendance.lateMinutes || 0,
           locationOut: locationOutStr,
           punchOutLatitude: dto.latitude ?? null,
           punchOutLongitude: dto.longitude ?? null,
@@ -656,6 +850,7 @@ result: SUCCESS`);
 
   async getTodayAttendance(user: any, customerId: number | string | undefined) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
+    await this.processAutoCheckOuts({ employeeId: employee.id });
     const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange();
 
     const todayAtt = await this.prisma.attendance.findFirst({
@@ -731,6 +926,7 @@ result: SUCCESS`);
     query: QueryAttendanceHistoryDto,
   ) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
+    await this.processAutoCheckOuts({ employeeId: employee.id });
 
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
@@ -907,6 +1103,7 @@ result: SUCCESS`);
 
   async getMyAttendanceStatus(user: any, customerId: number | string | undefined) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
+    await this.processAutoCheckOuts({ employeeId: employee.id });
     const office = await this.resolveOfficeForEmployee(employee);
     const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange();
 
@@ -1103,6 +1300,7 @@ result: SUCCESS`);
 
   async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string) {
     const customerId = await this.resolveCustomerId(user, customerIdParam);
+    await this.processAutoCheckOuts({ customerId });
     const { start: startOfDay, end: endOfDay } = getBusinessDayRange(dateParam);
 
     const [activeEmployees, offices, attendances, locations] = await Promise.all([

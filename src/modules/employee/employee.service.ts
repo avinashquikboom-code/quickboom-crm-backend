@@ -643,6 +643,99 @@ export class EmployeeService {
     return branches;
   }
 
+  /**
+   * Applies Auto Check-out to open attendance records that either:
+   * 1. Belong to a previous day, OR
+   * 2. Exceeded the 12-hour safety window
+   */
+  private async autoCheckOutOpenAttendances(customerId?: number) {
+    const now = new Date();
+    const { start: todayStart } = getBusinessDayRange(now);
+    const safetyHoursMs = 12 * 60 * 60 * 1000;
+    const safetyDate = new Date(now.getTime() - safetyHoursMs);
+
+    const openRecords = await this.prisma.attendance.findMany({
+      where: {
+        ...(customerId ? { customerId } : {}),
+        punchIn: { not: null },
+        punchOut: null,
+        OR: [
+          { date: { lt: todayStart } },
+          { punchIn: { lte: safetyDate } },
+        ],
+      },
+      include: {
+        breaks: true,
+        employee: { include: { shift: true } },
+      },
+    });
+
+    for (const att of openRecords) {
+      try {
+        const punchInDate = new Date(att.punchIn!);
+        const { dateStr } = getBusinessDayRange(punchInDate);
+        const [year, month, day] = dateStr.split('-').map(Number);
+
+        const policy = await this.prisma.attendancePolicy.findFirst({
+          where: { customerId: att.customerId, isActive: true },
+          orderBy: { officeId: 'desc' },
+        });
+
+        const endTimeStr = att.employee?.shift?.endTime || policy?.officeEndTime || '18:30';
+        const [endHour, endMin] = endTimeStr.split(':').map(Number);
+        let scheduledEnd = new Date(year, month - 1, day, endHour || 18, endMin || 30, 0, 0);
+
+        if (scheduledEnd.getTime() <= punchInDate.getTime()) {
+          scheduledEnd = new Date(punchInDate.getTime() + (policy?.workingHoursPerDay || 8.0) * 60 * 60 * 1000);
+        }
+        if (scheduledEnd.getTime() > now.getTime()) {
+          scheduledEnd = now;
+        }
+
+        let totalBreakMins = 0;
+        for (const b of att.breaks) {
+          if (!b.breakEnd) {
+            let bEnd = new Date(new Date(b.breakStart).getTime() + (policy?.maxBreakDurationMins || 60) * 60 * 1000);
+            if (bEnd.getTime() > scheduledEnd.getTime()) bEnd = scheduledEnd;
+            if (bEnd.getTime() < new Date(b.breakStart).getTime()) bEnd = new Date(b.breakStart);
+            const bDuration = Math.max(0, Math.round((bEnd.getTime() - new Date(b.breakStart).getTime()) / (1000 * 60)));
+            await this.prisma.attendanceBreak.update({
+              where: { id: b.id },
+              data: { breakEnd: bEnd, duration: bDuration },
+            });
+            totalBreakMins += bDuration;
+          } else {
+            totalBreakMins += (b.duration || Math.max(0, Math.round((new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60))));
+          }
+        }
+
+        const grossMins = Math.max(0, Math.round((scheduledEnd.getTime() - punchInDate.getTime()) / (1000 * 60)));
+        const netWorkingMins = Math.max(0, grossMins - totalBreakMins);
+        const actualHours = Math.round((netWorkingMins / 60) * 100) / 100;
+        const wasPunchInLate = Boolean(att.isLate || att.status === 'LATE');
+        const finalStatus = wasPunchInLate
+          ? (actualHours < (policy?.minWorkingHoursForHalfDay || 4.0) ? 'HALF_DAY' : 'LATE')
+          : (actualHours >= (policy?.minWorkingHoursForHalfDay || 4.0) ? 'PRESENT' : (actualHours > 0 ? 'HALF_DAY' : 'PRESENT'));
+
+        await this.prisma.attendance.update({
+          where: { id: att.id },
+          data: {
+            punchOut: scheduledEnd,
+            workingHours: actualHours,
+            workingMinutes: netWorkingMins,
+            breakDuration: Math.round((totalBreakMins / 60) * 100) / 100,
+            status: finalStatus as any,
+            isLate: wasPunchInLate,
+            lateMinutes: wasPunchInLate ? (att.lateMinutes || 0) : 0,
+            locationOut: 'Auto Check-out (Forgot Punch-Out)',
+          },
+        });
+      } catch (err: any) {
+        console.error(`[AUTO_CHECKOUT_ERR] EmployeeService failed to auto-checkout ${att.id}:`, err?.message);
+      }
+    }
+  }
+
   async getLiveAttendance(
     customerId?: number | string,
     isSuperAdmin = false,
@@ -684,6 +777,9 @@ export class EmployeeService {
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for live attendance access');
     }
+
+    // Run auto check-out for any open attendances
+    await this.autoCheckOutOpenAttendances(whereCust.customerId);
 
     if (branchFilter && branchFilter !== 'ALL') {
       whereEmp.branch = branchFilter;
@@ -782,7 +878,7 @@ export class EmployeeService {
             breakStartStr = formatTimeInTimezone(activeBreak.breakStart);
           } else {
             status = att.status === 'LATE' ? 'LATE' : (att.status === 'HALF_DAY' ? 'HALF_DAY' : 'PRESENT');
-            if (att.status === 'LATE') lateCount++;
+            if (att.status === 'LATE' && att.isLate) lateCount++;
             presentCount++;
             oStat.present++;
           }
@@ -2373,6 +2469,9 @@ export class EmployeeService {
       };
     }
 
+    // Auto-checkout any open attendances before listing
+    await this.autoCheckOutOpenAttendances(where.customerId);
+
     const [records, total] = await Promise.all([
       this.prisma.attendance.findMany({
         where,
@@ -2450,6 +2549,7 @@ export class EmployeeService {
       const grossWorkingFormatted = formatDurationHoursMinutes(grossWorkingMinutes);
       const netWorkingFormatted = formatDurationHoursMinutes(netWorkingMinutes);
       const totalBreakFormatted = formatDurationHoursMinutes(breakMins);
+      const isAutoCheckout = Boolean(a.locationOut?.includes('Auto Check-out') || a.locationOut?.includes('Forgot Punch-Out'));
 
       return {
         id: String(a.id),
@@ -2482,6 +2582,11 @@ export class EmployeeService {
         netWorkingHours: netWorkingFormatted,
         status: a.status,
         location: a.locationIn || 'Office GPS',
+        locationIn: a.locationIn || null,
+        locationOut: a.locationOut || null,
+        isAutoCheckout,
+        isLate: Boolean(a.isLate),
+        lateMinutes: a.lateMinutes || 0,
       };
     });
 

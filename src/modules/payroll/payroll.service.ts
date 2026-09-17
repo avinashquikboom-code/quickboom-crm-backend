@@ -17,6 +17,93 @@ export class PayrollService {
     return defaultCust ? defaultCust.id : 1;
   }
 
+  private async autoCheckOutOpenAttendances(customerId: number, periodEnd: Date) {
+    const now = new Date();
+    const safetyHoursMs = 12 * 60 * 60 * 1000;
+    const safetyDate = new Date(now.getTime() - safetyHoursMs);
+
+    const openRecords = await this.prisma.attendance.findMany({
+      where: {
+        customerId,
+        punchIn: { not: null },
+        punchOut: null,
+        OR: [
+          { date: { lte: periodEnd } },
+          { punchIn: { lte: safetyDate } },
+        ],
+      },
+      include: {
+        breaks: true,
+        employee: { include: { shift: true } },
+      },
+    });
+
+    for (const att of openRecords) {
+      try {
+        const punchInDate = new Date(att.punchIn!);
+        const year = punchInDate.getFullYear();
+        const month = punchInDate.getMonth();
+        const day = punchInDate.getDate();
+
+        const policy = await this.prisma.attendancePolicy.findFirst({
+          where: { customerId: att.customerId, isActive: true },
+          orderBy: { officeId: 'desc' },
+        });
+
+        const endTimeStr = att.employee?.shift?.endTime || policy?.officeEndTime || '18:30';
+        const [endHour, endMin] = endTimeStr.split(':').map(Number);
+        let scheduledEnd = new Date(year, month, day, endHour || 18, endMin || 30, 0, 0);
+
+        if (scheduledEnd.getTime() <= punchInDate.getTime()) {
+          scheduledEnd = new Date(punchInDate.getTime() + (policy?.workingHoursPerDay || 8.0) * 60 * 60 * 1000);
+        }
+        if (scheduledEnd.getTime() > now.getTime()) {
+          scheduledEnd = now;
+        }
+
+        let totalBreakMins = 0;
+        for (const b of att.breaks) {
+          if (!b.breakEnd) {
+            let bEnd = new Date(new Date(b.breakStart).getTime() + (policy?.maxBreakDurationMins || 60) * 60 * 1000);
+            if (bEnd.getTime() > scheduledEnd.getTime()) bEnd = scheduledEnd;
+            if (bEnd.getTime() < new Date(b.breakStart).getTime()) bEnd = new Date(b.breakStart);
+            const bDuration = Math.max(0, Math.round((bEnd.getTime() - new Date(b.breakStart).getTime()) / (1000 * 60)));
+            await this.prisma.attendanceBreak.update({
+              where: { id: b.id },
+              data: { breakEnd: bEnd, duration: bDuration },
+            });
+            totalBreakMins += bDuration;
+          } else {
+            totalBreakMins += (b.duration || Math.max(0, Math.round((new Date(b.breakEnd).getTime() - new Date(b.breakStart).getTime()) / (1000 * 60))));
+          }
+        }
+
+        const grossMins = Math.max(0, Math.round((scheduledEnd.getTime() - punchInDate.getTime()) / (1000 * 60)));
+        const netWorkingMins = Math.max(0, grossMins - totalBreakMins);
+        const actualHours = Math.round((netWorkingMins / 60) * 100) / 100;
+        const wasPunchInLate = Boolean(att.isLate || att.status === 'LATE');
+        const finalStatus = wasPunchInLate
+          ? (actualHours < (policy?.minWorkingHoursForHalfDay || 4.0) ? 'HALF_DAY' : 'LATE')
+          : (actualHours >= (policy?.minWorkingHoursForHalfDay || 4.0) ? 'PRESENT' : (actualHours > 0 ? 'HALF_DAY' : 'PRESENT'));
+
+        await this.prisma.attendance.update({
+          where: { id: att.id },
+          data: {
+            punchOut: scheduledEnd,
+            locationOut: 'Auto Check-out (Forgot Punch-Out)',
+            workingMinutes: netWorkingMins,
+            workingHours: actualHours,
+            status: finalStatus,
+            isLate: wasPunchInLate,
+            lateMinutes: wasPunchInLate ? (att.lateMinutes || 0) : 0,
+          },
+        });
+      } catch (err) {
+        // Continue loop
+      }
+    }
+  }
+
   async calculatePayroll(customerId: number | string | undefined, month: number, year: number, departmentId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numDeptId = departmentId && !isNaN(Number(departmentId)) ? Number(departmentId) : undefined;
@@ -24,6 +111,9 @@ export class PayrollService {
     // Period date bounds
     const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
     const periodEnd = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // Auto-checkout any open attendance records in or before this period
+    await this.autoCheckOutOpenAttendances(numCustomerId, periodEnd);
 
     // 1. Fetch Policy for Customer
     const [payrollPolicy, salaryPolicy] = await Promise.all([
