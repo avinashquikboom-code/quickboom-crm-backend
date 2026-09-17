@@ -731,24 +731,23 @@ export class LeaveService {
           remaining: balance.remainingDays,
         },
       };
+    }).then((result) => {
+      // Dispatch push notification AFTER transaction commits (non-blocking, never fails the API)
+      if (this.notificationService && result?.data) {
+        const leaveData = result.data;
+        const isHalfDay =
+          Number(leaveData.days) === 0.5 ||
+          (leaveData.reason && leaveData.reason.toLowerCase().includes('half')) ||
+          Number(leaveData.days) < 1;
+
+        this.notificationService
+          .sendLeaveApprovalNotification(leaveData.employeeId, leaveData, isHalfDay)
+          .catch((err) => {
+            this.logger.error(`Failed to send leave approval push notification: ${err?.message}`);
+          });
+      }
+      return result;
     });
-
-    // Dispatch Push Notification to Employee (Outside app / system notification)
-    if (this.notificationService && result?.data) {
-      const leaveData = result.data;
-      const isHalfDay =
-        Number(leaveData.days) === 0.5 ||
-        (leaveData.reason && leaveData.reason.toLowerCase().includes('half')) ||
-        Number(leaveData.days) < 1;
-
-      this.notificationService
-        .sendLeaveApprovalNotification(leaveData.employeeId, leaveData, isHalfDay)
-        .catch((err) => {
-          this.logger.error(`Failed to send leave approval push notification: ${err?.message}`);
-        });
-    }
-
-    return result;
   }
 
   async rejectLeave(
@@ -785,6 +784,7 @@ export class LeaveService {
           rejectionReason: dto?.rejectionReason?.trim() || 'Declined by Administrator / HR',
           approvedById: user?.id || null,
         },
+        include: { leaveType: true },
       });
 
       return {
@@ -792,6 +792,21 @@ export class LeaveService {
         message: 'Leave request rejected successfully. No balance was deducted.',
         data: updated,
       };
+    }).then((result) => {
+      // Dispatch push notification AFTER transaction commits
+      if (this.notificationService && result?.data) {
+        const leaveData = result.data;
+        const isHalfDay =
+          Number(leaveData.days) === 0.5 ||
+          Number(leaveData.days) < 1;
+
+        this.notificationService
+          .sendLeaveRejectionNotification(leaveData.employeeId, leaveData, isHalfDay)
+          .catch((err) => {
+            this.logger.error(`Failed to send leave rejection push notification: ${err?.message}`);
+          });
+      }
+      return result;
     });
   }
 

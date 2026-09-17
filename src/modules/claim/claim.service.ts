@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateClaimDto, UpdateClaimDto, ApproveClaimDto, RejectClaimDto, PayClaimDto } from './dto/claim.dto';
 import { ClaimStatus } from '@prisma/client';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class ClaimService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ClaimService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private resolveCustomerId(customerId: any): number {
     const num = Number(customerId);
@@ -264,7 +270,7 @@ export class ClaimService {
 
     const approvedAmount = dto.approvedAmount !== undefined && dto.approvedAmount !== null ? dto.approvedAmount : existing.amount;
 
-    return this.prisma.employeeClaim.update({
+    const updated = await this.prisma.employeeClaim.update({
       where: { id: Number(id) },
       data: {
         status: ClaimStatus.APPROVED,
@@ -274,6 +280,15 @@ export class ClaimService {
         reviewedAt: new Date(),
       },
     });
+
+    // Fire notification non-blocking
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendClaimNotification(updated.employeeId, updated, true)
+        .catch((err) => this.logger.error(`Claim approve notification failed: ${err?.message}`));
+    }
+
+    return updated;
   }
 
   async reject(customerId: any, id: string | number, dto: RejectClaimDto, reviewer?: any) {
@@ -284,7 +299,7 @@ export class ClaimService {
       return existing;
     }
 
-    return this.prisma.employeeClaim.update({
+    const updated = await this.prisma.employeeClaim.update({
       where: { id: Number(id) },
       data: {
         status: ClaimStatus.REJECTED,
@@ -294,6 +309,15 @@ export class ClaimService {
         reviewedAt: new Date(),
       },
     });
+
+    // Fire notification non-blocking
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendClaimNotification(updated.employeeId, updated, false)
+        .catch((err) => this.logger.error(`Claim reject notification failed: ${err?.message}`));
+    }
+
+    return updated;
   }
 
   async markAsPaid(customerId: any, id: string | number, dto?: PayClaimDto) {

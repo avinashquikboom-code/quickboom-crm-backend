@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLoanDto, UpdateLoanDto, ApproveLoanDto, RejectLoanDto } from './dto/loan.dto';
 import { LoanStatus } from '@prisma/client';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class LoanService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(LoanService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private resolveCustomerId(customerId: any): number {
     const num = Number(customerId);
@@ -261,7 +267,7 @@ export class LoanService {
     const monthlyEmi = dto.monthlyEmi || Math.round((approvedAmount / termMonths) * 100) / 100;
     const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
 
-    return this.prisma.employeeLoan.update({
+    const updated = await this.prisma.employeeLoan.update({
       where: { id: Number(id) },
       data: {
         status: LoanStatus.ACTIVE,
@@ -275,6 +281,15 @@ export class LoanService {
         notes: dto.notes || existing.notes,
       },
     });
+
+    // Fire notification non-blocking
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendLoanNotification(updated.employeeId, updated, true)
+        .catch((err) => this.logger.error(`Loan approve notification failed: ${err?.message}`));
+    }
+
+    return updated;
   }
 
   async reject(customerId: any, id: string | number, dto: RejectLoanDto, reviewer?: any) {
@@ -285,7 +300,7 @@ export class LoanService {
       return existing;
     }
 
-    return this.prisma.employeeLoan.update({
+    const updated = await this.prisma.employeeLoan.update({
       where: { id: Number(id) },
       data: {
         status: LoanStatus.REJECTED,
@@ -294,6 +309,15 @@ export class LoanService {
         approvedByName: reviewer ? `${reviewer.firstName || ''} ${reviewer.lastName || ''}`.trim() : 'HR Administrator',
       },
     });
+
+    // Fire notification non-blocking
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendLoanNotification(updated.employeeId, updated, false)
+        .catch((err) => this.logger.error(`Loan reject notification failed: ${err?.message}`));
+    }
+
+    return updated;
   }
 
   async remove(customerId: any, id: string | number) {

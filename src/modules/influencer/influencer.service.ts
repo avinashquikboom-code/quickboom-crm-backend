@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -27,6 +28,7 @@ import {
 } from './dto/influencer.dto';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class InfluencerService {
@@ -35,6 +37,7 @@ export class InfluencerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrationSettings: IntegrationSettingsService,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   // =========================================================================
@@ -1516,6 +1519,13 @@ export class InfluencerService {
     const { passwordHash: _, ...safe } = updated;
     this.logger.log(`[INFLUENCER_APPROVED] Admin approved creator #${id} (${updated.name})`);
 
+    // Fire notification non-blocking
+    if (this.notificationService) {
+      this.notificationService
+        .sendInfluencerApplicationNotification(updated, true)
+        .catch((err) => this.logger.error(`Influencer approve notification failed: ${err?.message}`));
+    }
+
     return {
       success: true,
       message: `Influencer ${updated.name} has been approved and is now live in the mobile hub`,
@@ -1548,6 +1558,13 @@ export class InfluencerService {
 
     const { passwordHash: _, ...safe } = updated;
     this.logger.log(`[INFLUENCER_REJECTED] Admin rejected creator #${id} (${updated.name}) reason: "${dto.reason}"`);
+
+    // Fire notification non-blocking
+    if (this.notificationService) {
+      this.notificationService
+        .sendInfluencerApplicationNotification(updated, false)
+        .catch((err) => this.logger.error(`Influencer reject notification failed: ${err?.message}`));
+    }
 
     return {
       success: true,

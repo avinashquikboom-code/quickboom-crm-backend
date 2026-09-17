@@ -4,6 +4,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -17,10 +19,16 @@ import {
   getBusinessDayRange,
   getBusinessDate,
 } from '../../common/utils/timezone.util';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class RemoteWorkService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(RemoteWorkService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     if (typeof customerId === 'number' && !isNaN(customerId)) {
@@ -411,6 +419,13 @@ export class RemoteWorkService {
       include: { employee: true },
     });
 
+    // Fire notification non-blocking after DB update succeeds
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendRemoteWorkNotification(updated.employeeId, updated, true)
+        .catch((err) => this.logger.error(`Remote-work approve notification failed: ${err?.message}`));
+    }
+
     return {
       success: true,
       message: `Remote work request approved for ${updated.employee?.firstName || 'Employee'}.`,
@@ -468,6 +483,13 @@ export class RemoteWorkService {
       },
       include: { employee: true },
     });
+
+    // Fire notification non-blocking after DB update succeeds
+    if (this.notificationService && updated.employeeId) {
+      this.notificationService
+        .sendRemoteWorkNotification(updated.employeeId, updated, false)
+        .catch((err) => this.logger.error(`Remote-work reject notification failed: ${err?.message}`));
+    }
 
     return {
       success: true,

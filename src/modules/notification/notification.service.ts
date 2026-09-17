@@ -505,4 +505,228 @@ export class NotificationService {
       return null;
     }
   }
+
+  /**
+   * Send Leave Rejection Notification to Employee
+   */
+  async sendLeaveRejectionNotification(employeeId: number, leave: any, isHalfDay = false) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send leave rejection notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      const leaveTypeName = leave.leaveType?.name || 'Leave';
+      const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
+      const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
+      const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+      const reasonText = leave.rejectionReason ? ` Reason: ${leave.rejectionReason}` : '';
+
+      const title = isHalfDay ? 'Half-Day Leave Rejected' : 'Leave Request Rejected';
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been rejected.${reasonText}`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: 'LEAVE_REJECTED',
+        data: {
+          type: 'LEAVE',
+          leaveId: String(leave.id),
+          leaveType: leaveTypeName,
+          status: 'REJECTED',
+          isHalfDay: String(isHalfDay),
+          dates: dateText,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending leave rejection notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Remote Work Approval/Rejection Notification to Employee
+   */
+  async sendRemoteWorkNotification(employeeId: number, remoteRequest: any, approved: boolean) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send remote-work notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      const fromStr = remoteRequest.fromDate
+        ? new Date(remoteRequest.fromDate).toISOString().split('T')[0]
+        : '';
+      const toStr = remoteRequest.toDate
+        ? new Date(remoteRequest.toDate).toISOString().split('T')[0]
+        : '';
+      const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+      const reasonText =
+        !approved && remoteRequest.rejectionReason ? ` Reason: ${remoteRequest.rejectionReason}` : '';
+
+      const title = approved ? 'Remote Work Request Approved' : 'Remote Work Request Rejected';
+      const body = `Your remote work request for ${dateText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED',
+        data: {
+          type: 'REMOTE_WORK',
+          remoteRequestId: String(remoteRequest.id),
+          status: approved ? 'APPROVED' : 'REJECTED',
+          dates: dateText,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending remote-work notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Claim Approval/Rejection Notification to Employee
+   */
+  async sendClaimNotification(employeeId: number, claim: any, approved: boolean) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send claim notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      const category = claim.category || 'Expense';
+      const amountStr =
+        claim.approvedAmount != null
+          ? `₹${Number(claim.approvedAmount).toLocaleString('en-IN')}`
+          : claim.amount != null
+            ? `₹${Number(claim.amount).toLocaleString('en-IN')}`
+            : '';
+      const amountText = amountStr ? ` (${amountStr})` : '';
+      const reasonText = !approved && claim.rejectionReason ? ` Reason: ${claim.rejectionReason}` : '';
+
+      const title = approved ? 'Claim Request Approved' : 'Claim Request Rejected';
+      const body = `Your ${category} claim request #${claim.id}${amountText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED',
+        data: {
+          type: 'CLAIM',
+          claimId: String(claim.id),
+          category,
+          status: approved ? 'APPROVED' : 'REJECTED',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending claim notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Loan Approval/Rejection Notification to Employee
+   */
+  async sendLoanNotification(employeeId: number, loan: any, approved: boolean) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true, firstName: true },
+      });
+
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send loan notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+
+      const amountStr =
+        loan.approvedAmount != null
+          ? `₹${Number(loan.approvedAmount).toLocaleString('en-IN')}`
+          : loan.loanAmount != null
+            ? `₹${Number(loan.loanAmount).toLocaleString('en-IN')}`
+            : '';
+      const amountText = amountStr ? ` of ${amountStr}` : '';
+      const reasonText = !approved && loan.rejectionReason ? ` Reason: ${loan.rejectionReason}` : '';
+
+      const title = approved ? 'Loan Request Approved' : 'Loan Request Rejected';
+      const body = `Your loan request #${loan.id}${amountText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title,
+        body,
+        type: approved ? 'LOAN_APPROVED' : 'LOAN_REJECTED',
+        data: {
+          type: 'LOAN',
+          loanId: String(loan.id),
+          status: approved ? 'APPROVED' : 'REJECTED',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending loan notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send Influencer Application Approval/Rejection Notification to the Influencer user
+   *
+   * Influencers have their own user account (userId field on the Influencer record).
+   * We use it directly so the notification lands on the correct device.
+   */
+  async sendInfluencerApplicationNotification(influencer: any, approved: boolean) {
+    try {
+      if (!influencer.userId) {
+        this.logger.warn(`Cannot send influencer notification: influencer #${influencer.id} has no linked userId`);
+        return null;
+      }
+
+      const name = influencer.name || 'Creator';
+      const reasonText =
+        !approved && influencer.rejectionReason ? ` Reason: ${influencer.rejectionReason}` : '';
+
+      const title = approved ? 'Application Approved! 🎉' : 'Application Status Update';
+      const body = approved
+        ? `Congratulations ${name}! Your influencer application has been approved. You are now live on the platform.`
+        : `Your influencer application has been reviewed and rejected.${reasonText}`;
+
+      return await this.sendPushNotification({
+        userId: influencer.userId,
+        title,
+        body,
+        type: approved ? 'INFLUENCER_APPROVED' : 'INFLUENCER_REJECTED',
+        data: {
+          type: 'INFLUENCER',
+          influencerId: String(influencer.id),
+          status: approved ? 'APPROVED' : 'REJECTED',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending influencer application notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
 }
+
