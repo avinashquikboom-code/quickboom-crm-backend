@@ -76,7 +76,7 @@ export class EmployeeController {
       employmentType,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
-      excludeAdmins: excludeAdmins === 'true',
+      excludeAdmins: excludeAdmins !== 'false',
     });
   }
 

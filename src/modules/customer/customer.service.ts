@@ -9,7 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RoleType } from '@prisma/client';
+import { Prisma, RoleType } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -21,6 +21,47 @@ import { QBIdGenerator } from '../auth/qb-id.generator';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import { ResetCustomerDataDto } from './dto/reset-customer.dto';
+
+/**
+ * Filter conditions to strictly exclude Super Admin, Admin, and system accounts
+ * from ever being returned or treated as customers.
+ */
+export const SYSTEM_CUSTOMER_EXCLUSIONS: Prisma.CustomerWhereInput[] = [
+  // 1. Exclude customer records linked to Super Admin or Admin users
+  {
+    users: {
+      some: {
+        userRoles: {
+          some: {
+            role: {
+              OR: [
+                { type: RoleType.SUPER_ADMIN },
+                { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'System Admin'] } },
+              ],
+            },
+          },
+        },
+      },
+    },
+  },
+  // 2. Exclude customer records with explicit platform admin roles
+  {
+    roles: {
+      some: {
+        OR: [
+          { type: RoleType.SUPER_ADMIN },
+          { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'System Admin'] } },
+        ],
+      },
+    },
+  },
+  // 3. Exclude non-customer system account types
+  {
+    customerType: {
+      in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'],
+    },
+  },
+];
 
 @Injectable()
 export class CustomerService {
@@ -69,6 +110,7 @@ export class CustomerService {
 
     const where: any = {
       deletedAt: null,
+      NOT: SYSTEM_CUSTOMER_EXCLUSIONS,
     };
 
     if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
@@ -134,7 +176,7 @@ export class CustomerService {
         },
       }),
       this.prisma.customer.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, NOT: SYSTEM_CUSTOMER_EXCLUSIONS },
         include: {
           subscriptions: {
             where: { deletedAt: null },
@@ -254,20 +296,25 @@ export class CustomerService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+    const baseWhere: any = {
+      deletedAt: null,
+      NOT: SYSTEM_CUSTOMER_EXCLUSIONS,
+    };
+
     const [totalCustomers, activeCustomers, inactiveCustomers, newCustomers, customersWithDeals] =
       await Promise.all([
-        this.prisma.customer.count({ where: { deletedAt: null } }),
-        this.prisma.customer.count({ where: { deletedAt: null, isActive: true } }),
-        this.prisma.customer.count({ where: { deletedAt: null, isActive: false } }),
+        this.prisma.customer.count({ where: { ...baseWhere } }),
+        this.prisma.customer.count({ where: { ...baseWhere, isActive: true } }),
+        this.prisma.customer.count({ where: { ...baseWhere, isActive: false } }),
         this.prisma.customer.count({
           where: {
-            deletedAt: null,
+            ...baseWhere,
             createdAt: { gte: thirtyDaysAgo },
           },
         }),
         this.prisma.customer.count({
           where: {
-            deletedAt: null,
+            ...baseWhere,
             deals: { some: { deletedAt: null, isWon: false, isLost: false } },
           },
         }),
@@ -310,36 +357,10 @@ export class CustomerService {
       deletedAt: null,
     };
 
-    if (query.excludeAdmins) {
-      where.NOT = [
-        {
-          users: {
-            some: {
-              userRoles: {
-                some: {
-                  role: {
-                    OR: [
-                      { type: RoleType.SUPER_ADMIN },
-                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-        { customerType: { in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'] } },
-        {
-          OR: [
-            { name: { equals: 'Super Admin', mode: 'insensitive' } },
-            { name: { equals: 'SUPER_ADMIN', mode: 'insensitive' } },
-            { name: { equals: 'Admin', mode: 'insensitive' } },
-            { companyName: { equals: 'Super Admin', mode: 'insensitive' } },
-            { companyName: { equals: 'SUPER_ADMIN', mode: 'insensitive' } },
-            { companyName: { equals: 'Admin', mode: 'insensitive' } },
-          ],
-        },
-      ];
+    // Customer directory and customer APIs must ALWAYS exclude Super Admin, Admin, and system accounts by default
+    const shouldExcludeAdmins = query.excludeAdmins !== false;
+    if (shouldExcludeAdmins) {
+      where.NOT = SYSTEM_CUSTOMER_EXCLUSIONS;
     }
 
     if (query.isActive !== undefined) {
@@ -364,51 +385,92 @@ export class CustomerService {
       }
     }
 
+    const andConditions: any[] = [];
+
     if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {
       const trimmedEmp = query.assignedEmployee.trim();
       const numEmpId = Number(trimmedEmp);
       if (!isNaN(numEmpId) && numEmpId > 0) {
-        where.OR = [
-          { assignedEmployeeId: numEmpId },
-          { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
-        ];
+        andConditions.push({
+          OR: [
+            { assignedEmployeeId: numEmpId },
+            { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
+          ],
+        });
       } else {
-        where.OR = [
-          { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
-          {
-            assignedEmployeeRel: {
-              OR: [
-                { firstName: { contains: trimmedEmp, mode: 'insensitive' } },
-                { lastName: { contains: trimmedEmp, mode: 'insensitive' } },
-              ],
+        andConditions.push({
+          OR: [
+            { assignedEmployee: { contains: trimmedEmp, mode: 'insensitive' } },
+            {
+              assignedEmployeeRel: {
+                OR: [
+                  { firstName: { contains: trimmedEmp, mode: 'insensitive' } },
+                  { lastName: { contains: trimmedEmp, mode: 'insensitive' } },
+                ],
+              },
             },
-          },
-        ];
+          ],
+        });
       }
     }
 
     if (query.company && query.company.trim()) {
       const c = query.company.trim();
-      where.OR = [
-        { name: { contains: c, mode: 'insensitive' } },
-        { companyName: { contains: c, mode: 'insensitive' } },
-      ];
+      andConditions.push({
+        OR: [
+          { name: { contains: c, mode: 'insensitive' } },
+          { companyName: { contains: c, mode: 'insensitive' } },
+        ],
+      });
     }
 
     if (query.search && query.search.trim()) {
       const s = query.search.trim();
-      where.OR = [
-        { name: { contains: s, mode: 'insensitive' } },
-        { companyName: { contains: s, mode: 'insensitive' } },
-        { email: { contains: s, mode: 'insensitive' } },
-        { phone: { contains: s, mode: 'insensitive' } },
-        { city: { contains: s, mode: 'insensitive' } },
-        { domain: { contains: s, mode: 'insensitive' } },
-        { users: { some: { email: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
-        { users: { some: { phone: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
-        { users: { some: { firstName: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
-        { users: { some: { lastName: { contains: s, mode: 'insensitive' }, deletedAt: null } } },
-      ];
+      andConditions.push({
+        OR: [
+          { name: { contains: s, mode: 'insensitive' } },
+          { companyName: { contains: s, mode: 'insensitive' } },
+          { email: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+          { city: { contains: s, mode: 'insensitive' } },
+          { domain: { contains: s, mode: 'insensitive' } },
+          {
+            users: {
+              some: {
+                AND: [
+                  { deletedAt: null },
+                  {
+                    OR: [
+                      { email: { contains: s, mode: 'insensitive' } },
+                      { phone: { contains: s, mode: 'insensitive' } },
+                      { firstName: { contains: s, mode: 'insensitive' } },
+                      { lastName: { contains: s, mode: 'insensitive' } },
+                    ],
+                  },
+                  {
+                    NOT: {
+                      userRoles: {
+                        some: {
+                          role: {
+                            OR: [
+                              { type: RoleType.SUPER_ADMIN },
+                              { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'System Admin'] } },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     if (query.dateFrom || query.dateTo) {

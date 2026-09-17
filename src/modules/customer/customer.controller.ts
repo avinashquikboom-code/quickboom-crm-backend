@@ -174,7 +174,7 @@ export class CustomerController {
       limit: limit ? parseInt(limit, 10) : 20,
       sortBy,
       sortOrder,
-      excludeAdmins: excludeAdmins === 'true',
+      excludeAdmins: excludeAdmins !== 'false',
     });
   }
 

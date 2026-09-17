@@ -380,6 +380,68 @@ describe('CustomerService - Resource Consumption', () => {
       expect(res.data[0].team.name).toBe('Social Media Team');
     });
 
+    it('findAll excludes Super Admin and Admin accounts by default at database query level', async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          id: 10,
+          name: 'BK Fireworks',
+          companyName: 'BK Fireworks Pvt Ltd',
+          customerType: 'ENTERPRISE',
+          subscriptions: [],
+          users: [{ id: 101, firstName: 'Priya', lastName: 'Bajaj', email: 'priya@bkfireworks.com' }],
+          _count: { users: 1, leads: 5, deals: 2, contacts: 3, tasks: 1, tickets: 0 },
+        },
+        {
+          id: 11,
+          name: 'Bajaj Textiles',
+          companyName: 'Bajaj Textiles Ltd',
+          customerType: 'ENTERPRISE',
+          subscriptions: [],
+          users: [{ id: 102, firstName: 'Nitesh', lastName: 'Bajaj', email: 'nitesh@bajajtextiles.com' }],
+          _count: { users: 1, leads: 2, deals: 1, contacts: 1, tasks: 0, tickets: 0 },
+        },
+      ]);
+      prisma.customer.count.mockResolvedValue(2);
+
+      const res = await service.findAll({});
+      expect(prisma.customer.findMany).toHaveBeenCalled();
+      const findManyCall = prisma.customer.findMany.mock.calls[prisma.customer.findMany.mock.calls.length - 1][0];
+
+      // Must include NOT filter excluding Super Admin role and non-customer types
+      expect(findManyCall.where.NOT).toBeDefined();
+      expect(findManyCall.where.deletedAt).toBeNull();
+      expect(res.data).toHaveLength(2);
+      expect(res.data.map((c: any) => c.name)).toEqual(['BK Fireworks', 'Bajaj Textiles']);
+    });
+
+    it('findAll search filters out Super Admin and Admin users when searching', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ search: 'Super Admin' });
+      const findManyCall = prisma.customer.findMany.mock.calls[prisma.customer.findMany.mock.calls.length - 1][0];
+
+      expect(findManyCall.where.NOT).toBeDefined();
+      expect(findManyCall.where.AND).toBeDefined();
+      // Verify the search condition includes NOT for userRoles with SUPER_ADMIN
+      const searchClause = findManyCall.where.AND[0];
+      expect(searchClause.OR).toBeDefined();
+      const userSearchClause = searchClause.OR.find((cond: any) => cond.users);
+      expect(userSearchClause.users.some.AND).toBeDefined();
+      const notRoleClause = userSearchClause.users.some.AND.find((c: any) => c.NOT);
+      expect(notRoleClause.NOT.userRoles).toBeDefined();
+    });
+
+    it('getMetrics excludes Super Admin from KPI counts', async () => {
+      prisma.customer.count.mockResolvedValue(15);
+
+      const metrics = await service.getMetrics();
+      expect(prisma.customer.count).toHaveBeenCalled();
+      const countCall = prisma.customer.count.mock.calls[prisma.customer.count.mock.calls.length - 1][0];
+      expect(countCall.where.NOT).toBeDefined();
+      expect(metrics.totalCustomers).toBe(15);
+    });
+
     it('update updates customer assignedTeamId and status properly', async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: 23, name: 'Little Laugh' });
       prisma.team.findUnique.mockResolvedValue({ id: 3, name: 'Production Team' });

@@ -101,7 +101,8 @@ export class EmployeeService {
       ];
     }
 
-    if (params.excludeAdmins) {
+    const shouldExcludeAdmins = params.excludeAdmins !== false;
+    if (shouldExcludeAdmins) {
       const excludeAdminCondition = {
         NOT: [
           {
