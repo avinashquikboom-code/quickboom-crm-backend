@@ -97,6 +97,7 @@ describe('Custom Plan Service & Calculation Tests', () => {
         findMany: jest.fn().mockResolvedValue(mockDbOptions),
         findFirst: jest.fn(),
         create: jest.fn(),
+        upsert: jest.fn().mockResolvedValue({ id: 1, code: 'OPT_REELS' }),
       },
       customPlanOrder: {
         findFirst: jest.fn(),
@@ -278,6 +279,28 @@ describe('Custom Plan Service & Calculation Tests', () => {
 
       expect(res.success).toBe(true);
       expect(workService.generatePlanSchedules).toHaveBeenCalledWith(101, 201);
+    });
+  });
+
+  describe('4. Option Retrieval & Seeding Resilience (Preventing 500 Unique Constraint Error)', () => {
+    it('returns existing options without re-seeding when active options exist', async () => {
+      prisma.customPlanOption.findMany.mockResolvedValueOnce(mockDbOptions);
+
+      const options = await customPlanService.getAvailableOptions();
+      expect(options.length).toBe(mockDbOptions.length);
+      expect(prisma.customPlanOption.upsert).not.toHaveBeenCalled();
+    });
+
+    it('uses upsert (not create) to restore options without unique constraint 500 crash when 0 active options exist', async () => {
+      // First findMany returns empty array, triggering fallback seeding
+      prisma.customPlanOption.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce(mockDbOptions);
+
+      const options = await customPlanService.getAvailableOptions();
+      expect(prisma.customPlanOption.upsert).toHaveBeenCalled();
+      expect(prisma.customPlanOption.create).not.toHaveBeenCalled();
+      expect(options.length).toBe(mockDbOptions.length);
     });
   });
 });

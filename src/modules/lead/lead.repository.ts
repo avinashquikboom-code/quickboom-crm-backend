@@ -457,6 +457,10 @@ export class LeadRepository {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    if (isNaN(numId) || numId <= 0) {
+      return null;
+    }
+
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;

@@ -208,7 +208,25 @@ export class CustomPlanService {
       ];
 
       for (const opt of defaultOptions) {
-        await this.prisma.customPlanOption.create({ data: opt });
+        await this.prisma.customPlanOption.upsert({
+          where: { code: opt.code },
+          update: {
+            deletedAt: null,
+            isActive: true,
+            name: opt.name,
+            description: opt.description,
+            category: opt.category,
+            monthlyPrice: opt.monthlyPrice,
+            pricingType: opt.pricingType,
+            unitName: opt.unitName,
+            minQuantity: opt.minQuantity,
+            maxQuantity: opt.maxQuantity,
+            defaultQuantity: opt.defaultQuantity,
+            isIncludedInStandard: opt.isIncludedInStandard,
+            sortOrder: opt.sortOrder,
+          },
+          create: opt,
+        });
       }
 
       options = await this.prisma.customPlanOption.findMany({
@@ -704,10 +722,20 @@ export class CustomPlanService {
       ];
     }
 
-    return this.prisma.customPlanOption.findMany({
+    const options = await this.prisma.customPlanOption.findMany({
       where,
       orderBy: { sortOrder: 'asc' },
     });
+
+    if (options.length === 0 && !query.search && (!query.category || query.category === 'ALL')) {
+      await this.getAvailableOptions();
+      return this.prisma.customPlanOption.findMany({
+        where,
+        orderBy: { sortOrder: 'asc' },
+      });
+    }
+
+    return options;
   }
 
   /**

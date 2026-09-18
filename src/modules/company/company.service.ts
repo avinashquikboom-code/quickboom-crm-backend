@@ -202,6 +202,10 @@ export class CompanyService {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
 
+    if (isNaN(numId) || numId <= 0) {
+      throw new NotFoundException(`Company record #${id} not found`);
+    }
+
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
