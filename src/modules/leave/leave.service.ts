@@ -698,7 +698,7 @@ export class LeaveService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     // Atomic transaction for leave approval + balance deduction
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Fetch leave application inside transaction
       const leave = await tx.leaveRequest.findFirst({
         where: { id, customerId: numCustomerId },
@@ -814,23 +814,24 @@ export class LeaveService {
           remaining: balance.remainingDays,
         },
       };
-    }).then((result) => {
-      // Dispatch push notification AFTER transaction commits (non-blocking, never fails the API)
-      if (this.notificationService && result?.data) {
-        const leaveData = result.data;
-        const isHalfDay =
-          Number(leaveData.days) === 0.5 ||
-          (leaveData.reason && leaveData.reason.toLowerCase().includes('half')) ||
-          Number(leaveData.days) < 1;
-
-        this.notificationService
-          .sendLeaveApprovalNotification(leaveData.employeeId, leaveData, isHalfDay)
-          .catch((err) => {
-            this.logger.error(`Failed to send leave approval push notification: ${err?.message}`);
-          });
-      }
-      return result;
     });
+
+    // Dispatch push notification AFTER transaction commits (non-blocking, never fails the API)
+    if (this.notificationService && result?.data) {
+      const leaveData = result.data;
+      const isHalfDay =
+        Number(leaveData.days) === 0.5 ||
+        (leaveData.reason && leaveData.reason.toLowerCase().includes('half')) ||
+        Number(leaveData.days) < 1;
+
+      this.notificationService
+        .sendLeaveApprovalNotification(leaveData.employeeId, leaveData, isHalfDay)
+        .catch((err) => {
+          this.logger.error(`Failed to send leave approval push notification: ${err?.message}`);
+        });
+    }
+
+    return result;
   }
 
   async rejectLeave(
@@ -841,7 +842,7 @@ export class LeaveService {
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const leave = await tx.leaveRequest.findFirst({
         where: { id, customerId: numCustomerId },
         include: { employee: true },
@@ -875,22 +876,23 @@ export class LeaveService {
         message: 'Leave request rejected successfully. No balance was deducted.',
         data: updated,
       };
-    }).then((result) => {
-      // Dispatch push notification AFTER transaction commits
-      if (this.notificationService && result?.data) {
-        const leaveData = result.data;
-        const isHalfDay =
-          Number(leaveData.days) === 0.5 ||
-          Number(leaveData.days) < 1;
-
-        this.notificationService
-          .sendLeaveRejectionNotification(leaveData.employeeId, leaveData, isHalfDay)
-          .catch((err) => {
-            this.logger.error(`Failed to send leave rejection push notification: ${err?.message}`);
-          });
-      }
-      return result;
     });
+
+    // Dispatch push notification AFTER transaction commits
+    if (this.notificationService && result?.data) {
+      const leaveData = result.data;
+      const isHalfDay =
+        Number(leaveData.days) === 0.5 ||
+        Number(leaveData.days) < 1;
+
+      this.notificationService
+        .sendLeaveRejectionNotification(leaveData.employeeId, leaveData, isHalfDay)
+        .catch((err) => {
+          this.logger.error(`Failed to send leave rejection push notification: ${err?.message}`);
+        });
+    }
+
+    return result;
   }
 
   async cancelLeave(user: any, customerId: number | string | undefined, id: number) {
