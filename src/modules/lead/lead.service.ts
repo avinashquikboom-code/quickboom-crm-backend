@@ -23,6 +23,7 @@ import { PlanAccessService } from '../subscription/plan-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { EmailService } from '../email/email.service';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class LeadService {
@@ -107,11 +108,13 @@ export class LeadService {
   }
 
   async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
-    if (this.planAccessService) {
+    const user = typeof userOrId === 'object' ? userOrId : { id: userOrId };
+    const isSuperAdmin = isUserSuperAdmin(user);
+
+    if (this.planAccessService && !isSuperAdmin) {
       await this.planAccessService.checkLeadLimit(customerId);
     }
 
-    const user = typeof userOrId === 'object' ? userOrId : { id: userOrId };
     const userId = Number(user.id);
 
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
