@@ -8,6 +8,7 @@ import { LeadStatus } from '@prisma/client';
 import { normalizeLeadStatus } from './dto/lead.dto';
 
 import { PlanAccessService } from '../subscription/plan-access.service';
+import { EmailService } from '../email/email.service';
 
 describe('Lead Stage / Status Synchronization Tests', () => {
   let controller: LeadController;
@@ -151,34 +152,27 @@ describe('Lead Stage / Status Synchronization Tests', () => {
         }),
       },
       leadStage: {
-        findMany: jest.fn(async ({ where }) => {
-          return stagesTable.filter((s) => {
-            if (where.deletedAt === null && s.deletedAt !== null) return false;
-            if (where.isActive === true && !s.isActive) return false;
-            return true;
-          }).map((s) => ({
-            ...s,
-            _count: {
-              leads: leadsTable.filter((l) => l.deletedAt === null && (l.stageId === s.id || l.status === s.key)).length,
-            },
-          }));
-        }),
         findFirst: jest.fn(async ({ where }) => {
           return stagesTable.find((s) => {
-            if (where.deletedAt === null && s.deletedAt !== null) return false;
-            if (where.id !== undefined && s.id !== where.id) return false;
-            if (where.key !== undefined && s.key !== where.key) return false;
+            if (where.id && s.id !== where.id) return false;
+            if (where.key && s.key !== where.key) return false;
+            if (where.customerId !== undefined) {
+              if (where.customerId === null && s.customerId !== null) return false;
+              if (where.customerId !== null && s.customerId !== where.customerId) return false;
+            }
+            if (where.isActive !== undefined && s.isActive !== where.isActive) return false;
             return true;
-          }) || null;
+          });
+        }),
+        findMany: jest.fn(async ({ where }) => {
+          return stagesTable.filter((s) => {
+            if (where?.customerId && s.customerId !== where.customerId) return false;
+            if (where?.isActive !== undefined && s.isActive !== where.isActive) return false;
+            return true;
+          });
         }),
         create: jest.fn(async ({ data }) => {
-          const newStage = {
-            id: stagesTable.length + 1,
-            ...data,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            deletedAt: null,
-          };
+          const newStage = { id: stagesTable.length + 1, ...data };
           stagesTable.push(newStage);
           return newStage;
         }),
@@ -198,6 +192,7 @@ describe('Lead Stage / Status Synchronization Tests', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: LeadLimitService, useValue: {} },
         { provide: PlanAccessService, useValue: { checkLeadLimit: jest.fn() } },
+        { provide: EmailService, useValue: { sendEmail: jest.fn().mockResolvedValue({ success: true }) } },
       ],
     }).compile();
 
