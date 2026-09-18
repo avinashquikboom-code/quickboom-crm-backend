@@ -794,8 +794,25 @@ export class EmployeeService {
     // Run auto check-out for any open attendances
     await this.autoCheckOutOpenAttendances(whereCust.customerId);
 
+    // Fetch active canonical branches for the customer to normalize offices
+    const activeBranches = await this.prisma.branchGeofence.findMany({
+      where: { ...whereCust, isActive: true },
+      select: { id: true, name: true },
+    });
+
     if (branchFilter && branchFilter !== 'ALL') {
-      whereEmp.branch = branchFilter;
+      const matchedBranch = activeBranches.find(
+        (b) => b.name.toLowerCase() === branchFilter.toLowerCase() || String(b.id) === branchFilter,
+      );
+      if (matchedBranch) {
+        whereEmp.OR = [
+          { officeId: matchedBranch.id },
+          { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
+          { branch: { equals: branchFilter, mode: 'insensitive' as Prisma.QueryMode } },
+        ];
+      } else {
+        whereEmp.branch = { equals: branchFilter, mode: 'insensitive' as Prisma.QueryMode };
+      }
     }
 
     const targetDate = dateFilter ? new Date(dateFilter) : new Date();
@@ -804,7 +821,7 @@ export class EmployeeService {
     const [employees, todayAttendances, todayLeaves] = await Promise.all([
       this.prisma.employee.findMany({
         where: whereEmp,
-        include: { department: true, designation: true },
+        include: { department: true, designation: true, office: true },
         orderBy: { firstName: 'asc' },
       }),
       this.prisma.attendance.findMany({
@@ -844,21 +861,47 @@ export class EmployeeService {
     let checkedOutCount = 0;
     let lateCount = 0;
 
-    // Office-wise aggregation map
+    // Canonical office-wise aggregation map
     const officeStatsMap = new Map<
       string,
-      { total: number; present: number; onBreak: number; onLeave: number; absent: number }
+      { officeId: number | null; officeName: string; total: number; present: number; onBreak: number; onLeave: number; absent: number }
     >();
 
     const liveRecords = employees.map((emp) => {
       const att = attendanceMap.get(emp.id);
       const leave = leaveMap.get(emp.id);
-      const officeName = emp.branch || 'Head Office';
 
-      if (!officeStatsMap.has(officeName)) {
-        officeStatsMap.set(officeName, { total: 0, present: 0, onBreak: 0, onLeave: 0, absent: 0 });
+      // Resolve canonical office using relation or matching active branch
+      let canonicalId: number | null = emp.office?.id || emp.officeId || null;
+      let canonicalName = emp.office?.name?.trim();
+
+      if (!canonicalName) {
+        const empBranchTrimmed = (emp.branch || '').trim();
+        const matched = activeBranches.find(
+          (b) => b.name.trim().toLowerCase() === empBranchTrimmed.toLowerCase(),
+        );
+        if (matched) {
+          canonicalId = matched.id;
+          canonicalName = matched.name.trim();
+        } else {
+          canonicalName = empBranchTrimmed || 'Head Office';
+        }
       }
-      const oStat = officeStatsMap.get(officeName)!;
+
+      const officeKey = canonicalId ? `id_${canonicalId}` : `name_${canonicalName.toLowerCase()}`;
+
+      if (!officeStatsMap.has(officeKey)) {
+        officeStatsMap.set(officeKey, {
+          officeId: canonicalId,
+          officeName: canonicalName,
+          total: 0,
+          present: 0,
+          onBreak: 0,
+          onLeave: 0,
+          absent: 0,
+        });
+      }
+      const oStat = officeStatsMap.get(officeKey)!;
       oStat.total++;
 
       let status = 'ABSENT';
@@ -950,8 +993,8 @@ export class EmployeeService {
         name: `${emp.firstName} ${emp.lastName}`,
         role: emp.designation?.name || 'Staff',
         department: emp.department?.name || 'General',
-        branch: officeName,
-        office: officeName,
+        branch: canonicalName,
+        office: canonicalName,
         status,
         punchIn: att?.punchIn ? att.punchIn.toISOString() : null,
         punchInAt: att?.punchIn ? att.punchIn.toISOString() : null,
@@ -970,8 +1013,9 @@ export class EmployeeService {
       };
     });
 
-    const offices = Array.from(officeStatsMap.entries()).map(([officeName, stats]) => ({
-      officeName,
+    const offices = Array.from(officeStatsMap.values()).map((stats) => ({
+      officeId: stats.officeId,
+      officeName: stats.officeName,
       totalEmployees: stats.total,
       present: stats.present,
       onBreak: stats.onBreak,
@@ -2468,7 +2512,28 @@ export class EmployeeService {
     }
 
     if (options?.branch && options.branch !== 'ALL') {
-      where.employee = { branch: options.branch };
+      const activeBranches = await this.prisma.branchGeofence.findMany({
+        where: { ...(where.customerId ? { customerId: where.customerId } : {}), isActive: true },
+        select: { id: true, name: true },
+      });
+      const matchedBranch = activeBranches.find(
+        (b) => b.name.toLowerCase() === options.branch!.toLowerCase() || String(b.id) === options.branch,
+      );
+      if (matchedBranch) {
+        where.employee = {
+          ...(where.employee || {}),
+          OR: [
+            { officeId: matchedBranch.id },
+            { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
+            { branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
+          ],
+        };
+      } else {
+        where.employee = {
+          ...(where.employee || {}),
+          branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode },
+        };
+      }
     }
 
     if (options?.search) {
@@ -2489,7 +2554,7 @@ export class EmployeeService {
       this.prisma.attendance.findMany({
         where,
         include: {
-          employee: true,
+          employee: { include: { office: true } },
           breaks: { orderBy: { breakStart: 'asc' } },
         },
         orderBy: { date: 'desc' },
@@ -2508,7 +2573,7 @@ export class EmployeeService {
           : Math.max(0, Math.round((Date.now() - new Date(b.breakStart).getTime()) / (1000 * 60))));
 
         return {
-          id: b.id,
+          id: b.id || idx + 1,
           sessionNumber: idx + 1,
           breakStart: bStartIso,
           breakEnd: bEndIso,
@@ -2569,8 +2634,8 @@ export class EmployeeService {
         customerId: a.customerId,
         employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
         employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
-        branch: a.employee?.branch || 'Head Office',
-        office: a.employee?.branch || 'Head Office',
+        branch: a.employee?.office?.name || a.employee?.branch || 'Head Office',
+        office: a.employee?.office?.name || a.employee?.branch || 'Head Office',
         attendanceDate: a.date ? getBusinessDate(a.date) : '—',
         date: a.date ? getBusinessDate(a.date) : '—',
         punchInAt: punchInIso,
