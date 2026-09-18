@@ -14,6 +14,7 @@ import {
   getBusinessMonthRange,
 } from '../../common/utils/timezone.util';
 import { Prisma } from '@prisma/client';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 export interface LeadLimitPeriodInfo {
   limit: number;
@@ -560,7 +561,12 @@ export class LeadLimitService {
       if (employee) employeeId = employee.id;
     }
 
-    // If super admin or customer admin creating a lead directly with no employee record
+    // Super Admin and Customer Admin have full lead generation access and are exempt from employee mobile limits
+    if (isUserSuperAdmin(user) || isUserAdmin(user)) {
+      return { employeeId: employeeId || null };
+    }
+
+    // If no employee record found for a non-admin user
     if (!employeeId) {
       return { employeeId: null };
     }

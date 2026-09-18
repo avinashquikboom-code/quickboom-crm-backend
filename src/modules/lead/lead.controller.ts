@@ -123,6 +123,7 @@ export class LeadController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'stageId', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
@@ -130,6 +131,7 @@ export class LeadController {
     @Query('limit') limit?: number,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('stageId') stageId?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
@@ -138,6 +140,7 @@ export class LeadController {
         limit: limit ? Number(limit) : 50,
         search,
         status,
+        stageId,
       },
       user,
     );

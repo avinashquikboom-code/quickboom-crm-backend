@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkAccessRequestStatus, AccessOverrideType } from '@prisma/client';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 export interface WorkModuleMeta {
   key: string;
@@ -99,10 +100,19 @@ export const DEFAULT_ROLE_WORK_MAPPINGS: Record<string, string[]> = {
   'INFLUENCER_LEAD': ['influencer_promo'],
   'Telecaller': ['leads'],
   'TELECALLER': ['leads'],
+  'Telesales Executive': ['leads'],
+  'TELESALES_EXECUTIVE': ['leads'],
+  'Telesales': ['leads'],
+  'TELESALES': ['leads'],
   'Sales Executive': ['leads'],
   'SALES_EXECUTIVE': ['leads'],
+  'Sales Head': ['leads'],
+  'SALES_HEAD': ['leads'],
   'Sales': ['leads'],
   'SALES': ['leads'],
+  'BPO': ['leads'],
+  'BPO Executive': ['leads'],
+  'BPO_EXECUTIVE': ['leads'],
   'Production Manager': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
   'PRODUCTION_MANAGER': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
   'Production Lead': ['video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'],
@@ -143,12 +153,12 @@ export class WorkPermissionService {
     }
     // Partial match checks
     const lower = trimmed.toLowerCase();
+    if (lower.includes('telecall') || lower.includes('telesales') || lower.includes('sales') || lower.includes('lead') || lower.includes('bpo')) return ['leads'];
     if (lower.includes('video edit') || lower.includes('editor')) return ['video_edit'];
     if (lower.includes('graphic') || lower.includes('designer')) return ['post_design', 'story_design'];
     if (lower.includes('photo') || lower.includes('shoot') || lower.includes('videograph')) return ['reel_shoot'];
-    if (lower.includes('social') || lower.includes('smm') || lower.includes('executive')) return ['reel_post', 'story_post', 'post_publish'];
+    if (lower.includes('social') || lower.includes('smm')) return ['reel_post', 'story_post', 'post_publish'];
     if (lower.includes('influencer')) return ['influencer_promo'];
-    if (lower.includes('telecall') || lower.includes('sales') || lower.includes('lead')) return ['leads'];
     if (lower.includes('admin')) return ['leads', 'video_edit', 'post_design', 'story_design', 'reel_shoot', 'reel_post', 'story_post', 'influencer_promo'];
     return [];
   }
@@ -657,12 +667,14 @@ export class WorkPermissionService {
     }
 
     // Determine primary role name from designation or user roles
-    const roleCandidate =
-      employee.designation?.name ||
-      ((employee as any).user?.userRoles && (employee as any).user.userRoles.length > 0
-        ? (employee as any).user.userRoles[0].role.name
-        : (employee as any).user?.designation || (employee as any).user?.role) ||
-      'Employee';
+    const isUserAdm = employee.user && (isUserSuperAdmin(employee.user) || isUserAdmin(employee.user));
+    const roleCandidate = isUserAdm
+      ? 'SUPER_ADMIN'
+      : (employee.designation?.name ||
+        ((employee as any).user?.userRoles && (employee as any).user.userRoles.length > 0
+          ? (employee as any).user.userRoles[0].role.name
+          : (employee as any).user?.designation || (employee as any).user?.role) ||
+        'Employee');
 
     const normalizedRole = this.normalizeRoleKey(roleCandidate);
 

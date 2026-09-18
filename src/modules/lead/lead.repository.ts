@@ -11,6 +11,7 @@ import {
   RecordPaymentDto,
   StartWorkDto,
   UpdateLeadDto,
+  normalizeLeadStatus,
 } from './dto/lead.dto';
 import { LeadStatus } from '@prisma/client';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -29,8 +30,32 @@ export class LeadRepository {
     const client = prismaClient || this.prisma;
     const numCustomerId = Number(customerId);
     const numCreatedById = Number(createdById);
-    const status = dto.status || LeadStatus.NEW;
+    const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
+    let status: LeadStatus = LeadStatus.NEW;
     let stageId = dto.stageId ? Number(dto.stageId) : undefined;
+
+    if (stageId && client.leadStage) {
+      const stage = await client.leadStage.findUnique({
+        where: { id: stageId },
+      });
+      if (stage) {
+        const normKey = normalizeLeadStatus(stage.key);
+        if (ALL_LEAD_STATUSES.includes(normKey)) {
+          status = normKey as LeadStatus;
+        } else if (dto.status) {
+          const normDto = normalizeLeadStatus(dto.status);
+          if (ALL_LEAD_STATUSES.includes(normDto)) {
+            status = normDto as LeadStatus;
+          }
+        }
+      }
+    } else if (dto.status) {
+      const norm = normalizeLeadStatus(dto.status);
+      if (ALL_LEAD_STATUSES.includes(norm)) {
+        status = norm as LeadStatus;
+      }
+    }
+
     if (!stageId && client.leadStage) {
       const matchStage = await client.leadStage.findFirst({
         where: {
@@ -382,7 +407,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; assignedToId?: string | number },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -406,8 +431,37 @@ export class LeadRepository {
       where.customerId = numCustomerId;
     }
 
-    if (options.status && options.status.toUpperCase() !== 'ALL') {
-      where.status = options.status as LeadStatus;
+    const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
+
+    if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
+      where.stageId = Number(options.stageId);
+    } else if (options.status && options.status.toUpperCase() !== 'ALL') {
+      const statusStr = String(options.status).trim();
+      if (!isNaN(Number(statusStr))) {
+        where.stageId = Number(statusStr);
+      } else {
+        const normStatus = normalizeLeadStatus(statusStr);
+        if (ALL_LEAD_STATUSES.includes(normStatus)) {
+          where.status = normStatus as LeadStatus;
+        } else {
+          // Custom stage key or label
+          const matchStage = await this.prisma.leadStage.findFirst({
+            where: {
+              OR: [
+                { key: statusStr },
+                { name: { equals: statusStr, mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+              ...(where.customerId ? { customerId: where.customerId } : {}),
+            },
+          });
+          if (matchStage) {
+            where.stageId = matchStage.id;
+          } else {
+            where.stage = { name: { equals: statusStr, mode: 'insensitive' } };
+          }
+        }
+      }
     }
 
     if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {

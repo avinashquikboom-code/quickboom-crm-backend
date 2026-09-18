@@ -275,7 +275,7 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 

@@ -63,15 +63,35 @@ export class CreateLeadDto {
   @IsNotEmpty()
   title: string;
 
-  @ApiProperty({ example: 'Alice' })
+  @ApiPropertyOptional({ example: 'Alice' })
+  @Transform(({ value, obj }) => {
+    const cleaned = cleanOptionalField({ value });
+    if (cleaned) return cleaned;
+    const sourceName = obj?.title || obj?.companyName || obj?.businessName;
+    if (sourceName) {
+      const parts = String(sourceName).trim().split(/\s+/);
+      return parts[0] || 'Prospective';
+    }
+    return 'Prospective';
+  })
   @IsString()
-  @IsNotEmpty()
-  firstName: string;
+  @IsOptional()
+  firstName?: string;
 
-  @ApiProperty({ example: 'Smith' })
+  @ApiPropertyOptional({ example: 'Smith' })
+  @Transform(({ value, obj }) => {
+    const cleaned = cleanOptionalField({ value });
+    if (cleaned) return cleaned;
+    const sourceName = obj?.title || obj?.companyName || obj?.businessName;
+    if (sourceName) {
+      const parts = String(sourceName).trim().split(/\s+/);
+      return parts.slice(1).join(' ').trim() || 'Client';
+    }
+    return 'Client';
+  })
   @IsString()
-  @IsNotEmpty()
-  lastName: string;
+  @IsOptional()
+  lastName?: string;
 
   @ApiPropertyOptional({ example: 'alice@techcorp.com' })
   @Transform(cleanOptionalField)
@@ -149,6 +169,7 @@ export class CreateLeadDto {
   value?: number;
 
   @ApiPropertyOptional({ example: 1 })
+  @Transform(cleanOptionalField)
   @IsOptional()
   assignedToId?: number | string;
 
