@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
-import { RegisterDeviceTokenDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, TestTokenDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
   userId?: number;
@@ -277,7 +277,24 @@ export class NotificationService {
     return {
       notification: dbNotification,
       fcm: fcmResult,
+      delivered: fcmResult.successCount > 0,
+      status:
+        tokens.length === 0
+          ? 'NO_ACTIVE_TOKENS'
+          : fcmResult.successCount > 0
+          ? 'DELIVERED'
+          : 'FCM_DELIVERY_FAILED',
     };
+  }
+
+  /**
+   * Directly test push delivery to a single FCM token (Requirement 10)
+   */
+  async sendDirectTestToToken(dto: TestTokenDto) {
+    const title = dto.title || 'Test Push Notification';
+    const body = dto.body || 'This is a test notification outside the app.';
+    const data = dto.data || { type: 'TEST', timestamp: new Date().toISOString() };
+    return this.fcmService.sendToSingleToken(dto.token, title, body, data);
   }
 
   // Business Event Notification Helpers

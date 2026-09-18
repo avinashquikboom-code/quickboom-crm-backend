@@ -55,3 +55,26 @@ export class SendNotificationDto {
   @IsObject()
   data?: Record<string, string>;
 }
+
+export class TestTokenDto {
+  @ApiProperty({ description: 'Firebase Cloud Messaging Device Registration Token to test' })
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+
+  @ApiPropertyOptional({ description: 'Test notification title', default: 'Test Push Notification' })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional({ description: 'Test notification body', default: 'This is a test notification outside the app.' })
+  @IsOptional()
+  @IsString()
+  body?: string;
+
+  @ApiPropertyOptional({ description: 'Optional data payload' })
+  @IsOptional()
+  @IsObject()
+  data?: Record<string, string>;
+}
+

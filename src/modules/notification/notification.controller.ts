@@ -12,7 +12,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
-import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto, TestTokenDto } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -91,6 +91,13 @@ export class NotificationController {
       type: dto.type || 'GENERAL',
       data: dto.data,
     });
+  }
+
+  @Post('test-token')
+  @ApiOperation({ summary: 'Send direct test push notification to a specific FCM token' })
+  @ApiBody({ type: TestTokenDto })
+  async testToken(@Body() dto: TestTokenDto) {
+    return this.notificationService.sendDirectTestToToken(dto);
   }
 
   @Post('triggers/run-scheduled-checks')

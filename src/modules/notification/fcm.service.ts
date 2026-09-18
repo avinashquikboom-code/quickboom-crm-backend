@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getApps, initializeApp, cert, applicationDefault, App, ServiceAccount } from 'firebase-admin/app';
-import { getMessaging, MulticastMessage, BatchResponse } from 'firebase-admin/messaging';
+import { getMessaging, MulticastMessage, BatchResponse, Message } from 'firebase-admin/messaging';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -39,24 +39,20 @@ export class FcmService implements OnModuleInit {
         process.env.FIREBASE_PROJECT_ID ||
         'quikboom-crm-925d5';
       const clientEmail =
-        this.configService.get<string>('FIREBASE_CLIENT_EMAIL') ||
-        process.env.FIREBASE_CLIENT_EMAIL;
-      let privateKey =
-        this.configService.get<string>('FIREBASE_PRIVATE_KEY') ||
-        process.env.FIREBASE_PRIVATE_KEY;
-
-      const serviceAccountPath =
-        this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_PATH') ||
-        process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+        this.configService.get<string>('FIREBASE_CLIENT_EMAIL') || process.env.FIREBASE_CLIENT_EMAIL;
+      const rawPrivateKey =
+        this.configService.get<string>('FIREBASE_PRIVATE_KEY') || process.env.FIREBASE_PRIVATE_KEY;
       const serviceAccountJson =
         this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_JSON') ||
         process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+      const serviceAccountPath =
+        this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_PATH') ||
+        process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 
-      let credential: any = null;
+      let credential = null;
 
-      if (projectId && clientEmail && privateKey) {
-        // Handle escaped newlines in private key string
-        privateKey = privateKey.replace(/\\n/g, '\n');
+      if (clientEmail && rawPrivateKey) {
+        const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
         const serviceAccount: ServiceAccount = {
           projectId,
           clientEmail,
@@ -65,23 +61,44 @@ export class FcmService implements OnModuleInit {
         credential = cert(serviceAccount);
         this.logger.log(`Initializing Firebase Admin SDK with project: ${projectId} (client: ${clientEmail})`);
       } else if (serviceAccountJson) {
-        const parsed = JSON.parse(serviceAccountJson);
+        const parsed = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson;
         credential = cert(parsed);
         this.logger.log(`Initializing Firebase Admin SDK from JSON config for project: ${parsed.project_id}`);
       } else if (serviceAccountPath) {
-        const resolvedPath = path.isAbsolute(serviceAccountPath)
-          ? serviceAccountPath
-          : path.resolve(process.cwd(), serviceAccountPath);
-
+        const resolvedPath = path.resolve(process.cwd(), serviceAccountPath);
         if (fs.existsSync(resolvedPath)) {
           const fileContent = fs.readFileSync(resolvedPath, 'utf8');
           const parsed = JSON.parse(fileContent);
           credential = cert(parsed);
-          this.logger.log(`Initializing Firebase Admin SDK from file: ${resolvedPath}`);
+          this.logger.log(`Initializing Firebase Admin SDK from file: ${resolvedPath} (project: ${parsed.project_id})`);
         } else {
           this.logger.warn(`Firebase service account file not found at: ${resolvedPath}`);
         }
-      } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      } else {
+        // Search default filesystem locations for service-account credentials
+        const candidates = [
+          path.resolve(process.cwd(), 'firebase-service-account.json'),
+          path.resolve(process.cwd(), 'service-account.json'),
+          path.resolve(process.cwd(), 'secrets/firebase-service-account.json'),
+          '/var/www/qbapp.online/secrets/firebase-service-account.json',
+          '/var/www/qbapp.online/firebase-service-account.json',
+        ];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            try {
+              const fileContent = fs.readFileSync(candidate, 'utf8');
+              const parsed = JSON.parse(fileContent);
+              credential = cert(parsed);
+              this.logger.log(`✅ Loaded Firebase service account from candidate: ${candidate} (project: ${parsed.project_id})`);
+              break;
+            } catch (err: any) {
+              this.logger.warn(`Failed reading candidate ${candidate}: ${err.message}`);
+            }
+          }
+        }
+      }
+
+      if (!credential && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
         credential = applicationDefault();
         this.logger.log('Initializing Firebase Admin SDK with Application Default Credentials');
       }
@@ -103,10 +120,107 @@ export class FcmService implements OnModuleInit {
   }
 
   /**
+   * Reinitialize with runtime credentials (e.g. from database or dynamic config)
+   */
+  public initializeWithCredentials(credentialData: any): boolean {
+    try {
+      const parsed = typeof credentialData === 'string' ? JSON.parse(credentialData) : credentialData;
+      if (parsed.private_key && typeof parsed.private_key === 'string') {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+      }
+      const credential = cert(parsed);
+      this.firebaseApp = initializeApp({ credential });
+      this.isInitialized = true;
+      this.logger.log(`✅ Firebase Admin SDK dynamically re-initialized for project: ${parsed.project_id || 'quikboom-crm-925d5'}`);
+      return true;
+    } catch (e: any) {
+      this.logger.error(`Failed dynamic Firebase initialization: ${e?.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Check if Firebase Admin is ready to send notifications
    */
   public ready(): boolean {
     return this.isInitialized && this.firebaseApp !== null;
+  }
+
+  /**
+   * Send push notification directly to a single device token (used for verification & test delivery)
+   */
+  async sendToSingleToken(
+    token: string,
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ): Promise<{ success: boolean; messageId?: string; error?: string; details?: string }> {
+    const cleanToken = (token || '').trim();
+    if (!cleanToken) {
+      return { success: false, error: 'EMPTY_TOKEN', details: 'FCM token cannot be empty' };
+    }
+
+    if (!this.ready() || !this.firebaseApp) {
+      const maskedToken = cleanToken.length > 8 ? `${cleanToken.substring(0, 8)}...` : '***';
+      this.logger.error(`[FCM Single Send Failed] Firebase Admin SDK is not initialized for token ${maskedToken}`);
+      return {
+        success: false,
+        error: 'FIREBASE_NOT_INITIALIZED',
+        details: 'Firebase Admin SDK credentials are not configured on backend',
+      };
+    }
+
+    const stringifiedData: Record<string, string> = {};
+    if (data) {
+      for (const [key, value] of Object.entries(data)) {
+        stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
+      }
+    }
+
+    const message: Message = {
+      token: cleanToken,
+      notification: {
+        title,
+        body,
+      },
+      data: stringifiedData,
+      android: {
+        priority: 'high',
+        notification: {
+          sound: 'default',
+          channelId: 'high_importance_channel',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          icon: 'ic_launcher',
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: 'default',
+            badge: 1,
+            contentAvailable: true,
+          },
+        },
+      },
+    };
+
+    const messaging = getMessaging(this.firebaseApp);
+    const maskedToken = cleanToken.length > 8 ? `${cleanToken.substring(0, 8)}...` : '***';
+
+    try {
+      const messageId = await messaging.send(message);
+      this.logger.log(`[FCM Single Send OK] Token "${maskedToken}" -> messageId: ${messageId}`);
+      return { success: true, messageId };
+    } catch (err: any) {
+      const errorCode = err.code || 'UNKNOWN_ERROR';
+      const errorMessage = err.message || String(err);
+      this.logger.error(`[FCM Single Send Error] Token "${maskedToken}": ${errorCode} - ${errorMessage}`);
+      return {
+        success: false,
+        error: errorCode,
+        details: errorMessage,
+      };
+    }
   }
 
   /**
@@ -174,6 +288,7 @@ export class FcmService implements OnModuleInit {
             sound: 'default',
             channelId: 'high_importance_channel',
             clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+            icon: 'ic_launcher',
           },
         },
         apns: {
