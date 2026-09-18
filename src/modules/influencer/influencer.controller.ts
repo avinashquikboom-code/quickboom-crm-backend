@@ -11,9 +11,14 @@ import {
   UseGuards,
   Req,
   ForbiddenException,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { InfluencerService } from './influencer.service';
+import { S3Service } from '../s3/s3.service';
 import {
   CreateInfluencerDto,
   FilterInfluencersQueryDto,
@@ -38,7 +43,10 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 @ApiTags('Influencer Hub')
 @Controller()
 export class InfluencerController {
-  constructor(private readonly influencerService: InfluencerService) {}
+  constructor(
+    private readonly influencerService: InfluencerService,
+    private readonly s3Service: S3Service,
+  ) {}
 
   private resolveCustomerId(req: any): number {
     const user = req.user;
@@ -308,11 +316,43 @@ export class InfluencerController {
     return { statusCode: 200, success: true, data };
   }
 
+  @Post('admin/influencers/upload-image')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Upload influencer profile image to S3 (Admin)' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('image'))
+  async uploadInfluencerImage(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Image file is required for upload');
+    }
+    const result = await this.s3Service.uploadFile(file, 'influencers');
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Influencer image uploaded successfully',
+      data: {
+        imageUrl: result.imageUrl,
+        imageKey: result.imageKey,
+      },
+    };
+  }
+
   @Post('admin/influencers')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Create new influencer (Admin)' })
-  async createInfluencer(@Body() dto: CreateInfluencerDto) {
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('image'))
+  async createInfluencer(
+    @Body() dto: CreateInfluencerDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (file) {
+      const result = await this.s3Service.uploadFile(file, 'influencers');
+      dto.profileImage = result.imageUrl;
+      dto.avatarUrl = result.imageUrl;
+    }
     const data = await this.influencerService.createInfluencer(dto);
     return {
       statusCode: 201,
@@ -362,10 +402,18 @@ export class InfluencerController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Update influencer details/status (Admin)' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('image'))
   async updateInfluencer(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateInfluencerDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
+    if (file) {
+      const result = await this.s3Service.uploadFile(file, 'influencers');
+      dto.profileImage = result.imageUrl;
+      dto.avatarUrl = result.imageUrl;
+    }
     const data = await this.influencerService.updateInfluencer(id, dto);
     return {
       statusCode: 200,
