@@ -129,12 +129,17 @@ export class NotificationService {
       },
     });
 
-    this.logger.log(`Registered device token for userId ${userId} (platform: ${platform})`);
+    this.logger.log(`Registered device token for userId ${userId} (platform: ${platform}, length: ${cleanToken.length})`);
 
     return {
       success: true,
       message: 'Device token registered successfully',
-      data: deviceToken,
+      data: {
+        id: deviceToken.id,
+        userId: deviceToken.userId,
+        platform: deviceToken.platform,
+        isActive: deviceToken.isActive,
+      },
     };
   }
 
@@ -156,7 +161,7 @@ export class NotificationService {
       },
     });
 
-    this.logger.log(`Deactivated device token for userId ${userId}`);
+    this.logger.log(`Deactivated device token for userId ${userId} (token length: ${cleanToken.length})`);
 
     return {
       success: true,
@@ -232,6 +237,16 @@ export class NotificationService {
     });
 
     const tokens = deviceRecords.map((d) => d.token);
+
+    if (tokens.length === 0) {
+      this.logger.warn(
+        `[PUSH_DISPATCH] No active device tokens found for userId=${targetUserId || 'none'}, customerId=${targetCustomerId || 'none'}. In-app notification #${dbNotification?.id || 'none'} created.`,
+      );
+    } else {
+      this.logger.log(
+        `[PUSH_DISPATCH] Dispatching push notification to ${tokens.length} active device(s) for userId=${targetUserId || 'none'}, customerId=${targetCustomerId || 'none'} (Title: "${title}")`,
+      );
+    }
 
     // Ensure data payload includes type & notification metadata
     const payloadData: Record<string, string> = {

@@ -36,7 +36,8 @@ export class FcmService implements OnModuleInit {
     try {
       const projectId =
         this.configService.get<string>('FIREBASE_PROJECT_ID') ||
-        process.env.FIREBASE_PROJECT_ID;
+        process.env.FIREBASE_PROJECT_ID ||
+        'quikboom-crm-925d5';
       const clientEmail =
         this.configService.get<string>('FIREBASE_CLIENT_EMAIL') ||
         process.env.FIREBASE_CLIENT_EMAIL;
@@ -90,10 +91,10 @@ export class FcmService implements OnModuleInit {
           credential,
         });
         this.isInitialized = true;
-        this.logger.log('✅ Firebase Admin SDK successfully initialized.');
+        this.logger.log(`✅ Firebase Admin SDK successfully initialized for project "${projectId}".`);
       } else {
         this.logger.warn(
-          'Firebase Admin credentials are not configured. Push notifications cannot be dispatched until real Firebase credentials are supplied.',
+          `Firebase Admin credentials are not configured for project "${projectId}". Push notifications cannot be dispatched to FCM until real credentials are supplied.`,
         );
       }
     } catch (error: any) {
@@ -138,7 +139,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM Dispatch Failed] Firebase is not configured; no push was sent to ${validTokens.length} token(s).`,
+        `[FCM Dispatch Failed] Firebase Admin SDK is not initialized; push notification was not sent to ${validTokens.length} device(s).`,
       );
       return {
         successCount: 0,
@@ -197,7 +198,8 @@ export class FcmService implements OnModuleInit {
           } else if (resp.error) {
             const token = batchTokens[index];
             const errorCode = resp.error.code;
-            this.logger.warn(`FCM send error for token "${token.substring(0, 10)}...": ${errorCode} (${resp.error.message})`);
+            const maskedToken = token.length > 8 ? `${token.substring(0, 8)}...` : '***';
+            this.logger.warn(`FCM send error for token "${maskedToken}": ${errorCode} (${resp.error.message})`);
 
             // Detect unregistered / expired / invalid tokens for cleanup
             if (
