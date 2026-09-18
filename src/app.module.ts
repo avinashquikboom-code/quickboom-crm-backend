@@ -36,6 +36,7 @@ import { ClaimModule } from './modules/claim/claim.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
+import { EmailModule } from './modules/email/email.module';
 import { TrendingModule } from './modules/trending/trending.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
 import { S3Module } from './modules/s3/s3.module';
@@ -58,6 +59,7 @@ import { AppController } from './app.controller';
     S3Module,
     Msg91Module,
     IntegrationSettingsModule,
+    EmailModule,
     AuthModule,
     CustomerModule,
     SubscriptionModule,

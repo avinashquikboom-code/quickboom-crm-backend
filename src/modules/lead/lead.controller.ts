@@ -269,4 +269,14 @@ export class LeadController {
   ) {
     return this.leadService.startWork(customerId, id, userId, dto);
   }
+
+  @Post(':id/send-details')
+  @ApiOperation({ summary: 'Send lead profile and account details to the lead email via configured SMTP' })
+  async sendLeadDetails(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.sendLeadDetails(customerId, id, user);
+  }
 }

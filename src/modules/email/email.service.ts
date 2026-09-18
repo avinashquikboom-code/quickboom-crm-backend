@@ -1,0 +1,170 @@
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { SendEmailDto } from './dto/send-email.dto';
+import * as nodemailer from 'nodemailer';
+
+@Injectable()
+export class EmailService {
+  private readonly logger = new Logger(EmailService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly integrationSettingsService: IntegrationSettingsService,
+  ) {}
+
+  /**
+   * Retrieves the current SMTP integration status without exposing credentials.
+   */
+  async getSmtpStatus() {
+    const config = await this.integrationSettingsService.getSmtpConfig();
+    return {
+      isConfigured: config.isConfigured,
+      isEnabled: config.isEnabled,
+      source: config.source,
+      host: config.host || null,
+      port: config.port || null,
+      security: config.security,
+      fromEmail: config.fromEmail || null,
+      fromName: config.fromName || null,
+    };
+  }
+
+  /**
+   * Sends an email via the configured SMTP server.
+   */
+  async sendEmail(dto: SendEmailDto, user?: any) {
+    // 1. Fetch dynamic SMTP configuration
+    const config = await this.integrationSettingsService.getSmtpConfig();
+
+    if (!config.isConfigured || !config.host) {
+      throw new BadRequestException(
+        'SMTP Email Integration is not configured. Please configure SMTP host, port, credentials, and from email in Admin Panel → Settings → SMTP Email Integration.',
+      );
+    }
+
+    if (!config.isEnabled) {
+      throw new BadRequestException(
+        'SMTP Email Integration is currently disabled. Please enable it under Admin Panel → Settings → SMTP Email Integration.',
+      );
+    }
+
+    // 2. Validate recipient email
+    const recipient = (dto.to || '').trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!recipient || !emailRegex.test(recipient)) {
+      throw new BadRequestException(`Invalid recipient email address: "${recipient}"`);
+    }
+
+    // 3. Validate content
+    const subject = (dto.subject || '').trim();
+    if (!subject) {
+      throw new BadRequestException('Email subject cannot be empty');
+    }
+
+    const htmlContent = dto.html || (dto.body && dto.body.includes('<') ? dto.body : undefined);
+    const textContent = dto.text || (!htmlContent ? dto.body : undefined);
+
+    if (!htmlContent && !textContent) {
+      throw new BadRequestException('Email body cannot be empty');
+    }
+
+    // 4. Resolve sender
+    const fromAddress = (dto.fromEmail?.trim() || config.fromEmail?.trim());
+    if (!fromAddress) {
+      throw new BadRequestException('From Email is missing in SMTP configuration');
+    }
+    const fromName = (dto.fromName?.trim() || config.fromName?.trim() || 'QuickBoom CRM');
+    const formattedFrom = fromName ? `"${fromName}" <${fromAddress}>` : fromAddress;
+
+    // 5. Create nodemailer transport with configured options
+    const transportOptions: any = {
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+    };
+
+    if (config.username || config.password) {
+      transportOptions.auth = {
+        user: config.username,
+        pass: config.password,
+      };
+    }
+
+    if (!config.secure && config.port !== 465) {
+      transportOptions.tls = {
+        rejectUnauthorized: false,
+      };
+    }
+
+    // 6. Send email
+    try {
+      const transporter = nodemailer.createTransport(transportOptions);
+      const info = await transporter.sendMail({
+        from: formattedFrom,
+        to: recipient,
+        subject,
+        text: textContent,
+        html: htmlContent,
+      });
+
+      this.logger.log(`[EMAIL_SENT] Successfully sent email to "${recipient}" with messageId: ${info.messageId}`);
+
+      // 7. Audit log
+      const customerId = user?.customerId ? Number(user.customerId) : null;
+      const userId = user?.id ? Number(user.id) : null;
+
+      await this.prisma.auditLog.create({
+        data: {
+          customerId,
+          userId,
+          action: 'EMAIL_SENT',
+          module: 'EMAIL',
+          details: {
+            to: recipient,
+            subject,
+            from: formattedFrom,
+            recordType: dto.recordType || null,
+            recordId: dto.recordId ? String(dto.recordId) : null,
+            messageId: info.messageId,
+            sentAt: new Date().toISOString(),
+          },
+        },
+      }).catch((err) => {
+        this.logger.warn(`[EMAIL_AUDIT_LOG_WARN] Failed to write email audit log: ${err?.message}`);
+      });
+
+      // 8. Contact communication history if recordType is contact
+      if (dto.recordType?.toLowerCase() === 'contact' && dto.recordId) {
+        const contactId = Number(dto.recordId);
+        if (!isNaN(contactId)) {
+          await this.prisma.communicationHistory.create({
+            data: {
+              contactId,
+              type: 'EMAIL',
+              summary: subject,
+              details: `To: ${recipient}\nFrom: ${formattedFrom}\n\n${textContent || ''}`,
+            },
+          }).catch((err) => {
+            this.logger.warn(`[EMAIL_COMM_HIST_WARN] Failed to record communication history: ${err?.message}`);
+          });
+        }
+      }
+
+      return {
+        success: true,
+        message: `Email successfully sent to ${recipient}`,
+        messageId: info.messageId,
+        envelope: info.envelope,
+      };
+    } catch (err: any) {
+      this.logger.error(`[EMAIL_SEND_FAILED] To: "${recipient}", Error: ${err?.message}`);
+      throw new BadRequestException(
+        `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Unknown SMTP error'}`,
+      );
+    }
+  }
+}

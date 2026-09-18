@@ -22,6 +22,7 @@ import {
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class LeadService {
@@ -30,6 +31,7 @@ export class LeadService {
     private readonly prisma: PrismaService,
     private readonly planAccessService?: PlanAccessService,
     private readonly leadLimitService?: LeadLimitService,
+    private readonly emailService?: EmailService,
   ) {}
 
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
@@ -431,5 +433,201 @@ export class LeadService {
   async startWork(customerId: number | string, leadId: number | string, userId: number | string, dto: StartWorkDto) {
     await this.getLeadById(customerId, leadId);
     return this.leadRepository.startWork(customerId, leadId, userId, dto);
+  }
+
+  /**
+   * Dispatches complete lead profile and account details to the lead's email
+   * using the configured SMTP Email Integration.
+   */
+  async sendLeadDetails(customerId: number | string | undefined, leadId: number | string, user?: any) {
+    const id = Number(leadId);
+    if (isNaN(id)) {
+      throw new BadRequestException('Invalid lead ID');
+    }
+
+    const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id,
+        ...(parsedCustomerId ? { customerId: parsedCustomerId } : {}),
+        deletedAt: null,
+      },
+      include: {
+        stage: true,
+        assignedTo: {
+          select: { firstName: true, lastName: true, email: true, phone: true },
+        },
+        customer: {
+          select: { name: true, companyName: true, email: true, phone: true },
+        },
+      },
+    });
+
+    if (!lead) {
+      throw new NotFoundException(`Lead record #${leadId} not found`);
+    }
+
+    const recipient = (lead.email || '').trim();
+    if (!recipient) {
+      throw new BadRequestException(
+        `Lead "${lead.companyName || lead.title || `${lead.firstName} ${lead.lastName}`}" has no email address configured. Please add an email address to the lead first.`,
+      );
+    }
+
+    if (!this.emailService) {
+      throw new BadRequestException('Email service is not available');
+    }
+
+    const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || 'Valued Contact';
+    const businessName = lead.companyName || lead.title || 'Client Organization';
+    const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom CRM';
+
+    // HTML Email Template
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
+    .card { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
+    .header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; }
+    .header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .body { padding: 32px; }
+    .intro { font-size: 14px; line-height: 1.6; margin-bottom: 24px; color: #334155; }
+    .section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 12px; }
+    .details-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; background: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+    .details-table td { padding: 12px 16px; font-size: 13px; border-bottom: 1px solid #e2e8f0; }
+    .details-table tr:last-child td { border-bottom: none; }
+    .label { font-weight: 700; color: #64748b; width: 38%; }
+    .value { font-weight: 600; color: #0f172a; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 700; background: #dcfce7; color: #15803d; }
+    .footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>${businessName}</h1>
+      <p>Lead Reference #${lead.id} • Registered Profile Details</p>
+    </div>
+    <div class="body">
+      <p class="intro">
+        Hello <strong>${leadFullName}</strong>,<br><br>
+        Here are the recorded account and lead details on file with <strong>${senderOrgName}</strong>:
+      </p>
+
+      <div class="section-title">Lead & Contact Information</div>
+      <table class="details-table">
+        <tr>
+          <td class="label">Business / Account</td>
+          <td class="value">${businessName}</td>
+        </tr>
+        <tr>
+          <td class="label">Primary Contact</td>
+          <td class="value">${leadFullName}</td>
+        </tr>
+        <tr>
+          <td class="label">Email Address</td>
+          <td class="value">${lead.email || '—'}</td>
+        </tr>
+        <tr>
+          <td class="label">Phone Number</td>
+          <td class="value">${lead.phone || '—'}</td>
+        </tr>
+        ${lead.website ? `
+        <tr>
+          <td class="label">Website</td>
+          <td class="value">${lead.website}</td>
+        </tr>` : ''}
+        ${lead.address || lead.city ? `
+        <tr>
+          <td class="label">Location</td>
+          <td class="value">${[lead.address, lead.city, lead.state, lead.country].filter(Boolean).join(', ')}</td>
+        </tr>` : ''}
+        ${lead.category ? `
+        <tr>
+          <td class="label">Industry / Category</td>
+          <td class="value">${lead.category}</td>
+        </tr>` : ''}
+      </table>
+
+      <div class="section-title">Account Engagement Overview</div>
+      <table class="details-table">
+        <tr>
+          <td class="label">Status / Stage</td>
+          <td class="value"><span class="badge">${lead.stage?.name || lead.status}</span></td>
+        </tr>
+        ${lead.value ? `
+        <tr>
+          <td class="label">Estimated Deal Value</td>
+          <td class="value">₹${Number(lead.value).toLocaleString('en-IN')}</td>
+        </tr>` : ''}
+        ${lead.assignedTo ? `
+        <tr>
+          <td class="label">Assigned Representative</td>
+          <td class="value">${lead.assignedTo.firstName} ${lead.assignedTo.lastName} (${lead.assignedTo.email})</td>
+        </tr>` : ''}
+        <tr>
+          <td class="label">Source</td>
+          <td class="value">${lead.source}</td>
+        </tr>
+      </table>
+
+      <p style="font-size: 13px; color: #64748b; margin: 0;">
+        If you have any questions or updates regarding these details, please reply directly to this email or get in touch with our team.
+      </p>
+    </div>
+    <div class="footer">
+      Sent by <strong>${senderOrgName}</strong> via CRM
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    // Plain text fallback
+    const textContent = `
+Lead & Account Details
+---------------------------------------------
+Business: ${businessName}
+Contact: ${leadFullName}
+Email: ${lead.email || '—'}
+Phone: ${lead.phone || '—'}
+Website: ${lead.website || '—'}
+Location: ${[lead.address, lead.city, lead.state, lead.country].filter(Boolean).join(', ') || '—'}
+Stage: ${lead.stage?.name || lead.status}
+Deal Value: ₹${Number(lead.value || 0).toLocaleString('en-IN')}
+Assigned Rep: ${lead.assignedTo ? `${lead.assignedTo.firstName} ${lead.assignedTo.lastName} (${lead.assignedTo.email})` : 'Unassigned'}
+Source: ${lead.source}
+
+Sent by ${senderOrgName} via CRM.
+    `.trim();
+
+    const result = await this.emailService.sendEmail({
+      to: recipient,
+      subject: `Lead Details: ${businessName}`,
+      html: htmlContent,
+      text: textContent,
+      recordType: 'lead',
+      recordId: lead.id,
+    }, user);
+
+    // Write to activity timeline
+    await this.prisma.leadActivityTimeline.create({
+      data: {
+        leadId: lead.id,
+        action: 'EMAIL_SENT',
+        description: `Lead details dispatched via SMTP to ${recipient} (Message ID: ${result.messageId || 'sent'})`,
+      },
+    }).catch(() => null);
+
+    return {
+      success: true,
+      message: `Lead details successfully sent to ${recipient}`,
+      messageId: result.messageId,
+    };
   }
 }

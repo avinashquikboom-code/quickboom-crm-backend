@@ -37,6 +37,14 @@ export class TestIntegrationDto {
   @IsOptional()
   credentials?: Record<string, any>;
 
+  @ApiPropertyOptional({
+    description: 'Provider-specific non-sensitive configuration settings to test with',
+    example: { host: 'smtp.gmail.com', port: 587 },
+  })
+  @IsObject()
+  @IsOptional()
+  config?: Record<string, any>;
+
   @ApiPropertyOptional({ description: 'Environment mode to test with', example: 'LIVE' })
   @IsString()
   @IsOptional()

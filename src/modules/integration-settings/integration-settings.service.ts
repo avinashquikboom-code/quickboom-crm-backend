@@ -16,6 +16,7 @@ import {
   TestIntegrationDto,
 } from './dto/integration-settings.dto';
 import axios from 'axios';
+import * as nodemailer from 'nodemailer';
 const Razorpay = require('razorpay');
 
 export enum IntegrationProvider {
@@ -29,6 +30,7 @@ export enum IntegrationProvider {
   SHIPROCKET = 'SHIPROCKET',
   OPENAI = 'OPENAI',
   GEMINI = 'GEMINI',
+  SMTP = 'SMTP',
 }
 
 export function normalizeProvider(provider: string): string {
@@ -47,6 +49,7 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
   if (norm === 'OPENAI' || norm === 'OPEN_AI' || norm === 'CHATGPT') return IntegrationProvider.OPENAI;
   if (norm === 'GEMINI' || norm === 'GOOGLE_GEMINI' || norm === 'GOOGLE_AI') return IntegrationProvider.GEMINI;
+  if (norm === 'SMTP' || norm === 'EMAIL' || norm === 'MAIL' || norm === 'SMTP_EMAIL') return IntegrationProvider.SMTP;
   return norm;
 }
 
@@ -129,6 +132,20 @@ export interface GoogleMapsDynamicConfig {
   isEnabled: boolean;
   environment: string;
   config: Record<string, any>;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+}
+
+export interface SmtpDynamicConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  security: 'SSL' | 'TLS' | 'NONE';
+  username: string;
+  password: string;
+  fromEmail: string;
+  fromName: string;
+  isEnabled: boolean;
+  isConfigured: boolean;
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
@@ -629,6 +646,88 @@ export class IntegrationSettingsService {
   }
 
   /**
+   * Typed helper for SMTP Email dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getSmtpConfig(): Promise<SmtpDynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.SMTP);
+    const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
+
+    const host = String(cfg.host || creds.host || creds.smtpHost || process.env.SMTP_HOST || '').trim();
+    const rawPort = cfg.port || creds.port || creds.smtpPort || process.env.SMTP_PORT || 587;
+    const port = Number(rawPort) || 587;
+
+    const rawSecurity = String(
+      cfg.security || creds.security || creds.smtpSecurity || (port === 465 ? 'SSL' : 'TLS'),
+    )
+      .toUpperCase()
+      .trim();
+    const security: 'SSL' | 'TLS' | 'NONE' =
+      rawSecurity === 'SSL' || rawSecurity === 'TLS' || rawSecurity === 'NONE'
+        ? rawSecurity
+        : port === 465
+        ? 'SSL'
+        : 'TLS';
+    const secure = security === 'SSL' || port === 465;
+
+    const username = sanitizeSecret(
+      String(
+        creds.username ||
+          creds.smtpUsername ||
+          creds.user ||
+          process.env.SMTP_USER ||
+          process.env.SMTP_USERNAME ||
+          '',
+      ),
+    );
+    const password = sanitizeSecret(
+      String(
+        creds.password ||
+          creds.smtpPassword ||
+          creds.pass ||
+          process.env.SMTP_PASSWORD ||
+          process.env.SMTP_PASS ||
+          '',
+      ),
+    );
+    const fromEmail = String(
+      cfg.fromEmail ||
+        creds.fromEmail ||
+        cfg.from ||
+        process.env.SMTP_FROM_EMAIL ||
+        process.env.MAIL_FROM ||
+        '',
+    ).trim();
+    const fromName = String(
+      cfg.fromName ||
+        creds.fromName ||
+        process.env.SMTP_FROM_NAME ||
+        process.env.MAIL_FROM_NAME ||
+        'QuickBoom CRM',
+    ).trim();
+
+    const isConfigured = Boolean(host && port && (username ? password : true) && fromEmail);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' =
+      conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+
+    return {
+      host,
+      port,
+      secure,
+      security,
+      username,
+      password,
+      fromEmail,
+      fromName,
+      isEnabled,
+      isConfigured,
+      source,
+    };
+  }
+
+  /**
    * Updates or creates integration settings in PostgreSQL, encrypting sensitive fields,
    * invalidating the cache immediately, and writing an audit log.
    */
@@ -930,6 +1029,7 @@ export class IntegrationSettingsService {
       IntegrationProvider.MSG91,
       IntegrationProvider.OPENAI,
       IntegrationProvider.GEMINI,
+      IntegrationProvider.SMTP,
     ];
     const results = [];
 
@@ -1369,6 +1469,129 @@ export class IntegrationSettingsService {
             err?.message ||
             'Could not authenticate with Google Gemini API';
           throw new BadRequestException(`Google Gemini connection test failed: ${errMsg}`);
+        }
+      }
+
+      case IntegrationProvider.SMTP: {
+        const host = String(
+          dto?.config?.host ||
+            testCreds.host ||
+            testCreds.smtpHost ||
+            active?.config?.host ||
+            resolvedCreds.host ||
+            resolvedCreds.smtpHost ||
+            '',
+        ).trim();
+
+        const rawPort =
+          dto?.config?.port ||
+          testCreds.port ||
+          testCreds.smtpPort ||
+          active?.config?.port ||
+          resolvedCreds.port ||
+          resolvedCreds.smtpPort ||
+          587;
+        const port = Number(rawPort) || 587;
+
+        const rawSecurity = String(
+          dto?.config?.security ||
+            testCreds.security ||
+            testCreds.smtpSecurity ||
+            active?.config?.security ||
+            resolvedCreds.security ||
+            (port === 465 ? 'SSL' : 'TLS'),
+        )
+          .toUpperCase()
+          .trim();
+        const secure = rawSecurity === 'SSL' || port === 465;
+
+        const username = sanitizeSecret(
+          String(
+            testCreds.username ||
+              testCreds.smtpUsername ||
+              resolvedCreds.username ||
+              resolvedCreds.smtpUsername ||
+              '',
+          ),
+        );
+
+        const password = sanitizeSecret(
+          String(
+            testCreds.password ||
+              testCreds.smtpPassword ||
+              resolvedCreds.password ||
+              resolvedCreds.smtpPassword ||
+              '',
+          ),
+        );
+
+        const fromEmail = String(
+          dto?.config?.fromEmail ||
+            testCreds.fromEmail ||
+            active?.config?.fromEmail ||
+            resolvedCreds.fromEmail ||
+            '',
+        ).trim();
+
+        const fromName = String(
+          dto?.config?.fromName ||
+            testCreds.fromName ||
+            active?.config?.fromName ||
+            resolvedCreds.fromName ||
+            'QuickBoom CRM',
+        ).trim();
+
+        if (!host) {
+          throw new BadRequestException('SMTP Host is required to test connection');
+        }
+        if (!port) {
+          throw new BadRequestException('SMTP Port is required to test connection');
+        }
+
+        try {
+          const transportOptions: any = {
+            host,
+            port,
+            secure,
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 15000,
+          };
+
+          if (username || password) {
+            transportOptions.auth = {
+              user: username,
+              pass: password,
+            };
+          }
+
+          if (!secure && port !== 465) {
+            transportOptions.tls = {
+              rejectUnauthorized: false,
+            };
+          }
+
+          const transporter = nodemailer.createTransport(transportOptions);
+          await transporter.verify();
+
+          return {
+            success: true,
+            provider: 'SMTP',
+            status: 'CONNECTED',
+            message: `SMTP connection established and verified successfully on ${host}:${port}`,
+            details: {
+              host,
+              port,
+              security: secure ? 'SSL' : rawSecurity === 'NONE' ? 'NONE' : 'TLS',
+              user: username ? username : 'Anonymous',
+              fromEmail: fromEmail || undefined,
+              fromName: fromName || undefined,
+            },
+          };
+        } catch (err: any) {
+          this.logger.error(`[SMTP_TEST_FAILED] ${err?.message}`);
+          const errMsg = err?.message || 'Failed to establish connection with SMTP server';
+          throw new BadRequestException(`SMTP connection test failed: ${errMsg}`);
         }
       }
 
