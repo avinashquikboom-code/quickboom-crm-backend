@@ -43,6 +43,20 @@ export function normalizeLeadStatus(value: any): any {
   return upper;
 }
 
+export function cleanOptionalField({ value }: { value: any }): any {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const upper = trimmed.toUpperCase();
+    if (upper === 'N/A' || upper === 'NA' || upper === 'NONE' || upper === 'NULL' || upper === '-') {
+      return undefined;
+    }
+    return trimmed;
+  }
+  return value;
+}
+
 export class CreateLeadDto {
   @ApiProperty({ example: 'Enterprise Cloud Modernization' })
   @IsString()
@@ -60,41 +74,49 @@ export class CreateLeadDto {
   lastName: string;
 
   @ApiPropertyOptional({ example: 'alice@techcorp.com' })
+  @Transform(cleanOptionalField)
   @IsEmail()
   @IsOptional()
   email?: string;
 
   @ApiPropertyOptional({ example: '+91 98200 12345' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   phone?: string;
 
   @ApiPropertyOptional({ example: 'TechCorp Solutions' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   companyName?: string;
 
   @ApiPropertyOptional({ example: 'https://techcorp.com' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   website?: string;
 
   @ApiPropertyOptional({ example: '123 Business Hub, MG Road' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   address?: string;
 
   @ApiPropertyOptional({ example: 'Mumbai' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   city?: string;
 
   @ApiPropertyOptional({ example: 'Maharashtra' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   state?: string;
 
   @ApiPropertyOptional({ example: 'IT & Software' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   category?: string;
@@ -189,6 +211,7 @@ export class CreateLeadDto {
   longitude?: number;
 
   @ApiPropertyOptional({ example: 'ChIJN1t_tDeuEmsRUsoyG83frY4' })
+  @Transform(cleanOptionalField)
   @IsString()
   @IsOptional()
   googlePlaceId?: string;

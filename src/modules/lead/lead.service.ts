@@ -43,6 +43,43 @@ export class LeadService {
     return this.leadRepository.convertLead(customerId, leadId, userId, dto);
   }
 
+  private sanitizeLeadFields<T extends Record<string, any>>(dto: T): T {
+    const isInvalid = (v: any) => {
+      if (v === null || v === undefined) return true;
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (!t) return true;
+        const u = t.toUpperCase();
+        return u === 'N/A' || u === 'NA' || u === 'NONE' || u === 'NULL' || u === '-';
+      }
+      return false;
+    };
+
+    const cleaned = { ...dto } as any;
+    const optionalKeys = [
+      'phone',
+      'email',
+      'companyName',
+      'website',
+      'address',
+      'city',
+      'state',
+      'category',
+      'googlePlaceId',
+    ];
+
+    for (const key of optionalKeys) {
+      if (key in cleaned) {
+        if (isInvalid(cleaned[key])) {
+          cleaned[key] = null;
+        } else if (typeof cleaned[key] === 'string') {
+          cleaned[key] = cleaned[key].trim();
+        }
+      }
+    }
+    return cleaned;
+  }
+
   private async validateBpoEmployeeAssignment(
     customerId: number | string,
     assignedToId?: number | string | null,
@@ -137,10 +174,11 @@ export class LeadService {
       }
     }
 
-    const assignment = await this.validateBpoEmployeeAssignment(customerId, dto.assignedToId);
+    const cleaned = this.sanitizeLeadFields(dto);
+    const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
 
     const sanitizedDto = {
-      ...dto,
+      ...cleaned,
       status: resolvedStatus,
       ...(resolvedStageId ? { stageId: resolvedStageId } : {}),
       ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
@@ -299,10 +337,11 @@ export class LeadService {
       }
     }
 
-    const assignment = await this.validateBpoEmployeeAssignment(customerId, dto.assignedToId);
+    const cleaned = this.sanitizeLeadFields(dto);
+    const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
 
     const sanitizedDto = {
-      ...dto,
+      ...cleaned,
       ...(resolvedStageId !== undefined ? { stageId: resolvedStageId } : {}),
       ...(resolvedStatus !== undefined ? { status: resolvedStatus } : {}),
       ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),

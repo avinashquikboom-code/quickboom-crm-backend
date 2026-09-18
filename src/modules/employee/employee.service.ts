@@ -30,6 +30,7 @@ export interface FindAllEmployeesParams {
   page?: number;
   limit?: number;
   excludeAdmins?: boolean;
+  bpoOnly?: boolean;
 }
 
 export interface EmployeeFindOneParams {
@@ -143,7 +144,19 @@ export class EmployeeService {
       });
     }
 
-    if (department && department !== 'ALL') {
+    const isBpoRequested = params.bpoOnly === true || (department && department.toUpperCase() === 'BPO');
+
+    if (isBpoRequested) {
+      andConditions.push({
+        OR: [
+          { department: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { department: { code: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { designation: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { designation: { code: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { teamMembers: { some: { team: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } } } },
+        ],
+      });
+    } else if (department && department !== 'ALL') {
       andConditions.push({
         OR: [
           { department: { name: { contains: department, mode: 'insensitive' as Prisma.QueryMode } } },
