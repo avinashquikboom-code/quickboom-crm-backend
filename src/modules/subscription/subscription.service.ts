@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   UnauthorizedException,
@@ -2766,6 +2767,29 @@ export class SubscriptionService {
       throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
     }
 
+    // ── State Transition Guard ───────────────────────────────────────────────
+    // Only PENDING requests can be approved. Enforce strict state machine:
+    //   PENDING → APPROVED  ✅
+    //   SUCCESS → APPROVED  ❌  (already processed)
+    //   REJECTED → APPROVED ❌  (invalid transition)
+    const currentStatus = (payment.status || '').toUpperCase();
+    if (currentStatus === 'SUCCESS' || currentStatus === 'PAID') {
+      throw new ConflictException(
+        `This offline payment request has already been approved (status: ${payment.status}). Duplicate approval is not allowed.`,
+      );
+    }
+    if (currentStatus === 'REJECTED' || currentStatus === 'FAILED' || currentStatus === 'CANCELED') {
+      throw new ConflictException(
+        `Cannot approve a rejected offline payment request (status: ${payment.status}). Only PENDING requests can be approved.`,
+      );
+    }
+    if (currentStatus !== 'PENDING') {
+      throw new BadRequestException(
+        `Offline payment request is in an unexpected state: ${payment.status}. Expected PENDING.`,
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const sub = payment.subscription;
     if (!sub) {
       throw new NotFoundException(`Subscription linked to payment request #${payment.id} not found`);
@@ -3012,6 +3036,29 @@ export class SubscriptionService {
     if (!payment) {
       throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
     }
+
+    // ── State Transition Guard ───────────────────────────────────────────────
+    // Only PENDING requests can be rejected. Enforce strict state machine:
+    //   PENDING → REJECTED  ✅
+    //   SUCCESS → REJECTED  ❌  (cannot reject an approved payment)
+    //   REJECTED → REJECTED ❌  (already rejected)
+    const currentStatus = (payment.status || '').toUpperCase();
+    if (currentStatus === 'SUCCESS' || currentStatus === 'PAID') {
+      throw new ConflictException(
+        `Cannot reject an already approved payment request (status: ${payment.status}). Only PENDING requests can be rejected.`,
+      );
+    }
+    if (currentStatus === 'REJECTED' || currentStatus === 'FAILED' || currentStatus === 'CANCELED') {
+      throw new ConflictException(
+        `This offline payment request has already been rejected (status: ${payment.status}).`,
+      );
+    }
+    if (currentStatus !== 'PENDING') {
+      throw new BadRequestException(
+        `Offline payment request is in an unexpected state: ${payment.status}. Expected PENDING.`,
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     await this.prisma.$transaction(async (tx) => {
       await tx.paymentHistory.update({
