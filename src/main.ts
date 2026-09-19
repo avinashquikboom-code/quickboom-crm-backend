@@ -116,6 +116,7 @@ handledBy: NestJS`);
     credentials: true,
     preflightContinue: false,
     optionsSuccessStatus: 204,
+    maxAge: 86400, // Cache successful preflights for 24 h (Access-Control-Max-Age)
   });
 
   // Global Prefix
