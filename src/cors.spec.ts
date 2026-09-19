@@ -20,6 +20,8 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
       helmet({
         crossOriginResourcePolicy: { policy: 'cross-origin' },
         crossOriginEmbedderPolicy: false,
+        crossOriginOpenerPolicy: { policy: 'unsafe-none' },
+        contentSecurityPolicy: false,
       }),
     );
 
@@ -64,9 +66,10 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         'x-tenant-id',
         'x-client-type',
         'x-refresh-token',
-        'Access-Control-Allow-Origin',
-        'Access-Control-Allow-Headers',
-        'Access-Control-Allow-Methods',
+        'Access-Control-Request-Method',
+        'Access-Control-Request-Headers',
+        // NOTE: Access-Control-Allow-* are RESPONSE headers, not request headers.
+        // They must NOT be listed in Access-Control-Allow-Headers on a preflight.
       ],
       exposedHeaders: [
         'Content-Range',

@@ -22,10 +22,17 @@ async function bootstrap() {
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
   // Security & Cross-Origin Policy
+  // crossOriginOpenerPolicy must be 'unsafe-none' for a REST API served from a
+  // different subdomain — 'same-origin' (Helmet's default) causes browsers to
+  // isolate the browsing context and can block cross-origin XHR/fetch.
+  // contentSecurityPolicy is disabled: it is a browser-document directive and
+  // is irrelevant (and potentially harmful) on JSON API responses.
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
       crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: { policy: 'unsafe-none' },
+      contentSecurityPolicy: false,
     }),
   );
 
@@ -81,20 +88,23 @@ handledBy: NestJS`);
     },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
+      // Standard request headers
       'Origin',
       'X-Requested-With',
       'Content-Type',
       'Accept',
       'Authorization',
+      // Custom headers sent by Admin Panel and Mobile app
       'x-customer-id',
       'x-tenant-id',
       'x-client-type',
       'x-refresh-token',
+      // Browser-generated preflight meta-headers
       'Access-Control-Request-Method',
       'Access-Control-Request-Headers',
-      'Access-Control-Allow-Origin',
-      'Access-Control-Allow-Headers',
-      'Access-Control-Allow-Methods',
+      // NOTE: Access-Control-Allow-* are RESPONSE headers, not request headers.
+      // They must NOT appear here — their presence in Access-Control-Allow-Headers
+      // causes Chromium-based browsers to reject the preflight.
     ],
     exposedHeaders: [
       'Content-Range',
