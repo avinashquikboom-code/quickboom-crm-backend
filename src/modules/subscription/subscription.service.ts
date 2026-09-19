@@ -2973,30 +2973,28 @@ export class SubscriptionService {
       });
     } catch (_) {}
 
-    // Send plan-activated in-app notification to the customer.
+    this.logger.log(
+      `[PAYMENT] Payment verified: customerId=${sub.customerId}, paymentId=${payment.id}`,
+    );
+    this.logger.log(
+      `[SUBSCRIPTION] Subscription activated: customerId=${sub.customerId}, subscriptionId=${sub.id}, status=ACTIVE`,
+    );
+
+    // Send plan purchase success in-app & FCM notification to the customer.
     // Wrapped in try/catch — notification failure must never break activation.
     try {
       if (this.notificationService) {
-        await this.notificationService.sendPushNotification({
+        await this.notificationService.sendPlanPurchaseSuccessNotification({
           customerId: sub.customerId,
-          title: '🎉 Plan Activated Successfully!',
-          body: `Your ${plan.name} plan has been activated successfully. Thank you for choosing QB Suite!`,
-          type: 'PLAN_ACTIVATED',
-          data: {
-            type: 'PLAN_ACTIVATED',
-            subscriptionId: String(sub.id),
-            planId: String(plan.id),
-            planName: plan.name,
-            paymentId: String(payment.id),
-          },
+          subscriptionId: sub.id,
+          planId: plan.id,
+          planName: plan.name,
+          paymentId: payment.id,
         });
-        this.logger.log(
-          `[NOTIFICATION] Plan-activated notification dispatched for customerId=${sub.customerId}, planName=${plan.name} (offline payment approved)`,
-        );
       }
     } catch (notifErr: any) {
       this.logger.warn(
-        `[NOTIFICATION] Plan-activated notification failed (non-fatal): ${notifErr?.message}`,
+        `[NOTIFICATION] Failed to create plan purchase notification: ${notifErr?.message}`,
       );
     }
 
