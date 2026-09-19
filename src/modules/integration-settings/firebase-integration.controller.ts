@@ -63,18 +63,47 @@ export class FirebaseIntegrationController {
     );
     const config = await this.integrationSettingsService.getFirebaseConfig();
 
+    const creds = masked?.credentials || {};
+    const hasAnyCred = Boolean(
+      config.projectId ||
+        config.clientEmail ||
+        config.privateKey ||
+        config.messagingSenderId ||
+        config.apiKey ||
+        config.appId ||
+        config.vapidKey ||
+        creds.projectId ||
+        creds.clientEmail ||
+        creds.privateKey,
+    );
+    const hasEnv = Boolean(
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+      process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+    );
+    const isFullyConfigured = Boolean(
+      config.projectId &&
+      (config.clientEmail || hasEnv) &&
+      (config.privateKey || hasEnv)
+    );
+
+    let status = 'NOT CONFIGURED';
+    if (masked?.config?.lastTestResult === 'FAILED') {
+      status = 'CONNECTION ERROR';
+    } else if (isFullyConfigured) {
+      status = 'CONNECTED';
+    } else if (hasAnyCred) {
+      status = 'PARTIALLY CONFIGURED';
+    }
+
     return {
       success: true,
       provider: 'Firebase Cloud Messaging',
-      connected: config.isConfigured && config.isEnabled,
-      status: !config.isConfigured
-        ? 'NOT_CONNECTED'
-        : config.isEnabled
-        ? 'CONNECTED'
-        : 'DISABLED',
+      connected: isFullyConfigured && config.isEnabled,
+      status,
       isEnabled: config.isEnabled,
       projectId: config.projectId,
-      source: masked.source,
+      source: masked.source || 'NONE',
       lastTestedAt: masked.config?.lastTestedAt || null,
       lastTestResult: masked.config?.lastTestResult || null,
     };

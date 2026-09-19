@@ -477,21 +477,24 @@ export class IntegrationSettingsService {
         const projectId = (
           process.env.FIREBASE_PROJECT_ID ||
           process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-          'quikboom-crm-925d5'
+          ''
         ).trim();
         const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
         const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
         const messagingSenderId = (
           process.env.FIREBASE_MESSAGING_SENDER_ID ||
           process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-          '325119319653'
+          ''
         ).trim();
         const apiKey = (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '').trim();
         const appId = (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '').trim();
-        const authDomain = (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'quikboom-crm-925d5.firebaseapp.com').trim();
-        const storageBucket = (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'quikboom-crm-925d5.firebasestorage.app').trim();
+        const authDomain = (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '').trim();
+        const storageBucket = (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '').trim();
         const vapidKey = (process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '').trim();
 
+        const hasAny = Boolean(
+          projectId || clientEmail || privateKey || messagingSenderId || apiKey || appId || authDomain || storageBucket || vapidKey,
+        );
         const isConfigured = Boolean(
           projectId &&
             (clientEmail ||
@@ -505,23 +508,23 @@ export class IntegrationSettingsService {
           isEnabled: isConfigured,
           environment: 'LIVE',
           credentials: {
-            projectId,
+            projectId: projectId || undefined,
             clientEmail: clientEmail || undefined,
             privateKey: privateKey || undefined,
-            messagingSenderId,
+            messagingSenderId: messagingSenderId || undefined,
             apiKey: apiKey || undefined,
             appId: appId || undefined,
-            authDomain,
-            storageBucket,
+            authDomain: authDomain || undefined,
+            storageBucket: storageBucket || undefined,
             vapidKey: vapidKey || undefined,
           },
           config: {
-            projectId,
-            messagingSenderId,
-            authDomain,
-            storageBucket,
+            projectId: projectId || undefined,
+            messagingSenderId: messagingSenderId || undefined,
+            authDomain: authDomain || undefined,
+            storageBucket: storageBucket || undefined,
           },
-          source: isConfigured ? 'ENV_FALLBACK' : 'NONE',
+          source: hasAny ? 'ENV_FALLBACK' : 'NONE',
         };
       }
 
@@ -763,7 +766,7 @@ export class IntegrationSettingsService {
         cfg.projectId ||
         process.env.FIREBASE_PROJECT_ID ||
         process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-        'quikboom-crm-925d5',
+        '',
     ).trim();
     const clientEmail = String(
       creds.clientEmail ||
@@ -783,7 +786,7 @@ export class IntegrationSettingsService {
         cfg.messagingSenderId ||
         process.env.FIREBASE_MESSAGING_SENDER_ID ||
         process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-        '325119319653',
+        '',
     ).trim();
     const apiKey = String(
       creds.apiKey ||
@@ -804,14 +807,14 @@ export class IntegrationSettingsService {
         creds.auth_domain ||
         cfg.authDomain ||
         process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-        'quikboom-crm-925d5.firebaseapp.com',
+        '',
     ).trim();
     const storageBucket = String(
       creds.storageBucket ||
         creds.storage_bucket ||
         cfg.storageBucket ||
         process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-        'quikboom-crm-925d5.firebasestorage.app',
+        '',
     ).trim();
     const vapidKey = String(
       creds.vapidKey ||
@@ -821,6 +824,18 @@ export class IntegrationSettingsService {
         '',
     ).trim();
 
+    const hasAnyCreds = Boolean(
+      projectId ||
+        clientEmail ||
+        privateKey ||
+        messagingSenderId ||
+        apiKey ||
+        appId ||
+        authDomain ||
+        storageBucket ||
+        vapidKey,
+    );
+
     const isConfigured = Boolean(
       projectId &&
         (clientEmail ||
@@ -829,8 +844,13 @@ export class IntegrationSettingsService {
           process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
           process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
     );
-    const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
+    const isEnabled = Boolean(conf?.isEnabled);
+    let source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = 'NONE';
+    if (conf?.source === 'DATABASE' && hasAnyCreds) {
+      source = 'DATABASE';
+    } else if (hasAnyCreds) {
+      source = 'ENV_FALLBACK';
+    }
 
     return {
       projectId,
@@ -993,12 +1013,18 @@ export class IntegrationSettingsService {
       }
     }
 
+    const isEnabled = dto.isEnabled !== undefined ? Boolean(dto.isEnabled) : (existing?.isEnabled ?? false);
+    const mergedConfig = {
+      ...(existing?.config || {}),
+      ...(dto.config || {}),
+    };
+
     // Upsert into integration_settings table
     const updated = await this.prisma.integrationSetting.upsert({
       where: { provider: normProvider },
       create: {
         provider: normProvider,
-        isEnabled: dto.isEnabled,
+        isEnabled,
         environment:
           dto.environment ||
           (normProvider === IntegrationProvider.RAZORPAY &&
@@ -1006,11 +1032,11 @@ export class IntegrationSettingsService {
             ? 'LIVE'
             : 'TEST'),
         credentials: encryptedCreds,
-        config: dto.config || {},
+        config: mergedConfig,
         updatedByUserId: adminUserId,
       },
       update: {
-        isEnabled: dto.isEnabled,
+        isEnabled,
         environment:
           dto.environment ||
           (normProvider === IntegrationProvider.RAZORPAY &&
@@ -1018,7 +1044,7 @@ export class IntegrationSettingsService {
             ? 'LIVE'
             : 'TEST'),
         credentials: encryptedCreds,
-        config: dto.config || {},
+        config: mergedConfig,
         updatedByUserId: adminUserId,
         deletedAt: null,
       },
@@ -1997,20 +2023,28 @@ export class IntegrationSettingsService {
             resolvedCreds.project_id ||
             process.env.FIREBASE_PROJECT_ID ||
             process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-            'quikboom-crm-925d5',
+            '',
         ).trim();
 
+        const hasEnvCreds = Boolean(
+          process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+        );
+        const hasExplicitKey = Boolean(rawPrivateKey && !isMaskedSecret(rawPrivateKey));
+
         this.logger.log(
-          `[FIREBASE_TEST_DEBUG] Provider: FIREBASE | ProjectId: ${projectId} | ClientEmail: ${clientEmail || 'NONE'} | HasKey: ${Boolean(rawPrivateKey && !isMaskedSecret(rawPrivateKey))} | AppsCount: ${getFirebaseAdminApps().length}`,
+          `[FIREBASE_TEST_DEBUG] Provider: FIREBASE | ProjectId: ${projectId || 'NONE'} | ClientEmail: ${clientEmail || 'NONE'} | HasKey: ${hasExplicitKey} | AppsCount: ${getFirebaseAdminApps().length}`,
         );
 
-        if (!projectId) {
+        if (!projectId || (!hasEnvCreds && (!clientEmail || !hasExplicitKey))) {
           return {
             connected: false,
             success: false,
             provider: 'FIREBASE',
             status: 'NOT CONFIGURED',
-            message: 'Firebase Project ID is required to test connection',
+            projectId: projectId || undefined,
+            message: 'FCM is not fully configured. Please add the required Firebase credentials to test the connection.',
           };
         }
 
@@ -2018,7 +2052,7 @@ export class IntegrationSettingsService {
           const now = new Date();
 
           // 1. If explicit credentials provided or resolved from database, test with dedicated app instance
-          if (clientEmail && rawPrivateKey && !isMaskedSecret(rawPrivateKey)) {
+          if (clientEmail && hasExplicitKey) {
             const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
             const testAppName = `test-firebase-${Date.now()}`;
             const testApp = initFirebaseAdminApp(
@@ -2048,18 +2082,14 @@ export class IntegrationSettingsService {
             const apps = getFirebaseAdminApps();
             if (apps.length > 0) {
               getFirebaseAdminMessaging(apps[0]);
-            } else if (
-              !process.env.GOOGLE_APPLICATION_CREDENTIALS &&
-              !process.env.FIREBASE_SERVICE_ACCOUNT_JSON &&
-              !process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-            ) {
+            } else if (!hasEnvCreds) {
               return {
                 connected: false,
                 success: false,
                 provider: 'FIREBASE',
                 status: 'NOT CONFIGURED',
-                projectId,
-                message: 'Firebase configuration is invalid: credentials are not configured. Please enter Client Email and Private Key, then click Update FCM Credentials.',
+                projectId: projectId || undefined,
+                message: 'FCM is not fully configured. Please add the required Firebase credentials to test the connection.',
               };
             }
           }
@@ -2143,8 +2173,29 @@ export class IntegrationSettingsService {
       `[FCM_TEST_NOTIFICATION] Request from adminId=${currentAdminId || 'NONE'}, recipientType=${recipientType}, title="${title}"`,
     );
 
-    // 1. Verify that Firebase integration is enabled
+    // 1. Verify that Firebase integration is configured
     const conf = await this.getFirebaseConfig();
+    const appsInitial = getFirebaseAdminApps();
+    const hasEnvCreds = Boolean(
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+      process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+    );
+    const hasEnoughConfig = Boolean(
+      conf.projectId &&
+      (conf.clientEmail || hasEnvCreds) &&
+      (conf.privateKey || hasEnvCreds)
+    );
+
+    if (!hasEnoughConfig && appsInitial.length === 0) {
+      return {
+        success: false,
+        connected: false,
+        deviceCount: 0,
+        message: 'FCM is not configured. Please configure Firebase credentials before sending a test notification.',
+      };
+    }
+
     if (!conf.isEnabled) {
       return {
         success: false,
@@ -2169,13 +2220,12 @@ export class IntegrationSettingsService {
       }
     }
 
-    if (apps.length === 0) {
+    if (apps.length === 0 && !hasEnvCreds) {
       return {
         success: false,
         connected: false,
         deviceCount: 0,
-        message:
-          'Firebase Admin SDK is not initialized on the server. Please verify credentials under Settings -> Integrations.',
+        message: 'FCM is not configured. Please configure Firebase credentials before sending a test notification.',
       };
     }
 

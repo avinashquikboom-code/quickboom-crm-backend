@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class UpdateIntegrationDto {
-  @ApiProperty({ description: 'Enable or disable the integration', example: true })
+  @ApiPropertyOptional({ description: 'Enable or disable the integration', example: true })
   @IsBoolean()
-  @IsNotEmpty()
-  isEnabled: boolean;
+  @IsOptional()
+  isEnabled?: boolean;
 
   @ApiPropertyOptional({ description: 'Environment mode (LIVE or TEST)', example: 'LIVE' })
   @IsString()
