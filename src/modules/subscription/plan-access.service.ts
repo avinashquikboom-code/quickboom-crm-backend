@@ -148,22 +148,12 @@ export class PlanAccessService {
     });
 
     // 3. Prioritize active non-expired current subscription
-    let activeSub = currentSubs.find(
+    const activeSub = currentSubs.find(
       (s) =>
         s.status === SubscriptionStatus.ACTIVE &&
         (!s.endDate || new Date(s.endDate) >= now) &&
         s.plan,
     );
-
-    // If no active subscription has startDate <= clockGraceTime, check if customer has an ACTIVE subscription in subs
-    if (!activeSub) {
-      activeSub = subs.find(
-        (s) =>
-          s.status === SubscriptionStatus.ACTIVE &&
-          (!s.endDate || new Date(s.endDate) >= now) &&
-          s.plan,
-      );
-    }
 
     // 4. Determine upcoming queued subscription
     const upcomingSub = activeSub
@@ -200,9 +190,10 @@ export class PlanAccessService {
     let basePlan = sub?.plan;
 
     // If no active subscription exists and there is an upcoming plan with future start date, return upcomingPlan structure with isActive: false
-    if (!activeSub && upcomingPlan && (!sub || sub.status !== SubscriptionStatus.ACTIVE)) {
+    if (!activeSub && upcomingPlan && (!sub || !sub.startDate || new Date(sub.startDate) > now)) {
       return {
         customerId: numCustomerId,
+        subscriptionId: upcomingPlan.subscriptionId,
         planId: upcomingPlan.planId,
         planName: upcomingPlan.planName,
         planCode: upcomingPlan.planCode,
@@ -280,9 +271,8 @@ export class PlanAccessService {
     const isDirectExpired = sub.status === SubscriptionStatus.EXPIRED || (subEndDate ? now > subEndDate : false);
     const isExpired = isDirectExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
-    const isPastDue = sub.status === SubscriptionStatus.PAST_DUE || isDirectExpired;
-    // An active subscription in DB with ACTIVE status and not expired/canceled is ACTIVE
-    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
+    const isUpcoming = Boolean(subStartDate && subStartDate > clockGraceTime);
+    const isActive = !isUpcoming && sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined
