@@ -165,6 +165,18 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_FIELD_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
+export function isMaskedSecret(val?: any): boolean {
+  if (!val || typeof val !== 'string') return true;
+  const t = val.trim();
+  return (
+    t.length === 0 ||
+    t === '******' ||
+    t === '••••••••' ||
+    t.includes('***') ||
+    t.includes('•')
+  );
+}
+
 @Injectable()
 export class IntegrationSettingsService {
   private readonly logger = new Logger(IntegrationSettingsService.name);
@@ -1101,11 +1113,19 @@ export class IntegrationSettingsService {
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
     const active = await this.getIntegrationConfig(normProvider);
     const activeCreds = active?.credentials || {};
-    const testCreds = dto?.credentials || {};
+    const testCreds: Record<string, any> = {
+      ...(dto?.credentials || {}),
+    };
+
+    // Support flat credentials if supplied directly at top level of DTO
+    if (dto?.username !== undefined) testCreds.username = dto.username;
+    if (dto?.password !== undefined) testCreds.password = dto.password;
+    if (dto?.smtpUsername !== undefined) testCreds.smtpUsername = dto.smtpUsername;
+    if (dto?.smtpPassword !== undefined) testCreds.smtpPassword = dto.smtpPassword;
 
     const resolvedCreds: Record<string, any> = { ...activeCreds };
     for (const [k, v] of Object.entries(testCreds)) {
-      if (typeof v === 'string' && !v.includes('***') && !v.includes('•') && v.trim() !== '******' && v.trim().length > 0) {
+      if (typeof v === 'string' && !isMaskedSecret(v) && v.trim().length > 0) {
         resolvedCreds[k] = v.trim();
       }
     }
@@ -1473,80 +1493,150 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.SMTP: {
-        const host = String(
+        // 1. Resolve host
+        let host = String(
           dto?.config?.host ||
+            dto?.host ||
+            dto?.smtpHost ||
             testCreds.host ||
             testCreds.smtpHost ||
             active?.config?.host ||
             resolvedCreds.host ||
             resolvedCreds.smtpHost ||
+            process.env.SMTP_HOST ||
             '',
         ).trim();
 
-        const rawPort =
-          dto?.config?.port ||
-          testCreds.port ||
-          testCreds.smtpPort ||
-          active?.config?.port ||
-          resolvedCreds.port ||
-          resolvedCreds.smtpPort ||
-          587;
-        const port = Number(rawPort) || 587;
+        // Strip any protocol prefix (e.g. smtp:// or ssl://)
+        host = host.replace(/^smtp(s)?:\/\//i, '').replace(/^ssl:\/\//i, '').trim();
 
+        if (!host) {
+          throw new BadRequestException('SMTP Host is required to test connection');
+        }
+
+        // 2. Resolve port
+        const rawPort =
+          dto?.config?.port ??
+          dto?.port ??
+          dto?.smtpPort ??
+          testCreds.port ??
+          testCreds.smtpPort ??
+          active?.config?.port ??
+          resolvedCreds.port ??
+          resolvedCreds.smtpPort ??
+          process.env.SMTP_PORT ??
+          587;
+
+        const port = Number(rawPort);
+        if (!port || isNaN(port) || port < 1 || port > 65535) {
+          throw new BadRequestException('SMTP Port must be a valid port number between 1 and 65535');
+        }
+
+        // 3. Resolve security / encryption enum
         const rawSecurity = String(
           dto?.config?.security ||
+            dto?.config?.encryption ||
+            dto?.security ||
+            dto?.encryption ||
+            dto?.smtpSecurity ||
             testCreds.security ||
+            testCreds.encryption ||
             testCreds.smtpSecurity ||
             active?.config?.security ||
+            active?.config?.encryption ||
             resolvedCreds.security ||
             (port === 465 ? 'SSL' : 'TLS'),
         )
           .toUpperCase()
           .trim();
-        const secure = rawSecurity === 'SSL' || port === 465;
 
-        const username = sanitizeSecret(
-          String(
-            testCreds.username ||
-              testCreds.smtpUsername ||
-              resolvedCreds.username ||
-              resolvedCreds.smtpUsername ||
-              '',
-          ),
-        );
+        const security: 'SSL' | 'TLS' | 'NONE' =
+          rawSecurity === 'SSL' || rawSecurity === 'SMTPS'
+            ? 'SSL'
+            : rawSecurity === 'NONE' || rawSecurity === 'PLAIN'
+            ? 'NONE'
+            : 'TLS';
 
-        const password = sanitizeSecret(
-          String(
-            testCreds.password ||
-              testCreds.smtpPassword ||
+        const secure = security === 'SSL' || port === 465;
+
+        // 4. Resolve username
+        const rawUsername =
+          dto?.username ??
+          dto?.smtpUsername ??
+          testCreds.username ??
+          testCreds.smtpUsername ??
+          resolvedCreds.username ??
+          resolvedCreds.smtpUsername ??
+          resolvedCreds.user ??
+          process.env.SMTP_USER ??
+          process.env.SMTP_USERNAME ??
+          '';
+
+        const username = sanitizeSecret(String(rawUsername || '').trim());
+
+        // 5. Resolve password
+        // If a new unmasked password is provided in dto or testCreds, use it.
+        // Otherwise, use existing stored decrypted password from database.
+        let password = '';
+        const incomingPassword =
+          dto?.password ??
+          dto?.smtpPassword ??
+          testCreds.password ??
+          testCreds.smtpPassword;
+
+        if (incomingPassword !== undefined && !isMaskedSecret(incomingPassword)) {
+          password = sanitizeSecret(String(incomingPassword).trim());
+        } else {
+          password = sanitizeSecret(
+            String(
               resolvedCreds.password ||
-              resolvedCreds.smtpPassword ||
-              '',
-          ),
-        );
+                resolvedCreds.smtpPassword ||
+                resolvedCreds.pass ||
+                activeCreds.password ||
+                activeCreds.smtpPassword ||
+                activeCreds.pass ||
+                process.env.SMTP_PASSWORD ||
+                process.env.SMTP_PASS ||
+                '',
+            ).trim(),
+          );
+        }
 
+        // Validate: if username is given, password must not be empty
+        if (username && !password) {
+          throw new BadRequestException(
+            'SMTP Password is required when SMTP Username is provided. Please enter your SMTP password or app password.',
+          );
+        }
+
+        // 6. Resolve fromEmail
         const fromEmail = String(
           dto?.config?.fromEmail ||
+            dto?.fromEmail ||
+            dto?.smtpFromEmail ||
             testCreds.fromEmail ||
             active?.config?.fromEmail ||
             resolvedCreds.fromEmail ||
+            process.env.SMTP_FROM_EMAIL ||
+            process.env.MAIL_FROM ||
             '',
         ).trim();
 
+        if (fromEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+          throw new BadRequestException(`Invalid From Email format: "${fromEmail}"`);
+        }
+
+        // 7. Resolve fromName
         const fromName = String(
           dto?.config?.fromName ||
+            dto?.fromName ||
+            dto?.smtpFromName ||
             testCreds.fromName ||
             active?.config?.fromName ||
             resolvedCreds.fromName ||
+            process.env.SMTP_FROM_NAME ||
             'QuickBoom CRM',
         ).trim();
-
-        if (!host) {
-          throw new BadRequestException('SMTP Host is required to test connection');
-        }
-        if (!port) {
-          throw new BadRequestException('SMTP Port is required to test connection');
-        }
 
         try {
           const transportOptions: any = {
@@ -1563,6 +1653,10 @@ export class IntegrationSettingsService {
               user: username,
               pass: password,
             };
+          }
+
+          if (!secure && security === 'TLS') {
+            transportOptions.requireTLS = true;
           }
 
           if (!secure && port !== 465) {
@@ -1582,16 +1676,32 @@ export class IntegrationSettingsService {
             details: {
               host,
               port,
-              security: secure ? 'SSL' : rawSecurity === 'NONE' ? 'NONE' : 'TLS',
+              security: secure ? 'SSL' : security === 'NONE' ? 'NONE' : 'TLS',
               user: username ? username : 'Anonymous',
               fromEmail: fromEmail || undefined,
               fromName: fromName || undefined,
             },
           };
         } catch (err: any) {
-          this.logger.error(`[SMTP_TEST_FAILED] ${err?.message}`);
-          const errMsg = err?.message || 'Failed to establish connection with SMTP server';
-          throw new BadRequestException(`SMTP connection test failed: ${errMsg}`);
+          this.logger.error(
+            `[SMTP_TEST_FAILED] ${err?.message} (code: ${err?.code}, responseCode: ${err?.responseCode})`,
+          );
+
+          let descriptiveMsg = err?.message || 'Failed to establish connection with SMTP server';
+
+          if (err?.code === 'EAUTH' || err?.responseCode === 535) {
+            descriptiveMsg = `SMTP authentication failed (535): Invalid username or password. If using Gmail, ensure 2-Step Verification is enabled and use a 16-character App Password (not your Gmail account password).`;
+          } else if (err?.code === 'ECONNREFUSED') {
+            descriptiveMsg = `Connection refused by server at ${host}:${port}. Please verify the SMTP host and port numbers.`;
+          } else if (err?.code === 'ETIMEDOUT' || err?.code === 'ESOCKETTIMEDOUT') {
+            descriptiveMsg = `Connection to SMTP server at ${host}:${port} timed out after 10 seconds. Check firewall or try alternative port (587 or 465).`;
+          } else if (err?.code === 'ENOTFOUND') {
+            descriptiveMsg = `SMTP Host "${host}" could not be resolved (DNS lookup failure). Please verify the hostname.`;
+          } else if (err?.responseCode === 530 || String(err?.message || '').includes('STARTTLS')) {
+            descriptiveMsg = `SMTP server requires TLS/STARTTLS encryption. Please select Security as "STARTTLS / TLS" and use port 587.`;
+          }
+
+          throw new BadRequestException(`SMTP connection test failed: ${descriptiveMsg}`);
         }
       }
 

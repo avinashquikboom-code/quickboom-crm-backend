@@ -423,6 +423,133 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       ).rejects.toThrow('MSG91 Template ID is required to test connection');
     });
   });
+
+  describe('10. SMTP Integration Live Testing', () => {
+    const nodemailer = require('nodemailer');
+
+    it('throws BadRequestException when SMTP host is missing', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      await expect(
+        service.testIntegration('SMTP', { config: { host: '' } }),
+      ).rejects.toThrow('SMTP Host is required to test connection');
+    });
+
+    it('throws BadRequestException when SMTP port is invalid', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      await expect(
+        service.testIntegration('SMTP', { config: { host: 'smtp.gmail.com', port: -1 } }),
+      ).rejects.toThrow('SMTP Port must be a valid port number between 1 and 65535');
+    });
+
+    it('throws BadRequestException when username is provided without a password and none is saved', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      await expect(
+        service.testIntegration('SMTP', {
+          config: { host: 'smtp.gmail.com', port: 587 },
+          credentials: { username: 'user@example.com', password: '' },
+        }),
+      ).rejects.toThrow('SMTP Password is required when SMTP Username is provided');
+    });
+
+    it('uses existing saved decrypted password when UI submits masked password (******)', async () => {
+      const savedPass = 'my_real_secret_smtp_password';
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        provider: 'SMTP',
+        isEnabled: true,
+        credentials: {
+          username: 'saved_user@example.com',
+          password: encryptSecret(savedPass),
+        },
+        config: {
+          host: 'smtp.gmail.com',
+          port: 587,
+          security: 'TLS',
+        },
+      });
+
+      let capturedOptions: any = null;
+      jest.spyOn(nodemailer, 'createTransport').mockImplementation((opts: any) => {
+        capturedOptions = opts;
+        return {
+          verify: jest.fn().mockResolvedValue(true),
+        } as any;
+      });
+
+      const res = await service.testIntegration('SMTP', {
+        config: { host: 'smtp.gmail.com', port: 587, security: 'TLS' },
+        credentials: { username: 'saved_user@example.com', password: '******' },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.status).toBe('CONNECTED');
+      expect(capturedOptions.auth.pass).toBe(savedPass);
+    });
+
+    it('uses new password when UI submits a non-masked password', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const newPass = 'new_app_password_123';
+
+      let capturedOptions: any = null;
+      jest.spyOn(nodemailer, 'createTransport').mockImplementation((opts: any) => {
+        capturedOptions = opts;
+        return {
+          verify: jest.fn().mockResolvedValue(true),
+        } as any;
+      });
+
+      const res = await service.testIntegration('SMTP', {
+        config: { host: 'smtp.gmail.com', port: 587 },
+        credentials: { username: 'user@example.com', password: newPass },
+      });
+
+      expect(res.success).toBe(true);
+      expect(capturedOptions.auth.pass).toBe(newPass);
+    });
+
+    it('supports flat payload properties for SMTP test', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      let capturedOptions: any = null;
+      jest.spyOn(nodemailer, 'createTransport').mockImplementation((opts: any) => {
+        capturedOptions = opts;
+        return {
+          verify: jest.fn().mockResolvedValue(true),
+        } as any;
+      });
+
+      const res = await service.testIntegration('SMTP', {
+        host: 'smtp.office365.com',
+        port: 587,
+        security: 'TLS',
+        username: 'office@company.com',
+        password: 'office_password',
+      });
+
+      expect(res.success).toBe(true);
+      expect(capturedOptions.host).toBe('smtp.office365.com');
+      expect(capturedOptions.auth.user).toBe('office@company.com');
+      expect(capturedOptions.auth.pass).toBe('office_password');
+    });
+
+    it('returns descriptive error when authentication fails (535)', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const authErr: any = new Error('535 5.7.8 Username and Password not accepted');
+      authErr.code = 'EAUTH';
+      authErr.responseCode = 535;
+
+      jest.spyOn(nodemailer, 'createTransport').mockImplementation(() => {
+        return {
+          verify: jest.fn().mockRejectedValue(authErr),
+        } as any;
+      });
+
+      await expect(
+        service.testIntegration('SMTP', {
+          config: { host: 'smtp.gmail.com', port: 587 },
+          credentials: { username: 'user@gmail.com', password: 'wrong_password' },
+        }),
+      ).rejects.toThrow('SMTP authentication failed (535): Invalid username or password');
+    });
+  });
 });
 
 
