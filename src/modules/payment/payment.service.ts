@@ -700,6 +700,10 @@ export class PaymentService {
       `[PLAN_PURCHASE]\ncustomerId: ${customerId}\nplanId: ${plan.id}\npurchaseDate: ${new Date().toISOString().split('T')[0]}\npaymentStatus: ${result.isFullyPaid ? 'PAID' : 'PARTIALLY_PAID'}\nsubscriptionId: ${result.subscription.id}`,
     );
 
+    this.logger.log(
+      `[PAYMENT_API_VERIFY] AUTH_USER_ID: ${customerId} | CUSTOMER_ID: ${customerId} | WORKSPACE_ID: ${customerId} | PLAN_ID: ${plan.id} | SUBSCRIPTION_ID: ${result.subscription.id} | SUBSCRIPTION_STATUS: ACTIVE | PAYMENT_ID: ${dto.razorpay_payment_id} | ORDER_ID: ${dto.razorpay_order_id} | START_DATE: ${startDate.toISOString()} | END_DATE: ${expiryDate.toISOString()}`,
+    );
+
     const remainingDays = Math.max(0, Math.ceil((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
     const totalDays = cycle === SubscriptionBillingCycle.YEARLY ? 365 : 30;
 
@@ -734,9 +738,10 @@ export class PaymentService {
           features: plan.features,
         },
         subscription: {
-          id: result.subscription.id,
-          customerId: result.subscription.customerId,
-          planId: plan.id,
+          id: String(result.subscription.id),
+          customerId: String(result.subscription.customerId),
+          workspaceId: String(result.subscription.customerId),
+          planId: String(plan.id),
           planName: plan.name,
           planCode: plan.code,
           status: 'ACTIVE',

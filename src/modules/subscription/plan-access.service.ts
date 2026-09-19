@@ -148,16 +148,26 @@ export class PlanAccessService {
     });
 
     // 3. Prioritize active non-expired current subscription
-    const activeSub = currentSubs.find(
+    let activeSub = currentSubs.find(
       (s) =>
         s.status === SubscriptionStatus.ACTIVE &&
         (!s.endDate || new Date(s.endDate) >= now) &&
         s.plan,
     );
 
+    // If no active subscription has startDate <= clockGraceTime, check if customer has an ACTIVE subscription in subs
+    if (!activeSub) {
+      activeSub = subs.find(
+        (s) =>
+          s.status === SubscriptionStatus.ACTIVE &&
+          (!s.endDate || new Date(s.endDate) >= now) &&
+          s.plan,
+      );
+    }
+
     // 4. Determine upcoming queued subscription
     const upcomingSub = activeSub
-      ? upcomingSubs.find((s) => s.id !== activeSub.id && (!activeSub.endDate || new Date(s.startDate) > new Date(activeSub.endDate))) || (upcomingSubs.length > 0 ? upcomingSubs[0] : null)
+      ? upcomingSubs.find((s) => s.id !== activeSub.id && (!activeSub.endDate || new Date(s.startDate) > new Date(activeSub.endDate))) || (upcomingSubs.length > 0 && upcomingSubs[0].id !== activeSub.id ? upcomingSubs[0] : null)
       : (upcomingSubs.length > 0 ? upcomingSubs[0] : null);
 
     const upcomingPlan: UpcomingPlanSummary | null = upcomingSub && upcomingSub.plan
@@ -190,7 +200,7 @@ export class PlanAccessService {
     let basePlan = sub?.plan;
 
     // If no active subscription exists and there is an upcoming plan with future start date, return upcomingPlan structure with isActive: false
-    if (!activeSub && upcomingPlan && (!sub || !sub.startDate || new Date(sub.startDate) > now)) {
+    if (!activeSub && upcomingPlan && (!sub || sub.status !== SubscriptionStatus.ACTIVE)) {
       return {
         customerId: numCustomerId,
         planId: upcomingPlan.planId,
@@ -271,9 +281,8 @@ export class PlanAccessService {
     const isExpired = isDirectExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
     const isPastDue = sub.status === SubscriptionStatus.PAST_DUE || isDirectExpired;
-    // An active subscription remains active throughout its validity period and cannot be upcoming or expired or canceled
-    const isUpcoming = Boolean(subStartDate && subStartDate > clockGraceTime);
-    const isActive = !isUpcoming && sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
+    // An active subscription in DB with ACTIVE status and not expired/canceled is ACTIVE
+    const isActive = sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits
     const effectiveUserLimit = sub?.customUserLimit !== null && sub?.customUserLimit !== undefined
@@ -490,6 +499,9 @@ export class PlanAccessService {
     const duration = Date.now() - startTime;
     this.logger.log(
       `[API_PERFORMANCE] GET /subscriptions/effective-plan customerId=${customerId} total=${duration}ms`,
+    );
+    this.logger.log(
+      `[SUBSCRIPTION_SYNC] AUTH_USER_ID: ${customerId} | CUSTOMER_ID: ${numCustomerId} | WORKSPACE_ID: ${numCustomerId} | PLAN_ID: ${result.planId} | SUBSCRIPTION_ID: ${result.subscriptionId} | SUBSCRIPTION_STATUS: ${result.status} | START_DATE: ${result.startDate instanceof Date ? result.startDate.toISOString() : result.startDate} | END_DATE: ${result.endDate instanceof Date ? result.endDate.toISOString() : result.endDate}`,
     );
     this.logger.debug(
       `[PLAN_DEBUG] completed - customerId=${numCustomerId}, scheduleLimit=${result.scheduleLimit}, services=${result.services.length}`,

@@ -12,6 +12,7 @@ import {
   Req,
   Headers,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SubscriptionService } from './subscription.service';
@@ -28,6 +29,8 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @ApiTags('Subscriptions & Plans')
 @Controller()
 export class SubscriptionController {
+  private readonly logger = new Logger(SubscriptionController.name);
+
   constructor(
     private readonly subscriptionService: SubscriptionService,
     private readonly planAccessService: PlanAccessService,
@@ -133,6 +136,8 @@ export class SubscriptionController {
 
   @Get('subscriptions/current')
   @Get('customer/subscriptions/current')
+  @Get('customer/subscription/current')
+  @Get('customer/subscription/status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription and installment status' })
@@ -153,7 +158,11 @@ export class SubscriptionController {
     if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('No customer organization associated with current user');
     }
-    return this.installmentService.getCurrentSubscription(customerId);
+    const res = await this.installmentService.getCurrentSubscription(customerId);
+    this.logger.log(
+      `[GET_CURRENT_SUBSCRIPTION] user=${user?.id || 'N/A'} customerId=${customerId} status=${res?.subscription?.status || res?.data?.status || 'NO_SUB'}`,
+    );
+    return res;
   }
 
   @Get('subscriptions/renewal-status')
@@ -324,20 +333,22 @@ export class SubscriptionController {
 
       const currentPlanData = isCurrentActive
         ? {
-            id: plan.planId,
-            subscriptionId: plan.subscriptionId,
-            planId: plan.planId,
+            id: String(plan.subscriptionId || plan.planId),
+            subscriptionId: plan.subscriptionId ? String(plan.subscriptionId) : null,
+            planId: String(plan.planId),
             name: plan.planName,
             planName: plan.planName,
             code: plan.planCode,
             planCode: plan.planCode,
             status: plan.status || (plan.isActive ? 'ACTIVE' : 'INACTIVE'),
-            customerId: plan.customerId || customerId,
-            billingCycle: plan.billingCycle,
+            customerId: String(plan.customerId || customerId),
+            workspaceId: String(plan.customerId || customerId),
+            billingCycle: plan.billingCycle || 'MONTHLY',
             price: plan.price,
             startDate: plan.startDate,
             endDate: plan.endDate,
             expiryDate: plan.endDate,
+            purchaseDate: plan.startDate,
             isActive: plan.isActive,
             isExpired: plan.isExpired,
             remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
@@ -361,6 +372,10 @@ export class SubscriptionController {
             },
           }
         : null;
+
+      this.logger.log(
+        `[EFFECTIVE_PLAN_API] AUTH_USER_ID: ${user?.id || customerId} | CUSTOMER_ID: ${customerId} | WORKSPACE_ID: ${customerId} | PLAN_ID: ${currentPlanData?.planId || 'NONE'} | SUBSCRIPTION_ID: ${currentPlanData?.subscriptionId || 'NONE'} | SUBSCRIPTION_STATUS: ${currentPlanData?.status || 'NONE'} | START_DATE: ${currentPlanData?.startDate || 'NONE'} | END_DATE: ${currentPlanData?.endDate || 'NONE'}`,
+      );
 
       return {
         success: true,

@@ -198,8 +198,8 @@ export class InstallmentService {
     const numCustomerId = Number(customerId);
     const now = new Date();
 
-    const sub = await this.prisma.customerSubscription.findFirst({
-      where: { customerId: numCustomerId, deletedAt: null },
+    let sub = await this.prisma.customerSubscription.findFirst({
+      where: { customerId: numCustomerId, status: SubscriptionStatus.ACTIVE, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: {
         plan: true,
@@ -212,6 +212,23 @@ export class InstallmentService {
         },
       },
     });
+
+    if (!sub) {
+      sub = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          plan: true,
+          installments: {
+            orderBy: { installmentNumber: 'asc' },
+          },
+          payments: {
+            where: { status: 'SUCCESS' },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      });
+    }
 
     const customer = await this.prisma.customer.findUnique({
       where: { id: numCustomerId },
@@ -915,12 +932,64 @@ export class InstallmentService {
     const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
     const currentInst = lastPaidInst || (summary.installments && summary.installments.length > 0 ? summary.installments[0] : null);
 
+    const activeSub = (await this.prisma.customerSubscription.findFirst({
+      where: { customerId: numCustomerId, status: SubscriptionStatus.ACTIVE, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true },
+    })) || (summary?.subscriptionId ? await this.prisma.customerSubscription.findUnique({
+      where: { id: summary.subscriptionId },
+      include: { plan: true },
+    }) : null);
+
+    const subscriptionObj = activeSub && activeSub.plan ? {
+      id: String(activeSub.id),
+      status: activeSub.status,
+      customerId: String(numCustomerId),
+      workspaceId: String(numCustomerId),
+      planId: String(activeSub.planId),
+      planName: activeSub.plan.name,
+      planCode: activeSub.plan.code,
+      billingCycle: activeSub.billingCycle || 'MONTHLY',
+      price: activeSub.customPrice !== null && activeSub.customPrice !== undefined
+        ? Number(activeSub.customPrice)
+        : (activeSub.billingCycle === SubscriptionBillingCycle.YEARLY
+            ? Number(activeSub.plan.yearlyPrice)
+            : Number(activeSub.plan.monthlyPrice)),
+      startDate: activeSub.startDate ? new Date(activeSub.startDate).toISOString() : null,
+      endDate: activeSub.endDate ? new Date(activeSub.endDate).toISOString() : null,
+      expiryDate: activeSub.endDate ? new Date(activeSub.endDate).toISOString() : null,
+      isActive: activeSub.status === SubscriptionStatus.ACTIVE,
+    } : (summary && summary.subscriptionId ? {
+      id: String(summary.subscriptionId),
+      status: summary.planStatus,
+      customerId: String(numCustomerId),
+      workspaceId: String(numCustomerId),
+      planId: String(summary.planId),
+      planName: summary.planName,
+      planCode: 'STANDARD',
+      billingCycle: 'MONTHLY',
+      price: summary.originalPlanValue,
+      startDate: null,
+      endDate: null,
+      expiryDate: null,
+      isActive: summary.planStatus === 'ACTIVE',
+    } : null);
+
     const currentData = {
+      id: String(activeSub?.id || summary.subscriptionId || ''),
       subscriptionId: summary.subscriptionId ? String(summary.subscriptionId) : null,
       customerId: String(numCustomerId),
+      workspaceId: String(numCustomerId),
       planId: summary.planId ? String(summary.planId) : null,
-      planName: summary.planName || 'No Active Plan',
+      planName: summary.planName || (activeSub?.plan?.name) || 'No Active Plan',
+      planCode: activeSub?.plan?.code || 'STANDARD',
+      billingCycle: activeSub?.billingCycle || 'MONTHLY',
+      price: subscriptionObj?.price ?? summary.originalPlanValue,
       originalPlanValue: summary.originalPlanValue,
+      startDate: subscriptionObj?.startDate ?? null,
+      endDate: subscriptionObj?.endDate ?? null,
+      expiryDate: subscriptionObj?.endDate ?? null,
+      isActive: summary.planStatus === 'ACTIVE' || activeSub?.status === SubscriptionStatus.ACTIVE,
       status: summary.planStatus,
       currentInstallment: currentInst
         ? {
@@ -948,10 +1017,15 @@ export class InstallmentService {
       newPlanPrice: summary.isRenewalFailed ? summary.newPlanPrice : null,
     };
 
+    this.logger.log(
+      `[SUBSCRIPTION_CURRENT_API] AUTH_USER_ID: ${numCustomerId} | CUSTOMER_ID: ${numCustomerId} | WORKSPACE_ID: ${numCustomerId} | PLAN_ID: ${subscriptionObj?.planId || 'NONE'} | SUBSCRIPTION_ID: ${subscriptionObj?.id || 'NONE'} | SUBSCRIPTION_STATUS: ${subscriptionObj?.status || 'NONE'} | START_DATE: ${subscriptionObj?.startDate || 'NONE'} | END_DATE: ${subscriptionObj?.endDate || 'NONE'}`,
+    );
+
     return {
       success: true,
       data: currentData,
       currentPlan: currentData,
+      subscription: subscriptionObj,
       upcomingPlan,
     };
   }
