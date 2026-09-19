@@ -4,6 +4,7 @@ import { IntegrationSettingsService } from '../integration-settings/integration-
 import { SendEmailDto } from './dto/send-email.dto';
 import { EmailTemplateService, PREDEFINED_SYSTEM_TEMPLATES } from './email-template.service';
 import * as nodemailer from 'nodemailer';
+import * as path from 'path';
 
 @Injectable()
 export class EmailService {
@@ -124,12 +125,42 @@ export class EmailService {
     // 6. Send email
     try {
       const transporter = nodemailer.createTransport(transportOptions);
+
+      // Attach QUIKBOOM logo as inline CID so email clients render <img src="cid:quikboom-logo">
+      const logoAttachment: any[] = [];
+      if (htmlContent && htmlContent.includes('cid:quikboom-logo')) {
+        try {
+          // Resolve path relative to dist output (compiled assets) or source fallback
+          const logoPaths = [
+            path.resolve(__dirname, '../../assets/images/logo.png'),        // dist/src/assets/...
+            path.resolve(__dirname, '../../../src/assets/images/logo.png'), // dev source
+          ];
+          const fs = await import('fs');
+          const resolvedLogoPath = logoPaths.find((p) => {
+            try { return fs.statSync(p).isFile(); } catch { return false; }
+          });
+          if (resolvedLogoPath) {
+            logoAttachment.push({
+              filename: 'logo.png',
+              path: resolvedLogoPath,
+              cid: 'quikboom-logo',
+              contentDisposition: 'inline',
+            });
+          } else {
+            this.logger.warn('[EMAIL_LOGO] Could not resolve logo.png path for CID attachment');
+          }
+        } catch (logoErr: any) {
+          this.logger.warn(`[EMAIL_LOGO] Failed to attach logo: ${logoErr?.message}`);
+        }
+      }
+
       const mailPayload: any = {
         from: formattedFrom,
         to: recipient,
         subject,
         text: textContent,
         html: htmlContent,
+        attachments: logoAttachment.length ? logoAttachment : undefined,
       };
       if (cc) mailPayload.cc = cc;
       if (bcc) mailPayload.bcc = bcc;
