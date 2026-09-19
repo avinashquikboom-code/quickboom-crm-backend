@@ -41,6 +41,7 @@ import { TrendingModule } from './modules/trending/trending.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
 import { S3Module } from './modules/s3/s3.module';
 import { Msg91Module } from './modules/msg91/msg91.module';
+import { WhatsappModule } from './modules/whatsapp/whatsapp.module';
 import { SocialMediaHandlerModule } from './modules/social-media-handler/social-media-handler.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { InfluencerModule } from './modules/influencer/influencer.module';
@@ -58,6 +59,7 @@ import { AppController } from './app.controller';
     PrismaModule,
     S3Module,
     Msg91Module,
+    WhatsappModule,
     IntegrationSettingsModule,
     EmailModule,
     AuthModule,

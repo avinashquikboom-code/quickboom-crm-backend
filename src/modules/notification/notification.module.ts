@@ -5,9 +5,10 @@ import { NotificationService } from './notification.service';
 import { FcmService } from './fcm.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-  imports: [PrismaModule, ConfigModule],
+  imports: [PrismaModule, ConfigModule, WhatsappModule],
   controllers: [NotificationController],
   providers: [NotificationService, FcmService, NotificationSchedulerService],
   exports: [NotificationService, FcmService, NotificationSchedulerService],

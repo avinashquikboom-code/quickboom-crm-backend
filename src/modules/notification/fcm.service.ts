@@ -296,6 +296,10 @@ export class FcmService implements OnModuleInit {
       };
     }
 
+    this.logger.log('[FCM] Firebase Admin initialized');
+    this.logger.log('[FCM] Sending push');
+    this.logger.log('[FCM] Sending notification');
+
     const stringifiedData: Record<string, string> = {
       click_action: 'FLUTTER_NOTIFICATION_CLICK',
     };
@@ -316,7 +320,7 @@ export class FcmService implements OnModuleInit {
         priority: 'high',
         notification: {
           sound: 'default',
-          channelId: 'high_importance_channel',
+          channelId: 'quikboom_notifications',
           clickAction: 'FLUTTER_NOTIFICATION_CLICK',
           icon: 'ic_notification',
           color: '#23C45E',
@@ -355,6 +359,8 @@ export class FcmService implements OnModuleInit {
 
     try {
       const messageId = await messaging.send(message);
+      this.logger.log('[FCM] Send response received');
+      this.logger.log('[FCM] Push sent successfully');
       this.logger.log(`[FCM] Sent successfully:\n${messageId}`);
       return { success: true, messageId };
     } catch (err: any) {
@@ -433,6 +439,10 @@ export class FcmService implements OnModuleInit {
       };
     }
 
+    this.logger.log('[FCM] Firebase Admin initialized');
+    this.logger.log('[FCM] Sending push');
+    this.logger.log('[FCM] Sending notification');
+
     const invalidTokens: string[] = [];
     const messageIds: string[] = [];
     let successCount = 0;
@@ -456,7 +466,7 @@ export class FcmService implements OnModuleInit {
           priority: 'high',
           notification: {
             sound: 'default',
-            channelId: 'high_importance_channel',
+            channelId: 'quikboom_notifications',
             clickAction: 'FLUTTER_NOTIFICATION_CLICK',
             icon: 'ic_notification',
             color: '#23C45E',
@@ -493,6 +503,10 @@ export class FcmService implements OnModuleInit {
 
       try {
         const response: BatchResponse = await messaging.sendEachForMulticast(message);
+        this.logger.log('[FCM] Send response received');
+        if (response.successCount > 0) {
+          this.logger.log('[FCM] Push sent successfully');
+        }
         successCount += response.successCount;
         failureCount += response.failureCount;
 
@@ -509,7 +523,8 @@ export class FcmService implements OnModuleInit {
             if (
               errorCode === 'messaging/invalid-registration-token' ||
               errorCode === 'messaging/registration-token-not-registered' ||
-              errorCode === 'messaging/mismatched-credential'
+              errorCode === 'messaging/mismatched-credential' ||
+              errorCode === 'messaging/invalid-argument'
             ) {
               invalidTokens.push(token);
             }

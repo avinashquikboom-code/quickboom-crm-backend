@@ -696,9 +696,13 @@ export class PaymentService {
     this.logger.log(
       `[PAYMENT] Payment verified: customerId=${customerId}, paymentId=${dto.razorpay_payment_id}`,
     );
-    this.logger.log(
-      `[SUBSCRIPTION] Subscription activated: customerId=${customerId}, subscriptionId=${result.subscription.id}, status=ACTIVE`,
-    );
+    this.logger.log(`[PAYMENT] Payment verified`);
+    this.logger.log(`[SUBSCRIPTION] ACTIVE`);
+    this.logger.log(`[PLAN] Payment verified`);
+    this.logger.log(`[PLAN] Subscription ID: ${result.subscription.id}`);
+    this.logger.log(`[PLAN] Customer ID: ${customerId}`);
+    this.logger.log(`[PLAN] Plan status: ACTIVE`);
+    this.logger.log(`[PLAN] Triggering plan activation notification`);
 
     // Trigger Plan Purchase Success Notification
     try {
@@ -973,6 +977,12 @@ export class PaymentService {
     });
 
     this.logger.log(`[TRUSTED_ACTIVATION_DONE] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
+    this.logger.log(`[PAYMENT] Payment verified`);
+    this.logger.log(`[SUBSCRIPTION] ACTIVE`);
+    this.logger.log(`[PLAN] Payment verified`);
+    this.logger.log(`[PLAN] Customer ID: ${customerId}`);
+    this.logger.log(`[PLAN] Plan status: ACTIVE`);
+    this.logger.log(`[PLAN] Triggering plan activation notification`);
 
     // Trigger Plan Purchase Success Notification
     try {

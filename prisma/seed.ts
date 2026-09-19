@@ -378,6 +378,302 @@ async function main() {
     }
   }
 
+  // 8. Seed QUIKBOOM CRM Email Templates (11 Telecaller Stage Templates)
+  const QUIKBOOM_TEMPLATES = [
+    {
+      key: 'QUIKBOOM_NEW_LEAD',
+      name: 'New Lead – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Thank You for Connecting with QUIKBOOM',
+      description: 'Sent when an inquiry or new lead connects with QUIKBOOM',
+      supportedVariables: ['leadTitle', 'userName', 'email'],
+      body: `Dear {{leadTitle}},
+
+Thank you for your interest in QUIKBOOM Digital Marketing Agency.
+
+Our team has received your inquiry and will be connecting with you shortly to understand your business requirements.
+
+We look forward to speaking with you and exploring how we can help your business grow.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+    },
+    {
+      key: 'QUIKBOOM_CONTACTED',
+      name: 'Customer Contacted – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Great Speaking With You – QUIKBOOM',
+      description: 'Sent after telecaller contacts prospective lead',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+Thank you for taking the time to speak with our team.
+
+We appreciate the opportunity to understand your business and digital marketing requirements.
+
+We will be happy to assist you with the right solutions for your business.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_DETAILS_SENT',
+      name: 'Company Details Sent – QUIKBOOM',
+      category: 'CRM',
+      subject: 'QUIKBOOM – Company Details & Services',
+      description: 'Sent with agency details and services overview',
+      supportedVariables: ['leadTitle', 'userName', 'email'],
+      body: `Dear {{leadTitle}},
+
+As discussed during our call, we are sharing the details of QUIKBOOM Digital Marketing Agency for your reference.
+
+You can explore our company, services and work through our website.
+
+Visit QUIKBOOM Website
+
+We look forward to discussing your requirements further.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+    },
+    {
+      key: 'QUIKBOOM_FOLLOW_UP',
+      name: 'Customer Follow-up – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Following Up on Our Discussion – QUIKBOOM',
+      description: 'Sent during regular telecaller follow-up',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+We wanted to follow up regarding our recent conversation about your digital marketing requirements.
+
+Please let us know if you have any questions or if you would like to discuss the next steps.
+
+Our team will be happy to assist you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_VISIT_SCHEDULED',
+      name: 'Visit Scheduled – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Your Meeting with QUIKBOOM is Scheduled',
+      description: 'Sent when an in-person or virtual visit is confirmed',
+      supportedVariables: ['leadTitle', 'startDate', 'startTime', 'userName'],
+      body: `Dear {{leadTitle}},
+
+This is to confirm that your visit/meeting with QUIKBOOM Digital Marketing Agency has been scheduled.
+
+We look forward to meeting you and discussing your business requirements in detail.
+
+Meeting Details:
+
+Date: {{startDate}}
+
+Time: {{startTime}}
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_VISIT_DONE',
+      name: 'Visit Completed – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Thank You for Visiting QUIKBOOM',
+      description: 'Sent after concluding a client visit or meeting',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+Thank you for visiting QUIKBOOM Digital Marketing Agency.
+
+It was a pleasure meeting with you and discussing your business requirements.
+
+We appreciate your time and look forward to taking our conversation ahead.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_PROPOSAL_SENT',
+      name: 'Proposal Sent – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Your Digital Marketing Proposal from QUIKBOOM',
+      description: 'Sent when digital marketing proposal is sent to client',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+As discussed, we have shared the proposal for your business requirements.
+
+Please review the proposal and feel free to contact us if you have any questions or require any clarification.
+
+We look forward to working with you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_NEGOTIATION',
+      name: 'Proposal Discussion – QUIKBOOM',
+      category: 'CRM',
+      subject: "Let's Discuss Your Proposal – QUIKBOOM",
+      description: 'Sent during commercials and proposal negotiation',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+Thank you for reviewing our proposal.
+
+We would be happy to discuss the proposal, requirements and available options with you.
+
+Please feel free to share your feedback so that we can take the discussion forward.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_FINAL_CALL',
+      name: 'Final Discussion – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Final Discussion Regarding Your Digital Marketing Requirements',
+      description: 'Sent for final discussion before deal closure',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+We are reaching out for a final discussion regarding the digital marketing solutions discussed with you.
+
+Please let us know if you would like to proceed or if there are any remaining questions we can help you with.
+
+We look forward to hearing from you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+    {
+      key: 'QUIKBOOM_WON',
+      name: 'Customer Onboarding – QUIKBOOM',
+      category: 'CRM',
+      subject: "Welcome to QUIKBOOM – Let's Grow Together! 🎉",
+      description: 'Sent when a deal is closed/won and onboarding starts',
+      supportedVariables: ['leadTitle', 'userName', 'email'],
+      body: `Dear {{leadTitle}},
+
+Welcome to QUIKBOOM Digital Marketing Agency! 🎉
+
+Thank you for choosing QUIKBOOM as your digital marketing partner.
+
+We are excited to work with you and help your business achieve its digital marketing goals.
+
+Our team will connect with you regarding the next steps and onboarding process.
+
+Welcome to the QUIKBOOM family!
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+    },
+    {
+      key: 'QUIKBOOM_LOST',
+      name: 'Lead Closed – QUIKBOOM',
+      category: 'CRM',
+      subject: 'Thank You for Considering QUIKBOOM',
+      description: 'Sent when a lead deal is closed/lost',
+      supportedVariables: ['leadTitle', 'userName'],
+      body: `Dear {{leadTitle}},
+
+Thank you for taking the time to speak with QUIKBOOM Digital Marketing Agency and considering our services.
+
+We completely understand that the timing may not be right at this moment.
+
+If your requirements change in the future, we would be happy to connect with you again.
+
+We wish you and your business continued success.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+    },
+  ];
+
+  for (const t of QUIKBOOM_TEMPLATES) {
+    const existing = await prisma.emailTemplate.findFirst({
+      where: {
+        key: t.key,
+        customerId: null,
+        deletedAt: null,
+      },
+    });
+
+    if (!existing) {
+      await prisma.emailTemplate.create({
+        data: {
+          customerId: null,
+          key: t.key,
+          name: t.name,
+          category: t.category,
+          subject: t.subject,
+          description: t.description,
+          supportedVariables: t.supportedVariables,
+          body: t.body,
+          isSystem: true,
+          isActive: true,
+        },
+      });
+      console.log(`✅ Created email template: [${t.key}] ${t.name}`);
+    } else {
+      await prisma.emailTemplate.update({
+        where: { id: existing.id },
+        data: {
+          name: t.name,
+          category: t.category,
+          subject: t.subject,
+          description: t.description,
+          supportedVariables: t.supportedVariables,
+          body: t.body,
+          isSystem: true,
+          isActive: true,
+        },
+      });
+      console.log(`✅ Refreshed email template: [${t.key}] ${t.name}`);
+    }
+  }
+
   console.log(`✅ Ready: Admin (admin@quikboom.com) & Demo Employee (demo@gmail.com) with password: ${password}`);
 }
 

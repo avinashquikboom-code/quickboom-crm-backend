@@ -3,17 +3,29 @@ import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray } from 'class-vali
 import { Transform } from 'class-transformer';
 
 export class CreateEmailTemplateDto {
-  @ApiProperty({ description: 'Human-readable name of the template', example: 'Email OTP' })
+  @ApiPropertyOptional({ description: 'Alias for name (templateName)', example: 'New Lead – QUIKBOOM' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
-  name: string;
+  templateName?: string;
 
-  @ApiProperty({ description: 'Unique identifier key for system resolution', example: 'EMAIL_OTP' })
+  @ApiProperty({ description: 'Human-readable name of the template', example: 'New Lead – QUIKBOOM' })
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'Alias for key (identifierKey)', example: 'QUIKBOOM_NEW_LEAD' })
+  @IsOptional()
+  @IsString()
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase().replace(/[\s-]+/g, '_') : value)
-  key: string;
+  identifierKey?: string;
+
+  @ApiProperty({ description: 'Unique identifier key for system resolution', example: 'QUIKBOOM_NEW_LEAD' })
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase().replace(/[\s-]+/g, '_') : value)
+  key?: string;
 
   @ApiProperty({ description: 'Email subject template supporting {{variables}}', example: 'Your OTP for {{companyName}}' })
   @IsString()

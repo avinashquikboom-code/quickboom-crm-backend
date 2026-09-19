@@ -45,4 +45,21 @@ export class SendEmailDto {
   @ApiPropertyOptional({ description: 'Associated record ID' })
   @IsOptional()
   recordId?: string | number;
+
+  @ApiPropertyOptional({ description: 'Email template ID if selected from active templates' })
+  @IsOptional()
+  templateId?: number;
+
+  @ApiPropertyOptional({ description: 'CC email recipients' })
+  @IsOptional()
+  cc?: string | string[];
+
+  @ApiPropertyOptional({ description: 'BCC email recipients' })
+  @IsOptional()
+  bcc?: string | string[];
+
+  @ApiPropertyOptional({ description: 'Event type identifier (e.g. LEAD_STAGE_CHANGED)' })
+  @IsString()
+  @IsOptional()
+  eventType?: string;
 }

@@ -21,7 +21,7 @@ import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { PreviewEmailTemplateDto, TestSendTemplateDto } from './dto/preview-email-template.dto';
 
 @ApiTags('Email Templates')
-@Controller('email/templates')
+@Controller(['email/templates', 'admin/email-templates'])
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class EmailTemplateController {
@@ -78,6 +78,16 @@ export class EmailTemplateController {
     return this.emailTemplateService.update(id, dto, user?.customerId);
   }
 
+  @Patch(':id/status')
+  @ApiOperation({ summary: 'Set active status of an email template' })
+  async setStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isActive') isActive: boolean,
+    @CurrentUser() user: any,
+  ) {
+    return this.emailTemplateService.setActive(id, isActive, user?.customerId);
+  }
+
   @Patch(':id/toggle')
   @ApiOperation({ summary: 'Toggle active status of an email template' })
   async toggleActive(
@@ -85,6 +95,15 @@ export class EmailTemplateController {
     @CurrentUser() user: any,
   ) {
     return this.emailTemplateService.toggleActive(id, user?.customerId);
+  }
+
+  @Post(':id/duplicate')
+  @ApiOperation({ summary: 'Duplicate an existing email template' })
+  async duplicate(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.emailTemplateService.duplicate(id, user?.customerId);
   }
 
   @Delete(':id')
@@ -100,6 +119,16 @@ export class EmailTemplateController {
   @ApiOperation({ summary: 'Generate live preview of an email template with sample variables' })
   async preview(@Body() dto: PreviewEmailTemplateDto) {
     return this.emailTemplateService.preview(dto);
+  }
+
+  @Post(':id/preview')
+  @ApiOperation({ summary: 'Generate live preview of a specific email template by ID' })
+  async previewById(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('variables') variables: Record<string, any>,
+    @CurrentUser() user: any,
+  ) {
+    return this.emailTemplateService.previewById(id, user?.customerId, variables);
   }
 
   @Post('test-send')

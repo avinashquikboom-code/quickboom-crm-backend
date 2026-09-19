@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationService } from './notification.service';
 import { FcmService } from './fcm.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 
@@ -44,6 +45,11 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
     sendToSingleToken: jest.fn(),
   };
 
+  const mockWhatsappService = {
+    sendCustomerWelcomeMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'wamid.welcome.1' }),
+    sendPlanActivationMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'wamid.plan.1' }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -52,6 +58,7 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         NotificationService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: FcmService, useValue: mockFcmService },
+        { provide: WhatsappService, useValue: mockWhatsappService },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     }).compile();
@@ -579,6 +586,163 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         }),
         expect.objectContaining({
           notificationType: 'CUSTOMER_REGISTERED',
+        }),
+      );
+    });
+  });
+
+  describe('Unified Multichannel Event Delivery: In-App, FCM, and WhatsApp', () => {
+    it('CUSTOMER REGISTERED -> Dispatches In-App, FCM push, and WhatsApp Welcome', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 10, customerId: 100 });
+      mockPrisma.notification.findFirst.mockResolvedValue(null);
+      mockPrisma.notification.create.mockResolvedValue({
+        id: 701,
+        customerId: 100,
+        userId: 10,
+        type: 'WELCOME',
+        title: 'Welcome to QuikBoom! 🎉',
+      });
+      mockPrisma.userDeviceToken.findMany.mockResolvedValue([
+        { token: 'device_fcm_token_100' },
+      ]);
+      mockFcmService.sendMulticast.mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        messageIds: ['fcm-msg-100'],
+      });
+
+      const result = await notificationService.sendCustomerWelcomeNotification({
+        customerId: 100,
+        userId: 10,
+        customerName: 'Prime Retail',
+      });
+
+      expect(result).toBeDefined();
+      expect(result?.fcmSent).toBe(true);
+      expect(mockPrisma.notification.create).toHaveBeenCalled();
+      expect(mockFcmService.sendMulticast).toHaveBeenCalled();
+      expect(mockWhatsappService.sendCustomerWelcomeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 100,
+          customerName: 'Prime Retail',
+          notificationId: 701,
+        }),
+      );
+    });
+
+    it('PLAN ACTIVATED -> Dispatches In-App, FCM push, and WhatsApp Plan Activation', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 20, customerId: 200 });
+      mockPrisma.notification.findMany.mockResolvedValue([]);
+      mockPrisma.notification.create.mockResolvedValue({
+        id: 702,
+        customerId: 200,
+        userId: 20,
+        type: 'PLAN_PURCHASE_SUCCESS',
+        title: 'Plan Activated Successfully',
+      });
+      mockPrisma.userDeviceToken.findMany.mockResolvedValue([
+        { token: 'device_fcm_token_200' },
+      ]);
+      mockFcmService.sendMulticast.mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        messageIds: ['fcm-plan-msg-200'],
+      });
+      mockPrisma.customerSubscription.findFirst.mockResolvedValue({
+        id: 50,
+        billingCycle: 'YEARLY',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2027-01-01'),
+      });
+      (mockPrisma as any).customerSubscription.findUnique = jest.fn().mockResolvedValue({
+        id: 50,
+        billingCycle: 'YEARLY',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2027-01-01'),
+      });
+
+      const result = await notificationService.sendPlanPurchaseSuccessNotification({
+        customerId: 200,
+        userId: 20,
+        subscriptionId: 50,
+        planId: 5,
+        planName: 'Pro Tier',
+        paymentId: 'pay_xyz_test',
+      });
+
+      expect(result).toBeDefined();
+      expect(result?.fcmSent).toBe(true);
+      expect(mockPrisma.notification.create).toHaveBeenCalled();
+      expect(mockFcmService.sendMulticast).toHaveBeenCalled();
+      expect(mockWhatsappService.sendPlanActivationMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 200,
+          planName: 'Pro Tier',
+          subscriptionId: 50,
+          paymentId: 'pay_xyz_test',
+          notificationId: 702,
+        }),
+      );
+    });
+
+    it('WhatsApp failure is non-fatal: In-App notification and FCM push still succeed', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 30, customerId: 300 });
+      mockPrisma.notification.findFirst.mockResolvedValue(null);
+      mockPrisma.notification.create.mockResolvedValue({
+        id: 703,
+        customerId: 300,
+        userId: 30,
+        type: 'WELCOME',
+      });
+      mockPrisma.userDeviceToken.findMany.mockResolvedValue([
+        { token: 'device_token_300' },
+      ]);
+      mockFcmService.sendMulticast.mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        messageIds: ['fcm-300'],
+      });
+      mockWhatsappService.sendCustomerWelcomeMessage.mockRejectedValueOnce(
+        new Error('WhatsApp Meta API Rate Limit'),
+      );
+
+      const result = await notificationService.sendCustomerWelcomeNotification({
+        customerId: 300,
+        customerName: 'Resilient Co',
+      });
+
+      expect(result).toBeDefined();
+      expect(result?.fcmSent).toBe(true);
+      expect(mockPrisma.notification.create).toHaveBeenCalled();
+    });
+
+    it('FCM failure is non-fatal: WhatsApp message is still attempted and sent', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 40, customerId: 400 });
+      mockPrisma.notification.findFirst.mockResolvedValue(null);
+      mockPrisma.notification.create.mockResolvedValue({
+        id: 704,
+        customerId: 400,
+        userId: 40,
+        type: 'WELCOME',
+      });
+      // No FCM device tokens found
+      mockPrisma.userDeviceToken.findMany.mockResolvedValue([]);
+
+      const result = await notificationService.sendCustomerWelcomeNotification({
+        customerId: 400,
+        customerName: 'No Token Client',
+      });
+
+      expect(result).toBeDefined();
+      expect(result?.fcmSent).toBe(false);
+      expect(mockWhatsappService.sendCustomerWelcomeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 400,
+          customerName: 'No Token Client',
+          notificationId: 704,
         }),
       );
     });

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { LeadStatus } from '@prisma/client';
 import { LeadRepository } from './lead.repository';
 import {
@@ -23,16 +23,32 @@ import { PlanAccessService } from '../subscription/plan-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { EmailService } from '../email/email.service';
+import {
+  EmailTemplateService,
+  TELECALLER_STATUS_TO_TEMPLATE_KEY,
+  renderEmailTemplate,
+  wrapInQuikboomEmailHtml,
+} from '../email/email-template.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+
+function maskEmail(email: string): string {
+  if (!email || !email.includes('@')) return '***';
+  const [user, domain] = email.split('@');
+  if (user.length <= 2) return `${user[0]}***@${domain}`;
+  return `${user[0]}***${user[user.length - 1]}@${domain}`;
+}
 
 @Injectable()
 export class LeadService {
+  private readonly logger = new Logger(LeadService.name);
+
   constructor(
     private readonly leadRepository: LeadRepository,
     private readonly prisma: PrismaService,
-    private readonly planAccessService?: PlanAccessService,
-    private readonly leadLimitService?: LeadLimitService,
-    private readonly emailService?: EmailService,
+    @Optional() private readonly planAccessService?: PlanAccessService,
+    @Optional() private readonly leadLimitService?: LeadLimitService,
+    @Optional() private readonly emailService?: EmailService,
+    @Optional() private readonly emailTemplateService?: EmailTemplateService,
   ) {}
 
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
@@ -429,6 +445,13 @@ export class LeadService {
       throw new BadRequestException('Either stageId or status must be provided.');
     }
 
+    // Detect if stage or status actually changed
+    const previousStageName = lead.stage?.name || lead.status || 'NEW';
+    const newStageName = stageName || resolvedStatus;
+    const isStageChanged =
+      (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
+      resolvedStatus !== lead.status;
+
     await this.leadRepository.updateStatus(
       customerId,
       id,
@@ -440,7 +463,356 @@ export class LeadService {
       lead.stageId,
       stageName,
     );
-    return this.getLeadById(customerId, id);
+
+    const updatedLead = await this.getLeadById(customerId, id);
+
+    // If stage actually changed, trigger automatic customer email notification
+    if (isStageChanged) {
+      await this.handleLeadStageChangeNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+        userId,
+      );
+    }
+
+    return updatedLead;
+  }
+
+  /**
+   * Dispatches automatic email notification to customer upon lead stage change.
+   * Ensures email failure never causes the lead update to fail.
+   */
+  async handleLeadStageChangeNotification(
+    customerId: number | string,
+    lead: any,
+    previousStageName: string,
+    newStageName: string,
+    userId?: number | string,
+  ) {
+    try {
+      this.logger.log(`[LEAD] Stage change detected`);
+      this.logger.log(`[LEAD] Previous stage: ${previousStageName}`);
+      this.logger.log(`[LEAD] New stage: ${newStageName}`);
+
+      // 1. Resolve recipient email: prioritize customer's registered email (Customer A), fallback to lead contact email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      let recipientEmail = (lead.customer?.email || '').trim();
+
+      if (!recipientEmail || !emailRegex.test(recipientEmail)) {
+        if (lead.email && emailRegex.test(lead.email.trim())) {
+          recipientEmail = lead.email.trim();
+        } else {
+          recipientEmail = '';
+        }
+      }
+
+      // Handle missing email gracefully
+      if (!recipientEmail) {
+        this.logger.warn(`[EMAIL] Customer email not available for lead ${lead.id}`);
+        return;
+      }
+
+      this.logger.log(`[EMAIL] Customer email found: ${maskEmail(recipientEmail)}`);
+
+      // 2. Prevent duplicate notifications (debounce identical transitions within 60 seconds)
+      const recentLog = await this.prisma.emailLog.findFirst({
+        where: {
+          leadId: Number(lead.id),
+          eventType: 'LEAD_STAGE_CHANGED',
+          previousStage: String(previousStageName),
+          newStage: String(newStageName),
+          createdAt: {
+            gte: new Date(Date.now() - 60000),
+          },
+        },
+      });
+
+      if (recentLog) {
+        this.logger.log(
+          `[LEAD] Duplicate stage change notification detected for lead #${lead.id} (${previousStageName} → ${newStageName}). Skipping redundant email.`,
+        );
+        return;
+      }
+
+      // 3. Resolve template mapping from lead status / stage
+      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const templateKey =
+        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage] ||
+        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStatus] ||
+        null;
+
+      let template: any = null;
+      if (templateKey && this.emailTemplateService) {
+        template = await this.emailTemplateService.findByKey(templateKey, lead.customerId);
+        if (template && !template.isActive) {
+          this.logger.log(
+            `[EMAIL] Email template "${templateKey}" is inactive. Skipping automatic email for lead #${lead.id}.`,
+          );
+          return;
+        }
+      }
+
+      // Build context variables
+      const leadTitle =
+        lead.title ||
+        lead.companyName ||
+        `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
+        'Valued Client';
+
+      let userName = 'QUIKBOOM Team';
+      if (lead.user?.name) {
+        userName = lead.user.name;
+      } else if (userId && this.prisma.user) {
+        const u = await this.prisma.user
+          .findUnique({
+            where: { id: Number(userId) },
+            select: { firstName: true, lastName: true },
+          })
+          .catch(() => null);
+        if (u) {
+          userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QUIKBOOM Team';
+        }
+      }
+
+      const senderEmail =
+        lead.user?.email ||
+        lead.customer?.email ||
+        'sales@quikboom.com';
+
+      let startDate = '';
+      let startTime = '';
+
+      if (templateKey === 'QUIKBOOM_VISIT_SCHEDULED') {
+        const scheduledVisit = await this.prisma.visit
+          .findFirst({
+            where: {
+              leadId: Number(lead.id),
+              status: 'SCHEDULED',
+            },
+            orderBy: { date: 'desc' },
+          })
+          .catch(() => null);
+
+        if (scheduledVisit?.date) {
+          startDate = new Intl.DateTimeFormat('en-IN', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }).format(new Date(scheduledVisit.date));
+          startTime = scheduledVisit.time || '';
+        } else if (lead.nextFollowUpDate) {
+          startDate = new Intl.DateTimeFormat('en-IN', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }).format(new Date(lead.nextFollowUpDate));
+          startTime = lead.nextFollowUpTime || '';
+        }
+
+        // Section 8 & 16: Handle missing variables safely. Never send raw placeholders.
+        if (!startDate || !startTime) {
+          this.logger.warn(
+            `[EMAIL] Scheduled visit details (startDate/startTime) missing for lead #${lead.id}. Cannot send ${templateKey} without scheduled visit details.`,
+          );
+          return;
+        }
+      }
+
+      let emailSubject = 'Your Lead Status Has Been Updated';
+      let htmlContent = '';
+      let textContent = '';
+
+      if (template) {
+        const variables: Record<string, any> = {
+          leadTitle,
+          userName,
+          email: senderEmail,
+          startDate,
+          startTime,
+          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
+        };
+
+        const rendered = renderEmailTemplate(
+          { subject: template.subject, body: template.body },
+          variables,
+          {
+            requiredVariables: templateKey === 'QUIKBOOM_VISIT_SCHEDULED' ? ['startDate', 'startTime', 'leadTitle'] : ['leadTitle'],
+          },
+        );
+
+        emailSubject = rendered.subject;
+        textContent = rendered.body;
+        htmlContent = wrapInQuikboomEmailHtml(rendered.body);
+      } else {
+        // Fallback generic stage update notification for non-template stages
+        const customerName =
+          lead.customer?.companyName ||
+          lead.customer?.name ||
+          `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
+          'Valued Customer';
+        const leadName = leadTitle;
+        const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuikBoom Team';
+
+        htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Lead Status Has Been Updated</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
+    .card { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
+    .header h1 { margin: 0 0 6px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+    .header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .body { padding: 32px; }
+    .intro { font-size: 15px; line-height: 1.6; margin-bottom: 20px; color: #334155; }
+    .status-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 20px 0; }
+    .status-pill-old { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+    .status-pill-new { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .details-table { width: 100%; border-collapse: collapse; margin-top: 16px; border-top: 1px solid #e2e8f0; }
+    .details-table td { padding: 10px 0; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .details-table tr:last-child td { border-bottom: none; }
+    .label { font-weight: 700; color: #64748b; width: 40%; }
+    .value { font-weight: 600; color: #0f172a; }
+    .closing { font-size: 14px; color: #475569; margin-top: 24px; line-height: 1.6; }
+    .footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Your Lead Status Has Been Updated</h1>
+      <p>Notification from ${senderOrgName}</p>
+    </div>
+    <div class="body">
+      <p class="intro">
+        Hello <strong>${customerName}</strong>,<br><br>
+        We wanted to let you know that the status of your request has been updated.
+      </p>
+
+      <div class="status-box">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Previous Status:</td>
+            <td style="padding: 6px 0;"><span class="status-pill-old">${previousStageName}</span></td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">New Status:</td>
+            <td style="padding: 6px 0;"><span class="status-pill-new">${newStageName}</span></td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">Lead:</td>
+            <td style="padding: 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">${leadName}</td>
+          </tr>
+        </table>
+      </div>
+
+      <p class="closing">
+        Thank you,<br>
+        <strong>QuikBoom Team</strong>
+      </p>
+    </div>
+    <div class="footer">
+      Sent via <strong>${senderOrgName}</strong> • QuikBoom CRM
+    </div>
+  </div>
+</body>
+</html>`.trim();
+
+        textContent = `
+Hello ${customerName},
+
+We wanted to let you know that the status of your request has been updated.
+
+Previous Status:
+${previousStageName}
+
+New Status:
+${newStageName}
+
+Lead:
+${leadName}
+
+Thank you,
+QuikBoom Team`.trim();
+      }
+
+      // 4. Send email via existing EmailService
+      let messageId: string | null = null;
+      let sendError: string | null = null;
+      let status = 'SENT';
+
+      try {
+        if (!this.emailService) {
+          throw new Error('Email service is not available');
+        }
+
+        const sendResult = await this.emailService.sendEmail({
+          to: recipientEmail,
+          subject: emailSubject,
+          html: htmlContent,
+          text: textContent,
+          recordType: 'lead',
+          recordId: lead.id,
+          templateId: template?.id || undefined,
+          eventType: 'LEAD_STAGE_CHANGED',
+        });
+
+        messageId = sendResult?.messageId || null;
+        this.logger.log(`[EMAIL] Lead stage change email sent successfully`);
+      } catch (err: any) {
+        status = 'FAILED';
+        sendError = err?.message || 'Failed to dispatch email';
+        this.logger.error(`[EMAIL] Failed to send lead stage change email: ${sendError}`);
+      }
+
+      // 5. Store email delivery/log status in EmailLog table
+      await this.prisma.emailLog.create({
+        data: {
+          leadId: Number(lead.id),
+          customerId: lead.customerId ? Number(lead.customerId) : null,
+          userId: userId ? Number(userId) : null,
+          templateId: template?.id || null,
+          identifierKey: templateKey || null,
+          recipientEmail,
+          subject: emailSubject,
+          renderedContent: htmlContent,
+          eventType: 'LEAD_STAGE_CHANGED',
+          previousStage: String(previousStageName),
+          newStage: String(newStageName),
+          status,
+          providerMessageId: messageId,
+          errorMessage: sendError,
+          sentAt: new Date(),
+        },
+      }).catch((logErr) => {
+        this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${logErr?.message}`);
+      });
+
+      // 6. Record timeline event
+      await this.leadRepository.logTimeline(
+        lead.id,
+        'STAGE_CHANGE_EMAIL',
+        status === 'SENT'
+          ? `Stage transition email sent to ${maskEmail(recipientEmail)} (${previousStageName} → ${newStageName})`
+          : `Stage transition email failed for ${maskEmail(recipientEmail)}: ${sendError}`,
+        {
+          previousStage: previousStageName,
+          newStage: newStageName,
+          recipientEmail: maskEmail(recipientEmail),
+          status,
+          providerMessageId: messageId,
+        },
+      ).catch(() => null);
+    } catch (unexpectedError: any) {
+      // Must NEVER fail the lead stage update even on unexpected notification errors
+      this.logger.error(`[EMAIL_NOTIFICATION_UNEXPECTED_ERROR] ${unexpectedError?.message}`);
+    }
   }
 
   async deleteLead(customerId: number | string, id: number | string) {

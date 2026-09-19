@@ -154,13 +154,403 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
   <p style="color: #94a3b8; font-size: 12px;">Warm regards,<br /><strong>{{companyName}}</strong></p>
 </div>`,
   },
+  {
+    key: 'QUIKBOOM_NEW_LEAD',
+    name: 'New Lead – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Thank You for Connecting with QUIKBOOM',
+    description: 'Sent automatically when a new inquiry or lead connects with QUIKBOOM',
+    supportedVariables: ['leadTitle', 'userName', 'email'],
+    body: `Dear {{leadTitle}},
+
+Thank you for your interest in QUIKBOOM Digital Marketing Agency.
+
+Our team has received your inquiry and will be connecting with you shortly to understand your business requirements.
+
+We look forward to speaking with you and exploring how we can help your business grow.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+  },
+  {
+    key: 'QUIKBOOM_CONTACTED',
+    name: 'Customer Contacted – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Great Speaking With You – QUIKBOOM',
+    description: 'Sent after initial telecaller contact with the prospective lead',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+Thank you for taking the time to speak with our team.
+
+We appreciate the opportunity to understand your business and digital marketing requirements.
+
+We will be happy to assist you with the right solutions for your business.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_DETAILS_SENT',
+    name: 'Company Details Sent – QUIKBOOM',
+    category: 'CRM',
+    subject: 'QUIKBOOM – Company Details & Services',
+    description: 'Sent along with marketing agency overview and company credentials',
+    supportedVariables: ['leadTitle', 'userName', 'email'],
+    body: `Dear {{leadTitle}},
+
+As discussed during our call, we are sharing the details of QUIKBOOM Digital Marketing Agency for your reference.
+
+You can explore our company, services and work through our website.
+
+Visit QUIKBOOM Website
+
+We look forward to discussing your requirements further.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+  },
+  {
+    key: 'QUIKBOOM_FOLLOW_UP',
+    name: 'Customer Follow-up – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Following Up on Our Discussion – QUIKBOOM',
+    description: 'Sent during regular follow-up touchpoints',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+We wanted to follow up regarding our recent conversation about your digital marketing requirements.
+
+Please let us know if you have any questions or if you would like to discuss the next steps.
+
+Our team will be happy to assist you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_VISIT_SCHEDULED',
+    name: 'Visit Scheduled – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Your Meeting with QUIKBOOM is Scheduled',
+    description: 'Sent upon scheduling an in-person or virtual field meeting',
+    supportedVariables: ['leadTitle', 'startDate', 'startTime', 'userName'],
+    body: `Dear {{leadTitle}},
+
+This is to confirm that your visit/meeting with QUIKBOOM Digital Marketing Agency has been scheduled.
+
+We look forward to meeting you and discussing your business requirements in detail.
+
+Meeting Details:
+
+Date: {{startDate}}
+
+Time: {{startTime}}
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_VISIT_DONE',
+    name: 'Visit Completed – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Thank You for Visiting QUIKBOOM',
+    description: 'Sent following the conclusion of a client visit or meeting',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+Thank you for visiting QUIKBOOM Digital Marketing Agency.
+
+It was a pleasure meeting with you and discussing your business requirements.
+
+We appreciate your time and look forward to taking our conversation ahead.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_PROPOSAL_SENT',
+    name: 'Proposal Sent – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Your Digital Marketing Proposal from QUIKBOOM',
+    description: 'Sent when the formal digital marketing quotation/proposal is dispatched',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+As discussed, we have shared the proposal for your business requirements.
+
+Please review the proposal and feel free to contact us if you have any questions or require any clarification.
+
+We look forward to working with you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_NEGOTIATION',
+    name: 'Proposal Discussion – QUIKBOOM',
+    category: 'CRM',
+    subject: "Let's Discuss Your Proposal – QUIKBOOM",
+    description: 'Sent during commercial discussions and scope adjustments',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+Thank you for reviewing our proposal.
+
+We would be happy to discuss the proposal, requirements and available options with you.
+
+Please feel free to share your feedback so that we can take the discussion forward.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_FINAL_CALL',
+    name: 'Final Discussion – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Final Discussion Regarding Your Digital Marketing Requirements',
+    description: 'Sent for concluding conversations before deal sign-off',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+We are reaching out for a final discussion regarding the digital marketing solutions discussed with you.
+
+Please let us know if you would like to proceed or if there are any remaining questions we can help you with.
+
+We look forward to hearing from you.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
+  {
+    key: 'QUIKBOOM_WON',
+    name: 'Customer Onboarding – QUIKBOOM',
+    category: 'CRM',
+    subject: "Welcome to QUIKBOOM – Let's Grow Together! 🎉",
+    description: 'Sent when the lead deal is successfully closed/won',
+    supportedVariables: ['leadTitle', 'userName', 'email'],
+    body: `Dear {{leadTitle}},
+
+Welcome to QUIKBOOM Digital Marketing Agency! 🎉
+
+Thank you for choosing QUIKBOOM as your digital marketing partner.
+
+We are excited to work with you and help your business achieve its digital marketing goals.
+
+Our team will connect with you regarding the next steps and onboarding process.
+
+Welcome to the QUIKBOOM family!
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+  },
+  {
+    key: 'QUIKBOOM_LOST',
+    name: 'Lead Closed – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Thank You for Considering QUIKBOOM',
+    description: 'Sent gracefully when a lead is marked as closed/lost',
+    supportedVariables: ['leadTitle', 'userName'],
+    body: `Dear {{leadTitle}},
+
+Thank you for taking the time to speak with QUIKBOOM Digital Marketing Agency and considering our services.
+
+We completely understand that the timing may not be right at this moment.
+
+If your requirements change in the future, we would be happy to connect with you again.
+
+We wish you and your business continued success.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency`,
+  },
 ];
+
+export const TELECALLER_STATUS_TO_TEMPLATE_KEY: Record<string, string> = {
+  NEW: 'QUIKBOOM_NEW_LEAD',
+  CONTACTED: 'QUIKBOOM_CONTACTED',
+  DETAILS_SENT: 'QUIKBOOM_DETAILS_SENT',
+  FOLLOW_UP: 'QUIKBOOM_FOLLOW_UP',
+  VISIT_SCHEDULED: 'QUIKBOOM_VISIT_SCHEDULED',
+  VISIT: 'QUIKBOOM_VISIT_SCHEDULED',
+  VISIT_DONE: 'QUIKBOOM_VISIT_DONE',
+  PROPOSAL_SENT: 'QUIKBOOM_PROPOSAL_SENT',
+  PROPOSAL: 'QUIKBOOM_PROPOSAL_SENT',
+  NEGOTIATION: 'QUIKBOOM_NEGOTIATION',
+  FINAL_CALL: 'QUIKBOOM_FINAL_CALL',
+  WON: 'QUIKBOOM_WON',
+  CONVERTED: 'QUIKBOOM_WON',
+  LOST: 'QUIKBOOM_LOST',
+  CANCELLED: 'QUIKBOOM_LOST',
+};
+
+export interface RenderTemplateOptions {
+  requiredVariables?: string[];
+  safeFallbacks?: Record<string, string>;
+  strict?: boolean;
+}
+
+export interface RenderedTemplateResult {
+  subject: string;
+  body: string;
+  variablesUsed: Record<string, any>;
+  missingVariables: string[];
+}
+
+export function wrapInQuikboomEmailHtml(content: string, options?: { previewText?: string; companyName?: string }): string {
+  if (!content) return '';
+  if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<body')) {
+    return content;
+  }
+
+  const paragraphs = content
+    .split(/\n\n+/)
+    .map((p) => {
+      const trimmed = p.trim();
+      if (!trimmed) return '';
+      if (trimmed.includes('<p') || trimmed.includes('<div') || trimmed.includes('<table')) return trimmed;
+      if (trimmed === 'Visit QUIKBOOM Website' || trimmed.includes('Visit QUIKBOOM Website')) {
+        return `<p style="margin: 20px 0; text-align: center;"><a href="https://quikboom.com" style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">Visit QUIKBOOM Website &rarr;</a></p>`;
+      }
+      return `<p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #334155;">${trimmed.replace(/\n/g, '<br/>')}</p>`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
+    .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .email-header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
+    .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+    .email-header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .email-body { padding: 32px; font-size: 15px; line-height: 1.6; color: #334155; }
+    .email-footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="email-container">
+    <div class="email-header">
+      <h1>QUIKBOOM</h1>
+      <p>Digital Marketing Agency</p>
+    </div>
+    <div class="email-body">
+      ${paragraphs}
+    </div>
+    <div class="email-footer">
+      Sent via <strong>QUIKBOOM Digital Marketing Agency</strong> • CRM
+    </div>
+  </div>
+</body>
+</html>`.trim();
+}
+
+export function renderEmailTemplate(
+  template: { subject: string; body: string },
+  variables: Record<string, any> = {},
+  options?: RenderTemplateOptions,
+): RenderedTemplateResult {
+  const missingVars = new Set<string>();
+
+  const defaultFallbacks: Record<string, string> = {
+    leadTitle: 'Valued Client',
+    customerName: 'Valued Client',
+    userName: 'QUIKBOOM Team',
+    email: 'support@quikboom.com',
+    companyName: 'QUIKBOOM Digital Marketing Agency',
+    ...(options?.safeFallbacks || {}),
+  };
+
+  const replacer = (text: string): string => {
+    if (!text || typeof text !== 'string') return '';
+    return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, varName) => {
+      const val = variables[varName];
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        return String(val);
+      }
+      missingVars.add(varName);
+
+      if (options?.strict && options.requiredVariables?.includes(varName)) {
+        throw new BadRequestException(`Required template variable "${varName}" is missing`);
+      }
+
+      if (varName in defaultFallbacks) {
+        return defaultFallbacks[varName];
+      }
+
+      // Never leave raw placeholder
+      return '';
+    });
+  };
+
+  const renderedSubject = replacer(template.subject);
+  const renderedBody = replacer(template.body);
+
+  return {
+    subject: renderedSubject,
+    body: renderedBody,
+    variablesUsed: variables,
+    missingVariables: Array.from(missingVars),
+  };
+}
 
 @Injectable()
 export class EmailTemplateService {
   private readonly logger = new Logger(EmailTemplateService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  private formatTemplate(t: any) {
+    if (!t) return null;
+    return {
+      ...t,
+      identifierKey: t.key,
+      templateName: t.name,
+    };
+  }
 
   /**
    * Safely interpolates {{variables}} inside a string template.
@@ -174,6 +564,14 @@ export class EmailTemplateService {
       }
       return match;
     });
+  }
+
+  renderEmailTemplate(
+    template: { subject: string; body: string },
+    variables: Record<string, any> = {},
+    options?: RenderTemplateOptions,
+  ): RenderedTemplateResult {
+    return renderEmailTemplate(template, variables, options);
   }
 
   /**
@@ -261,7 +659,7 @@ export class EmailTemplateService {
     const map = new Map<string, any>();
     for (const t of templates) {
       if (!map.has(t.key) || (t.customerId === numCustomerId && map.get(t.key)?.customerId === null)) {
-        map.set(t.key, t);
+        map.set(t.key, this.formatTemplate(t));
       }
     }
 
@@ -290,7 +688,7 @@ export class EmailTemplateService {
       throw new NotFoundException(`Email template with ID ${id} not found`);
     }
 
-    return template;
+    return this.formatTemplate(template);
   }
 
   /**
@@ -312,7 +710,7 @@ export class EmailTemplateService {
           deletedAt: null,
         },
       });
-      if (custom) return custom;
+      if (custom) return this.formatTemplate(custom);
     }
 
     // 2. Global active template
@@ -324,12 +722,12 @@ export class EmailTemplateService {
         deletedAt: null,
       },
     });
-    if (globalTpl) return globalTpl;
+    if (globalTpl) return this.formatTemplate(globalTpl);
 
     // 3. Fallback to hardcoded predefined system template
     const fallbackDef = PREDEFINED_SYSTEM_TEMPLATES.find((t) => t.key === upperKey);
     if (fallbackDef) {
-      return {
+      return this.formatTemplate({
         id: 0,
         customerId: null,
         key: fallbackDef.key,
@@ -341,7 +739,7 @@ export class EmailTemplateService {
         supportedVariables: fallbackDef.supportedVariables,
         isSystem: true,
         isActive: true,
-      };
+      });
     }
 
     return null;
@@ -352,7 +750,16 @@ export class EmailTemplateService {
    */
   async create(dto: CreateEmailTemplateDto, customerId?: number | null) {
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
-    const cleanKey = (dto.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const rawKey = dto.identifierKey || dto.key || '';
+    const rawName = dto.templateName || dto.name || '';
+    const cleanKey = rawKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
+
+    if (!rawName.trim()) {
+      throw new BadRequestException('Template name is required');
+    }
+    if (!cleanKey) {
+      throw new BadRequestException('Template identifierKey is required');
+    }
 
     // Check duplicate key within customer scope
     const existing = await this.prisma.emailTemplate.findFirst({
@@ -379,20 +786,22 @@ export class EmailTemplateService {
       variables = Array.from(foundVars);
     }
 
-    return this.prisma.emailTemplate.create({
+    const created = await this.prisma.emailTemplate.create({
       data: {
         customerId: numCustomerId,
-        name: dto.name.trim(),
+        name: rawName.trim(),
         key: cleanKey,
         subject: dto.subject.trim(),
         body: dto.body,
         description: dto.description?.trim() || null,
-        category: dto.category ? dto.category.trim().toUpperCase() : 'GENERAL',
+        category: dto.category ? dto.category.trim().toUpperCase() : 'CRM',
         supportedVariables: variables,
         isSystem: false,
         isActive: dto.isActive !== undefined ? dto.isActive : true,
       },
     });
+
+    return this.formatTemplate(created);
   }
 
   /**
@@ -402,7 +811,8 @@ export class EmailTemplateService {
     const template = await this.findOne(id, customerId);
 
     const updateData: any = {};
-    if (dto.name !== undefined) updateData.name = dto.name.trim();
+    const name = dto.templateName || dto.name;
+    if (name !== undefined) updateData.name = name.trim();
     if (dto.subject !== undefined) updateData.subject = dto.subject.trim();
     if (dto.body !== undefined) updateData.body = dto.body;
     if (dto.description !== undefined) updateData.description = dto.description?.trim() || null;
@@ -423,11 +833,12 @@ export class EmailTemplateService {
     }
 
     // If key is changed on non-system template, check duplicate
-    if (dto.key && dto.key !== template.key) {
+    const key = dto.identifierKey || dto.key;
+    if (key && key !== template.key) {
       if (template.isSystem) {
         throw new BadRequestException('The key of a system template cannot be modified');
       }
-      const cleanKey = dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const cleanKey = key.trim().toUpperCase().replace(/[\s-]+/g, '_');
       const dup = await this.prisma.emailTemplate.findFirst({
         where: {
           key: cleanKey,
@@ -442,10 +853,24 @@ export class EmailTemplateService {
       updateData.key = cleanKey;
     }
 
-    return this.prisma.emailTemplate.update({
+    const updated = await this.prisma.emailTemplate.update({
       where: { id: template.id },
       data: updateData,
     });
+
+    return this.formatTemplate(updated);
+  }
+
+  /**
+   * Sets active status directly.
+   */
+  async setActive(id: number, isActive: boolean, customerId?: number | null) {
+    const template = await this.findOne(id, customerId);
+    const updated = await this.prisma.emailTemplate.update({
+      where: { id: template.id },
+      data: { isActive: Boolean(isActive) },
+    });
+    return this.formatTemplate(updated);
   }
 
   /**
@@ -453,10 +878,50 @@ export class EmailTemplateService {
    */
   async toggleActive(id: number, customerId?: number | null) {
     const template = await this.findOne(id, customerId);
-    return this.prisma.emailTemplate.update({
+    const updated = await this.prisma.emailTemplate.update({
       where: { id: template.id },
       data: { isActive: !template.isActive },
     });
+    return this.formatTemplate(updated);
+  }
+
+  /**
+   * Duplicates an existing email template.
+   */
+  async duplicate(id: number, customerId?: number | null) {
+    const template = await this.findOne(id, customerId);
+    const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+
+    let candidateKey = `${template.key}_COPY`;
+    let counter = 1;
+    while (
+      await this.prisma.emailTemplate.findFirst({
+        where: {
+          key: candidateKey,
+          customerId: numCustomerId,
+          deletedAt: null,
+        },
+      })
+    ) {
+      candidateKey = `${template.key}_COPY_${counter++}`;
+    }
+
+    const duplicated = await this.prisma.emailTemplate.create({
+      data: {
+        customerId: numCustomerId,
+        name: `${template.name} (Copy)`,
+        key: candidateKey,
+        subject: template.subject,
+        body: template.body,
+        description: template.description,
+        category: template.category,
+        supportedVariables: template.supportedVariables,
+        isSystem: false,
+        isActive: template.isActive,
+      },
+    });
+
+    return this.formatTemplate(duplicated);
   }
 
   /**
@@ -480,42 +945,64 @@ export class EmailTemplateService {
    * Generates a preview with interpolated sample variables.
    */
   preview(dto: PreviewEmailTemplateDto) {
+    const isQuikboomLeadTemplate =
+      (dto.subject && /QUIKBOOM|Lead|Proposal|Visit/i.test(dto.subject)) ||
+      (dto.body && /QUIKBOOM|leadTitle|startDate|startTime/i.test(dto.body));
+
     const sampleVars: Record<string, any> = {
-      companyName: 'QuickBoom Technologies',
-      userName: 'John Doe',
+      companyName: isQuikboomLeadTemplate ? 'QUIKBOOM Digital Marketing Agency' : 'QuickBoom Technologies',
+      userName: isQuikboomLeadTemplate ? 'Avinash' : 'John Doe',
+      leadTitle: 'Mr. Raj Sharma',
+      email: 'sales@quikboom.com',
+      startDate: '25 September 2026',
+      startTime: '11:30 AM',
+      to: 'sales@quikboom.com',
       otp: '682941',
-      email: 'john.doe@example.com',
       temporaryPassword: 'QB-' + Math.random().toString(36).slice(-8),
-      resetLink: 'https://crm.quickboom.com/reset-password?token=sample-token-123456',
-      loginUrl: 'https://crm.quickboom.com/login',
+      resetLink: 'https://crm.quikboom.com/reset-password?token=sample-token-123456',
+      loginUrl: 'https://crm.quikboom.com/login',
       designation: 'Sales Executive',
       leaveType: 'Casual Leave',
-      startDate: new Date().toLocaleDateString('en-IN'),
-      endDate: new Date(Date.now() + 86400000 * 2).toLocaleDateString('en-IN'),
+      endDate: '28 September 2026',
       approverName: 'Manager Sarah',
       remarks: 'Approved as per leave policy.',
       rejectionReason: 'Urgent project release during this week.',
-      recipientName: 'Vikram Patel',
-      leadTitle: 'Sunrise Infrastructure Pvt Ltd',
-      leadContact: 'Vikram Patel',
+      recipientName: 'Mr. Raj Sharma',
+      leadContact: 'Mr. Raj Sharma',
       leadPhone: '+91 98765 43210',
       leadCity: 'Pune',
       leadValue: '1,50,000',
-      leadNotes: 'Client interested in Enterprise CRM & HRMS setup.',
-      customerName: 'Acme Enterprises',
-      contactEmail: 'support@quickboom.com',
+      leadNotes: 'Interested in QUIKBOOM Digital Marketing services.',
+      customerName: 'Mr. Raj Sharma',
+      contactEmail: 'sales@quikboom.com',
       supportPhone: '+91 8000 123 456',
       ...(dto.variables || {}),
     };
 
-    const renderedSubject = this.interpolate(dto.subject, sampleVars);
-    const renderedBody = this.interpolate(dto.body, sampleVars);
+    const rendered = renderEmailTemplate(
+      { subject: dto.subject, body: dto.body },
+      sampleVars,
+    );
 
     return {
-      subject: renderedSubject,
-      body: renderedBody,
+      to: sampleVars.to || sampleVars.email || 'sales@quikboom.com',
+      subject: rendered.subject,
+      body: rendered.body,
       variablesUsed: sampleVars,
+      missingVariables: rendered.missingVariables,
     };
+  }
+
+  /**
+   * Generates a preview for a specific template by ID.
+   */
+  async previewById(id: number, customerId?: number | null, variables?: Record<string, any>) {
+    const template = await this.findOne(id, customerId);
+    return this.preview({
+      subject: template.subject,
+      body: template.body,
+      variables,
+    });
   }
 
   /**
@@ -524,7 +1011,9 @@ export class EmailTemplateService {
   getEventDefinitions() {
     return PREDEFINED_SYSTEM_TEMPLATES.map((t) => ({
       key: t.key,
+      identifierKey: t.key,
       name: t.name,
+      templateName: t.name,
       category: t.category,
       description: t.description,
       supportedVariables: t.supportedVariables,

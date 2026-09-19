@@ -530,6 +530,7 @@ export class LeadRepository {
     return this.prisma.lead.findFirst({
       where,
       include: {
+        customer: true,
         stage: true,
         assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },

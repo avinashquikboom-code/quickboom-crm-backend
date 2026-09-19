@@ -58,6 +58,19 @@ export class EmailService {
       throw new BadRequestException(`Invalid recipient email address: "${recipient}"`);
     }
 
+    // 2b. Validate template if provided
+    if (dto.templateId) {
+      const template = await this.prisma.emailTemplate.findFirst({
+        where: { id: Number(dto.templateId), deletedAt: null },
+      });
+      if (!template) {
+        throw new BadRequestException('Selected email template was not found');
+      }
+      if (!template.isActive) {
+        throw new BadRequestException('The selected email template is inactive or has been disabled');
+      }
+    }
+
     // 3. Validate content
     const subject = (dto.subject || '').trim();
     if (!subject) {
@@ -102,23 +115,30 @@ export class EmailService {
       };
     }
 
+    const cc = dto.cc ? (Array.isArray(dto.cc) ? dto.cc.join(', ') : String(dto.cc).trim()) : undefined;
+    const bcc = dto.bcc ? (Array.isArray(dto.bcc) ? dto.bcc.join(', ') : String(dto.bcc).trim()) : undefined;
+
+    const customerId = user?.customerId ? Number(user.customerId) : null;
+    const userId = user?.id ? Number(user.id) : null;
+
     // 6. Send email
     try {
       const transporter = nodemailer.createTransport(transportOptions);
-      const info = await transporter.sendMail({
+      const mailPayload: any = {
         from: formattedFrom,
         to: recipient,
         subject,
         text: textContent,
         html: htmlContent,
-      });
+      };
+      if (cc) mailPayload.cc = cc;
+      if (bcc) mailPayload.bcc = bcc;
+
+      const info = await transporter.sendMail(mailPayload);
 
       this.logger.log(`[EMAIL_SENT] Successfully sent email to "${recipient}" with messageId: ${info.messageId}`);
 
       // 7. Audit log
-      const customerId = user?.customerId ? Number(user.customerId) : null;
-      const userId = user?.id ? Number(user.id) : null;
-
       await this.prisma.auditLog.create({
         data: {
           customerId,
@@ -127,8 +147,11 @@ export class EmailService {
           module: 'EMAIL',
           details: {
             to: recipient,
+            cc: cc || null,
+            bcc: bcc || null,
             subject,
             from: formattedFrom,
+            templateId: dto.templateId || null,
             recordType: dto.recordType || null,
             recordId: dto.recordId ? String(dto.recordId) : null,
             messageId: info.messageId,
@@ -139,7 +162,28 @@ export class EmailService {
         this.logger.warn(`[EMAIL_AUDIT_LOG_WARN] Failed to write email audit log: ${err?.message}`);
       });
 
-      // 8. Contact communication history if recordType is contact
+      // 8. Dedicated EmailLog record if available
+      if (this.prisma.emailLog) {
+        await this.prisma.emailLog.create({
+          data: {
+            customerId,
+            userId,
+            templateId: dto.templateId ? Number(dto.templateId) : null,
+            leadId: dto.recordType?.toLowerCase() === 'lead' && dto.recordId ? Number(dto.recordId) : null,
+            recipientEmail: recipient,
+            subject,
+            renderedContent: htmlContent || textContent,
+            eventType: dto.eventType || (dto.templateId ? 'TEMPLATE_SEND' : 'DIRECT_SEND'),
+            status: 'SENT',
+            providerMessageId: info.messageId,
+            sentAt: new Date(),
+          },
+        }).catch((err) => {
+          this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${err?.message}`);
+        });
+      }
+
+      // 9. Contact communication history if recordType is contact
       if (dto.recordType?.toLowerCase() === 'contact' && dto.recordId) {
         const contactId = Number(dto.recordId);
         if (!isNaN(contactId)) {
@@ -164,6 +208,25 @@ export class EmailService {
       };
     } catch (err: any) {
       this.logger.error(`[EMAIL_SEND_FAILED] To: "${recipient}", Error: ${err?.message}`);
+
+      if (this.prisma.emailLog) {
+        await this.prisma.emailLog.create({
+          data: {
+            customerId,
+            userId,
+            templateId: dto.templateId ? Number(dto.templateId) : null,
+            leadId: dto.recordType?.toLowerCase() === 'lead' && dto.recordId ? Number(dto.recordId) : null,
+            recipientEmail: recipient,
+            subject,
+            renderedContent: htmlContent || textContent,
+            eventType: dto.eventType || (dto.templateId ? 'TEMPLATE_SEND' : 'DIRECT_SEND'),
+            status: 'FAILED',
+            errorMessage: err?.message || 'Unknown SMTP error',
+            sentAt: new Date(),
+          },
+        }).catch(() => null);
+      }
+
       throw new BadRequestException(
         `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Unknown SMTP error'}`,
       );

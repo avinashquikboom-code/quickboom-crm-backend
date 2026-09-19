@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
@@ -19,6 +20,7 @@ export class NotificationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fcmService: FcmService,
+    @Optional() private readonly whatsappService?: WhatsappService,
   ) {}
 
   async findAll(
@@ -967,6 +969,7 @@ export class NotificationService {
 
     this.logger.log(`[WELCOME] Customer created: ${params.customerName || 'Customer'}`);
     this.logger.log(`[WELCOME] Customer ID: ${customerId}`);
+    this.logger.log(`[FCM] Notification recipient customerId: ${customerId}`);
 
     try {
       // 1. Resolve userId if not explicitly provided
@@ -1021,8 +1024,13 @@ export class NotificationService {
         );
       }
 
+      this.logger.log(`[NOTIFICATION] WELCOME created`);
+      this.logger.log(`[FCM] Customer ID found`);
+
       // 3. Find active device tokens for the customer and target user
       this.logger.log(`[WELCOME] Looking for FCM tokens...`);
+      this.logger.log(`[FCM] Customer token lookup started`);
+      this.logger.log(`[FCM] Customer ID: ${customerId}`);
       const deviceRecords = await this.prisma.userDeviceToken.findMany({
         where: {
           isActive: true,
@@ -1036,47 +1044,69 @@ export class NotificationService {
 
       const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
       const tokens = Array.from(new Set(rawTokens));
+      const tokenFound = tokens.length > 0;
+
+      this.logger.log(`[FCM] Token found: ${tokenFound ? 'YES' : 'NO'}`);
+      this.logger.log(`[FCM] Number of active tokens: ${tokens.length}`);
+
+      let fcmSent = false;
+      let fcmResult: any = null;
 
       if (tokens.length === 0) {
         this.logger.log(`[FCM] No active device tokens found for customer ${customerId}`);
         this.logger.log(`[WELCOME] Notification completed`);
-        return {
-          notification: dbNotification,
-          fcmSent: false,
-          reason: 'NO_DEVICE_TOKEN',
+      } else {
+        this.logger.log(`[FCM] Device token found`);
+        const maskedTokens = tokens.map((t) => (t.length > 8 ? `****${t.slice(-4)}` : '****'));
+        this.logger.log(`[FCM] Active token suffix: ${maskedTokens.join(', ')}`);
+        this.logger.log(`[WELCOME] FCM tokens found: ${tokens.length}`);
+        this.logger.log(`[WELCOME] Calling FCM service...`);
+
+        // 4. Send FCM Push Notification to all active customer devices
+        const fcmPayload: Record<string, string> = {
+          ...payloadData,
+          notificationId: dbNotification ? String(dbNotification.id) : '',
         };
-      }
 
-      this.logger.log(`[WELCOME] FCM tokens found: ${tokens.length}`);
-      this.logger.log(`[WELCOME] Calling FCM service...`);
-
-      // 4. Send FCM Push Notification to all active customer devices
-      const fcmPayload: Record<string, string> = {
-        ...payloadData,
-        notificationId: dbNotification ? String(dbNotification.id) : '',
-      };
-
-      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
-        customerId,
-        notificationType: 'WELCOME',
-      });
-
-      this.logger.log(
-        `[WELCOME] FCM response: successCount=${fcmResult.successCount}, failureCount=${fcmResult.failureCount}`,
-      );
-
-      // 5. Clean up any invalid or expired tokens
-      if (fcmResult.invalidTokens.length > 0) {
-        await this.prisma.userDeviceToken.updateMany({
-          where: { token: { in: fcmResult.invalidTokens } },
-          data: { isActive: false, updatedAt: new Date() },
+        fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
+          customerId,
+          notificationType: 'WELCOME',
         });
+
         this.logger.log(
-          `[FCM] Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`,
+          `[WELCOME] FCM response: successCount=${fcmResult.successCount}, failureCount=${fcmResult.failureCount}`,
         );
+
+        if (fcmResult.successCount > 0) {
+          fcmSent = true;
+        }
+
+        // 5. Clean up any invalid or expired tokens
+        if (fcmResult.invalidTokens.length > 0) {
+          await this.prisma.userDeviceToken.updateMany({
+            where: { token: { in: fcmResult.invalidTokens } },
+            data: { isActive: false, updatedAt: new Date() },
+          });
+          this.logger.log(
+            `[FCM] Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`,
+          );
+        }
+
+        this.logger.log(`[WELCOME] Notification completed`);
       }
 
-      this.logger.log(`[WELCOME] Notification completed`);
+      // WhatsApp Customer Welcome Message (independent of FCM, non-blocking)
+      try {
+        if (this.whatsappService) {
+          await this.whatsappService.sendCustomerWelcomeMessage({
+            customerId,
+            customerName: params.customerName,
+            notificationId: dbNotification?.id,
+          });
+        }
+      } catch (waErr: any) {
+        this.logger.warn(`[WHATSAPP] Customer welcome message notice: ${waErr?.message}`);
+      }
 
       // 6. Non-blocking Notification to Super Admins / Platform Admins
       this.notifyAdmins({
@@ -1094,8 +1124,9 @@ export class NotificationService {
 
       return {
         notification: dbNotification,
-        fcmSent: fcmResult.successCount > 0,
+        fcmSent,
         result: fcmResult,
+        reason: tokens.length === 0 ? 'NO_DEVICE_TOKEN' : undefined,
       };
     } catch (err: any) {
       this.logger.error(`[FCM] Send failed:\n${err?.message}`);
@@ -1120,8 +1151,12 @@ export class NotificationService {
     let targetUserId = params.userId;
 
     this.logger.log(`[PLAN] Payment verified: ${paymentId || 'N/A'}`);
+    this.logger.log(`[PLAN] Subscription ID: ${subscriptionId}`);
     this.logger.log(`[PLAN] Subscription activated: ${subscriptionId}`);
     this.logger.log(`[PLAN] Customer ID: ${customerId}`);
+    this.logger.log(`[PLAN] Plan status: ACTIVE`);
+    this.logger.log(`[PLAN] Triggering plan activation notification`);
+    this.logger.log(`[FCM] Notification recipient customerId: ${customerId}`);
 
     try {
       // 1. Resolve userId if not explicitly provided
@@ -1187,6 +1222,7 @@ export class NotificationService {
         planId: String(planId),
         planName,
         customerId: String(customerId),
+        status: 'ACTIVE',
       };
 
       // 3. Create in-app Notification database record
@@ -1206,8 +1242,13 @@ export class NotificationService {
         },
       });
 
+      this.logger.log(`[NOTIFICATION] PLAN_PURCHASE_SUCCESS created`);
+      this.logger.log(`[FCM] Customer ID found`);
+
       // 4. Fetch active device tokens for the customer and target user
       this.logger.log(`[PLAN] Looking for FCM tokens...`);
+      this.logger.log(`[FCM] Customer token lookup started`);
+      this.logger.log(`[FCM] Customer ID: ${customerId}`);
       const deviceRecords = await this.prisma.userDeviceToken.findMany({
         where: {
           isActive: true,
@@ -1221,11 +1262,18 @@ export class NotificationService {
 
       const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
       const tokens = Array.from(new Set(rawTokens));
+      const tokenFound = tokens.length > 0;
+
+      this.logger.log(`[FCM] Token found: ${tokenFound ? 'YES' : 'NO'}`);
+      this.logger.log(`[FCM] Number of active tokens: ${tokens.length}`);
 
       if (tokens.length === 0) {
         this.logger.log(`[FCM] No active device tokens found for customer ${customerId}`);
         this.logger.log(`[PLAN] Notification completed`);
       } else {
+        this.logger.log(`[FCM] Device token found`);
+        const maskedTokens = tokens.map((t) => (t.length > 8 ? `****${t.slice(-4)}` : '****'));
+        this.logger.log(`[FCM] Active token suffix: ${maskedTokens.join(', ')}`);
         this.logger.log(`[PLAN] FCM tokens found: ${tokens.length}`);
         this.logger.log(`[PLAN] Calling FCM service...`);
 
@@ -1256,6 +1304,29 @@ export class NotificationService {
         }
 
         this.logger.log(`[PLAN] Notification completed`);
+      }
+
+      // WhatsApp Plan Activation Message (independent of FCM, non-blocking)
+      try {
+        if (this.whatsappService) {
+          const subDetails = await this.prisma.customerSubscription.findUnique({
+            where: { id: subscriptionId },
+            select: { billingCycle: true, startDate: true, endDate: true },
+          });
+
+          await this.whatsappService.sendPlanActivationMessage({
+            customerId,
+            planName,
+            subscriptionId,
+            paymentId,
+            billingCycle: subDetails?.billingCycle || 'Monthly',
+            startDate: subDetails?.startDate,
+            expiryDate: subDetails?.endDate,
+            notificationId: dbNotification?.id,
+          });
+        }
+      } catch (waErr: any) {
+        this.logger.warn(`[WHATSAPP] Plan activation message notice: ${waErr?.message}`);
       }
 
       // 7. Non-blocking Notification to Super Admins / Platform Admins

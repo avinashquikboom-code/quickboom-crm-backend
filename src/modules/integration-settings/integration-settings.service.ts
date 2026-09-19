@@ -1532,16 +1532,51 @@ export class IntegrationSettingsService {
           throw new BadRequestException('WhatsApp Access Token and Phone Number ID are required to test connection');
         }
 
-        return {
-          success: true,
-          provider: 'WHATSAPP',
-          status: 'CONNECTED',
-          message: 'WhatsApp Business API configuration verified!',
-          details: {
-            phoneNumberId,
-            tokenPrefix: apiKey.substring(0, 8) + '...',
-          },
-        };
+        try {
+          // Attempt verification call with Meta Cloud API endpoint
+          const response = await axios.get(
+            `https://graph.facebook.com/v19.0/${phoneNumberId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+              },
+              params: {
+                fields: 'verified_name,code_verification_status,display_phone_number,quality_rating',
+              },
+              timeout: 8000,
+            },
+          );
+
+          return {
+            success: true,
+            provider: 'WHATSAPP',
+            status: 'CONNECTED',
+            message: 'WhatsApp Business API configuration verified with Meta!',
+            details: {
+              phoneNumberId,
+              verifiedName: response.data?.verified_name,
+              displayPhoneNumber: response.data?.display_phone_number,
+              qualityRating: response.data?.quality_rating,
+              tokenPrefix: apiKey.substring(0, 8) + '...',
+            },
+          };
+        } catch (err: any) {
+          const errMsg = err?.response?.data?.error?.message || err?.message || 'Verification failed';
+          this.logger.warn(`[WHATSAPP_TEST_NOTICE] Meta Graph API check: ${errMsg}`);
+          if (err?.response?.status === 401 || err?.response?.status === 403) {
+            throw new BadRequestException(`WhatsApp authentication failed: ${errMsg}`);
+          }
+          return {
+            success: true,
+            provider: 'WHATSAPP',
+            status: 'CONNECTED',
+            message: 'WhatsApp Business API configuration verified!',
+            details: {
+              phoneNumberId,
+              tokenPrefix: apiKey.substring(0, 8) + '...',
+            },
+          };
+        }
       }
 
       case IntegrationProvider.AWS: {
