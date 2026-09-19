@@ -68,10 +68,17 @@ export class LeadRepository {
       if (matchStage) stageId = matchStage.id;
     }
 
-    const { notes, ...leadData } = dto;
+    const { notes, location, ...leadData } = dto as any;
+    const resolvedCity = (leadData.city || location || '').trim() || null;
+    const resolvedFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
+    const resolvedLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
+
     const lead = await client.lead.create({
       data: {
         ...leadData,
+        city: resolvedCity,
+        firstName: resolvedFirstName,
+        lastName: resolvedLastName,
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         status,
         stageId,
@@ -545,16 +552,29 @@ export class LeadRepository {
   async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null }) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    const { notes, ...leadData } = dto;
+    const { notes, location, ...leadData } = dto as any;
+    const updateData: any = {
+      ...leadData,
+      assignedToId: dto.assignedToId !== undefined
+        ? (dto.assignedToId ? Number(dto.assignedToId) : null)
+        : undefined,
+      ...(dto.employeeId !== undefined ? { employeeId: dto.employeeId } : {}),
+    };
+
+    if (leadData.city !== undefined || location !== undefined) {
+      const c = (leadData.city || location || '').trim();
+      updateData.city = c ? c : null;
+    }
+    if (leadData.firstName !== undefined) {
+      updateData.firstName = leadData.firstName ? String(leadData.firstName).trim() : '';
+    }
+    if (leadData.lastName !== undefined) {
+      updateData.lastName = leadData.lastName ? String(leadData.lastName).trim() : '';
+    }
+
     return this.prisma.lead.updateMany({
       where: { id: numId, customerId: numCustomerId, deletedAt: null },
-      data: {
-        ...leadData,
-        assignedToId: dto.assignedToId !== undefined
-          ? (dto.assignedToId ? Number(dto.assignedToId) : null)
-          : undefined,
-        ...(dto.employeeId !== undefined ? { employeeId: dto.employeeId } : {}),
-      } as any,
+      data: updateData,
     });
   }
 

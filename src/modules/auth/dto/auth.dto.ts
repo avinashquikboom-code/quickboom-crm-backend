@@ -158,26 +158,46 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
-export class VerifyOtpDto {
-  @ApiProperty({ example: 'john@acme.com' })
-  @IsEmail()
-  @IsNotEmpty()
+export class SendEmailOtpDto {
+  @ApiProperty({ example: 'admin@quickboom.com', description: 'Registered account email address' })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email address is required' })
   email: string;
+}
 
-  @ApiProperty({ example: '123456' })
+export class VerifyOtpDto {
+  @ApiPropertyOptional({ example: 'john@acme.com' })
+  @IsOptional()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  email?: string;
+
+  @ApiPropertyOptional({ example: '9876543210' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  mobile?: string;
+
+  @ApiProperty({ example: '123456', description: '6-digit OTP verification code' })
+  @IsString()
+  @IsNotEmpty({ message: 'OTP is required' })
   otp: string;
 }
 
 export class SendOtpDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: '9876543210',
     description: '10-digit Indian mobile number with or without +91',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  mobile: string;
+  mobile?: string;
+
+  @ApiPropertyOptional({
+    example: 'admin@quickboom.com',
+    description: 'Registered account email address',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  email?: string;
 }
 
 export class VerifyMobileOtpDto {

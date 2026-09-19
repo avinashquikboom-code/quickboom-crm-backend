@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { SendEmailDto } from './dto/send-email.dto';
+import { EmailTemplateService, PREDEFINED_SYSTEM_TEMPLATES } from './email-template.service';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class EmailService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    private readonly emailTemplateService: EmailTemplateService,
   ) {}
 
   /**
@@ -166,5 +168,55 @@ export class EmailService {
         `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Unknown SMTP error'}`,
       );
     }
+  }
+
+  /**
+   * Resolves an email template by key, interpolates placeholders, and sends via existing SMTP.
+   * Seamless fallback to default template if custom template is absent or inactive.
+   */
+  async sendTemplateEmail(
+    key: string,
+    to: string,
+    variables: Record<string, any> = {},
+    options?: Partial<SendEmailDto>,
+    user?: any,
+  ) {
+    const customerId = user?.customerId ? Number(user.customerId) : null;
+    const template = await this.emailTemplateService.findByKey(key, customerId);
+
+    let subject: string;
+    let body: string;
+
+    if (template && template.isActive) {
+      subject = this.emailTemplateService.interpolate(template.subject, variables);
+      body = this.emailTemplateService.interpolate(template.body, variables);
+    } else {
+      this.logger.warn(`Template "${key}" not active or not found. Falling back to default system definition.`);
+      const fallback = PREDEFINED_SYSTEM_TEMPLATES.find((t) => t.key === key.trim().toUpperCase());
+      if (fallback) {
+        subject = this.emailTemplateService.interpolate(fallback.subject, variables);
+        body = this.emailTemplateService.interpolate(fallback.body, variables);
+      } else {
+        subject = options?.subject || `Notification: ${key}`;
+        body = options?.body || `Hello,\n\nThis is an automated notification.`;
+      }
+    }
+
+    const isHtml = body.includes('<') && body.includes('>');
+
+    return this.sendEmail(
+      {
+        to,
+        subject,
+        body,
+        html: isHtml ? body : undefined,
+        text: !isHtml ? body : undefined,
+        fromEmail: options?.fromEmail,
+        fromName: options?.fromName,
+        recordType: options?.recordType || 'TEMPLATE',
+        recordId: options?.recordId || key,
+      },
+      user,
+    );
   }
 }

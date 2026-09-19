@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -20,10 +21,13 @@ import {
   ResetPasswordDto,
   SendOtpDto,
   VerifyMobileOtpDto,
+  SendEmailOtpDto,
+  VerifyOtpDto,
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +39,7 @@ export class AuthService {
     private configService: ConfigService,
     private qbIdGenerator: QBIdGenerator,
     private msg91Service: Msg91Service,
+    @Optional() private emailService?: EmailService,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
@@ -1625,25 +1630,7 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    if (!user) {
-      return { message: 'If the email exists, a reset code will be sent.' };
-    }
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        otpCode: otp,
-        otpExpiresAt: expiresAt,
-      },
-    });
-
-    return { message: 'Password reset OTP sent successfully' };
+    return this.sendEmailOtp({ email: dto.email });
   }
 
   async resetPassword(dto: ResetPasswordDto) {
@@ -1675,9 +1662,13 @@ export class AuthService {
    * Dispatches a 6-digit OTP to an Indian mobile number via MSG91.
    */
   async sendOtp(dto: SendOtpDto) {
+    if (dto.email && !dto.mobile) {
+      return this.sendEmailOtp({ email: dto.email });
+    }
+
     const rawMobile = dto.mobile?.trim();
     if (!rawMobile) {
-      throw new BadRequestException('Mobile number is required');
+      throw new BadRequestException('Mobile number or email address is required');
     }
 
     const normalizedFullMobile = this.msg91Service.normalizeMobile(rawMobile);
@@ -1746,8 +1737,12 @@ export class AuthService {
   /**
    * Verifies OTP code and logs the user in, issuing JWT tokens and roles.
    */
-  async verifyOtp(dto: VerifyMobileOtpDto) {
-    const rawMobile = dto.mobile?.trim();
+  async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto) {
+    if ((dto as any).email && !(dto as any).mobile) {
+      return this.verifyEmailOtp(dto as any);
+    }
+
+    const rawMobile = (dto as any).mobile?.trim();
     const otpCode = dto.otp?.trim();
 
     if (!rawMobile || !otpCode) {
@@ -1913,6 +1908,277 @@ export class AuthService {
       statusCode: 200,
       success: true,
       message: 'Logged in successfully via mobile OTP verification',
+      data: {
+        user: userData,
+        tokens,
+      },
+      user: userData,
+      tokens,
+    };
+  }
+
+  /**
+   * Generates and dispatches a 6-digit Email OTP via the existing SMTP integration
+   * using the Admin Panel configured EMAIL_OTP template.
+   */
+  async sendEmailOtp(dto: SendEmailOtpDto) {
+    const rawEmail = dto.email?.trim().toLowerCase();
+    if (!rawEmail) {
+      throw new BadRequestException('Email address is required');
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(rawEmail)) {
+      throw new BadRequestException('Invalid email address format');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email: rawEmail, deletedAt: null },
+      include: { customer: true },
+    });
+
+    // To prevent user enumeration, return generic success if email does not exist
+    if (!user) {
+      this.logger.warn(`[EMAIL_OTP] Request for non-existent email "${rawEmail}". Returning generic response.`);
+      return {
+        statusCode: 200,
+        success: true,
+        message: 'If an account exists with this email address, a verification OTP has been sent.',
+      };
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('User account is deactivated. Please contact support.');
+    }
+
+    // Enforce 60 seconds cooldown
+    if (user.otpLastSentAt) {
+      const secondsSinceLastSent = (Date.now() - new Date(user.otpLastSentAt).getTime()) / 1000;
+      if (secondsSinceLastSent < 60) {
+        const remainingSeconds = Math.ceil(60 - secondsSinceLastSent);
+        throw new BadRequestException(
+          `Please wait ${remainingSeconds} seconds before requesting a new OTP.`,
+        );
+      }
+    }
+
+    // Generate cryptographically secure random 6-digit OTP
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    const expiryMinutes = 5; // Exactly 5 minutes expiry
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
+
+    // Invalidate prior OTP and persist new OTP details
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode: otp,
+        otpExpiresAt: expiresAt,
+        otpAttempts: 0,
+        otpLastSentAt: new Date(),
+      },
+    });
+
+    const companyName = user.customer?.companyName || user.customer?.name || 'QuickBoom CRM';
+    const userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User';
+
+    // Dispatch OTP strictly through existing SMTP email service using EMAIL_OTP template
+    if (this.emailService) {
+      try {
+        await this.emailService.sendTemplateEmail(
+          'EMAIL_OTP',
+          user.email,
+          {
+            userName,
+            companyName,
+            otp,
+          },
+          {
+            recordType: 'USER_OTP',
+            recordId: String(user.id),
+          },
+          { id: user.id, customerId: user.customerId },
+        );
+      } catch (err: any) {
+        this.logger.error(`[EMAIL_OTP_FAILED] To: "${user.email}", Error: ${err?.message}`);
+        throw new BadRequestException(
+          `Failed to deliver OTP verification email: ${err?.message || 'SMTP service error'}. Please check your SMTP configuration in Admin Panel → Settings → SMTP Email Integration.`,
+        );
+      }
+    } else {
+      this.logger.warn(`[EMAIL_OTP] EmailService not available. OTP code generated for userId: ${user.id}`);
+    }
+
+    this.logger.log(`[EMAIL_OTP_SENT] Verification OTP dispatched via SMTP to userId: ${user.id} (${user.email})`);
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'OTP sent successfully to registered email address',
+    };
+  }
+
+  /**
+   * Verifies 6-digit Email OTP and authenticates the user, issuing tokens and roles.
+   */
+  async verifyEmailOtp(dto: VerifyOtpDto) {
+    const rawEmail = dto.email?.trim().toLowerCase();
+    const otpCode = dto.otp?.trim();
+
+    if (!rawEmail || !otpCode) {
+      throw new BadRequestException('Email address and OTP code are required');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email: rawEmail, deletedAt: null },
+      include: {
+        customer: true,
+        employee: {
+          include: {
+            department: true,
+            designation: true,
+          },
+        },
+        userRoles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found matching this email address.');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('User account is deactivated. Please contact support.');
+    }
+
+    // Check if OTP was generated
+    if (!user.otpCode || !user.otpExpiresAt) {
+      throw new BadRequestException('No active OTP request found. Please request a new OTP.');
+    }
+
+    // Check expiry (5 minutes)
+    if (new Date(user.otpExpiresAt) < new Date()) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { otpCode: null, otpExpiresAt: null },
+      });
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    // Check maximum attempts (5 max)
+    if (user.otpAttempts >= 5) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { otpCode: null, otpExpiresAt: null },
+      });
+      throw new BadRequestException('Maximum OTP verification attempts exceeded. Please request a new OTP.');
+    }
+
+    // Validate OTP match
+    if (user.otpCode !== otpCode) {
+      const updated = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { otpAttempts: { increment: 1 } },
+      });
+      const remainingAttempts = 5 - updated.otpAttempts;
+      throw new BadRequestException(
+        `Invalid OTP code. ${remainingAttempts > 0 ? `${remainingAttempts} attempt(s) remaining.` : 'Please request a new OTP.'}`,
+      );
+    }
+
+    // Success: Clear OTP & mark email verified
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode: null,
+        otpExpiresAt: null,
+        otpAttempts: 0,
+        isVerified: true,
+      },
+    });
+
+    this.logger.log(`[AUTH_EMAIL_OTP_VERIFIED] User ${user.id} (${user.email}) successfully logged in via email OTP`);
+
+    // Resolve primary role
+    const isEmployee = user.employee !== null;
+    const isCustomerAdmin = user.userRoles.some(
+      (ur) => ur.role.type === RoleType.CUSTOMER_ADMIN || (ur.role.type as string) === 'COMPANY_ADMIN',
+    );
+    const hasSuperAdminRole = user.userRoles.some(
+      (ur) => ur.role.type === RoleType.SUPER_ADMIN,
+    );
+
+    let userRole = 'CUSTOMER';
+    if (hasSuperAdminRole) {
+      userRole = 'SUPER_ADMIN';
+    } else if (isCustomerAdmin) {
+      userRole = 'COMPANY_ADMIN';
+    } else if (isEmployee) {
+      userRole = 'EMPLOYEE';
+    }
+
+    const roles = isEmployee && !hasSuperAdminRole
+      ? ['EMPLOYEE', RoleType.CUSTOM]
+      : user.userRoles.map((ur) => ur.role.type);
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
+
+    let emp: any = null;
+    let employeeData: any = null;
+    if (userRole === 'EMPLOYEE') {
+      emp = await this.ensureEmployee(user);
+      const targetNumericId = emp?.id || user.id;
+      const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      employeeData = {
+        id: emp.id,
+        employeeId: qbCode,
+        employeeCode: qbCode,
+        firstName: emp.firstName || user.firstName,
+        lastName: emp.lastName || user.lastName,
+        email: emp.email || user.email,
+        mobile: emp.phone || user.phone,
+        phone: emp.phone || user.phone,
+        branch: emp.branch || 'Head Office',
+        office: emp.branch || 'Head Office',
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        status: emp.status || 'ACTIVE',
+        mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
+        joiningDate: emp.joiningDate || user.createdAt,
+      };
+    }
+
+    const targetNumericId = userRole === 'EMPLOYEE'
+      ? (emp?.id || user.id)
+      : (userRole === 'COMPANY_ADMIN' || userRole === 'CUSTOMER' ? (user.customerId || user.id) : user.id);
+    const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+
+    const userData: any = {
+      id: user.id,
+      email: user.email,
+      phone: user.phone || null,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: userRole,
+      roles: roles.length > 0 ? roles : [userRole],
+      userId: qbCode,
+      ...(userRole !== 'SUPER_ADMIN' && { customerId: user.customerId }),
+      ...(userRole !== 'SUPER_ADMIN' && { customerName: user.customer?.name ?? null }),
+    };
+
+    if (userRole === 'EMPLOYEE' && employeeData) {
+      userData.employeeId = qbCode;
+      userData.employeeCode = qbCode;
+      userData.employee = employeeData;
+    }
+
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Logged in successfully via email OTP verification',
       data: {
         user: userData,
         tokens,

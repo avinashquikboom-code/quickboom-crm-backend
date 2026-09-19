@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { EmailService } from './email.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { EmailTemplateService } from './email-template.service';
 import * as nodemailer from 'nodemailer';
 
 jest.mock('nodemailer');
@@ -11,6 +12,7 @@ describe('EmailService', () => {
   let service: EmailService;
   let mockPrisma: any;
   let mockIntegrationSettings: any;
+  let mockEmailTemplateService: any;
   let mockSendMail: jest.Mock;
 
   beforeEach(async () => {
@@ -49,11 +51,17 @@ describe('EmailService', () => {
       }),
     };
 
+    mockEmailTemplateService = {
+      findByKey: jest.fn().mockResolvedValue(null),
+      interpolate: jest.fn((str, vars) => str),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EmailService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: IntegrationSettingsService, useValue: mockIntegrationSettings },
+        { provide: EmailTemplateService, useValue: mockEmailTemplateService },
       ],
     }).compile();
 

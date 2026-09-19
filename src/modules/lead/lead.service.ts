@@ -63,9 +63,12 @@ export class LeadService {
       'website',
       'address',
       'city',
+      'location',
       'state',
       'category',
       'googlePlaceId',
+      'firstName',
+      'lastName',
     ];
 
     for (const key of optionalKeys) {
@@ -77,6 +80,15 @@ export class LeadService {
         }
       }
     }
+
+    // Bi-directional fallback between city and location
+    if (!cleaned.city && cleaned.location) {
+      cleaned.city = cleaned.location;
+    }
+    if (!cleaned.location && cleaned.city) {
+      cleaned.location = cleaned.city;
+    }
+
     return cleaned;
   }
 

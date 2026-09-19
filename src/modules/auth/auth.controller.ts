@@ -10,6 +10,8 @@ import {
   ResetPasswordDto,
   SendOtpDto,
   VerifyMobileOtpDto,
+  SendEmailOtpDto,
+  VerifyOtpDto,
 } from './dto/auth.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -25,10 +27,43 @@ export class AuthController {
   @Public()
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Send 6-digit OTP code to mobile number via SMS' })
+  @ApiOperation({ summary: 'Send 6-digit OTP code to mobile number or email address' })
   @ApiResponse({ status: 200, description: 'OTP sent successfully' })
   async sendOtp(@Body() dto: SendOtpDto) {
     return this.authService.sendOtp(dto);
+  }
+
+  @Public()
+  @Post('send-email-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send 6-digit verification OTP code via configured SMTP email' })
+  @ApiResponse({ status: 200, description: 'Email OTP sent successfully' })
+  async sendEmailOtp(@Body() dto: SendEmailOtpDto) {
+    return this.authService.sendEmailOtp(dto);
+  }
+
+  @Public()
+  @Post('email/send-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Alias for sending email verification OTP' })
+  async emailSendOtpAlias(@Body() dto: SendEmailOtpDto) {
+    return this.authService.sendEmailOtp(dto);
+  }
+
+  @Public()
+  @Post('resend-email-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resend 6-digit email OTP (enforces 60-second cooldown)' })
+  async resendEmailOtp(@Body() dto: SendEmailOtpDto) {
+    return this.authService.sendEmailOtp(dto);
+  }
+
+  @Public()
+  @Post('email/resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Alias for resending email OTP' })
+  async emailResendOtpAlias(@Body() dto: SendEmailOtpDto) {
+    return this.authService.sendEmailOtp(dto);
   }
 
   @Public()
@@ -36,8 +71,25 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP code and authenticate user' })
   @ApiResponse({ status: 200, description: 'User authenticated successfully' })
-  async verifyOtp(@Body() dto: VerifyMobileOtpDto) {
-    return this.authService.verifyOtp(dto);
+  async verifyOtp(@Body() dto: VerifyOtpDto | VerifyMobileOtpDto) {
+    return this.authService.verifyOtp(dto as any);
+  }
+
+  @Public()
+  @Post('verify-email-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify 6-digit Email OTP and authenticate user' })
+  @ApiResponse({ status: 200, description: 'User authenticated successfully via email OTP' })
+  async verifyEmailOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyEmailOtp(dto);
+  }
+
+  @Public()
+  @Post('email/verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Alias for verifying email OTP' })
+  async emailVerifyOtpAlias(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyEmailOtp(dto);
   }
 
   @Public()

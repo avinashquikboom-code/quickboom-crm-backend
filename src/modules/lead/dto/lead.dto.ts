@@ -64,34 +64,16 @@ export class CreateLeadDto {
   title: string;
 
   @ApiPropertyOptional({ example: 'Alice' })
-  @Transform(({ value, obj }) => {
-    const cleaned = cleanOptionalField({ value });
-    if (cleaned) return cleaned;
-    const sourceName = obj?.title || obj?.companyName || obj?.businessName;
-    if (sourceName) {
-      const parts = String(sourceName).trim().split(/\s+/);
-      return parts[0] || 'Prospective';
-    }
-    return 'Prospective';
-  })
+  @Transform(({ value }) => cleanOptionalField({ value }) ?? null)
   @IsString()
   @IsOptional()
-  firstName?: string;
+  firstName?: string | null;
 
   @ApiPropertyOptional({ example: 'Smith' })
-  @Transform(({ value, obj }) => {
-    const cleaned = cleanOptionalField({ value });
-    if (cleaned) return cleaned;
-    const sourceName = obj?.title || obj?.companyName || obj?.businessName;
-    if (sourceName) {
-      const parts = String(sourceName).trim().split(/\s+/);
-      return parts.slice(1).join(' ').trim() || 'Client';
-    }
-    return 'Client';
-  })
+  @Transform(({ value }) => cleanOptionalField({ value }) ?? null)
   @IsString()
   @IsOptional()
-  lastName?: string;
+  lastName?: string | null;
 
   @ApiPropertyOptional({ example: 'alice@techcorp.com' })
   @Transform(cleanOptionalField)
@@ -124,10 +106,28 @@ export class CreateLeadDto {
   address?: string;
 
   @ApiPropertyOptional({ example: 'Mumbai' })
-  @Transform(cleanOptionalField)
+  @Transform(({ value, obj }) => {
+    const directCity = cleanOptionalField({ value });
+    if (directCity) return directCity;
+    const loc = cleanOptionalField({ value: obj?.location });
+    if (loc) return loc;
+    return null;
+  })
   @IsString()
   @IsOptional()
-  city?: string;
+  city?: string | null;
+
+  @ApiPropertyOptional({ example: 'Mumbai', description: 'Alias for city' })
+  @Transform(({ value, obj }) => {
+    const directLoc = cleanOptionalField({ value });
+    if (directLoc) return directLoc;
+    const c = cleanOptionalField({ value: obj?.city });
+    if (c) return c;
+    return null;
+  })
+  @IsString()
+  @IsOptional()
+  location?: string | null;
 
   @ApiPropertyOptional({ example: 'Maharashtra' })
   @Transform(cleanOptionalField)

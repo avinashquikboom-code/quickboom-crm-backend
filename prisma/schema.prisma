@@ -103,6 +103,7 @@ model Customer {
   socialAccounts           SocialAccount[]
   socialPublishes          SocialPublish[]
   masterItems              MasterItem[]
+  emailTemplates           EmailTemplate[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -3026,5 +3027,31 @@ model MasterItem {
   @@index([type, customerId])
   @@map("master_items")
 }
+
+model EmailTemplate {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int?
+  name               String
+  key                String
+  subject            String
+  body               String    @db.Text
+  description        String?
+  category           String?   @default("GENERAL")
+  supportedVariables String[]  @default([])
+  isSystem           Boolean   @default(false)
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([customerId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("email_templates")
+}
+
 
 
