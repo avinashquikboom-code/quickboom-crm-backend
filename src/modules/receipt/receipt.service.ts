@@ -6,7 +6,23 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import PDFDocument = require('pdfkit');
+
+const inrCurrencyFormatter = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+export function formatInrCurrency(amount: any): string {
+  if (amount === null || amount === undefined || amount === '') return '₹0.00';
+  const num = Number(amount);
+  if (isNaN(num)) return '₹0.00';
+  return inrCurrencyFormatter.format(num);
+}
 
 export interface NormalizedReceiptPayment {
   id: number;
@@ -287,6 +303,26 @@ export class ReceiptService {
     };
   }
 
+  private resolveFontPaths(): { regular: string; bold: string } | null {
+    const candidateDirs = [
+      path.join(__dirname, '../../assets/fonts'),
+      path.join(__dirname, '../assets/fonts'),
+      path.join(process.cwd(), 'src/assets/fonts'),
+      path.join(process.cwd(), 'dist/src/assets/fonts'),
+      path.join(process.cwd(), 'dist/assets/fonts'),
+      path.join(process.cwd(), 'assets/fonts'),
+    ];
+
+    for (const dir of candidateDirs) {
+      const regular = path.join(dir, 'Roboto-Regular.ttf');
+      const bold = path.join(dir, 'Roboto-Bold.ttf');
+      if (fs.existsSync(regular) && fs.existsSync(bold)) {
+        return { regular, bold };
+      }
+    }
+    return null;
+  }
+
   async generateReceiptPdfBuffer(payment: NormalizedReceiptPayment, receiptNo: string): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
       try {
@@ -307,57 +343,72 @@ export class ReceiptService {
           reject(err);
         });
 
+        // Register Unicode Font supporting ₹ (U+20B9)
+        const fontPaths = this.resolveFontPaths();
+        let regularFont = 'Helvetica';
+        let boldFont = 'Helvetica-Bold';
+
+        if (fontPaths) {
+          doc.registerFont('ReceiptFont', fontPaths.regular);
+          doc.registerFont('ReceiptFont-Bold', fontPaths.bold);
+          regularFont = 'ReceiptFont';
+          boldFont = 'ReceiptFont-Bold';
+        }
+
         const primaryColor = '#10B981';
         const darkColor = '#0F172A';
         const grayColor = '#64748B';
         const borderCol = '#E2E8F0';
         const lightBg = '#F8FAFC';
 
-        // Header & Company Info
-        doc.fillColor(primaryColor).fontSize(20).font('Helvetica-Bold').text('QUIKBOOM CRM', 40, 40);
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
+        // Header & Company Info (x = 40 to 555)
+        doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QUIKBOOM CRM', 40, 40);
+        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
           .text('QuikBoom Marketing Solutions Pvt Ltd', 40, 62)
           .text('Dynasty Business Park, Andheri-Kurla Road, Mumbai, Maharashtra 400059', 40, 74)
           .text('GSTIN: 27AABCT3518Q1Z4 | PAN: AABCT3518Q | State Code: 27', 40, 86);
 
-        doc.fillColor(darkColor).fontSize(16).font('Helvetica-Bold').text('PAYMENT RECEIPT', 350, 40, { align: 'right' });
-        doc.fillColor(primaryColor).fontSize(10).font('Helvetica-Bold').text(receiptNo, 350, 60, { align: 'right' });
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
-          .text('Customer Voucher Copy', 350, 74, { align: 'right' })
-          .text(`Receipt Date: ${new Date(payment.createdAt).toLocaleDateString('en-IN')}`, 350, 86, { align: 'right' });
+        doc.fillColor(darkColor).fontSize(16).font(boldFont).text('PAYMENT RECEIPT', 300, 40, { width: 255, align: 'right' });
+        doc.fillColor(primaryColor).fontSize(10).font(boldFont).text(receiptNo, 300, 60, { width: 255, align: 'right' });
+        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
+          .text('Customer Voucher Copy', 300, 74, { width: 255, align: 'right' })
+          .text(`Receipt Date: ${new Date(payment.createdAt).toLocaleDateString('en-IN')}`, 300, 86, { width: 255, align: 'right' });
 
         doc.moveTo(40, 102).lineTo(555, 102).strokeColor(borderCol).lineWidth(1).stroke();
 
-        // Customer & Receipt Meta 2-Column Section
+        // Customer & Receipt Meta 2-Column Section (Balanced 245pt each)
         const isOffline = payment.paymentMethod?.toUpperCase() === 'OFFLINE' || payment.paymentMethod?.toUpperCase() === 'CASH' || payment.paymentMethod?.toUpperCase() === 'BANK_TRANSFER';
         const paymentMethodLabel = isOffline ? 'Offline / Cash (Admin Approved)' : 'Online (Razorpay Verified)';
         const metaTop = 112;
 
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica-Bold').text('PAID BY (CUSTOMER)', 40, metaTop);
-        doc.fillColor(darkColor).fontSize(10).font('Helvetica-Bold').text(payment.customer?.name || 'Customer Account', 40, metaTop + 14);
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
-          .text(`Email: ${payment.customer?.email || 'N/A'}`, 40, metaTop + 28)
-          .text(`Phone: ${payment.customer?.phone || 'N/A'}`, 40, metaTop + 40)
-          .text(`Customer ID: #${payment.customerId}`, 40, metaTop + 52);
+        // Left Column (x=40, width=245): PAID BY CUSTOMER
+        doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('PAID BY CUSTOMER', 40, metaTop);
+        doc.fillColor(darkColor).fontSize(10).font(boldFont).text(payment.customer?.name || 'Customer Account', 40, metaTop + 14, { width: 245 });
+        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
+          .text(`Email: ${payment.customer?.email || 'N/A'}`, 40, metaTop + 28, { width: 245 })
+          .text(`Phone: ${payment.customer?.phone || 'N/A'}`, 40, metaTop + 40, { width: 245 })
+          .text(`Customer ID: #${payment.customerId}`, 40, metaTop + 52, { width: 245 });
 
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica-Bold').text('TRANSACTION DETAILS', 350, metaTop);
-        doc.fillColor(darkColor).fontSize(8.5).font('Helvetica')
-          .text(`Payment Mode: ${paymentMethodLabel}`, 350, metaTop + 14)
-          .text(`Transaction Ref: ${payment.transactionId || 'TXN-' + payment.id}`, 350, metaTop + 28)
-          .text(`Order Reference: ${payment.orderNumber || '#QB-' + payment.id}`, 350, metaTop + 40)
-          .text(`Payment Status: CONFIRMED (PAID)`, 350, metaTop + 52);
+        // Right Column (x=310, width=245): TRANSACTION DETAILS
+        doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('TRANSACTION DETAILS', 310, metaTop);
+        doc.fillColor(darkColor).fontSize(8.5).font(regularFont)
+          .text(`Payment Mode: ${paymentMethodLabel}`, 310, metaTop + 14, { width: 245 })
+          .text(`Transaction Ref: ${payment.transactionId || 'TXN-' + payment.id}`, 310, metaTop + 28, { width: 245 })
+          .text(`Order Reference: ${payment.orderNumber || '#QB-' + payment.id}`, 310, metaTop + 40, { width: 245 })
+          .text(`Payment Status: CONFIRMED (PAID)`, 310, metaTop + 52, { width: 245 });
 
         doc.moveTo(40, metaTop + 70).lineTo(555, metaTop + 70).strokeColor(borderCol).stroke();
 
-        // Itemized Table Header
+        // Itemized Table Header (x=40, width=515)
         const tableTop = metaTop + 82;
         doc.rect(40, tableTop, 515, 22).fill('#F1F5F9');
-        doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold');
-        doc.text('ITEM / PLAN DESCRIPTION', 50, tableTop + 6);
-        doc.text('BILLING CYCLE', 240, tableTop + 6);
-        doc.text('BASE AMT', 320, tableTop + 6);
-        doc.text('TAX (18%)', 400, tableTop + 6);
-        doc.text('AMOUNT PAID', 470, tableTop + 6, { align: 'right' });
+        doc.fillColor(darkColor).fontSize(8.5).font(boldFont);
+        doc.text('#', 48, tableTop + 6, { width: 20 });
+        doc.text('ITEM / PLAN DESCRIPTION', 72, tableTop + 6, { width: 160 });
+        doc.text('BILLING CYCLE', 236, tableTop + 6, { width: 75 });
+        doc.text('BASE AMT', 315, tableTop + 6, { width: 75, align: 'right' });
+        doc.text('TAX (18%)', 395, tableTop + 6, { width: 75, align: 'right' });
+        doc.text('AMOUNT PAID', 475, tableTop + 6, { width: 75, align: 'right' });
 
         // Itemized Table Row
         const planName = payment.planName;
@@ -369,75 +420,78 @@ export class ReceiptService {
         const sgst = taxAmt / 2;
         const rowTop = tableTop + 28;
 
-        doc.fillColor(darkColor).fontSize(9.5).font('Helvetica-Bold').text(planName, 50, rowTop);
-        doc.fontSize(8).font('Helvetica').fillColor(grayColor).text(`Receipt Ref: ${receiptNo} • Installment Settlement`, 50, rowTop + 13);
+        doc.fillColor(darkColor).fontSize(9.5).font(boldFont).text('1', 48, rowTop);
+        doc.text(planName, 72, rowTop, { width: 160 });
+        doc.fontSize(8).font(regularFont).fillColor(grayColor).text(`Receipt Ref: ${receiptNo} • Installment Settlement`, 72, rowTop + 13, { width: 160 });
 
-        doc.fillColor(darkColor).fontSize(8.5).font('Helvetica').text(cycle, 240, rowTop);
-        doc.text(`₹${baseAmt.toLocaleString('en-IN')}`, 320, rowTop);
-        doc.text(`₹${taxAmt.toLocaleString('en-IN')}`, 400, rowTop);
-        doc.font('Helvetica-Bold').text(`₹${totalAmt.toLocaleString('en-IN')}`, 470, rowTop, { align: 'right' });
+        doc.fillColor(darkColor).fontSize(8.5).font(regularFont).text(cycle, 236, rowTop, { width: 75 });
+        doc.text(formatInrCurrency(baseAmt), 315, rowTop, { width: 75, align: 'right' });
+        doc.text(formatInrCurrency(taxAmt), 395, rowTop, { width: 75, align: 'right' });
+        doc.font(boldFont).text(formatInrCurrency(totalAmt), 475, rowTop, { width: 75, align: 'right' });
 
         doc.moveTo(40, rowTop + 32).lineTo(555, rowTop + 32).strokeColor(borderCol).stroke();
 
-        // Summary & Tax Breakdown Box
+        // Summary & Tax Breakdown Box (x=40..285, x=310..555, width=245 each)
         const summaryTop = rowTop + 44;
 
         // Left Box: Tax Breakdown
-        doc.rect(40, summaryTop, 270, 95).fill(lightBg);
-        doc.rect(40, summaryTop, 270, 95).strokeColor(borderCol).stroke();
+        doc.rect(40, summaryTop, 245, 95).fill(lightBg);
+        doc.rect(40, summaryTop, 245, 95).strokeColor(borderCol).stroke();
 
-        doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold').text('TAX SUMMARY (GST 18%)', 52, summaryTop + 10);
-        doc.fillColor(grayColor).fontSize(8).font('Helvetica')
-          .text('CGST (9.0%):', 52, summaryTop + 26)
-          .text(`₹${cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 26, { align: 'right' })
-          .text('SGST (9.0%):', 52, summaryTop + 42)
-          .text(`₹${sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 42, { align: 'right' })
-          .text('Total Tax Component:', 52, summaryTop + 58)
-          .text(`₹${taxAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 240, summaryTop + 58, { align: 'right' });
+        doc.fillColor(darkColor).fontSize(8.5).font(boldFont).text('TAX SUMMARY (GST 18%)', 50, summaryTop + 10);
+        doc.fillColor(grayColor).fontSize(8).font(regularFont)
+          .text('CGST (9.0%):', 50, summaryTop + 26)
+          .text(formatInrCurrency(cgst), 160, summaryTop + 26, { width: 115, align: 'right' })
+          .text('SGST (9.0%):', 50, summaryTop + 42)
+          .text(formatInrCurrency(sgst), 160, summaryTop + 42, { width: 115, align: 'right' })
+          .text('Total Tax Component:', 50, summaryTop + 58)
+          .text(formatInrCurrency(taxAmt), 160, summaryTop + 58, { width: 115, align: 'right' });
 
-        doc.moveTo(52, summaryTop + 72).lineTo(298, summaryTop + 72).strokeColor(borderCol).stroke();
-        doc.fillColor(primaryColor).fontSize(8.5).font('Helvetica-Bold')
-          .text('Payment Status: Confirmed & Received', 52, summaryTop + 78);
+        doc.moveTo(50, summaryTop + 72).lineTo(275, summaryTop + 72).strokeColor(borderCol).stroke();
+        doc.fillColor(primaryColor).fontSize(8.5).font(boldFont)
+          .text('Payment Status: Confirmed & Received', 50, summaryTop + 78);
 
-        // Right Box: Total Received
-        doc.rect(330, summaryTop, 225, 95).fill(lightBg);
-        doc.rect(330, summaryTop, 225, 95).strokeColor(borderCol).stroke();
+        // Right Box: Payment Summary (x=310, width=245)
+        doc.rect(310, summaryTop, 245, 95).fill(lightBg);
+        doc.rect(310, summaryTop, 245, 95).strokeColor(borderCol).stroke();
 
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica').text('Base Amount:', 342, summaryTop + 10);
-        doc.fillColor(darkColor).text(`₹${baseAmt.toLocaleString('en-IN')}`, 470, summaryTop + 10, { align: 'right' });
+        doc.fillColor(darkColor).fontSize(8.5).font(boldFont).text('PAYMENT SUMMARY', 320, summaryTop + 10);
+        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
+          .text('Base Amount:', 320, summaryTop + 24)
+          .fillColor(darkColor).text(formatInrCurrency(baseAmt), 430, summaryTop + 24, { width: 115, align: 'right' });
 
-        doc.fillColor(grayColor).text('Tax Amount (18%):', 342, summaryTop + 26);
-        doc.fillColor(darkColor).text(`₹${taxAmt.toLocaleString('en-IN')}`, 470, summaryTop + 26, { align: 'right' });
+        doc.fillColor(grayColor).text('Tax Amount (18%):', 320, summaryTop + 38)
+          .fillColor(darkColor).text(formatInrCurrency(taxAmt), 430, summaryTop + 38, { width: 115, align: 'right' });
 
-        doc.moveTo(342, summaryTop + 42).lineTo(543, summaryTop + 42).strokeColor('#CBD5E1').stroke();
+        doc.moveTo(320, summaryTop + 52).lineTo(545, summaryTop + 52).strokeColor('#CBD5E1').stroke();
 
-        doc.fillColor(primaryColor).fontSize(10.5).font('Helvetica-Bold').text('Amount Received:', 342, summaryTop + 50);
-        doc.text(`₹${totalAmt.toLocaleString('en-IN')}`, 470, summaryTop + 50, { align: 'right' });
+        doc.fillColor(primaryColor).fontSize(10).font(boldFont).text('Amount Received:', 320, summaryTop + 58);
+        doc.text(formatInrCurrency(totalAmt), 430, summaryTop + 58, { width: 115, align: 'right' });
 
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica').text('Voucher Type:', 342, summaryTop + 72);
-        doc.fillColor('#059669').font('Helvetica-Bold').text('OFFICIAL RECEIPT', 470, summaryTop + 72, { align: 'right' });
+        doc.fillColor(grayColor).fontSize(8).font(regularFont).text('Voucher Type:', 320, summaryTop + 76);
+        doc.fillColor('#059669').font(boldFont).text('OFFICIAL RECEIPT', 430, summaryTop + 76, { width: 115, align: 'right' });
 
         // Official Verification Stamp & Signature Section
         const signTop = summaryTop + 110;
 
         // Paid Stamp
-        doc.rect(40, signTop, 130, 48).fillAndStroke('#ECFDF5', '#10B981');
-        doc.fillColor('#065F46').fontSize(14).font('Helvetica-Bold').text('PAID', 82, signTop + 12);
-        doc.fontSize(7.5).font('Helvetica').text('Official Payment Receipt • Verified', 48, signTop + 32);
+        doc.rect(40, signTop, 140, 48).fillAndStroke('#ECFDF5', '#10B981');
+        doc.fillColor('#065F46').fontSize(14).font(boldFont).text('PAID', 90, signTop + 12);
+        doc.fontSize(7.5).font(regularFont).text('Official Payment Receipt • Verified', 48, signTop + 32);
 
-        // Signatory
-        doc.fillColor(darkColor).fontSize(8.5).font('Helvetica-Bold')
-          .text('For QuikBoom Marketing Solutions Pvt Ltd', 330, signTop + 8, { align: 'right' });
-        doc.fillColor(grayColor).fontSize(8.5).font('Helvetica')
-          .text('Authorized Signatory', 330, signTop + 34, { align: 'right' });
+        // Signatory (Aligned to right box column x=310, width=245)
+        doc.fillColor(darkColor).fontSize(8.5).font(boldFont)
+          .text('For QuikBoom Marketing Solutions Pvt Ltd', 310, signTop + 8, { width: 245, align: 'right' });
+        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
+          .text('Authorized Signatory', 310, signTop + 34, { width: 245, align: 'right' });
 
         // Terms & Conditions Footer
         const footerTop = signTop + 65;
         doc.moveTo(40, footerTop).lineTo(555, footerTop).strokeColor(borderCol).stroke();
-        doc.fillColor(grayColor).fontSize(7.5).font('Helvetica')
-          .text('Note: This is a computer-generated payment voucher confirming receipt of payment.', 40, footerTop + 10)
-          .text('Final Tax Invoice will be issued upon completion of 100% full plan payment.', 40, footerTop + 22)
-          .text('QuikBoom CRM • Support: support@quikboom.com | https://quikboom.com', 40, footerTop + 34, { align: 'center' });
+        doc.fillColor(grayColor).fontSize(7.5).font(regularFont)
+          .text('Note: This is a computer-generated payment voucher confirming receipt of payment.', 40, footerTop + 10, { width: 515, align: 'center' })
+          .text('Final Tax Invoice will be issued upon completion of 100% full plan payment.', 40, footerTop + 22, { width: 515, align: 'center' })
+          .text('QuikBoom CRM • Support: support@quikboom.com • https://quikboom.com', 40, footerTop + 34, { width: 515, align: 'center' });
 
         doc.end();
       } catch (err: any) {

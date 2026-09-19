@@ -23,6 +23,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent when a user requests an email verification code for login or password reset',
     supportedVariables: ['companyName', 'userName', 'otp'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #0f172a; margin-top: 0; margin-bottom: 16px; font-size: 20px;">Verification Code</h2>
   <p style="color: #475569; font-size: 15px; margin-bottom: 12px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px; margin-bottom: 20px;">Your verification OTP is:</p>
@@ -43,6 +46,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent when an employee or administrator requests a password reset link or OTP',
     supportedVariables: ['companyName', 'userName', 'resetLink', 'otp'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #0f172a; margin-top: 0;">Password Reset Request</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px;">We received a request to reset your password for {{companyName}}.</p>
@@ -63,6 +69,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent to newly created employees with their onboarding login details',
     supportedVariables: ['companyName', 'userName', 'email', 'temporaryPassword', 'loginUrl', 'designation'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #0f172a; margin-top: 0;">Welcome to {{companyName}}!</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px;">We are excited to welcome you to the team as <strong>{{designation}}</strong>.</p>
@@ -86,6 +95,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent to employee when their leave application is approved by manager or HR',
     supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'remarks'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #16a34a; margin-top: 0;">Leave Approved</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px;">Your application for <strong>{{leaveType}}</strong> from <strong>{{startDate}}</strong> to <strong>{{endDate}}</strong> has been <strong style="color: #16a34a;">APPROVED</strong> by {{approverName}}.</p>
@@ -105,6 +117,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent to employee when their leave application cannot be approved',
     supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'rejectionReason'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #dc2626; margin-top: 0;">Leave Application Update</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px;">Your application for <strong>{{leaveType}}</strong> from <strong>{{startDate}}</strong> to <strong>{{endDate}}</strong> was reviewed by {{approverName}} and could not be approved at this time.</p>
@@ -124,6 +139,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent to sales representative or contact when a lead is created or shared',
     supportedVariables: ['companyName', 'recipientName', 'leadTitle', 'leadContact', 'leadPhone', 'leadCity', 'leadValue', 'leadNotes'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #0f172a; margin-top: 0;">Lead Details</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{recipientName}},</p>
   <p style="color: #475569; font-size: 15px;">Here are the details for lead <strong>{{leadTitle}}</strong>:</p>
@@ -131,7 +149,7 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Contact:</strong> {{leadContact}}</p>
     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Phone:</strong> {{leadPhone}}</p>
     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>City / Location:</strong> {{leadCity}}</p>
-    <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Potential Value:</strong> ₹{{leadValue}}</p>
+    <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Potential Value:</strong> &#x20B9;{{leadValue}}</p>
     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Notes:</strong> {{leadNotes}}</p>
   </div>
   <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
@@ -146,6 +164,9 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     description: 'Sent to newly converted customers or registered enterprise clients',
     supportedVariables: ['companyName', 'customerName', 'contactEmail', 'supportPhone'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+  </div>
   <h2 style="color: #0f172a; margin-top: 0;">Welcome to {{companyName}}!</h2>
   <p style="color: #475569; font-size: 15px;">Dear {{customerName}},</p>
   <p style="color: #475569; font-size: 15px;">Thank you for partnering with {{companyName}}. We are thrilled to have you onboard.</p>
@@ -436,11 +457,14 @@ export interface RenderedTemplateResult {
   missingVariables: string[];
 }
 
-export function wrapInQuikboomEmailHtml(content: string, options?: { previewText?: string; companyName?: string }): string {
+export function wrapInQuikboomEmailHtml(content: string, options?: { previewText?: string; companyName?: string; logoSrc?: string }): string {
   if (!content) return '';
   if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<body')) {
     return content;
   }
+
+  // Use CID for actual email sends; fallback to /logo.png for web previews
+  const logoSrc = options?.logoSrc ?? 'cid:quikboom-logo';
 
   const paragraphs = content
     .split(/\n\n+/)
@@ -464,7 +488,8 @@ export function wrapInQuikboomEmailHtml(content: string, options?: { previewText
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
     .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .email-header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
+    .email-header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 24px 32px; text-align: center; color: #ffffff; }
+    .email-header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 10px; }
     .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
     .email-header p { margin: 0; font-size: 13px; color: #94a3b8; }
     .email-body { padding: 32px; font-size: 15px; line-height: 1.6; color: #334155; }
@@ -474,6 +499,7 @@ export function wrapInQuikboomEmailHtml(content: string, options?: { previewText
 <body>
   <div class="email-container">
     <div class="email-header">
+      <img src="${logoSrc}" alt="QUIKBOOM" />
       <h1>QUIKBOOM</h1>
       <p>Digital Marketing Agency</p>
     </div>
@@ -481,7 +507,7 @@ export function wrapInQuikboomEmailHtml(content: string, options?: { previewText
       ${paragraphs}
     </div>
     <div class="email-footer">
-      Sent via <strong>QUIKBOOM Digital Marketing Agency</strong> • CRM
+      Sent via <strong>QUIKBOOM Digital Marketing Agency</strong> &bull; CRM
     </div>
   </div>
 </body>

@@ -4,6 +4,9 @@
   "sourceRoot": "src",
   "entryFile": "main",
   "compilerOptions": {
-    "deleteOutDir": true
+    "deleteOutDir": true,
+    "assets": [
+      { "include": "assets/**/*", "outDir": "dist/src" }
+    ]
   }
 }
