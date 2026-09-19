@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Post,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -14,6 +15,7 @@ import {
   UpdateIntegrationDto,
   TestIntegrationDto,
 } from './dto/integration-settings.dto';
+import { SendFirebaseTestNotificationDto } from './dto/firebase-test-notification.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -110,6 +112,19 @@ export class IntegrationSettingsController {
     );
   }
 
+  @Delete(':provider')
+  @ApiOperation({
+    summary: 'Disconnect / remove third-party integration credentials and invalidate active instances',
+  })
+  async disconnectIntegration(
+    @Param('provider') provider: string,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.disconnectIntegration(provider, adminUserId);
+  }
+
   @Post(':provider/test')
   @ApiOperation({
     summary:
@@ -130,10 +145,11 @@ export class IntegrationSettingsController {
   })
   async sendTestNotification(
     @Param('provider') provider: string,
-    @Body() dto: any,
+    @Body() dto: SendFirebaseTestNotificationDto,
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
-    return this.integrationSettingsService.sendFirebaseTestNotification(dto);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.sendFirebaseTestNotification(dto, adminUserId);
   }
 }

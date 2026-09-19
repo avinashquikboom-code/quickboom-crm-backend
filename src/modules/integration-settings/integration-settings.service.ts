@@ -1097,6 +1097,54 @@ export class IntegrationSettingsService {
   }
 
   /**
+   * Disconnects / removes an integration securely.
+   * Clears credentials from DB, resets cache, and invalidates any runtime instances.
+   */
+  async disconnectIntegration(provider: string, adminUserId?: number) {
+    const normProvider = normalizeProvider(provider);
+
+    await this.prisma.integrationSetting.deleteMany({
+      where: { provider: normProvider },
+    });
+
+    this.clearCache(normProvider);
+
+    if (normProvider === IntegrationProvider.FIREBASE) {
+      const fcm = this.getFcmService();
+      if (fcm && typeof fcm.invalidateFirebaseInstance === 'function') {
+        await fcm.invalidateFirebaseInstance();
+      }
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'DISCONNECT_INTEGRATION',
+          module: 'INTEGRATIONS',
+          userId: adminUserId,
+          details: {
+            provider: normProvider,
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    this.logger.log(`[INTEGRATION_DISCONNECTED] Provider=${normProvider} by adminUserId=${adminUserId}`);
+
+    return {
+      success: true,
+      provider: normProvider,
+      status: 'NOT CONFIGURED',
+      connected: false,
+      isEnabled: false,
+      message: `${normProvider} integration disconnected successfully.`,
+    };
+  }
+
+  /**
    * Retrieves full payment configuration for Admin Panel Settings (Single source of truth).
    */
   async getPaymentSettings() {
@@ -1918,37 +1966,58 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.FIREBASE: {
+        let rawPrivateKey = String(
+          dto?.credentials?.privateKey || dto?.credentials?.private_key || '',
+        ).trim();
+        if (!rawPrivateKey || isMaskedSecret(rawPrivateKey)) {
+          rawPrivateKey = String(
+            resolvedCreds.privateKey ||
+              resolvedCreds.private_key ||
+              process.env.FIREBASE_PRIVATE_KEY ||
+              '',
+          ).trim();
+        }
+
+        let clientEmail = String(
+          dto?.credentials?.clientEmail || dto?.credentials?.client_email || '',
+        ).trim();
+        if (!clientEmail || isMaskedSecret(clientEmail)) {
+          clientEmail = String(
+            resolvedCreds.clientEmail ||
+              resolvedCreds.client_email ||
+              process.env.FIREBASE_CLIENT_EMAIL ||
+              '',
+          ).trim();
+        }
+
         const projectId = String(
           dto?.credentials?.projectId ||
             dto?.credentials?.project_id ||
             resolvedCreds.projectId ||
             resolvedCreds.project_id ||
             process.env.FIREBASE_PROJECT_ID ||
+            process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
             'quikboom-crm-925d5',
         ).trim();
-        const clientEmail = String(
-          dto?.credentials?.clientEmail ||
-            dto?.credentials?.client_email ||
-            resolvedCreds.clientEmail ||
-            resolvedCreds.client_email ||
-            process.env.FIREBASE_CLIENT_EMAIL ||
-            '',
-        ).trim();
-        const rawPrivateKey = String(
-          dto?.credentials?.privateKey ||
-            dto?.credentials?.private_key ||
-            resolvedCreds.privateKey ||
-            resolvedCreds.private_key ||
-            process.env.FIREBASE_PRIVATE_KEY ||
-            '',
-        ).trim();
+
+        this.logger.log(
+          `[FIREBASE_TEST_DEBUG] Provider: FIREBASE | ProjectId: ${projectId} | ClientEmail: ${clientEmail || 'NONE'} | HasKey: ${Boolean(rawPrivateKey && !isMaskedSecret(rawPrivateKey))} | AppsCount: ${getFirebaseAdminApps().length}`,
+        );
 
         if (!projectId) {
-          throw new BadRequestException('Firebase Project ID is required to test connection');
+          return {
+            connected: false,
+            success: false,
+            provider: 'FIREBASE',
+            status: 'NOT CONFIGURED',
+            message: 'Firebase Project ID is required to test connection',
+          };
         }
 
         try {
-          // If explicit credentials provided in test request or resolved credentials, test initialization
+          const now = new Date();
+
+          // 1. If explicit credentials provided or resolved from database, test with dedicated app instance
           if (clientEmail && rawPrivateKey && !isMaskedSecret(rawPrivateKey)) {
             const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
             const testAppName = `test-firebase-${Date.now()}`;
@@ -1964,6 +2033,16 @@ export class IntegrationSettingsService {
             );
             getFirebaseAdminMessaging(testApp);
             await deleteFirebaseAdminApp(testApp);
+
+            // Also re-initialize the main FCM service instance if available
+            const fcm = this.getFcmService();
+            if (fcm) {
+              await fcm.initializeWithCredentials({
+                projectId,
+                clientEmail,
+                privateKey,
+              });
+            }
           } else {
             // Check if default initialized Firebase App exists on server
             const apps = getFirebaseAdminApps();
@@ -1974,13 +2053,17 @@ export class IntegrationSettingsService {
               !process.env.FIREBASE_SERVICE_ACCOUNT_JSON &&
               !process.env.FIREBASE_SERVICE_ACCOUNT_PATH
             ) {
-              throw new BadRequestException(
-                'Firebase credentials are not configured. Please supply Client Email and Private Key or configure server environment.',
-              );
+              return {
+                connected: false,
+                success: false,
+                provider: 'FIREBASE',
+                status: 'NOT CONFIGURED',
+                projectId,
+                message: 'Firebase configuration is invalid: credentials are not configured. Please enter Client Email and Private Key, then click Update FCM Credentials.',
+              };
             }
           }
 
-          const now = new Date();
           await this.prisma.integrationSetting.updateMany({
             where: { provider: IntegrationProvider.FIREBASE },
             data: {
@@ -1995,17 +2078,41 @@ export class IntegrationSettingsService {
           return {
             connected: true,
             success: true,
-            provider: 'Firebase Cloud Messaging',
+            provider: 'FIREBASE',
             status: 'CONNECTED',
             projectId,
             lastTestedAt: now.toISOString(),
             lastTestResult: 'SUCCESS',
-            message: 'Firebase Cloud Messaging connection verified successfully!',
+            message: 'Connection check successful',
           };
         } catch (err: any) {
           this.logger.error(`[FIREBASE_TEST_FAILED] ${err?.message}`);
           const errMsg = err?.message || 'Could not authenticate with Firebase Admin SDK';
-          throw new BadRequestException(`Firebase connection test failed: ${errMsg}`);
+
+          try {
+            await this.prisma.integrationSetting.updateMany({
+              where: { provider: IntegrationProvider.FIREBASE },
+              data: {
+                config: {
+                  lastTestedAt: new Date().toISOString(),
+                  lastTestResult: 'FAILED',
+                  lastTestError: errMsg,
+                  projectId,
+                },
+              },
+            });
+          } catch (_) {}
+
+          return {
+            connected: false,
+            success: false,
+            provider: 'FIREBASE',
+            status: 'CONNECTION ERROR',
+            projectId,
+            lastTestedAt: new Date().toISOString(),
+            lastTestResult: 'FAILED',
+            message: `Connection failed: ${errMsg}`,
+          };
         }
       }
 
@@ -2017,62 +2124,128 @@ export class IntegrationSettingsService {
   /**
    * Dispatches an FCM test push notification to targeted recipients from Admin Panel.
    */
-  async sendFirebaseTestNotification(dto: {
-    recipientType?: string;
-    recipientId?: string | number;
-    deviceToken?: string;
-    title?: string;
-    message?: string;
-  }) {
+  async sendFirebaseTestNotification(
+    dto: {
+      recipientType?: string;
+      recipientId?: string | number;
+      deviceToken?: string;
+      title?: string;
+      message?: string;
+      body?: string;
+    },
+    currentAdminId?: number,
+  ) {
     const title = (dto.title || 'QuikBoom Test Notification').trim();
-    const body = (dto.message || 'FCM integration is working correctly.').trim();
-    const recipientType = (dto.recipientType || 'ALL_ADMINS').toUpperCase();
+    const body = (dto.message || dto.body || 'Firebase Cloud Messaging is working correctly.').trim();
+    const recipientType = (dto.recipientType || (currentAdminId ? 'CURRENT_ADMIN' : 'ALL_ADMINS')).toUpperCase();
+
+    this.logger.log(
+      `[FCM_TEST_NOTIFICATION] Request from adminId=${currentAdminId || 'NONE'}, recipientType=${recipientType}, title="${title}"`,
+    );
 
     // 1. Verify that Firebase integration is enabled
     const conf = await this.getFirebaseConfig();
     if (!conf.isEnabled) {
-      throw new BadRequestException(
-        'Firebase Cloud Messaging integration is currently disabled. Please enable it in Settings -> Integrations.',
-      );
+      return {
+        success: false,
+        connected: false,
+        deviceCount: 0,
+        message:
+          'Firebase Cloud Messaging integration is currently disabled. Please enable it in Settings -> Integrations.',
+      };
+    }
+
+    // 2. Ensure Firebase Admin SDK is ready
+    let apps = getFirebaseAdminApps();
+    if (apps.length === 0 && conf.clientEmail && conf.privateKey) {
+      const fcm = this.getFcmService();
+      if (fcm) {
+        await fcm.initializeWithCredentials({
+          projectId: conf.projectId,
+          clientEmail: conf.clientEmail,
+          privateKey: conf.privateKey,
+        });
+        apps = getFirebaseAdminApps();
+      }
+    }
+
+    if (apps.length === 0) {
+      return {
+        success: false,
+        connected: false,
+        deviceCount: 0,
+        message:
+          'Firebase Admin SDK is not initialized on the server. Please verify credentials under Settings -> Integrations.',
+      };
     }
 
     let tokens: string[] = [];
-    let targetUserId: number | null = null;
+    let targetUserId: number | null = currentAdminId || null;
     let targetCustomerId: number | null = null;
 
     if (dto.deviceToken && dto.deviceToken.trim()) {
       tokens = [dto.deviceToken.trim()];
-    } else if (recipientType === 'ALL_ADMINS') {
-      const adminUsers = await this.prisma.user.findMany({
+    } else if (recipientType === 'CURRENT_ADMIN' && currentAdminId) {
+      const adminTokens = await this.prisma.userDeviceToken.findMany({
         where: {
+          userId: currentAdminId,
           isActive: true,
-          deletedAt: null,
-          OR: [
-            { customerId: null },
-            {
-              userRoles: {
-                some: {
-                  role: {
-                    name: { in: ['SUPER_ADMIN', 'ADMIN', 'Super Admin', 'Admin'] },
-                  },
-                },
-              },
-            },
-          ],
-        },
-        select: { id: true },
-      });
-      const adminUserIds = adminUsers.map((u) => u.id);
-      targetUserId = adminUserIds[0] || null;
-
-      const deviceTokens = await this.prisma.userDeviceToken.findMany({
-        where: {
-          isActive: true,
-          userId: { in: adminUserIds },
         },
         select: { token: true },
       });
-      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+      tokens = Array.from(new Set(adminTokens.map((t) => t.token.trim()).filter(Boolean)));
+      if (tokens.length === 0) {
+        return {
+          success: false,
+          connected: true,
+          deviceCount: 0,
+          message: 'No FCM device token registered for this account.',
+        };
+      }
+    } else if (recipientType === 'ALL_ADMINS') {
+      // First check if current admin has active tokens
+      if (currentAdminId) {
+        const myTokens = await this.prisma.userDeviceToken.findMany({
+          where: { userId: currentAdminId, isActive: true },
+          select: { token: true },
+        });
+        if (myTokens.length > 0) {
+          tokens = Array.from(new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)));
+        }
+      }
+
+      if (tokens.length === 0) {
+        const adminUsers = await this.prisma.user.findMany({
+          where: {
+            isActive: true,
+            deletedAt: null,
+            OR: [
+              { customerId: null },
+              {
+                userRoles: {
+                  some: {
+                    role: {
+                      name: { in: ['SUPER_ADMIN', 'ADMIN', 'Super Admin', 'Admin'] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          select: { id: true },
+        });
+        const adminUserIds = adminUsers.map((u) => u.id);
+        targetUserId = adminUserIds[0] || currentAdminId || null;
+
+        const deviceTokens = await this.prisma.userDeviceToken.findMany({
+          where: {
+            isActive: true,
+            userId: { in: adminUserIds },
+          },
+          select: { token: true },
+        });
+        tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+      }
     } else if (recipientType === 'CUSTOMER' && dto.recipientId) {
       targetCustomerId = Number(dto.recipientId);
       const customerUsers = await this.prisma.user.findMany({
@@ -2105,14 +2278,26 @@ export class IntegrationSettingsService {
       });
       tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
     } else {
-      // Default: all active device tokens (up to 50)
-      const deviceTokens = await this.prisma.userDeviceToken.findMany({
-        where: { isActive: true },
-        take: 50,
-        select: { token: true, userId: true },
-      });
-      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
-      targetUserId = deviceTokens[0]?.userId || null;
+      // Default: check current admin, then all active tokens
+      if (currentAdminId) {
+        const myTokens = await this.prisma.userDeviceToken.findMany({
+          where: { userId: currentAdminId, isActive: true },
+          select: { token: true },
+        });
+        if (myTokens.length > 0) {
+          tokens = Array.from(new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)));
+        }
+      }
+
+      if (tokens.length === 0) {
+        const deviceTokens = await this.prisma.userDeviceToken.findMany({
+          where: { isActive: true },
+          take: 50,
+          select: { token: true, userId: true },
+        });
+        tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+        targetUserId = deviceTokens[0]?.userId || currentAdminId || null;
+      }
     }
 
     if (tokens.length === 0) {
@@ -2120,12 +2305,11 @@ export class IntegrationSettingsService {
         success: false,
         connected: true,
         deviceCount: 0,
-        message:
-          'No active device tokens found for the selected recipient. Ensure the recipient has logged in and allowed notifications on mobile or web.',
+        message: 'No FCM device token registered for this account.',
       };
     }
 
-    // 2. Create in-app notification record
+    // 3. Create in-app notification record
     try {
       if (!targetCustomerId) {
         const firstCust = await this.prisma.customer.findFirst({ select: { id: true } });
@@ -2142,12 +2326,7 @@ export class IntegrationSettingsService {
       });
     } catch (_) {}
 
-    // 3. Dispatch FCM Multicast
-    const apps = getFirebaseAdminApps();
-    if (apps.length === 0) {
-      throw new BadRequestException('Firebase Admin SDK is not initialized on the server.');
-    }
-
+    // 4. Dispatch FCM Multicast
     const messaging = getFirebaseAdminMessaging(apps[0]);
     const multicastMessage = {
       tokens,
@@ -2188,7 +2367,7 @@ export class IntegrationSettingsService {
     try {
       const response = await messaging.sendEachForMulticast(multicastMessage);
       this.logger.log(
-        `[FCM] Test notification sent to ${tokens.length} tokens. Success: ${response.successCount}, Failed: ${response.failureCount}`,
+        `[FCM] Test notification sent to ${tokens.length} token(s). Success: ${response.successCount}, Failed: ${response.failureCount}`,
       );
 
       // Clean invalid tokens automatically
@@ -2218,11 +2397,16 @@ export class IntegrationSettingsService {
         deviceCount: tokens.length,
         successCount: response.successCount,
         failureCount: response.failureCount,
-        message: `Notification sent successfully to ${tokens.length} device(s)!`,
+        message: 'Test notification sent successfully!',
       };
     } catch (err: any) {
       this.logger.error(`[FCM] Test notification failed: ${err?.message}`);
-      throw new BadRequestException(`Unable to send notification: ${err?.message}`);
+      return {
+        success: false,
+        connected: true,
+        deviceCount: tokens.length,
+        message: `Failed to send test notification: ${err?.message || 'Firebase dispatch error'}`,
+      };
     }
   }
 }

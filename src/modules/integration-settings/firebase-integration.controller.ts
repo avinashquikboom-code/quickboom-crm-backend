@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   UseGuards,
   ForbiddenException,
@@ -12,6 +13,7 @@ import {
   IntegrationSettingsService,
   IntegrationProvider,
 } from './integration-settings.service';
+import { SendFirebaseTestNotificationDto } from './dto/firebase-test-notification.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -98,11 +100,25 @@ export class FirebaseIntegrationController {
     summary: 'Send an FCM test push notification to targeted recipient',
   })
   async sendTestNotification(
-    @Body() dto: any,
+    @Body() dto: SendFirebaseTestNotificationDto,
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
-    return this.integrationSettingsService.sendFirebaseTestNotification(dto);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.sendFirebaseTestNotification(dto, adminUserId);
+  }
+
+  @Delete()
+  @ApiOperation({
+    summary: 'Disconnect Firebase integration and invalidate active instances',
+  })
+  async disconnect(@CurrentUser() user: any) {
+    this.checkAdminAccess(user);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.disconnectIntegration(
+      IntegrationProvider.FIREBASE,
+      adminUserId,
+    );
   }
 
   @Patch('status')
