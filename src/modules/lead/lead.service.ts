@@ -529,6 +529,13 @@ export class LeadService {
       );
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(recipient)) {
+      throw new BadRequestException(
+        `Lead "${lead.companyName || lead.title || `${lead.firstName} ${lead.lastName}`}" has an invalid email address "${recipient}". Please update the lead with a valid email address.`,
+      );
+    }
+
     if (!this.emailService) {
       throw new BadRequestException('Email service is not available');
     }
@@ -576,6 +583,10 @@ export class LeadService {
       <div class="section-title">Lead & Contact Information</div>
       <table class="details-table">
         <tr>
+          <td class="label">Lead / Opportunity</td>
+          <td class="value">${lead.title}</td>
+        </tr>
+        <tr>
           <td class="label">Business / Account</td>
           <td class="value">${businessName}</td>
         </tr>
@@ -598,7 +609,7 @@ export class LeadService {
         </tr>` : ''}
         ${lead.address || lead.city ? `
         <tr>
-          <td class="label">Location</td>
+          <td class="label">Location / City</td>
           <td class="value">${[lead.address, lead.city, lead.state, lead.country].filter(Boolean).join(', ')}</td>
         </tr>` : ''}
         ${lead.category ? `
@@ -614,6 +625,10 @@ export class LeadService {
           <td class="label">Status / Stage</td>
           <td class="value"><span class="badge">${lead.stage?.name || lead.status}</span></td>
         </tr>
+        <tr>
+          <td class="label">Priority</td>
+          <td class="value">${lead.priority || 'MEDIUM'}</td>
+        </tr>
         ${lead.value ? `
         <tr>
           <td class="label">Estimated Deal Value</td>
@@ -625,7 +640,7 @@ export class LeadService {
           <td class="value">${lead.assignedTo.firstName} ${lead.assignedTo.lastName} (${lead.assignedTo.email})</td>
         </tr>` : ''}
         <tr>
-          <td class="label">Source</td>
+          <td class="label">Lead Source</td>
           <td class="value">${lead.source}</td>
         </tr>
       </table>
@@ -646,6 +661,7 @@ export class LeadService {
     const textContent = `
 Lead & Account Details
 ---------------------------------------------
+Opportunity: ${lead.title}
 Business: ${businessName}
 Contact: ${leadFullName}
 Email: ${lead.email || '—'}
@@ -653,6 +669,7 @@ Phone: ${lead.phone || '—'}
 Website: ${lead.website || '—'}
 Location: ${[lead.address, lead.city, lead.state, lead.country].filter(Boolean).join(', ') || '—'}
 Stage: ${lead.stage?.name || lead.status}
+Priority: ${lead.priority || 'MEDIUM'}
 Deal Value: ₹${Number(lead.value || 0).toLocaleString('en-IN')}
 Assigned Rep: ${lead.assignedTo ? `${lead.assignedTo.firstName} ${lead.assignedTo.lastName} (${lead.assignedTo.email})` : 'Unassigned'}
 Source: ${lead.source}
