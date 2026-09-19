@@ -53,7 +53,7 @@ export class RemoteWorkService {
     return undefined;
   }
 
-  async getSummary(customerId: number | string | undefined) {
+  async getSummary(customerId: number | string | undefined, employeeId?: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const todayStart = new Date();
@@ -62,20 +62,28 @@ export class RemoteWorkService {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
+    const baseWhere: any = {};
+    if (numCustomerId) {
+      baseWhere.customerId = numCustomerId;
+    }
+    if (employeeId) {
+      baseWhere.employeeId = employeeId;
+    }
+
     const [totalRequests, pending, approved, rejected, todayCount] = await Promise.all([
-      this.prisma.remoteRequest.count({ where: { customerId: numCustomerId } }),
+      this.prisma.remoteRequest.count({ where: baseWhere }),
       this.prisma.remoteRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.PENDING },
+        where: { ...baseWhere, status: RequestStatus.PENDING },
       }),
       this.prisma.remoteRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.APPROVED },
+        where: { ...baseWhere, status: RequestStatus.APPROVED },
       }),
       this.prisma.remoteRequest.count({
-        where: { customerId: numCustomerId, status: RequestStatus.REJECTED },
+        where: { ...baseWhere, status: RequestStatus.REJECTED },
       }),
       this.prisma.remoteRequest.count({
         where: {
-          customerId: numCustomerId,
+          ...baseWhere,
           status: RequestStatus.APPROVED,
           fromDate: { lte: todayEnd },
           toDate: { gte: todayStart },
@@ -99,47 +107,111 @@ export class RemoteWorkService {
     const limit = Math.min(100, Math.max(1, Number(query?.limit) || 25));
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {};
+    if (numCustomerId) {
+      where.customerId = numCustomerId;
+    }
 
-    // Scope to employee identity if caller is an employee
-    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
-    if (isEmpUser) {
-      const emp = user.employee || (await this.prisma.employee.findFirst({
-        where: {
-          OR: [
-            { userId: user.id },
-            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as Prisma.QueryMode } }] : []),
-          ],
-        },
-      }));
+    // Role & permission evaluation:
+    const userRole = String(user?.role || '').toUpperCase();
+    const userRoleType = String(user?.roleType || '').toUpperCase();
+    const userRoles = Array.isArray(user?.roles)
+      ? user.roles.map((r: any) => String(r).toUpperCase())
+      : [];
+
+    const isAdminOrManager =
+      userRole === 'ADMIN' ||
+      userRole === 'SUPER_ADMIN' ||
+      userRole === 'CUSTOMER_ADMIN' ||
+      userRole === 'COMPANY_ADMIN' ||
+      userRole === 'COMPANY_OWNER' ||
+      userRole === 'HR_ADMIN' ||
+      userRole === 'HR_MANAGER' ||
+      userRole === 'MANAGER' ||
+      userRoles.some((r) =>
+        [
+          'ADMIN',
+          'SUPER_ADMIN',
+          'CUSTOMER_ADMIN',
+          'COMPANY_ADMIN',
+          'COMPANY_OWNER',
+          'HR_ADMIN',
+          'HR_MANAGER',
+          'MANAGER',
+        ].includes(r),
+      ) ||
+      Boolean(
+        user?.permissions?.some((p: any) => {
+          const code = typeof p === 'string' ? p : p?.code || p?.name;
+          return [
+            'remote.view_all',
+            'remote.view',
+            'remote.approve',
+            'remote.manage',
+            'hrm.manage',
+            '*',
+          ].includes(code);
+        }),
+      );
+
+    // If caller is NOT an admin/manager, and has EMPLOYEE role, scope strictly to their own employee ID
+    const isStrictEmployee =
+      !isAdminOrManager &&
+      (userRole === 'EMPLOYEE' || userRoleType === 'EMPLOYEE');
+
+    if (isStrictEmployee) {
+      const emp =
+        user.employee ||
+        (await this.prisma.employee.findFirst({
+          where: {
+            OR: [
+              { userId: user.id },
+              ...(user.email
+                ? [
+                    {
+                      email: {
+                        equals: user.email.trim().toLowerCase(),
+                        mode: 'insensitive' as Prisma.QueryMode,
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          },
+        }));
       if (emp) {
         where.employeeId = emp.id;
       }
+    } else if (query?.employeeId && query.employeeId !== 'ALL' && !isNaN(Number(query.employeeId))) {
+      // Admin filter by specific employee
+      where.employeeId = Number(query.employeeId);
     }
 
-    if (query?.status && query.status !== 'ALL') {
-      where.status = query.status as RequestStatus;
+    if (query?.status && String(query.status).toUpperCase() !== 'ALL') {
+      const normalizedStatus = String(query.status).trim().toUpperCase();
+      if (['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(normalizedStatus)) {
+        where.status = normalizedStatus as RequestStatus;
+      }
     }
 
     if (query?.search && query.search.trim()) {
       const q = query.search.trim();
-      where.employee = {
-        OR: [
-          { firstName: { contains: q, mode: 'insensitive' } },
-          { lastName: { contains: q, mode: 'insensitive' } },
-          { employeeCode: { contains: q, mode: 'insensitive' } },
-        ],
-      };
+      where.OR = [
+        { employee: { firstName: { contains: q, mode: 'insensitive' } } },
+        { employee: { lastName: { contains: q, mode: 'insensitive' } } },
+        { employee: { employeeCode: { contains: q, mode: 'insensitive' } } },
+        { reason: { contains: q, mode: 'insensitive' } },
+      ];
     }
 
-    if (query?.officeId && query.officeId !== 'ALL') {
+    if (query?.officeId && query.officeId !== 'ALL' && !isNaN(Number(query.officeId))) {
       where.employee = {
         ...(where.employee || {}),
         officeId: Number(query.officeId),
       };
     }
 
-    if (query?.departmentId && query.departmentId !== 'ALL') {
+    if (query?.departmentId && query.departmentId !== 'ALL' && !isNaN(Number(query.departmentId))) {
       where.employee = {
         ...(where.employee || {}),
         departmentId: Number(query.departmentId),
@@ -192,7 +264,7 @@ export class RemoteWorkService {
         },
       }),
       this.prisma.remoteRequest.count({ where }),
-      this.getSummary(numCustomerId),
+      this.getSummary(numCustomerId, isStrictEmployee ? where.employeeId : undefined),
     ]);
 
     const formatted = items.map((r) => {

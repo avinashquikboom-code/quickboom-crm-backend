@@ -91,6 +91,10 @@ export class RemoteRequestQueryDto {
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
+  employeeId?: string | number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
   page?: string | number;
 
   @ApiPropertyOptional({ example: 25 })
