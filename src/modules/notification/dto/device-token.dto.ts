@@ -110,3 +110,9 @@ export class AdminOfferNotificationDto {
   deepLink?: string;
 }
 
+export class TestCustomerNotificationDto {
+  @ApiProperty({ description: 'Customer ID whose active devices should receive the test push', example: 1 })
+  @IsNotEmpty()
+  customerId: number | string;
+}
+

@@ -123,6 +123,10 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
           event: 'CUSTOMER_REGISTERED',
           notificationId: '101',
         }),
+        expect.objectContaining({
+          customerId: 42,
+          notificationType: 'WELCOME',
+        }),
       );
 
       expect(result?.fcmSent).toBe(true);
@@ -245,6 +249,10 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         'Welcome to QuikBoom! 🎉',
         'Your account has been created successfully. Welcome to QuikBoom!',
         expect.any(Object),
+        expect.objectContaining({
+          customerId: 45,
+          notificationType: 'WELCOME',
+        }),
       );
       expect(result?.fcmSent).toBe(true);
     });
@@ -403,6 +411,10 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
           status: 'ACTIVE',
           paymentId: 'pay_ABC123',
         }),
+        expect.objectContaining({
+          customerId: 60,
+          notificationType: 'PLAN_PURCHASE_SUCCESS',
+        }),
       );
 
       expect(result?.fcmSent).toBe(true);
@@ -472,8 +484,13 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         'Plan Activated Successfully',
         'Your Enterprise Plan has been activated successfully.',
         expect.any(Object),
+        expect.objectContaining({
+          customerId: 61,
+          notificationType: 'PLAN_PURCHASE_SUCCESS',
+        }),
       );
       expect(result?.fcmSent).toBe(true);
     });
   });
 });
+

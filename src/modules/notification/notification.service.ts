@@ -286,7 +286,10 @@ export class NotificationService {
     };
 
     // 3. Dispatch multicast push via FCM Service
-    const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData);
+    const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
+      customerId: targetCustomerId,
+      notificationType: type,
+    });
 
     // 4. Automatically deactivate invalid / stale tokens in database
     if (fcmResult.invalidTokens.length > 0) {
@@ -322,7 +325,65 @@ export class NotificationService {
     const title = dto.title || 'Test Push Notification';
     const body = dto.body || 'This is a test notification outside the app.';
     const data = dto.data || { type: 'TEST', timestamp: new Date().toISOString() };
-    return this.fcmService.sendToSingleToken(dto.token, title, body, data);
+    return this.fcmService.sendToSingleToken(dto.token, title, body, data, {
+      notificationType: 'TEST_DIRECT_TOKEN',
+    });
+  }
+
+  /**
+   * Protected test endpoint for Section 14: POST /api/v1/notifications/test
+   * Finds valid FCM tokens for the given customer, dispatches test FCM message,
+   * logs with [FCM] prefix, and returns the messageId.
+   */
+  async sendCustomerTestNotification(targetCustomerId: number | string | undefined) {
+    const customerId = Number(targetCustomerId);
+    if (!customerId || isNaN(customerId)) {
+      throw new BadRequestException('A valid customerId must be provided.');
+    }
+
+    const deviceRecords = await this.prisma.userDeviceToken.findMany({
+      where: {
+        isActive: true,
+        user: { customerId, deletedAt: null },
+      },
+      select: { token: true, userId: true },
+    });
+
+    const tokens = deviceRecords.map((d) => d.token);
+
+    if (tokens.length === 0) {
+      this.logger.warn(
+        `[FCM]\ncustomerId: ${customerId}\ntoken: none\nnotificationType: TEST\nmessageId: none\nsend result: NO_VALID_TOKEN`,
+      );
+      return {
+        success: false,
+        message: 'No active FCM device tokens registered for this customer.',
+        customerId,
+      };
+    }
+
+    const title = 'Test Push Notification 🚀';
+    const body = 'This is a test notification outside the app to verify background FCM delivery.';
+    const payloadData: Record<string, string> = {
+      type: 'TEST',
+      customerId: String(customerId),
+      timestamp: new Date().toISOString(),
+    };
+
+    const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
+      customerId,
+      notificationType: 'TEST',
+    });
+
+    const messageId = fcmResult.messageIds.length > 0 ? fcmResult.messageIds[0] : undefined;
+
+    return {
+      success: fcmResult.successCount > 0,
+      messageId: messageId || (fcmResult.successCount > 0 ? 'FCM_SENT' : undefined),
+      deliveredCount: fcmResult.successCount,
+      failureCount: fcmResult.failureCount,
+      customerId,
+    };
   }
 
   // Business Event Notification Helpers
@@ -960,7 +1021,10 @@ export class NotificationService {
         notificationId: dbNotification ? String(dbNotification.id) : '',
       };
 
-      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload);
+      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
+        customerId,
+        notificationType: 'WELCOME',
+      });
 
       // 5. Clean up any invalid or expired tokens
       if (fcmResult.invalidTokens.length > 0) {
@@ -1117,7 +1181,10 @@ export class NotificationService {
         notificationId: String(dbNotification.id),
       };
 
-      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload);
+      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
+        customerId,
+        notificationType: 'PLAN_PURCHASE_SUCCESS',
+      });
 
       // 6. Clean up invalid tokens
       if (fcmResult.invalidTokens.length > 0) {

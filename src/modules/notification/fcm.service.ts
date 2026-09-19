@@ -12,6 +12,11 @@ export interface FcmSendResult {
   messageIds: string[];
 }
 
+export interface FcmContextMeta {
+  customerId?: string | number;
+  notificationType?: string;
+}
+
 @Injectable()
 export class FcmService implements OnModuleInit {
   private readonly logger = new Logger(FcmService.name);
@@ -154,15 +159,25 @@ export class FcmService implements OnModuleInit {
     title: string,
     body: string,
     data?: Record<string, string>,
+    meta?: FcmContextMeta,
   ): Promise<{ success: boolean; messageId?: string; error?: string; details?: string }> {
     const cleanToken = (token || '').trim();
+    const maskedToken =
+      cleanToken.length > 12
+        ? `${cleanToken.substring(0, 6)}...${cleanToken.substring(cleanToken.length - 4)}`
+        : cleanToken || 'EMPTY';
+
     if (!cleanToken) {
+      this.logger.error(
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: EMPTY\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (EMPTY_TOKEN)`,
+      );
       return { success: false, error: 'EMPTY_TOKEN', details: 'FCM token cannot be empty' };
     }
 
     if (!this.ready() || !this.firebaseApp) {
-      const maskedToken = cleanToken.length > 8 ? `${cleanToken.substring(0, 8)}...` : '***';
-      this.logger.error(`[FCM Single Send Failed] Firebase Admin SDK is not initialized for token ${maskedToken}`);
+      this.logger.error(
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (FIREBASE_NOT_INITIALIZED)`,
+      );
       return {
         success: false,
         error: 'FIREBASE_NOT_INITIALIZED',
@@ -190,7 +205,10 @@ export class FcmService implements OnModuleInit {
           sound: 'default',
           channelId: 'high_importance_channel',
           clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-          icon: 'ic_launcher',
+          icon: 'ic_notification',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          visibility: 'public',
         },
       },
       apns: {
@@ -205,16 +223,19 @@ export class FcmService implements OnModuleInit {
     };
 
     const messaging = getMessaging(this.firebaseApp);
-    const maskedToken = cleanToken.length > 8 ? `${cleanToken.substring(0, 8)}...` : '***';
 
     try {
       const messageId = await messaging.send(message);
-      this.logger.log(`[FCM Single Send OK] Token "${maskedToken}" -> messageId: ${messageId}`);
+      this.logger.log(
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: ${messageId}\nsend result: SUCCESS`,
+      );
       return { success: true, messageId };
     } catch (err: any) {
       const errorCode = err.code || 'UNKNOWN_ERROR';
       const errorMessage = err.message || String(err);
-      this.logger.error(`[FCM Single Send Error] Token "${maskedToken}": ${errorCode} - ${errorMessage}`);
+      this.logger.error(
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (${errorCode} - ${errorMessage})`,
+      );
       return {
         success: false,
         error: errorCode,
@@ -231,10 +252,14 @@ export class FcmService implements OnModuleInit {
     title: string,
     body: string,
     data?: Record<string, string>,
+    meta?: FcmContextMeta,
   ): Promise<FcmSendResult> {
     const validTokens = (tokens || []).filter((t) => typeof t === 'string' && t.trim().length > 0);
 
     if (validTokens.length === 0) {
+      this.logger.warn(
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: NONE\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: SKIPPED (NO_VALID_TOKENS)`,
+      );
       return {
         successCount: 0,
         failureCount: 0,
@@ -253,7 +278,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM Dispatch Failed] Firebase Admin SDK is not initialized; push notification was not sent to ${validTokens.length} device(s).`,
+        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${validTokens.length} device(s)\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (FIREBASE_NOT_INITIALIZED)`,
       );
       return {
         successCount: 0,
@@ -288,7 +313,10 @@ export class FcmService implements OnModuleInit {
             sound: 'default',
             channelId: 'high_importance_channel',
             clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-            icon: 'ic_launcher',
+            icon: 'ic_notification',
+            defaultSound: true,
+            defaultVibrateTimings: true,
+            visibility: 'public',
           },
         },
         apns: {
@@ -308,13 +336,22 @@ export class FcmService implements OnModuleInit {
         failureCount += response.failureCount;
 
         response.responses.forEach((resp, index) => {
+          const token = batchTokens[index];
+          const maskedToken =
+            token.length > 12
+              ? `${token.substring(0, 6)}...${token.substring(token.length - 4)}`
+              : token;
+
           if (resp.success && resp.messageId) {
             messageIds.push(resp.messageId);
+            this.logger.log(
+              `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: ${resp.messageId}\nsend result: SUCCESS`,
+            );
           } else if (resp.error) {
-            const token = batchTokens[index];
             const errorCode = resp.error.code;
-            const maskedToken = token.length > 8 ? `${token.substring(0, 8)}...` : '***';
-            this.logger.warn(`FCM send error for token "${maskedToken}": ${errorCode} (${resp.error.message})`);
+            this.logger.warn(
+              `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (${errorCode} - ${resp.error.message})`,
+            );
 
             // Detect unregistered / expired / invalid tokens for cleanup
             if (
@@ -327,14 +364,12 @@ export class FcmService implements OnModuleInit {
           }
         });
       } catch (batchError: any) {
-        this.logger.error(`Error sending FCM batch: ${batchError?.message}`, batchError?.stack);
+        this.logger.error(
+          `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: batch (${batchTokens.length})\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: BATCH_FAILED (${batchError?.message})`,
+        );
         failureCount += batchTokens.length;
       }
     }
-
-    this.logger.log(
-      `[FCM Send Result] Title: "${title}" | Sent: ${successCount} | Failed: ${failureCount} | Invalid Tokens: ${invalidTokens.length}`,
-    );
 
     return {
       successCount,

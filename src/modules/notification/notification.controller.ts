@@ -12,7 +12,14 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
-import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
+import {
+  RegisterDeviceTokenDto,
+  UnregisterDeviceTokenDto,
+  SendNotificationDto,
+  TestTokenDto,
+  AdminOfferNotificationDto,
+  TestCustomerNotificationDto,
+} from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -98,6 +105,17 @@ export class NotificationController {
   @ApiBody({ type: TestTokenDto })
   async testToken(@Body() dto: TestTokenDto) {
     return this.notificationService.sendDirectTestToToken(dto);
+  }
+
+  @Post('test')
+  @ApiOperation({ summary: 'Send test FCM push notification to a customer active device(s)' })
+  @ApiBody({ type: TestCustomerNotificationDto })
+  async testCustomerNotification(
+    @CurrentCustomer() currentCustomerId: number | string | undefined,
+    @Body() dto: TestCustomerNotificationDto,
+  ) {
+    const targetCustomerId = dto.customerId || currentCustomerId;
+    return this.notificationService.sendCustomerTestNotification(targetCustomerId);
   }
 
   @Post('admin/offer')
