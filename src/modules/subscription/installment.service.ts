@@ -215,7 +215,11 @@ export class InstallmentService {
 
     if (!sub) {
       sub = await this.prisma.customerSubscription.findFirst({
-        where: { customerId: numCustomerId, deletedAt: null },
+        where: {
+          customerId: numCustomerId,
+          status: { in: [SubscriptionStatus.EXPIRED, SubscriptionStatus.CANCELED] },
+          deletedAt: null,
+        },
         orderBy: { createdAt: 'desc' },
         include: {
           plan: true,
@@ -932,14 +936,24 @@ export class InstallmentService {
     const lastPaidInst = paidInsts.length > 0 ? paidInsts[paidInsts.length - 1] : null;
     const currentInst = lastPaidInst || (summary.installments && summary.installments.length > 0 ? summary.installments[0] : null);
 
-    const activeSub = (await this.prisma.customerSubscription.findFirst({
+    const activeSub = await this.prisma.customerSubscription.findFirst({
       where: { customerId: numCustomerId, status: SubscriptionStatus.ACTIVE, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
-    })) || (summary?.subscriptionId ? await this.prisma.customerSubscription.findUnique({
-      where: { id: summary.subscriptionId },
-      include: { plan: true },
-    }) : null);
+    });
+
+    if (!activeSub || activeSub.status !== SubscriptionStatus.ACTIVE || summary.planStatus === 'PENDING') {
+      this.logger.log(
+        `[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, no active subscription found (planStatus: ${summary.planStatus})`,
+      );
+      return {
+        success: true,
+        data: null,
+        currentPlan: null,
+        subscription: null,
+        upcomingPlan,
+      };
+    }
 
     const subscriptionObj = activeSub && activeSub.plan ? {
       id: String(activeSub.id),
@@ -959,21 +973,7 @@ export class InstallmentService {
       endDate: activeSub.endDate ? new Date(activeSub.endDate).toISOString() : null,
       expiryDate: activeSub.endDate ? new Date(activeSub.endDate).toISOString() : null,
       isActive: activeSub.status === SubscriptionStatus.ACTIVE,
-    } : (summary && summary.subscriptionId ? {
-      id: String(summary.subscriptionId),
-      status: summary.planStatus,
-      customerId: String(numCustomerId),
-      workspaceId: String(numCustomerId),
-      planId: String(summary.planId),
-      planName: summary.planName,
-      planCode: 'STANDARD',
-      billingCycle: 'MONTHLY',
-      price: summary.originalPlanValue,
-      startDate: null,
-      endDate: null,
-      expiryDate: null,
-      isActive: summary.planStatus === 'ACTIVE',
-    } : null);
+    } : null;
 
     const currentData = {
       id: String(activeSub?.id || summary.subscriptionId || ''),

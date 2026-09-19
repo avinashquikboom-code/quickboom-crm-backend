@@ -180,12 +180,10 @@ export class PlanAccessService {
         }
       : null;
 
-    // 5. Select active or latest subscription with a plan for limits evaluation
+    // 5. Select active subscription with a plan for limits evaluation
     const sub =
       activeSub ||
-      currentSubs.find((s) => s.status === SubscriptionStatus.ACTIVE && s.plan) ||
-      currentSubs.find((s) => s.plan) ||
-      subs.find((s) => s.plan);
+      currentSubs.find((s) => s.status === SubscriptionStatus.ACTIVE && s.plan);
 
     let basePlan = sub?.plan;
 

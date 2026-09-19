@@ -111,6 +111,16 @@ export function deriveSubscriptionStatus(
     return 'CANCELLED';
   }
 
+  if (status === 'EXPIRED') {
+    return 'EXPIRED';
+  }
+
+  // Non-active statuses must never be promoted to ACTIVE by date logic.
+  // PENDING, PAYMENT_PENDING, CREATED, INITIATED, PROCESSING, FAILED must NEVER appear as ACTIVE.
+  if (status !== 'ACTIVE') {
+    return 'CANCELLED';
+  }
+
   const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   if (startDate) {
@@ -136,6 +146,7 @@ export function deriveSubscriptionStatus(
   }
   return 'ACTIVE';
 }
+
 
 export function getExpiryNotificationPayload(
   planName: string,

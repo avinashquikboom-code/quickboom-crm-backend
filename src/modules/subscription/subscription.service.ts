@@ -221,7 +221,7 @@ export class SubscriptionService {
     const numCustomerId = Number(customerId);
 
     const sub: any = await this.prisma.customerSubscription.findFirst({
-      where: { customerId: numCustomerId, deletedAt: null },
+      where: { customerId: numCustomerId, status: SubscriptionStatus.ACTIVE, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: {
         plan: true,
@@ -232,7 +232,7 @@ export class SubscriptionService {
       },
     });
 
-    if (!sub) {
+    if (!sub || sub.status !== SubscriptionStatus.ACTIVE) {
       return null;
     }
 
