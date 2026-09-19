@@ -144,19 +144,47 @@ export class NotificationService {
       });
 
       if (pendingWelcome) {
-        this.logger.log(`[FCM] Delivering pending welcome notification to newly registered token for userId=${userId}`);
+        this.logger.log(`[WELCOME] Delivering pending welcome push to newly registered token for userId=${userId}`);
         const payload: Record<string, string> = {
           type: 'WELCOME',
-          customerId: String(pendingWelcome.customerId),
-          event: 'CUSTOMER_REGISTERED',
+          customerId: String(pendingWelcome.customerId || ''),
           notificationId: String(pendingWelcome.id),
-          title: pendingWelcome.title,
-          body: pendingWelcome.message,
         };
-        await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload);
+        await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
+          customerId: pendingWelcome.customerId || undefined,
+          notificationType: 'WELCOME',
+        });
+      }
+
+      // Check if user has an unread recent PLAN_PURCHASE_SUCCESS notification to deliver
+      const pendingPlan = await this.prisma.notification.findFirst({
+        where: {
+          userId,
+          type: 'PLAN_PURCHASE_SUCCESS',
+          isRead: false,
+          createdAt: { gte: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (pendingPlan) {
+        this.logger.log(`[PLAN] Delivering pending plan purchase push to newly registered token for userId=${userId}`);
+        const planData = (pendingPlan.data as any) || {};
+        const payload: Record<string, string> = {
+          type: 'PLAN_PURCHASE_SUCCESS',
+          subscriptionId: String(planData.subscriptionId || ''),
+          planId: String(planData.planId || ''),
+          planName: String(planData.planName || ''),
+          customerId: String(pendingPlan.customerId || ''),
+          notificationId: String(pendingPlan.id),
+        };
+        await this.fcmService.sendToSingleToken(cleanToken, pendingPlan.title, pendingPlan.message, payload, {
+          customerId: pendingPlan.customerId || undefined,
+          notificationType: 'PLAN_PURCHASE_SUCCESS',
+        });
       }
     } catch (pendingErr: any) {
-      this.logger.warn(`Non-fatal: Failed to deliver pending welcome push to new token: ${pendingErr?.message}`);
+      this.logger.warn(`Non-fatal: Failed to deliver pending push to new token: ${pendingErr?.message}`);
     }
 
     return {
@@ -937,7 +965,8 @@ export class NotificationService {
     const { customerId } = params;
     let targetUserId = params.userId;
 
-    this.logger.log(`[NOTIFICATION] Creating welcome notification`);
+    this.logger.log(`[WELCOME] Customer created: ${params.customerName || 'Customer'}`);
+    this.logger.log(`[WELCOME] Customer ID: ${customerId}`);
 
     try {
       // 1. Resolve userId if not explicitly provided
@@ -971,7 +1000,6 @@ export class NotificationService {
       const payloadData: Record<string, string> = {
         type: 'WELCOME',
         customerId: String(customerId),
-        event: 'CUSTOMER_REGISTERED',
       };
 
       let dbNotification = existingNotif;
@@ -993,19 +1021,25 @@ export class NotificationService {
         );
       }
 
-      // 3. Find all active device tokens for the customer (all customer devices)
+      // 3. Find active device tokens for the customer and target user
+      this.logger.log(`[WELCOME] Looking for FCM tokens...`);
       const deviceRecords = await this.prisma.userDeviceToken.findMany({
         where: {
           isActive: true,
-          user: { customerId, deletedAt: null },
+          OR: [
+            { userId: targetUserId },
+            { user: { customerId: Number(customerId), deletedAt: null } },
+          ],
         },
         select: { token: true },
       });
 
-      const tokens = deviceRecords.map((d) => d.token);
+      const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
+      const tokens = Array.from(new Set(rawTokens));
 
       if (tokens.length === 0) {
-        this.logger.log(`[FCM] No device token available`);
+        this.logger.log(`[FCM] No active device tokens found for customer ${customerId}`);
+        this.logger.log(`[WELCOME] Notification completed`);
         return {
           notification: dbNotification,
           fcmSent: false,
@@ -1013,7 +1047,8 @@ export class NotificationService {
         };
       }
 
-      this.logger.log(`[FCM] Customer device token found`);
+      this.logger.log(`[WELCOME] FCM tokens found: ${tokens.length}`);
+      this.logger.log(`[WELCOME] Calling FCM service...`);
 
       // 4. Send FCM Push Notification to all active customer devices
       const fcmPayload: Record<string, string> = {
@@ -1026,6 +1061,10 @@ export class NotificationService {
         notificationType: 'WELCOME',
       });
 
+      this.logger.log(
+        `[WELCOME] FCM response: successCount=${fcmResult.successCount}, failureCount=${fcmResult.failureCount}`,
+      );
+
       // 5. Clean up any invalid or expired tokens
       if (fcmResult.invalidTokens.length > 0) {
         await this.prisma.userDeviceToken.updateMany({
@@ -1037,13 +1076,9 @@ export class NotificationService {
         );
       }
 
-      if (fcmResult.successCount > 0) {
-        this.logger.log(`[FCM] Welcome notification sent successfully`);
-      } else {
-        this.logger.warn(`[FCM] Failed to send welcome notification`);
-      }
+      this.logger.log(`[WELCOME] Notification completed`);
 
-      // 7. Non-blocking Notification to Super Admins / Platform Admins
+      // 6. Non-blocking Notification to Super Admins / Platform Admins
       this.notifyAdmins({
         title: 'New Customer Registered',
         body: `A new customer account has been created successfully.`,
@@ -1060,10 +1095,10 @@ export class NotificationService {
       return {
         notification: dbNotification,
         fcmSent: fcmResult.successCount > 0,
-        fcmResult,
+        result: fcmResult,
       };
     } catch (err: any) {
-      this.logger.error(`[FCM] Failed to send welcome notification: ${err?.message}`);
+      this.logger.error(`[FCM] Send failed:\n${err?.message}`);
       return null;
     }
   }
@@ -1084,7 +1119,9 @@ export class NotificationService {
     const { customerId, subscriptionId, planId, planName, paymentId } = params;
     let targetUserId = params.userId;
 
-    this.logger.log(`[NOTIFICATION] Creating plan purchase notification`);
+    this.logger.log(`[PLAN] Payment verified: ${paymentId || 'N/A'}`);
+    this.logger.log(`[PLAN] Subscription activated: ${subscriptionId}`);
+    this.logger.log(`[PLAN] Customer ID: ${customerId}`);
 
     try {
       // 1. Resolve userId if not explicitly provided
@@ -1150,8 +1187,6 @@ export class NotificationService {
         planId: String(planId),
         planName,
         customerId: String(customerId),
-        status: 'ACTIVE',
-        paymentId: paymentId ? String(paymentId) : '',
       };
 
       // 3. Create in-app Notification database record
@@ -1163,25 +1198,36 @@ export class NotificationService {
           message: body,
           type: 'PLAN_PURCHASE_SUCCESS',
           isRead: false,
-          data: payloadData as any,
+          data: {
+            ...payloadData,
+            status: 'ACTIVE',
+            paymentId: paymentId ? String(paymentId) : '',
+          } as any,
         },
       });
 
-      // 4. Fetch all active device tokens for the customer (all customer devices)
+      // 4. Fetch active device tokens for the customer and target user
+      this.logger.log(`[PLAN] Looking for FCM tokens...`);
       const deviceRecords = await this.prisma.userDeviceToken.findMany({
         where: {
           isActive: true,
-          user: { customerId, deletedAt: null },
+          OR: [
+            { userId: targetUserId },
+            { user: { customerId: Number(customerId), deletedAt: null } },
+          ],
         },
         select: { token: true },
       });
 
-      const tokens = deviceRecords.map((d) => d.token);
+      const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
+      const tokens = Array.from(new Set(rawTokens));
 
       if (tokens.length === 0) {
-        this.logger.log(`[FCM] No device token found`);
+        this.logger.log(`[FCM] No active device tokens found for customer ${customerId}`);
+        this.logger.log(`[PLAN] Notification completed`);
       } else {
-        this.logger.log(`[FCM] Customer token found`);
+        this.logger.log(`[PLAN] FCM tokens found: ${tokens.length}`);
+        this.logger.log(`[PLAN] Calling FCM service...`);
 
         // 5. Dispatch multicast push via FCM Service
         const fcmPayload: Record<string, string> = {
@@ -1194,6 +1240,10 @@ export class NotificationService {
           notificationType: 'PLAN_PURCHASE_SUCCESS',
         });
 
+        this.logger.log(
+          `[PLAN] FCM response: successCount=${fcmResult.successCount}, failureCount=${fcmResult.failureCount}`,
+        );
+
         // 6. Clean up invalid tokens
         if (fcmResult.invalidTokens.length > 0) {
           await this.prisma.userDeviceToken.updateMany({
@@ -1205,11 +1255,7 @@ export class NotificationService {
           );
         }
 
-        if (fcmResult.successCount > 0) {
-          this.logger.log(`[FCM] Notification sent successfully`);
-        } else {
-          this.logger.warn(`[FCM] Failed to send notification`);
-        }
+        this.logger.log(`[PLAN] Notification completed`);
       }
 
       // 7. Non-blocking Notification to Super Admins / Platform Admins
@@ -1234,7 +1280,7 @@ export class NotificationService {
         fcmSent: tokens.length > 0,
       };
     } catch (err: any) {
-      this.logger.error(`[FCM] Failed to send notification: ${err?.message}`);
+      this.logger.error(`[FCM] Send failed:\n${err?.message}`);
       return null;
     }
   }

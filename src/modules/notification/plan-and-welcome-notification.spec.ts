@@ -75,7 +75,6 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         data: {
           type: 'WELCOME',
           customerId: '42',
-          event: 'CUSTOMER_REGISTERED',
         },
       });
 
@@ -108,7 +107,6 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
           data: {
             type: 'WELCOME',
             customerId: '42',
-            event: 'CUSTOMER_REGISTERED',
           },
         },
       });
@@ -121,7 +119,6 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         expect.objectContaining({
           type: 'WELCOME',
           customerId: '42',
-          event: 'CUSTOMER_REGISTERED',
           notificationId: '101',
         }),
         expect.objectContaining({
@@ -319,14 +316,19 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         isActive: true,
       });
 
-      mockPrisma.notification.findFirst.mockResolvedValue({
-        id: 200,
-        customerId: 50,
-        userId: 20,
-        title: 'Welcome to QuikBoom! 🎉',
-        message: 'Your account has been created successfully. Welcome to QuikBoom!',
-        type: 'WELCOME',
-        isRead: false,
+      mockPrisma.notification.findFirst.mockImplementation((args: any) => {
+        if (args?.where?.type === 'WELCOME') {
+          return Promise.resolve({
+            id: 200,
+            customerId: 50,
+            userId: 20,
+            title: 'Welcome to QuikBoom! 🎉',
+            message: 'Your account has been created successfully. Welcome to QuikBoom!',
+            type: 'WELCOME',
+            isRead: false,
+          });
+        }
+        return Promise.resolve(null);
       });
 
       await notificationService.registerDeviceToken(20, {
@@ -341,7 +343,10 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         expect.objectContaining({
           type: 'WELCOME',
           customerId: '50',
-          event: 'CUSTOMER_REGISTERED',
+        }),
+        expect.objectContaining({
+          customerId: 50,
+          notificationType: 'WELCOME',
         }),
       );
     });
@@ -409,8 +414,7 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
           subscriptionId: '100',
           planId: '1',
           planName: 'Basic Package',
-          status: 'ACTIVE',
-          paymentId: 'pay_ABC123',
+          customerId: '60',
         }),
         expect.objectContaining({
           customerId: 60,

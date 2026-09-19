@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { IntegrationSettingsService, isMaskedSecret } from '../integration-settings/integration-settings.service';
 import { getApps, initializeApp, cert, applicationDefault, App, ServiceAccount, deleteApp } from 'firebase-admin/app';
 import { getMessaging, MulticastMessage, BatchResponse, Message } from 'firebase-admin/messaging';
 import * as fs from 'fs';
@@ -31,6 +31,12 @@ export class FcmService implements OnModuleInit {
 
   onModuleInit() {
     this.initializeFirebase();
+    // Asynchronously verify dynamic credentials from DB once dependency injection is ready
+    setTimeout(() => {
+      this.ensureInitialized().catch((err) =>
+        this.logger.debug(`[FCM] Background ensureInitialized notice: ${err?.message}`),
+      );
+    }, 1000);
   }
 
   private initializeFirebase(): void {
@@ -191,6 +197,52 @@ export class FcmService implements OnModuleInit {
   }
 
   /**
+   * Ensure Firebase Admin SDK is initialized before dispatching notifications.
+   * If not already ready, attempts lazy dynamic initialization from IntegrationSettingsService (DB)
+   * or environment variables / filesystem credentials.
+   */
+  public async ensureInitialized(): Promise<boolean> {
+    if (this.ready()) {
+      return true;
+    }
+
+    const existingApps = getApps();
+    if (existingApps.length > 0) {
+      this.firebaseApp = existingApps[0];
+      this.isInitialized = true;
+      return true;
+    }
+
+    // 1. Attempt loading dynamic credentials from IntegrationSettingsService (PostgreSQL)
+    if (this.integrationSettingsService) {
+      try {
+        const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
+        const projectId = fbConfig.projectId || process.env.FIREBASE_PROJECT_ID || 'quikboom-crm-925d5';
+        const clientEmail = fbConfig.clientEmail;
+        const privateKey = fbConfig.privateKey;
+
+        if (clientEmail && privateKey && !isMaskedSecret(privateKey)) {
+          const success = await this.initializeWithCredentials({
+            projectId,
+            clientEmail,
+            privateKey,
+          });
+          if (success) {
+            this.logger.log(`[FCM] Firebase Admin SDK dynamically initialized from Integration Settings (project: ${projectId})`);
+            return true;
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[FCM] Dynamic initialization from integration settings notice: ${err?.message}`);
+      }
+    }
+
+    // 2. Fall back to environment / filesystem credentials
+    this.initializeFirebase();
+    return this.ready();
+  }
+
+  /**
    * Check if Firebase Admin is ready to send notifications
    */
   public ready(): boolean {
@@ -214,11 +266,12 @@ export class FcmService implements OnModuleInit {
         : cleanToken || 'EMPTY';
 
     if (!cleanToken) {
-      this.logger.error(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: EMPTY\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (EMPTY_TOKEN)`,
-      );
+      this.logger.warn(`[FCM] No active device tokens found for customer ${meta?.customerId ?? 'N/A'}`);
       return { success: false, error: 'EMPTY_TOKEN', details: 'FCM token cannot be empty' };
     }
+
+    // Ensure Firebase is initialized dynamically before checking readiness
+    await this.ensureInitialized();
 
     try {
       if (this.integrationSettingsService) {
@@ -234,7 +287,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (FIREBASE_NOT_INITIALIZED)`,
+        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${meta?.customerId ?? 'N/A'}, token: ${maskedToken})`,
       );
       return {
         success: false,
@@ -243,7 +296,9 @@ export class FcmService implements OnModuleInit {
       };
     }
 
-    const stringifiedData: Record<string, string> = {};
+    const stringifiedData: Record<string, string> = {
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    };
     if (data) {
       for (const [key, value] of Object.entries(data)) {
         stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
@@ -300,16 +355,12 @@ export class FcmService implements OnModuleInit {
 
     try {
       const messageId = await messaging.send(message);
-      this.logger.log(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: ${messageId}\nsend result: SUCCESS`,
-      );
+      this.logger.log(`[FCM] Sent successfully:\n${messageId}`);
       return { success: true, messageId };
     } catch (err: any) {
       const errorCode = err.code || 'UNKNOWN_ERROR';
       const errorMessage = err.message || String(err);
-      this.logger.error(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (${errorCode} - ${errorMessage})`,
-      );
+      this.logger.error(`[FCM] Send failed:\n${errorCode} - ${errorMessage}`);
       return {
         success: false,
         error: errorCode,
@@ -331,9 +382,7 @@ export class FcmService implements OnModuleInit {
     const validTokens = (tokens || []).filter((t) => typeof t === 'string' && t.trim().length > 0);
 
     if (validTokens.length === 0) {
-      this.logger.warn(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: NONE\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: SKIPPED (NO_VALID_TOKENS)`,
-      );
+      this.logger.warn(`[FCM] No active device tokens found for customer ${meta?.customerId ?? 'N/A'}`);
       return {
         successCount: 0,
         failureCount: 0,
@@ -342,8 +391,13 @@ export class FcmService implements OnModuleInit {
       };
     }
 
+    // Ensure Firebase is initialized dynamically before checking readiness
+    await this.ensureInitialized();
+
     // Stringify all values in data payload for Firebase compliance
-    const stringifiedData: Record<string, string> = {};
+    const stringifiedData: Record<string, string> = {
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    };
     if (data) {
       for (const [key, value] of Object.entries(data)) {
         stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
@@ -369,7 +423,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${validTokens.length} device(s)\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (FIREBASE_NOT_INITIALIZED)`,
+        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${meta?.customerId ?? 'N/A'})`,
       );
       return {
         successCount: 0,
@@ -444,21 +498,12 @@ export class FcmService implements OnModuleInit {
 
         response.responses.forEach((resp, index) => {
           const token = batchTokens[index];
-          const maskedToken =
-            token.length > 12
-              ? `${token.substring(0, 6)}...${token.substring(token.length - 4)}`
-              : token;
-
           if (resp.success && resp.messageId) {
             messageIds.push(resp.messageId);
-            this.logger.log(
-              `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: ${resp.messageId}\nsend result: SUCCESS`,
-            );
+            this.logger.log(`[FCM] Sent successfully:\n${resp.messageId}`);
           } else if (resp.error) {
             const errorCode = resp.error.code;
-            this.logger.warn(
-              `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (${errorCode} - ${resp.error.message})`,
-            );
+            this.logger.error(`[FCM] Send failed:\n${errorCode} - ${resp.error.message}`);
 
             // Detect unregistered / expired / invalid tokens for cleanup
             if (
@@ -472,7 +517,7 @@ export class FcmService implements OnModuleInit {
         });
       } catch (batchError: any) {
         this.logger.error(
-          `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: batch (${batchTokens.length})\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: BATCH_FAILED (${batchError?.message})`,
+          `[FCM] Send failed:\nBATCH_FAILED - ${batchError?.message} (batch of ${batchTokens.length} tokens)`,
         );
         failureCount += batchTokens.length;
       }
