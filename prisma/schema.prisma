@@ -912,20 +912,37 @@ model UserDeviceToken {
 }
 
 model AuditLog {
-  id         Int       @id @default(autoincrement())
-  customerId Int?
-  userId     Int?
-  action     String
-  module     String
-  details    Json
-  ipAddress  String?
-  createdAt  DateTime  @default(now())
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  user       User?     @relation(fields: [userId], references: [id])
+  id           Int       @id @default(autoincrement())
+  customerId   Int?
+  userId       Int?
+  userName     String?
+  userRole     String?   // CUSTOMER, EMPLOYEE, ADMIN, SUPER_ADMIN
+  source       String    @default("ADMIN_PANEL") // ADMIN_PANEL, MOBILE_APP
+  action       String    // LOGIN, LOGOUT, CREATE, UPDATE, DELETE, APPROVE, REJECT, SUBMIT, etc.
+  module       String    // Attendance, Leave, Remote Work, Influencers, CRM, Settings, Payroll, etc.
+  description  String?
+  entityType   String?
+  entityId     String?
+  endpoint     String?
+  method       String?   // POST, PUT, PATCH, DELETE, GET
+  ipAddress    String?
+  device       String?
+  status       String    @default("SUCCESS") // SUCCESS, FAILED
+  errorMessage String?
+  details      Json?
+  createdAt    DateTime  @default(now())
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user         User?     @relation(fields: [userId], references: [id])
 
   @@index([customerId])
   @@index([userId])
+  @@index([createdAt])
+  @@index([source])
+  @@index([userRole])
   @@index([module])
+  @@index([action])
+  @@index([status])
+  @@index([entityType, entityId])
 }
 
 model FeatureToggle {
