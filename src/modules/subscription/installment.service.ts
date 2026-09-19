@@ -859,6 +859,21 @@ export class InstallmentService {
       `[PLAN_PURCHASE]\ncustomerId: ${numCustomerId}\nplanId: ${plan.id}\npurchaseDate: ${now.toISOString().split('T')[0]}\npaymentStatus: PARTIALLY_PAID\nsubscriptionId: ${newSubResult.newSub.id}`,
     );
 
+    // Trigger Plan Purchase Success Notification
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPlanPurchaseSuccessNotification({
+          customerId: numCustomerId,
+          subscriptionId: newSubResult.newSub.id,
+          planId: plan.id,
+          planName: plan.name,
+          paymentId: newSubResult.payment.paymentId,
+        });
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(`Non-fatal: Installment plan purchase notification warning: ${notifErr?.message}`);
+    }
+
     const summary = await this.getCustomerInstallmentSummary(numCustomerId);
 
     return {

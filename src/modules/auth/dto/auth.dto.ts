@@ -59,6 +59,16 @@ export class RegisterCustomerDto {
   @IsOptional()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
+
+  @ApiPropertyOptional({ example: 'fcm_token_xyz', description: 'Optional FCM device token registered at sign-up' })
+  @IsString()
+  @IsOptional()
+  fcmToken?: string;
+
+  @ApiPropertyOptional({ example: 'ANDROID', enum: ['ANDROID', 'IOS', 'WEB'] })
+  @IsString()
+  @IsOptional()
+  platform?: string;
 }
 
 export class RegisterEmployeeDto {

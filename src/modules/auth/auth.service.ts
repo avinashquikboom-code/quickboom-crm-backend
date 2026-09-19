@@ -58,6 +58,7 @@ export class AuthService {
       throw new BadRequestException('Business name or full name is required');
     }
 
+    this.logger.log('[AUTH] Customer registration started');
     this.logger.log(
       `[REGISTRATION_REQUEST] Registering customer email=${normalizedEmail} company=${companyOrCustomerName} city=${normalizedCity || 'N/A'}`,
     );
@@ -247,28 +248,32 @@ export class AuthService {
       'CUSTOMER',
     );
 
+    this.logger.log(`[AUTH] Customer created successfully: ${createdResult.customer.id}`);
     this.logger.log(
       `[REGISTRATION_SUCCESS] Customer created → customerId=${createdResult.customer.id} (${createdResult.customer.name}), email=${createdResult.user.email}, userId=${createdResult.user.id}`,
     );
 
-    // Send welcome in-app notification to the newly registered customer.
+    // If initial FCM device token was provided during registration, register it now
+    if (dto.fcmToken && dto.fcmToken.trim()) {
+      try {
+        await this.notificationService?.registerDeviceToken(createdResult.user.id, {
+          token: dto.fcmToken.trim(),
+          platform: dto.platform || 'ANDROID',
+        });
+      } catch (tokenErr: any) {
+        this.logger.warn(`Non-fatal: Failed to register initial FCM token: ${tokenErr?.message}`);
+      }
+    }
+
+    // Send welcome in-app notification and FCM push to the newly registered customer.
     // Wrapped in try/catch — a notification failure must never break registration.
     try {
       if (this.notificationService) {
-        await this.notificationService.sendPushNotification({
-          userId: createdResult.user.id,
+        await this.notificationService.sendCustomerWelcomeNotification({
           customerId: createdResult.customer.id,
-          title: '🎉 Welcome to QB Suite!',
-          body: 'Welcome to QB Suite! Your account has been created successfully. We\'re happy to have you with us.',
-          type: 'WELCOME',
-          data: {
-            type: 'WELCOME',
-            customerId: String(createdResult.customer.id),
-          },
+          userId: createdResult.user.id,
+          customerName: createdResult.customer.name,
         });
-        this.logger.log(
-          `[NOTIFICATION] Welcome notification dispatched for customerId=${createdResult.customer.id}`,
-        );
       }
     } catch (notifErr: any) {
       this.logger.warn(

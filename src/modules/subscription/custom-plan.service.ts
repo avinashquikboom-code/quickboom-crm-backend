@@ -1,7 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   PreviewCustomPlanDto,
   CreateCustomPlanDto,
@@ -24,6 +25,7 @@ export class CustomPlanService {
     private readonly scheduleService: ScheduleService,
     private readonly workService: WorkService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   /**
@@ -671,6 +673,21 @@ export class CustomPlanService {
       await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
     } catch (err: any) {
       this.logger.error(`Failed to auto-generate schedules for custom plan: ${err?.message}`, err?.stack);
+    }
+
+    // Trigger Plan Purchase Success Notification
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPlanPurchaseSuccessNotification({
+          customerId: numCustomerId,
+          subscriptionId: result.subscription.id,
+          planId: (result.subscription as any).planId || 1,
+          planName: 'Custom Plan',
+          paymentId: rzpPaymentId,
+        });
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(`Non-fatal: Custom plan notification warning: ${notifErr?.message}`);
     }
 
     return result;

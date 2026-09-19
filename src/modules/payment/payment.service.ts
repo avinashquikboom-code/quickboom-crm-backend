@@ -694,6 +694,31 @@ export class PaymentService {
     }
 
     this.logger.log(
+      `[PAYMENT] Payment verified: customerId=${customerId}, paymentId=${dto.razorpay_payment_id}`,
+    );
+    this.logger.log(
+      `[SUBSCRIPTION] Subscription activated: customerId=${customerId}, subscriptionId=${result.subscription.id}, status=ACTIVE`,
+    );
+
+    // Trigger Plan Purchase Success Notification
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPlanPurchaseSuccessNotification({
+          customerId,
+          userId: user?.id,
+          subscriptionId: result.subscription.id,
+          planId: plan.id,
+          planName: plan.name,
+          paymentId: dto.razorpay_payment_id,
+        });
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(
+        `Non-fatal: Failed to send plan purchase notification: ${notifErr?.message}`,
+      );
+    }
+
+    this.logger.log(
       `[PAYMENT_VERIFIED_SUCCESS] customerId=${customerId} plan=${plan.name} paymentId=${dto.razorpay_payment_id}`,
     );
     this.logger.log(
@@ -948,6 +973,27 @@ export class PaymentService {
     });
 
     this.logger.log(`[TRUSTED_ACTIVATION_DONE] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
+
+    // Trigger Plan Purchase Success Notification
+    try {
+      if (this.notificationService) {
+        const activeSub = await this.prisma.customerSubscription.findFirst({
+          where: { customerId, status: SubscriptionStatus.ACTIVE, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (activeSub) {
+          await this.notificationService.sendPlanPurchaseSuccessNotification({
+            customerId,
+            subscriptionId: activeSub.id,
+            planId: plan.id,
+            planName: plan.name,
+            paymentId,
+          });
+        }
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(`Non-fatal: Webhook plan purchase notification warning: ${notifErr?.message}`);
+    }
   }
 
   /**
