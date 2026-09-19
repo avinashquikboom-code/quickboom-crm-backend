@@ -139,6 +139,10 @@ describe('NotificationService & FCM Integration', () => {
           orderId: '123',
           title: 'Order Confirmed',
         }),
+        expect.objectContaining({
+          customerId: 1,
+          notificationType: 'ORDER_CONFIRMED',
+        }),
       );
 
       // Verify invalid token was automatically deactivated

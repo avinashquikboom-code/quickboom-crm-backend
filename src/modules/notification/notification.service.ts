@@ -1043,6 +1043,20 @@ export class NotificationService {
         this.logger.warn(`[FCM] Failed to send welcome notification`);
       }
 
+      // 7. Non-blocking Notification to Super Admins / Platform Admins
+      this.notifyAdmins({
+        title: 'New Customer Registered',
+        body: `A new customer account has been created successfully.`,
+        type: 'CUSTOMER_REGISTERED',
+        data: {
+          type: 'CUSTOMER_REGISTERED',
+          customerId: String(customerId),
+          route: '/customers',
+        },
+      }).catch((adminErr) =>
+        this.logger.warn(`Failed notifying admins of customer registration: ${adminErr?.message}`),
+      );
+
       return {
         notification: dbNotification,
         fcmSent: fcmResult.successCount > 0,
@@ -1166,52 +1180,171 @@ export class NotificationService {
 
       if (tokens.length === 0) {
         this.logger.log(`[FCM] No device token found`);
-        return {
-          notification: dbNotification,
-          fcmSent: false,
-          reason: 'NO_DEVICE_TOKEN',
-        };
-      }
-
-      this.logger.log(`[FCM] Customer token found`);
-
-      // 5. Dispatch multicast push via FCM Service
-      const fcmPayload: Record<string, string> = {
-        ...payloadData,
-        notificationId: String(dbNotification.id),
-      };
-
-      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
-        customerId,
-        notificationType: 'PLAN_PURCHASE_SUCCESS',
-      });
-
-      // 6. Clean up invalid tokens
-      if (fcmResult.invalidTokens.length > 0) {
-        await this.prisma.userDeviceToken.updateMany({
-          where: { token: { in: fcmResult.invalidTokens } },
-          data: { isActive: false, updatedAt: new Date() },
-        });
-        this.logger.log(
-          `[FCM] Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`,
-        );
-      }
-
-      if (fcmResult.successCount > 0) {
-        this.logger.log(`[FCM] Notification sent successfully`);
       } else {
-        this.logger.warn(`[FCM] Failed to send notification`);
+        this.logger.log(`[FCM] Customer token found`);
+
+        // 5. Dispatch multicast push via FCM Service
+        const fcmPayload: Record<string, string> = {
+          ...payloadData,
+          notificationId: String(dbNotification.id),
+        };
+
+        const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
+          customerId,
+          notificationType: 'PLAN_PURCHASE_SUCCESS',
+        });
+
+        // 6. Clean up invalid tokens
+        if (fcmResult.invalidTokens.length > 0) {
+          await this.prisma.userDeviceToken.updateMany({
+            where: { token: { in: fcmResult.invalidTokens } },
+            data: { isActive: false, updatedAt: new Date() },
+          });
+          this.logger.log(
+            `[FCM] Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`,
+          );
+        }
+
+        if (fcmResult.successCount > 0) {
+          this.logger.log(`[FCM] Notification sent successfully`);
+        } else {
+          this.logger.warn(`[FCM] Failed to send notification`);
+        }
       }
+
+      // 7. Non-blocking Notification to Super Admins / Platform Admins
+      this.notifyAdmins({
+        title: 'New Plan Purchase',
+        body: `Customer #${customerId} has successfully purchased plan "${planName}".`,
+        type: 'PLAN_PURCHASE_SUCCESS',
+        data: {
+          type: 'PLAN_PURCHASE_SUCCESS',
+          customerId: String(customerId),
+          subscriptionId: String(subscriptionId),
+          planId: String(planId),
+          planName,
+          route: '/subscriptions',
+        },
+      }).catch((adminErr) =>
+        this.logger.warn(`Failed notifying admins of plan purchase: ${adminErr?.message}`),
+      );
 
       return {
         notification: dbNotification,
-        fcmSent: fcmResult.successCount > 0,
-        fcmResult,
+        fcmSent: tokens.length > 0,
       };
     } catch (err: any) {
       this.logger.error(`[FCM] Failed to send notification: ${err?.message}`);
       return null;
     }
   }
+
+  /**
+   * Send notification to all active Super Admins & Platform Admins (both in-app and FCM push)
+   * Supports webpush (Admin Panel) and mobile.
+   */
+  async notifyAdmins(params: {
+    title: string;
+    body: string;
+    type: string;
+    data?: Record<string, string>;
+  }) {
+    const { title, body, type, data = {} } = params;
+
+    try {
+      // 1. Find all active Admin / Super Admin users
+      const adminUsers = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          OR: [
+            {
+              userRoles: {
+                some: {
+                  role: {
+                    OR: [
+                      { type: 'SUPER_ADMIN' as any },
+                      { name: { in: ['SUPER_ADMIN', 'Super Admin', 'Super Administrator', 'ADMIN', 'Admin'] } },
+                    ],
+                  },
+                },
+              },
+            },
+            { customerId: null },
+          ],
+        },
+        select: { id: true, customerId: true },
+      });
+
+      if (adminUsers.length === 0) {
+        this.logger.log(`[FCM] Target user: admin, Tokens found: 0 (no admin users found in DB)`);
+        return;
+      }
+
+      const adminUserIds = adminUsers.map((u) => u.id);
+
+      // 2. Create in-app Notification database records for each admin
+      for (const admin of adminUsers) {
+        const fallbackCustomerId = admin.customerId || 1;
+        try {
+          await this.prisma.notification.create({
+            data: {
+              customerId: fallbackCustomerId,
+              userId: admin.id,
+              title,
+              message: body,
+              type,
+              data: data as any,
+              isRead: false,
+            },
+          });
+        } catch (dbErr: any) {
+          this.logger.warn(`Failed to create admin notification DB record for userId=${admin.id}: ${dbErr?.message}`);
+        }
+      }
+
+      // 3. Find active device tokens for all admin users
+      const deviceRecords = await this.prisma.userDeviceToken.findMany({
+        where: {
+          isActive: true,
+          userId: { in: adminUserIds },
+        },
+        select: { token: true, userId: true, platform: true },
+      });
+
+      const tokens = deviceRecords.map((d) => d.token);
+      this.logger.log(
+        `[FCM] Target user: admin (${adminUsers.length}), Tokens found: ${tokens.length}, Sending notification: "${title}"`,
+      );
+
+      if (tokens.length === 0) {
+        return;
+      }
+
+      const payloadData: Record<string, string> = {
+        type,
+        title,
+        body,
+        targetRole: 'SUPER_ADMIN',
+        ...data,
+      };
+
+      const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
+        notificationType: type,
+      });
+
+      // 4. Cleanup invalid tokens
+      if (fcmResult.invalidTokens.length > 0) {
+        await this.prisma.userDeviceToken.updateMany({
+          where: { token: { in: fcmResult.invalidTokens } },
+          data: { isActive: false, updatedAt: new Date() },
+        });
+        this.logger.log(`[FCM] Invalid token removed: ${fcmResult.invalidTokens.length}`);
+      }
+    } catch (err: any) {
+      this.logger.error(`[FCM] Error notifying admins (non-fatal): ${err?.message}`);
+    }
+  }
 }
+
 

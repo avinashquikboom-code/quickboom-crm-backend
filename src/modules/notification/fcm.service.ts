@@ -206,6 +206,7 @@ export class FcmService implements OnModuleInit {
           channelId: 'high_importance_channel',
           clickAction: 'FLUTTER_NOTIFICATION_CLICK',
           icon: 'ic_notification',
+          color: '#23C45E',
           defaultSound: true,
           defaultVibrateTimings: true,
           visibility: 'public',
@@ -218,6 +219,21 @@ export class FcmService implements OnModuleInit {
             badge: 1,
             contentAvailable: true,
           },
+        },
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high',
+        },
+        notification: {
+          title,
+          body,
+          icon: '/logo.png',
+          badge: '/favicon.ico',
+          requireInteraction: true,
+        },
+        fcmOptions: {
+          link: data?.route || '/notifications',
         },
       },
     };
@@ -314,6 +330,7 @@ export class FcmService implements OnModuleInit {
             channelId: 'high_importance_channel',
             clickAction: 'FLUTTER_NOTIFICATION_CLICK',
             icon: 'ic_notification',
+            color: '#23C45E',
             defaultSound: true,
             defaultVibrateTimings: true,
             visibility: 'public',
@@ -326,6 +343,21 @@ export class FcmService implements OnModuleInit {
               badge: 1,
               contentAvailable: true,
             },
+          },
+        },
+        webpush: {
+          headers: {
+            Urgency: 'high',
+          },
+          notification: {
+            title,
+            body,
+            icon: '/logo.png',
+            badge: '/favicon.ico',
+            requireInteraction: true,
+          },
+          fcmOptions: {
+            link: data?.route || '/notifications',
           },
         },
       };

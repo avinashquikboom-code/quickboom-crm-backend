@@ -25,6 +25,7 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
     user: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
     },
     customer: {
@@ -490,6 +491,92 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         }),
       );
       expect(result?.fcmSent).toBe(true);
+    });
+  });
+
+  describe('Admin Web Push Notifications Flow', () => {
+    it('CASE 12: Admin device token registration with platform WEB', async () => {
+      mockPrisma.userDeviceToken.upsert.mockResolvedValue({
+        id: 99,
+        userId: 1,
+        token: 'admin_web_token_abc',
+        platform: 'WEB',
+        isActive: true,
+      });
+
+      const result = await notificationService.registerDeviceToken(1, {
+        token: 'admin_web_token_abc',
+        platform: 'WEB',
+        deviceType: 'ADMIN_PANEL',
+      });
+
+      expect(mockPrisma.userDeviceToken.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { token: 'admin_web_token_abc' },
+          create: expect.objectContaining({
+            userId: 1,
+            token: 'admin_web_token_abc',
+            platform: 'WEB',
+            isActive: true,
+          }),
+        }),
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('CASE 13: notifyAdmins sends Web Push FCM multicast to registered Admin tokens', async () => {
+      mockPrisma.user.findMany.mockResolvedValue([
+        { id: 1, email: 'admin@quikboom.com', customerId: null },
+      ]);
+      mockPrisma.customer.findFirst.mockResolvedValue({ id: 1 });
+      mockPrisma.notification.create.mockResolvedValue({
+        id: 501,
+        customerId: 1,
+        userId: 1,
+        title: 'New Customer Registered',
+        message: 'ACME Corp has registered.',
+        type: 'CUSTOMER_REGISTERED',
+      });
+      mockPrisma.userDeviceToken.findMany.mockResolvedValue([
+        { token: 'admin_web_token_1', platform: 'WEB' },
+      ]);
+      mockFcmService.sendMulticast.mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        messageIds: ['msg-admin-1'],
+      });
+
+      await notificationService.notifyAdmins({
+        title: 'New Customer Registered',
+        body: 'ACME Corp has registered.',
+        type: 'CUSTOMER_REGISTERED',
+        data: {
+          route: '/settings/data-management',
+          eventType: 'CUSTOMER_REGISTERED',
+        },
+      });
+
+      expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 1,
+            type: 'CUSTOMER_REGISTERED',
+          }),
+        }),
+      );
+      expect(mockFcmService.sendMulticast).toHaveBeenCalledWith(
+        ['admin_web_token_1'],
+        'New Customer Registered',
+        'ACME Corp has registered.',
+        expect.objectContaining({
+          route: '/settings/data-management',
+          eventType: 'CUSTOMER_REGISTERED',
+        }),
+        expect.objectContaining({
+          notificationType: 'CUSTOMER_REGISTERED',
+        }),
+      );
     });
   });
 });

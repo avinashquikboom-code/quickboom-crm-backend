@@ -12,6 +12,11 @@ export class RegisterDeviceTokenDto {
   @IsString()
   @IsIn(['ANDROID', 'IOS', 'WEB'])
   platform?: string;
+
+  @ApiPropertyOptional({ description: 'Device Type', example: 'ADMIN_PANEL' })
+  @IsOptional()
+  @IsString()
+  deviceType?: string;
 }
 
 export class UnregisterDeviceTokenDto {
