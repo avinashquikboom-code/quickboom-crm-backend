@@ -28,6 +28,7 @@ import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class AuthService {
@@ -40,6 +41,7 @@ export class AuthService {
     private qbIdGenerator: QBIdGenerator,
     private msg91Service: Msg91Service,
     @Optional() private emailService?: EmailService,
+    @Optional() private notificationService?: NotificationService,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
@@ -248,6 +250,31 @@ export class AuthService {
     this.logger.log(
       `[REGISTRATION_SUCCESS] Customer created → customerId=${createdResult.customer.id} (${createdResult.customer.name}), email=${createdResult.user.email}, userId=${createdResult.user.id}`,
     );
+
+    // Send welcome in-app notification to the newly registered customer.
+    // Wrapped in try/catch — a notification failure must never break registration.
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPushNotification({
+          userId: createdResult.user.id,
+          customerId: createdResult.customer.id,
+          title: '🎉 Welcome to QB Suite!',
+          body: 'Welcome to QB Suite! Your account has been created successfully. We\'re happy to have you with us.',
+          type: 'WELCOME',
+          data: {
+            type: 'WELCOME',
+            customerId: String(createdResult.customer.id),
+          },
+        });
+        this.logger.log(
+          `[NOTIFICATION] Welcome notification dispatched for customerId=${createdResult.customer.id}`,
+        );
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(
+        `[NOTIFICATION] Welcome notification failed (non-fatal): ${notifErr?.message}`,
+      );
+    }
 
     return {
       success: true,

@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   UnauthorizedException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PaymentMethod, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,6 +18,7 @@ import {
 } from './dto/subscription.dto';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
+import { NotificationService } from '../notification/notification.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
@@ -35,6 +37,7 @@ export class SubscriptionService {
     private prisma: PrismaService,
     private scheduleService?: ScheduleService,
     private workService?: WorkService,
+    @Optional() private notificationService?: NotificationService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -1967,6 +1970,32 @@ export class SubscriptionService {
       });
     } catch (_) {}
 
+    // Send plan-activated in-app notification to the customer.
+    // Wrapped in try/catch — notification failure must never break activation.
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPushNotification({
+          customerId: numCustomerId,
+          title: '🎉 Plan Activated Successfully!',
+          body: `Your ${plan.name} plan has been activated successfully. Thank you for choosing QB Suite!`,
+          type: 'PLAN_ACTIVATED',
+          data: {
+            type: 'PLAN_ACTIVATED',
+            subscriptionId: String(newSub.id),
+            planId: String(plan.id),
+            planName: plan.name,
+          },
+        });
+        this.logger.log(
+          `[NOTIFICATION] Plan-activated notification dispatched for customerId=${numCustomerId}, planName=${plan.name}`,
+        );
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(
+        `[NOTIFICATION] Plan-activated notification failed (non-fatal): ${notifErr?.message}`,
+      );
+    }
+
     return this.getAdminCustomerSubscriptions(numCustomerId);
   }
 
@@ -2347,6 +2376,32 @@ export class SubscriptionService {
         },
       });
     } catch (_) {}
+
+    // Send plan-activated in-app notification to the customer.
+    // Wrapped in try/catch — notification failure must never break activation.
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPushNotification({
+          customerId: sub.customerId,
+          title: '🎉 Plan Activated Successfully!',
+          body: `Your ${sub.plan.name} plan has been activated successfully. Thank you for choosing QB Suite!`,
+          type: 'PLAN_ACTIVATED',
+          data: {
+            type: 'PLAN_ACTIVATED',
+            subscriptionId: String(sub.id),
+            planId: String(sub.planId),
+            planName: sub.plan.name,
+          },
+        });
+        this.logger.log(
+          `[NOTIFICATION] Plan-activated notification dispatched for customerId=${sub.customerId}, planName=${sub.plan.name}`,
+        );
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(
+        `[NOTIFICATION] Plan-activated notification failed (non-fatal): ${notifErr?.message}`,
+      );
+    }
 
     this.logger.log(
       `[SUBSCRIPTION_ACTIVATE_RESPONSE]\nsuccess: true\nsubscriptionId: ${updated.id}\nstatus: ${updated.status}`,
@@ -2893,6 +2948,33 @@ export class SubscriptionService {
         },
       });
     } catch (_) {}
+
+    // Send plan-activated in-app notification to the customer.
+    // Wrapped in try/catch — notification failure must never break activation.
+    try {
+      if (this.notificationService) {
+        await this.notificationService.sendPushNotification({
+          customerId: sub.customerId,
+          title: '🎉 Plan Activated Successfully!',
+          body: `Your ${plan.name} plan has been activated successfully. Thank you for choosing QB Suite!`,
+          type: 'PLAN_ACTIVATED',
+          data: {
+            type: 'PLAN_ACTIVATED',
+            subscriptionId: String(sub.id),
+            planId: String(plan.id),
+            planName: plan.name,
+            paymentId: String(payment.id),
+          },
+        });
+        this.logger.log(
+          `[NOTIFICATION] Plan-activated notification dispatched for customerId=${sub.customerId}, planName=${plan.name} (offline payment approved)`,
+        );
+      }
+    } catch (notifErr: any) {
+      this.logger.warn(
+        `[NOTIFICATION] Plan-activated notification failed (non-fatal): ${notifErr?.message}`,
+      );
+    }
 
     return {
       success: true,

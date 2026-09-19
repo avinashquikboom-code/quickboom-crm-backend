@@ -7,11 +7,13 @@ import { MobileAuthController } from './mobile-auth.controller';
 import { AdminAuthController } from './admin-auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { QBIdGenerator } from './qb-id.generator';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({}),
+    NotificationModule,
   ],
   controllers: [AuthController, MobileAuthController, AdminAuthController],
   providers: [AuthService, JwtStrategy, QBIdGenerator],
