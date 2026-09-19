@@ -322,6 +322,31 @@ describe('PlanAccessService — Centralized Plan & Limit Enforcement', () => {
       expect(new Date(effective.upcomingPlan!.startDate).getTime()).toBe(futureStart.getTime());
     });
 
+    it('immediately activates subscription with isActive=true and no upcomingPlan when startDate is today', async () => {
+      const todayStart = new Date();
+      const oneMonthEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      prisma.customerSubscription.findMany.mockResolvedValue([
+        {
+          id: 501,
+          customerId: 101,
+          planId: 1,
+          status: SubscriptionStatus.ACTIVE,
+          billingCycle: 'MONTHLY',
+          startDate: todayStart,
+          endDate: oneMonthEnd,
+          plan: mockBasePremiumPlan,
+        },
+      ]);
+
+      const effective = await service.getEffectivePlan(101);
+
+      expect(effective.isActive).toBe(true);
+      expect(effective.isExpired).toBe(false);
+      expect(effective.planId).toBe(mockBasePremiumPlan.id);
+      expect(effective.upcomingPlan).toBeNull();
+    });
+
     it('returns both current active plan AND upcoming plan when customer purchases a renewal/future plan', async () => {
       const activeStart = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days ago
       const activeEnd = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000); // 20 days in future

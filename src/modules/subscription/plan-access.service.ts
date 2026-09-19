@@ -88,9 +88,14 @@ export class PlanAccessService {
       return directNum;
     }
 
-    const match = str.match(/^CUST[-_]?0*(\d+)$/i);
+    const match = str.match(/^(?:QB[-_]?)?CUST[-_]?0*(\d+)$/i);
     if (match && match[1]) {
       const parsed = parseInt(match[1], 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    const digitsMatch = str.match(/(\d+)$/);
+    if (digitsMatch && digitsMatch[1]) {
+      const parsed = parseInt(digitsMatch[1], 10);
       if (!isNaN(parsed) && parsed > 0) return parsed;
     }
     return undefined;
@@ -123,21 +128,23 @@ export class PlanAccessService {
     this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms (count=${subs.length})`);
 
     const now = new Date();
+    // Allow small 60-second grace buffer for clock skew on newly activated subscriptions
+    const clockGraceTime = new Date(now.getTime() + 60 * 1000);
 
-    // 1. Separate Future / Upcoming Subscriptions (startDate > now)
+    // 1. Separate Future / Upcoming Subscriptions (startDate > clockGraceTime)
     const upcomingSubs = subs
       .filter((s) => {
-        if (s.status === SubscriptionStatus.CANCELED) return false;
+        if (s.status === SubscriptionStatus.CANCELED || s.status === SubscriptionStatus.EXPIRED) return false;
         if (!s.startDate) return false;
-        return new Date(s.startDate) > now && s.plan;
+        return new Date(s.startDate) > clockGraceTime && s.plan;
       })
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
-    // 2. Identify Current Subscriptions (startDate <= now or missing startDate)
+    // 2. Identify Current Subscriptions (startDate <= clockGraceTime or missing startDate)
     const currentSubs = subs.filter((s) => {
       if (s.status === SubscriptionStatus.CANCELED) return false;
       if (!s.startDate) return true;
-      return new Date(s.startDate) <= now;
+      return new Date(s.startDate) <= clockGraceTime;
     });
 
     // 3. Prioritize active non-expired current subscription
@@ -259,13 +266,13 @@ export class PlanAccessService {
 
     // 2. Check expiration & active state
     const subStartDate = sub.startDate ? new Date(sub.startDate) : null;
-    const isUpcoming = Boolean(subStartDate && subStartDate > now);
     const subEndDate = sub.endDate ? new Date(sub.endDate) : null;
     const isDirectExpired = sub.status === SubscriptionStatus.EXPIRED || (subEndDate ? now > subEndDate : false);
     const isExpired = isDirectExpired;
     const isCanceled = sub.status === SubscriptionStatus.CANCELED;
     const isPastDue = sub.status === SubscriptionStatus.PAST_DUE || isDirectExpired;
     // An active subscription remains active throughout its validity period and cannot be upcoming or expired or canceled
+    const isUpcoming = Boolean(subStartDate && subStartDate > clockGraceTime);
     const isActive = !isUpcoming && sub.status === SubscriptionStatus.ACTIVE && !isExpired && !isCanceled;
 
     // 3. Resolve Custom vs Base limits

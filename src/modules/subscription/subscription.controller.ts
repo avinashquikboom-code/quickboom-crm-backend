@@ -326,8 +326,13 @@ export class SubscriptionController {
         ? {
             id: plan.planId,
             subscriptionId: plan.subscriptionId,
+            planId: plan.planId,
             name: plan.planName,
+            planName: plan.planName,
             code: plan.planCode,
+            planCode: plan.planCode,
+            status: plan.status || (plan.isActive ? 'ACTIVE' : 'INACTIVE'),
+            customerId: plan.customerId || customerId,
             billingCycle: plan.billingCycle,
             price: plan.price,
             startDate: plan.startDate,
@@ -361,6 +366,7 @@ export class SubscriptionController {
         success: true,
         data: currentPlanData,
         currentPlan: currentPlanData,
+        subscription: currentPlanData,
         upcomingPlan,
         effectivePlan: currentPlanData,
         message: currentPlanData

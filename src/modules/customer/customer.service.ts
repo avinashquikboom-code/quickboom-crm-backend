@@ -2364,7 +2364,7 @@ export class CustomerService {
             subscriptions: {
               where: { deletedAt: null },
               orderBy: { createdAt: 'desc' },
-              take: 1,
+              take: 5,
               include: { plan: true },
             },
           },
@@ -2387,7 +2387,7 @@ export class CustomerService {
         subscriptions: {
           where: { deletedAt: null },
           orderBy: { createdAt: 'desc' },
-          take: 1,
+          take: 5,
           include: { plan: true },
         },
       },
@@ -2397,7 +2397,10 @@ export class CustomerService {
       throw new NotFoundException('Customer profile not found');
     }
 
-    const activeSub = customer.subscriptions[0];
+    const activeSub =
+      customer.subscriptions.find((s) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= new Date())) ||
+      customer.subscriptions.find((s) => s.status === 'ACTIVE') ||
+      customer.subscriptions[0];
     const qbCode = this.qbIdGenerator.generateQBUserId('CUSTOMER', customer.id);
     const customerCode = `CUST-${String(customer.id).padStart(4, '0')}`;
 

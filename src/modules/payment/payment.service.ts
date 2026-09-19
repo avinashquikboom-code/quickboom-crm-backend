@@ -24,7 +24,10 @@ import {
 } from '../integration-settings/integration-settings.service';
 import { PaymentMethod, SubscriptionStatus, InvoiceStatus, InstallmentStatus } from '@prisma/client';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
-import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
+import {
+  calculatePlanExpiry,
+  calculateSubscriptionDates,
+} from '../../common/utils/subscription-date.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
 
@@ -264,7 +267,21 @@ export class PaymentService {
    * 2. Verify Razorpay Payment Signature, Activate Subscription, Provision Entitlements & Generate Schedules
    */
   async verifyRazorpayPayment(user: any, dto: VerifyRazorpayPaymentDto, reqCustomerId?: number) {
-    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    let customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if ((!customerId || isNaN(customerId)) && user?.id) {
+      const cust = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: Number(user.id) } } },
+            { employees: { some: { userId: Number(user.id) } } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (cust) {
+        customerId = cust.id;
+      }
+    }
     if (!customerId || isNaN(customerId)) {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
@@ -370,7 +387,8 @@ export class PaymentService {
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
+    const startDate = new Date();
+    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
 
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${dto.razorpay_payment_id}`;
@@ -850,7 +868,8 @@ export class PaymentService {
     const total = basePrice + tax;
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
+    const startDate = new Date();
+    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
 
     const orderNumber = `#QB-WH-${Date.now().toString(36).toUpperCase()}`;
     const transactionId = `TXN-${paymentId}`;
@@ -1077,7 +1096,8 @@ export class PaymentService {
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), durationMonths);
+    const startDate = new Date();
+    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
 
     const orderNumber = `#QB-OFFLINE-${Date.now().toString(36).toUpperCase()}`;
 
