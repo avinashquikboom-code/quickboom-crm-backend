@@ -12,13 +12,13 @@ export class UpdateIntegrationDto {
   @IsOptional()
   environment?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Key-value map of credentials (sensitive values will be encrypted automatically)',
     example: { keyId: 'rzp_live_xxx', keySecret: 'rzp_sec_live_xxx', webhookSecret: 'whsec_xxx' },
   })
   @IsObject()
-  @IsNotEmpty()
-  credentials: Record<string, any>;
+  @IsOptional()
+  credentials?: Record<string, any>;
 
   @ApiPropertyOptional({
     description: 'Provider-specific non-sensitive configuration settings',

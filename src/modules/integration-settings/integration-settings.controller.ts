@@ -123,4 +123,17 @@ export class IntegrationSettingsController {
     this.checkAdminAccess(user);
     return this.integrationSettingsService.testIntegration(provider, dto);
   }
+
+  @Post(':provider/test-notification')
+  @ApiOperation({
+    summary: 'Send an FCM test push notification to targeted recipients from Admin Panel',
+  })
+  async sendTestNotification(
+    @Param('provider') provider: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    return this.integrationSettingsService.sendFirebaseTestNotification(dto);
+  }
 }

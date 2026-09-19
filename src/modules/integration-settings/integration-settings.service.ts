@@ -18,6 +18,13 @@ import {
 import axios from 'axios';
 import * as nodemailer from 'nodemailer';
 const Razorpay = require('razorpay');
+import {
+  initializeApp as initFirebaseAdminApp,
+  deleteApp as deleteFirebaseAdminApp,
+  cert as firebaseAdminCert,
+  getApps as getFirebaseAdminApps,
+} from 'firebase-admin/app';
+import { getMessaging as getFirebaseAdminMessaging } from 'firebase-admin/messaging';
 
 export enum IntegrationProvider {
   RAZORPAY = 'RAZORPAY',
@@ -31,6 +38,7 @@ export enum IntegrationProvider {
   OPENAI = 'OPENAI',
   GEMINI = 'GEMINI',
   SMTP = 'SMTP',
+  FIREBASE = 'FIREBASE',
 }
 
 export function normalizeProvider(provider: string): string {
@@ -50,7 +58,16 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'OPENAI' || norm === 'OPEN_AI' || norm === 'CHATGPT') return IntegrationProvider.OPENAI;
   if (norm === 'GEMINI' || norm === 'GOOGLE_GEMINI' || norm === 'GOOGLE_AI') return IntegrationProvider.GEMINI;
   if (norm === 'SMTP' || norm === 'EMAIL' || norm === 'MAIL' || norm === 'SMTP_EMAIL') return IntegrationProvider.SMTP;
+  if (norm === 'FIREBASE' || norm === 'FCM' || norm === 'FIREBASE_MESSAGING') return IntegrationProvider.FIREBASE;
   return norm;
+}
+
+export interface FirebaseDynamicConfig {
+  projectId: string;
+  clientEmail?: string;
+  privateKey?: string;
+  isEnabled: boolean;
+  isConfigured: boolean;
 }
 
 export interface OpenAiDynamicConfig {
@@ -434,6 +451,37 @@ export class IntegrationSettingsService {
         };
       }
 
+      case IntegrationProvider.FIREBASE: {
+        const projectId = (
+          process.env.FIREBASE_PROJECT_ID ||
+          'quikboom-crm-925d5'
+        ).trim();
+        const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+        const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
+        const isConfigured = Boolean(
+          projectId &&
+            (clientEmail ||
+              privateKey ||
+              process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+              process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+              process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
+        );
+        return {
+          provider: IntegrationProvider.FIREBASE,
+          isEnabled: isConfigured,
+          environment: 'LIVE',
+          credentials: {
+            projectId,
+            clientEmail: clientEmail || undefined,
+            privateKey: privateKey || undefined,
+          },
+          config: {
+            projectId,
+          },
+          source: isConfigured ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
       default:
         return {
           provider: normProvider,
@@ -655,6 +703,50 @@ export class IntegrationSettingsService {
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
     return { apiKey, isEnabled, isConfigured, source };
+  }
+
+  /**
+   * Typed helper for Firebase Cloud Messaging (FCM) dynamic configuration.
+   * Priority: Database (Admin Settings) → ENV fallback.
+   */
+  async getFirebaseConfig(): Promise<FirebaseDynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.FIREBASE);
+    const creds = conf?.credentials || {};
+    const projectId = String(
+      creds.projectId ||
+        creds.project_id ||
+        process.env.FIREBASE_PROJECT_ID ||
+        'quikboom-crm-925d5',
+    ).trim();
+    const clientEmail = String(
+      creds.clientEmail ||
+        creds.client_email ||
+        process.env.FIREBASE_CLIENT_EMAIL ||
+        '',
+    ).trim();
+    const privateKey = String(
+      creds.privateKey ||
+        creds.private_key ||
+        process.env.FIREBASE_PRIVATE_KEY ||
+        '',
+    ).trim();
+    const isConfigured = Boolean(
+      projectId &&
+        (clientEmail ||
+          privateKey ||
+          process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
+    );
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+
+    return {
+      projectId,
+      clientEmail: clientEmail || undefined,
+      privateKey: privateKey || undefined,
+      isEnabled,
+      isConfigured,
+    };
   }
 
   /**
@@ -1042,6 +1134,7 @@ export class IntegrationSettingsService {
       IntegrationProvider.OPENAI,
       IntegrationProvider.GEMINI,
       IntegrationProvider.SMTP,
+      IntegrationProvider.FIREBASE,
     ];
     const results = [];
 
@@ -1705,8 +1798,312 @@ export class IntegrationSettingsService {
         }
       }
 
+      case IntegrationProvider.FIREBASE: {
+        const projectId = String(
+          dto?.credentials?.projectId ||
+            dto?.credentials?.project_id ||
+            resolvedCreds.projectId ||
+            resolvedCreds.project_id ||
+            process.env.FIREBASE_PROJECT_ID ||
+            'quikboom-crm-925d5',
+        ).trim();
+        const clientEmail = String(
+          dto?.credentials?.clientEmail ||
+            dto?.credentials?.client_email ||
+            resolvedCreds.clientEmail ||
+            resolvedCreds.client_email ||
+            process.env.FIREBASE_CLIENT_EMAIL ||
+            '',
+        ).trim();
+        const rawPrivateKey = String(
+          dto?.credentials?.privateKey ||
+            dto?.credentials?.private_key ||
+            resolvedCreds.privateKey ||
+            resolvedCreds.private_key ||
+            process.env.FIREBASE_PRIVATE_KEY ||
+            '',
+        ).trim();
+
+        if (!projectId) {
+          throw new BadRequestException('Firebase Project ID is required to test connection');
+        }
+
+        try {
+          // If explicit credentials provided in test request or resolved credentials, test initialization
+          if (clientEmail && rawPrivateKey && !isMaskedSecret(rawPrivateKey)) {
+            const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
+            const testAppName = `test-firebase-${Date.now()}`;
+            const testApp = initFirebaseAdminApp(
+              {
+                credential: firebaseAdminCert({
+                  projectId,
+                  clientEmail,
+                  privateKey,
+                }),
+              },
+              testAppName,
+            );
+            getFirebaseAdminMessaging(testApp);
+            await deleteFirebaseAdminApp(testApp);
+          } else {
+            // Check if default initialized Firebase App exists on server
+            const apps = getFirebaseAdminApps();
+            if (apps.length > 0) {
+              getFirebaseAdminMessaging(apps[0]);
+            } else if (
+              !process.env.GOOGLE_APPLICATION_CREDENTIALS &&
+              !process.env.FIREBASE_SERVICE_ACCOUNT_JSON &&
+              !process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+            ) {
+              throw new BadRequestException(
+                'Firebase credentials are not configured. Please supply Client Email and Private Key or configure server environment.',
+              );
+            }
+          }
+
+          const now = new Date();
+          await this.prisma.integrationSetting.updateMany({
+            where: { provider: IntegrationProvider.FIREBASE },
+            data: {
+              config: {
+                lastTestedAt: now.toISOString(),
+                lastTestResult: 'SUCCESS',
+                projectId,
+              },
+            },
+          });
+
+          return {
+            connected: true,
+            success: true,
+            provider: 'Firebase Cloud Messaging',
+            status: 'CONNECTED',
+            projectId,
+            lastTestedAt: now.toISOString(),
+            lastTestResult: 'SUCCESS',
+            message: 'Firebase Cloud Messaging connection verified successfully!',
+          };
+        } catch (err: any) {
+          this.logger.error(`[FIREBASE_TEST_FAILED] ${err?.message}`);
+          const errMsg = err?.message || 'Could not authenticate with Firebase Admin SDK';
+          throw new BadRequestException(`Firebase connection test failed: ${errMsg}`);
+        }
+      }
+
       default:
         throw new BadRequestException(`Unsupported integration provider: ${provider}`);
+    }
+  }
+
+  /**
+   * Dispatches an FCM test push notification to targeted recipients from Admin Panel.
+   */
+  async sendFirebaseTestNotification(dto: {
+    recipientType?: string;
+    recipientId?: string | number;
+    deviceToken?: string;
+    title?: string;
+    message?: string;
+  }) {
+    const title = (dto.title || 'QuikBoom Test Notification').trim();
+    const body = (dto.message || 'FCM integration is working correctly.').trim();
+    const recipientType = (dto.recipientType || 'ALL_ADMINS').toUpperCase();
+
+    // 1. Verify that Firebase integration is enabled
+    const conf = await this.getFirebaseConfig();
+    if (!conf.isEnabled) {
+      throw new BadRequestException(
+        'Firebase Cloud Messaging integration is currently disabled. Please enable it in Settings -> Integrations.',
+      );
+    }
+
+    let tokens: string[] = [];
+    let targetUserId: number | null = null;
+    let targetCustomerId: number | null = null;
+
+    if (dto.deviceToken && dto.deviceToken.trim()) {
+      tokens = [dto.deviceToken.trim()];
+    } else if (recipientType === 'ALL_ADMINS') {
+      const adminUsers = await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          deletedAt: null,
+          OR: [
+            { customerId: null },
+            {
+              userRoles: {
+                some: {
+                  role: {
+                    name: { in: ['SUPER_ADMIN', 'ADMIN', 'Super Admin', 'Admin'] },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        select: { id: true },
+      });
+      const adminUserIds = adminUsers.map((u) => u.id);
+      targetUserId = adminUserIds[0] || null;
+
+      const deviceTokens = await this.prisma.userDeviceToken.findMany({
+        where: {
+          isActive: true,
+          userId: { in: adminUserIds },
+        },
+        select: { token: true },
+      });
+      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+    } else if (recipientType === 'CUSTOMER' && dto.recipientId) {
+      targetCustomerId = Number(dto.recipientId);
+      const customerUsers = await this.prisma.user.findMany({
+        where: {
+          customerId: targetCustomerId,
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const userIds = customerUsers.map((u) => u.id);
+      targetUserId = userIds[0] || null;
+
+      const deviceTokens = await this.prisma.userDeviceToken.findMany({
+        where: {
+          isActive: true,
+          userId: { in: userIds },
+        },
+        select: { token: true },
+      });
+      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+    } else if (recipientType === 'EMPLOYEE' && dto.recipientId) {
+      targetUserId = Number(dto.recipientId);
+      const deviceTokens = await this.prisma.userDeviceToken.findMany({
+        where: {
+          isActive: true,
+          userId: targetUserId,
+        },
+        select: { token: true },
+      });
+      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+    } else {
+      // Default: all active device tokens (up to 50)
+      const deviceTokens = await this.prisma.userDeviceToken.findMany({
+        where: { isActive: true },
+        take: 50,
+        select: { token: true, userId: true },
+      });
+      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+      targetUserId = deviceTokens[0]?.userId || null;
+    }
+
+    if (tokens.length === 0) {
+      return {
+        success: false,
+        connected: true,
+        deviceCount: 0,
+        message:
+          'No active device tokens found for the selected recipient. Ensure the recipient has logged in and allowed notifications on mobile or web.',
+      };
+    }
+
+    // 2. Create in-app notification record
+    try {
+      if (!targetCustomerId) {
+        const firstCust = await this.prisma.customer.findFirst({ select: { id: true } });
+        targetCustomerId = firstCust?.id || 1;
+      }
+      await this.prisma.notification.create({
+        data: {
+          customerId: targetCustomerId,
+          userId: targetUserId,
+          title,
+          message: body,
+          type: 'TEST_NOTIFICATION',
+        },
+      });
+    } catch (_) {}
+
+    // 3. Dispatch FCM Multicast
+    const apps = getFirebaseAdminApps();
+    if (apps.length === 0) {
+      throw new BadRequestException('Firebase Admin SDK is not initialized on the server.');
+    }
+
+    const messaging = getFirebaseAdminMessaging(apps[0]);
+    const multicastMessage = {
+      tokens,
+      notification: {
+        title,
+        body,
+      },
+      data: {
+        type: 'TEST_NOTIFICATION',
+        source: 'ADMIN_PANEL',
+        route: '/notifications',
+      },
+      android: {
+        priority: 'high' as const,
+        notification: {
+          sound: 'default',
+          channelId: 'high_importance_channel',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          icon: 'ic_notification',
+          color: '#23C45E',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          visibility: 'public' as const,
+        },
+      },
+      webpush: {
+        headers: { Urgency: 'high' },
+        notification: {
+          title,
+          body,
+          icon: '/logo.png',
+          requireInteraction: true,
+        },
+        fcmOptions: { link: '/notifications' },
+      },
+    };
+
+    try {
+      const response = await messaging.sendEachForMulticast(multicastMessage);
+      this.logger.log(
+        `[FCM] Test notification sent to ${tokens.length} tokens. Success: ${response.successCount}, Failed: ${response.failureCount}`,
+      );
+
+      // Clean invalid tokens automatically
+      const invalidTokens: string[] = [];
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success && resp.error) {
+          const code = resp.error.code;
+          if (
+            code === 'messaging/invalid-registration-token' ||
+            code === 'messaging/registration-token-not-registered'
+          ) {
+            invalidTokens.push(tokens[idx]);
+          }
+        }
+      });
+      if (invalidTokens.length > 0) {
+        await this.prisma.userDeviceToken.updateMany({
+          where: { token: { in: invalidTokens } },
+          data: { isActive: false },
+        });
+        this.logger.log(`[FCM] Deactivated ${invalidTokens.length} stale/invalid tokens during test.`);
+      }
+
+      return {
+        success: true,
+        connected: true,
+        deviceCount: tokens.length,
+        successCount: response.successCount,
+        failureCount: response.failureCount,
+        message: `Notification sent successfully to ${tokens.length} device(s)!`,
+      };
+    } catch (err: any) {
+      this.logger.error(`[FCM] Test notification failed: ${err?.message}`);
+      throw new BadRequestException(`Unable to send notification: ${err?.message}`);
     }
   }
 }

@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { getApps, initializeApp, cert, applicationDefault, App, ServiceAccount } from 'firebase-admin/app';
 import { getMessaging, MulticastMessage, BatchResponse, Message } from 'firebase-admin/messaging';
 import * as fs from 'fs';
@@ -23,7 +24,10 @@ export class FcmService implements OnModuleInit {
   private firebaseApp: App | null = null;
   private isInitialized = false;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional() private readonly integrationSettingsService?: IntegrationSettingsService,
+  ) {}
 
   onModuleInit() {
     this.initializeFirebase();
@@ -174,6 +178,18 @@ export class FcmService implements OnModuleInit {
       return { success: false, error: 'EMPTY_TOKEN', details: 'FCM token cannot be empty' };
     }
 
+    try {
+      if (this.integrationSettingsService) {
+        const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
+        if (!fbConfig.isEnabled) {
+          this.logger.log(
+            '[FCM] Push notification skipped: Firebase integration is disabled in Admin Settings',
+          );
+          return { success: false, error: 'FIREBASE_DISABLED', details: 'FCM push delivery is disabled in Admin Panel' };
+        }
+      }
+    } catch (_) {}
+
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
         `[FCM]\ncustomerId: ${meta?.customerId ?? 'N/A'}\ntoken: ${maskedToken}\nnotificationType: ${meta?.notificationType ?? 'N/A'}\nmessageId: none\nsend result: FAILED (FIREBASE_NOT_INITIALIZED)`,
@@ -291,6 +307,23 @@ export class FcmService implements OnModuleInit {
         stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
       }
     }
+
+    try {
+      if (this.integrationSettingsService) {
+        const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
+        if (!fbConfig.isEnabled) {
+          this.logger.log(
+            '[FCM] Push notification skipped: Firebase integration is disabled in Admin Settings',
+          );
+          return {
+            successCount: 0,
+            failureCount: 0,
+            invalidTokens: [],
+            messageIds: [],
+          };
+        }
+      }
+    } catch (_) {}
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
