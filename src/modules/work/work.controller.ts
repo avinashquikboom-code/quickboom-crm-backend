@@ -662,6 +662,20 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     return this.workService.requestRework(authCustId, id, dto);
   }
 
+  @Post(':id/approve')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customer or Admin approves deliverable / level' })
+  async approveWork(
+    @Param('id') id: string,
+    @Query('customerId') customerIdQuery: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    return this.workService.approveWork(custId, id);
+  }
+
   @Post(':id/cancel')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()

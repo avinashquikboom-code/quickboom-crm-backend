@@ -12,7 +12,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
-import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto, TestTokenDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto, SendNotificationDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -98,6 +98,13 @@ export class NotificationController {
   @ApiBody({ type: TestTokenDto })
   async testToken(@Body() dto: TestTokenDto) {
     return this.notificationService.sendDirectTestToToken(dto);
+  }
+
+  @Post('admin/offer')
+  @ApiOperation({ summary: 'Send admin offer notification to customer(s) and store in-app history' })
+  @ApiBody({ type: AdminOfferNotificationDto })
+  async sendAdminOffer(@Body() dto: AdminOfferNotificationDto) {
+    return this.notificationService.sendAdminOfferNotification(dto);
   }
 
   @Post('triggers/run-scheduled-checks')

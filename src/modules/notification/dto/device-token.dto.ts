@@ -78,3 +78,35 @@ export class TestTokenDto {
   data?: Record<string, string>;
 }
 
+export class AdminOfferNotificationDto {
+  @ApiProperty({ description: 'Offer title', example: 'Special Festive Discount!' })
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @ApiProperty({ description: 'Offer message/details', example: 'Get 20% off on all annual plans with code FESTIVE20!' })
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @ApiPropertyOptional({ description: 'Target customer ID (optional: if omitted, broadcast to all active customers)', example: 1 })
+  @IsOptional()
+  @IsNumber()
+  customerId?: number;
+
+  @ApiPropertyOptional({ description: 'Optional promo / offer code', example: 'FESTIVE20' })
+  @IsOptional()
+  @IsString()
+  offerCode?: string;
+
+  @ApiPropertyOptional({ description: 'Optional banner image URL', example: 'https://example.com/banner.png' })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Optional deep link route in mobile app', example: '/subscription-plans' })
+  @IsOptional()
+  @IsString()
+  deepLink?: string;
+}
+

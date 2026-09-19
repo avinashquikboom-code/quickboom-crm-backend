@@ -638,6 +638,91 @@ export class WorkService {
       date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
     });
 
+    // Notification 4: Employee Starts Work
+    if (
+      this.notificationService &&
+      existing.status !== WorkStatus.IN_PROGRESS &&
+      dto.status === WorkStatus.IN_PROGRESS
+    ) {
+      try {
+        const existingNotifs = await this.prisma.notification.findMany({
+          where: {
+            customerId: result.customerId,
+            type: 'WORK_STARTED',
+          },
+          select: { data: true },
+          take: 50,
+          orderBy: { id: 'desc' },
+        });
+        const alreadyNotified = existingNotifs.some((n: any) => n.data?.workId === String(result.id));
+
+        if (!alreadyNotified) {
+          const employeeName =
+            result.assignedTo
+              ? `${result.assignedTo.firstName || ''} ${result.assignedTo.lastName || ''}`.trim() || 'Assigned Specialist'
+              : 'Our specialist';
+          const workTitle = result.title || 'Work Task';
+
+          await this.notificationService.sendPushNotification({
+            customerId: result.customerId,
+            title: '🚀 Work Started',
+            body: `${employeeName} has started working on ${workTitle}.`,
+            type: 'WORK_STARTED',
+            data: {
+              type: 'WORK',
+              workId: String(result.id),
+              customerId: String(result.customerId),
+              employeeName,
+              workTitle,
+            },
+          });
+          this.logger.log(`Dispatched WORK_STARTED notification to customer #${result.customerId} for work #${result.id}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to dispatch WORK_STARTED notification (non-fatal): ${err?.message}`);
+      }
+    }
+
+    // Notification 5: Level / Work Approved via update
+    if (
+      this.notificationService &&
+      existing.status !== WorkStatus.COMPLETED &&
+      dto.status === WorkStatus.COMPLETED
+    ) {
+      const staffUserIds = [result.assignedTo?.userId, result.editor?.userId].filter(Boolean) as number[];
+      for (const uid of staffUserIds) {
+        try {
+          const existingNotifs = await this.prisma.notification.findMany({
+            where: {
+              userId: uid,
+              type: 'LEVEL_APPROVED',
+            },
+            select: { data: true },
+            take: 20,
+            orderBy: { id: 'desc' },
+          });
+          const alreadyNotified = existingNotifs.some((n: any) => n.data?.workId === String(result.id));
+          if (!alreadyNotified) {
+            await this.notificationService.sendPushNotification({
+              userId: uid,
+              customerId: result.customerId,
+              title: '✅ Level Approved',
+              body: `Your submitted level for "${result.title}" has been approved by Admin.`,
+              type: 'LEVEL_APPROVED',
+              data: {
+                type: 'WORK',
+                workId: String(result.id),
+                status: 'APPROVED',
+              },
+            });
+            this.logger.log(`Dispatched LEVEL_APPROVED push notification to staff user #${uid} for work #${result.id}`);
+          }
+        } catch (err: any) {
+          this.logger.warn(`Failed to send level approval push to staff user #${uid} (non-fatal): ${err?.message}`);
+        }
+      }
+    }
+
     return result;
   }
 
@@ -714,7 +799,7 @@ export class WorkService {
       return { success: true, message: 'Work already approved and completed.', work: existing };
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Mark COMPLETED
       const work = await tx.work.update({
         where: { id: numId },
@@ -748,19 +833,21 @@ export class WorkService {
         });
       }
 
-      // 4. Notify assigned staff
+      // 4. Fallback in-DB notification if notificationService not available
       const staffUserIds = [work.assignedTo?.userId, work.editor?.userId].filter(Boolean) as number[];
-      for (const uid of staffUserIds) {
-        await tx.notification.create({
-          data: {
-            customerId: work.customerId,
-            userId: uid,
-            title: 'Work Approved!',
-            message: `Customer approved final content for "${work.title}". Deliverable marked COMPLETED.`,
-            type: 'WORK_APPROVED',
-            data: { workId: work.id },
-          },
-        });
+      if (!this.notificationService) {
+        for (const uid of staffUserIds) {
+          await tx.notification.create({
+            data: {
+              customerId: work.customerId,
+              userId: uid,
+              title: '✅ Level Approved',
+              message: `Your submitted level for "${work.title}" has been approved by Admin.`,
+              type: 'LEVEL_APPROVED',
+              data: { workId: work.id },
+            },
+          });
+        }
       }
 
       return {
@@ -769,6 +856,44 @@ export class WorkService {
         work,
       };
     });
+
+    // 5. Notify assigned staff via Push Notification + FCM
+    if (this.notificationService) {
+      const staffUserIds = [result.work.assignedTo?.userId, result.work.editor?.userId].filter(Boolean) as number[];
+      for (const uid of staffUserIds) {
+        try {
+          const existingNotifs = await this.prisma.notification.findMany({
+            where: {
+              userId: uid,
+              type: 'LEVEL_APPROVED',
+            },
+            select: { data: true },
+            take: 20,
+            orderBy: { id: 'desc' },
+          });
+          const alreadyNotified = existingNotifs.some((n: any) => n.data?.workId === String(result.work.id));
+          if (!alreadyNotified) {
+            await this.notificationService.sendPushNotification({
+              userId: uid,
+              customerId: result.work.customerId,
+              title: '✅ Level Approved',
+              body: `Your submitted level for "${result.work.title}" has been approved by Admin.`,
+              type: 'LEVEL_APPROVED',
+              data: {
+                type: 'WORK',
+                workId: String(result.work.id),
+                status: 'APPROVED',
+              },
+            });
+            this.logger.log(`Dispatched LEVEL_APPROVED push notification to staff user #${uid} for work #${result.work.id}`);
+          }
+        } catch (err: any) {
+          this.logger.warn(`Failed to send level approval push to staff user #${uid} (non-fatal): ${err?.message}`);
+        }
+      }
+    }
+
+    return result;
   }
 
   /**

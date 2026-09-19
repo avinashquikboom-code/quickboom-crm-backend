@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
-import { RegisterDeviceTokenDto, TestTokenDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
   userId?: number;
@@ -471,8 +471,8 @@ export class NotificationService {
       const planName = subscription.plan?.name || 'Subscription Plan';
       const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'soon';
 
-      const title = `Subscription Expiring in ${daysRemaining} Days`;
-      const body = `Your plan "${planName}" will expire on ${endDate}. Renew now to maintain uninterrupted access.`;
+      const title = '⚠️ Your Plan Expires Soon';
+      const body = `Your ${planName} plan will expire in 3 days. Renew your plan to continue using QB Suite.`;
 
       return await this.sendPushNotification({
         customerId,
@@ -759,6 +759,80 @@ export class NotificationService {
       this.logger.error(`Error sending influencer application notification: ${err?.message}`, err?.stack);
       return null;
     }
+  }
+
+  /**
+   * Send Admin Offer Notification to targeted customer or broadcast to all active customers
+   */
+  async sendAdminOfferNotification(dto: AdminOfferNotificationDto) {
+    let targetCustomers: { id: number }[] = [];
+
+    if (dto.customerId) {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: Number(dto.customerId), deletedAt: null },
+        select: { id: true },
+      });
+      if (!customer) {
+        throw new NotFoundException(`Customer with ID ${dto.customerId} not found or inactive`);
+      }
+      targetCustomers = [customer];
+    } else {
+      targetCustomers = await this.prisma.customer.findMany({
+        where: { deletedAt: null },
+        select: { id: true },
+      });
+    }
+
+    if (targetCustomers.length === 0) {
+      return {
+        success: true,
+        totalTargeted: 0,
+        sentCount: 0,
+        failedCount: 0,
+        message: 'No active customers found to receive the offer notification.',
+      };
+    }
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const cust of targetCustomers) {
+      try {
+        const payloadData: Record<string, string> = {
+          type: 'OFFER',
+          title: dto.title,
+          message: dto.message,
+        };
+        if (dto.offerCode) payloadData.offerCode = String(dto.offerCode);
+        if (dto.imageUrl) payloadData.imageUrl = String(dto.imageUrl);
+        if (dto.deepLink) payloadData.deepLink = String(dto.deepLink);
+
+        const res = await this.sendPushNotification({
+          customerId: cust.id,
+          title: dto.title,
+          body: dto.message,
+          type: 'ADMIN_OFFER',
+          data: payloadData,
+        });
+
+        if (res) {
+          successCount++;
+        } else {
+          failedCount++;
+        }
+      } catch (err: any) {
+        failedCount++;
+        this.logger.warn(`Failed to send offer notification to customer #${cust.id}: ${err?.message}`);
+      }
+    }
+
+    return {
+      success: true,
+      totalTargeted: targetCustomers.length,
+      sentCount: successCount,
+      failedCount,
+      message: `Offer notification dispatched to ${successCount} customer(s).`,
+    };
   }
 }
 
