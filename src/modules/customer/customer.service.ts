@@ -1854,7 +1854,10 @@ export class CustomerService {
       );
     }
 
-    const preserveSubs = dto?.preserveSubscriptions !== false;
+    // NOTE: preserveSubscriptions flag is intentionally ignored.
+    // Subscription/plan state is ALWAYS fully reset — keeping subscriptions would
+    // leave the customer appearing active in the Plans screen, Profile, and Admin panel.
+    // The DTO field is retained for backward compatibility but has no effect.
     const preserveInvoices = dto?.preserveInvoices === true;
 
     // 3. Atomic Prisma Transaction with Foreign Key Order
@@ -1947,10 +1950,45 @@ export class CustomerService {
       const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
       const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: { customerId: numericId } }) : { count: 0 };
 
-      // Step J: Subscription assignments (if explicitly requested to reset)
-      if (!preserveSubs && tx.customerSubscription?.deleteMany) {
-        await tx.customerSubscription.deleteMany({ where: { customerId: numericId } });
+      // Step J: Subscription & Plan state — ALWAYS fully reset
+      // Rationale: The purpose of "Reset Data" is to make the customer behave as
+      // a fresh account. Leaving subscriptions/plan entitlements active contradicts
+      // that goal and was the primary reported bug (subscription still showed after reset).
+      //
+      // FK ordering:
+      //   MonthlySchedule  (subscriptionId FK) → already deleted in Step E
+      //   Work             (subscriptionId FK) → already deleted in Step E
+      //   SubscriptionInstallment (subscriptionId FK) → already deleted in Step F
+      //   CustomPlanOrder  (subscriptionId FK) → already deleted in Step F
+      //   PaymentHistory   (subscriptionId FK, onDelete: SetNull) → already deleted in Step F
+      //   PlanEntitlement  (customerId FK)     → delete now (no sub FK)
+      //   FeatureToggle    (customerId FK)     → delete now (plan-driven flags)
+      //   AiCreditWallet   (customerId unique) → reset balance to 0 (preserve row for fresh start)
+      //   CustomerSubscription → delete last
+
+      // J-1: Plan quota entitlements (tracks slots used by subscription)
+      const planEntitlements = tx.planEntitlement?.deleteMany
+        ? await tx.planEntitlement.deleteMany({ where: { customerId: numericId } })
+        : { count: 0 };
+
+      // J-2: Feature toggles driven by plan (e.g. AI enabled, lead limits)
+      if (tx.featureToggle?.deleteMany) {
+        await tx.featureToggle.deleteMany({ where: { customerId: numericId } });
       }
+
+      // J-3: AI credit wallet — reset balance to 0 (keep the row so wallet is re-created
+      //       fresh on next plan activation; do NOT delete because it has @unique customerId)
+      if (tx.aiCreditWallet?.updateMany) {
+        await tx.aiCreditWallet.updateMany({
+          where: { customerId: numericId },
+          data: { balance: 0, totalEarned: 0, totalSpent: 0, updatedAt: new Date() },
+        });
+      }
+
+      // J-4: Delete all customer subscription rows (children already cleaned above)
+      const subscriptions = tx.customerSubscription?.deleteMany
+        ? await tx.customerSubscription.deleteMany({ where: { customerId: numericId } })
+        : { count: 0 };
 
       const totalDeleted =
         deletedInvoices +
@@ -1990,7 +2028,9 @@ export class CustomerService {
         cnt(bookingPayments) +
         cnt(reviews) +
         cnt(bookings) +
-        cnt(workAccess);
+        cnt(workAccess) +
+        cnt(subscriptions) +
+        cnt(planEntitlements);
 
       // Step K: Reset storage usage
       if (tx.customer?.update) {
@@ -2041,6 +2081,10 @@ export class CustomerService {
           social: cnt(socialPublishes) + cnt(socialAccounts),
           aiGenerations: cnt(aiGens),
           bookings: cnt(bookings),
+          subscriptions: cnt(subscriptions),
+          planEntitlements: cnt(planEntitlements),
+          aiCreditWalletReset: true,
+          featureTogglesCleared: true,
         },
         totalDeleted,
         timestamp: new Date().toISOString(),
@@ -2101,6 +2145,14 @@ export class CustomerService {
     return {
       success: true,
       message: `Customer data for "${existing.companyName || existing.name}" has been successfully reset. All ${resetResult.totalDeleted} business records were deleted. Customer account and master records remain intact.`,
+      data: {
+        customerId: existing.id,
+        activeSubscription: null,       // Always null after reset — subscriptions fully removed
+        currentPlan: null,
+        subscriptionsDeleted: resetResult.deletedCounts?.subscriptions ?? 0,
+        planEntitlementsCleared: resetResult.deletedCounts?.planEntitlements ?? 0,
+        aiWalletReset: resetResult.deletedCounts?.aiCreditWalletReset ?? false,
+      },
       deletedCounts: resetResult.deletedCounts,
       totalDeleted: resetResult.totalDeleted,
       customer: {
