@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
-import { getApps, initializeApp, cert, applicationDefault, App, ServiceAccount } from 'firebase-admin/app';
+import { getApps, initializeApp, cert, applicationDefault, App, ServiceAccount, deleteApp } from 'firebase-admin/app';
 import { getMessaging, MulticastMessage, BatchResponse, Message } from 'firebase-admin/messaging';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -131,20 +131,62 @@ export class FcmService implements OnModuleInit {
   /**
    * Reinitialize with runtime credentials (e.g. from database or dynamic config)
    */
-  public initializeWithCredentials(credentialData: any): boolean {
+  public async initializeWithCredentials(credentialData: any): Promise<boolean> {
     try {
+      // Clean up existing app instance if present
+      await this.invalidateFirebaseInstance();
+
       const parsed = typeof credentialData === 'string' ? JSON.parse(credentialData) : credentialData;
-      if (parsed.private_key && typeof parsed.private_key === 'string') {
-        parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+      const projectId = parsed.projectId || parsed.project_id || 'quikboom-crm-925d5';
+      const clientEmail = parsed.clientEmail || parsed.client_email;
+      let privateKey = parsed.privateKey || parsed.private_key;
+
+      if (privateKey && typeof privateKey === 'string') {
+        privateKey = privateKey.replace(/\\n/g, '\n');
       }
-      const credential = cert(parsed);
+
+      const serviceAccount: ServiceAccount = {
+        projectId,
+        clientEmail,
+        privateKey,
+      };
+
+      const credential = cert(serviceAccount);
       this.firebaseApp = initializeApp({ credential });
       this.isInitialized = true;
-      this.logger.log(`✅ Firebase Admin SDK dynamically re-initialized for project: ${parsed.project_id || 'quikboom-crm-925d5'}`);
+      this.logger.log(`✅ Firebase Admin SDK dynamically re-initialized for project: ${projectId}`);
       return true;
     } catch (e: any) {
       this.logger.error(`Failed dynamic Firebase initialization: ${e?.message}`);
       return false;
+    }
+  }
+
+  /**
+   * Disconnect and invalidate cached Firebase Admin instance
+   */
+  public async invalidateFirebaseInstance(): Promise<void> {
+    if (this.firebaseApp) {
+      try {
+        await deleteApp(this.firebaseApp);
+        this.logger.log('Firebase Admin SDK instance successfully invalidated.');
+      } catch (err: any) {
+        this.logger.warn(`Non-fatal: Error deleting Firebase App instance: ${err?.message}`);
+      } finally {
+        this.firebaseApp = null;
+        this.isInitialized = false;
+      }
+    } else {
+      const existingApps = getApps();
+      for (const app of existingApps) {
+        try {
+          await deleteApp(app);
+        } catch {
+          // ignore
+        }
+      }
+      this.firebaseApp = null;
+      this.isInitialized = false;
     }
   }
 

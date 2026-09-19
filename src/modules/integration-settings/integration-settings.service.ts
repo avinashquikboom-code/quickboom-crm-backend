@@ -3,7 +3,9 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   encryptSecret,
@@ -66,8 +68,15 @@ export interface FirebaseDynamicConfig {
   projectId: string;
   clientEmail?: string;
   privateKey?: string;
+  messagingSenderId?: string;
+  apiKey?: string;
+  appId?: string;
+  authDomain?: string;
+  storageBucket?: string;
+  vapidKey?: string;
   isEnabled: boolean;
   isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
 export interface OpenAiDynamicConfig {
@@ -202,7 +211,20 @@ export class IntegrationSettingsService {
   private readonly cache = new Map<string, { config: any; cachedAt: number }>();
   private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly moduleRef?: ModuleRef,
+  ) {}
+
+  private getFcmService(): any {
+    try {
+      if (!this.moduleRef) return null;
+      // Lazy lookup by service token name to prevent circular import
+      return this.moduleRef.get('FcmService', { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Clears the in-memory cache for a given provider or all providers.
@@ -454,10 +476,22 @@ export class IntegrationSettingsService {
       case IntegrationProvider.FIREBASE: {
         const projectId = (
           process.env.FIREBASE_PROJECT_ID ||
+          process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
           'quikboom-crm-925d5'
         ).trim();
         const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
         const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
+        const messagingSenderId = (
+          process.env.FIREBASE_MESSAGING_SENDER_ID ||
+          process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
+          '325119319653'
+        ).trim();
+        const apiKey = (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '').trim();
+        const appId = (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '').trim();
+        const authDomain = (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'quikboom-crm-925d5.firebaseapp.com').trim();
+        const storageBucket = (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'quikboom-crm-925d5.firebasestorage.app').trim();
+        const vapidKey = (process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '').trim();
+
         const isConfigured = Boolean(
           projectId &&
             (clientEmail ||
@@ -474,9 +508,18 @@ export class IntegrationSettingsService {
             projectId,
             clientEmail: clientEmail || undefined,
             privateKey: privateKey || undefined,
+            messagingSenderId,
+            apiKey: apiKey || undefined,
+            appId: appId || undefined,
+            authDomain,
+            storageBucket,
+            vapidKey: vapidKey || undefined,
           },
           config: {
             projectId,
+            messagingSenderId,
+            authDomain,
+            storageBucket,
           },
           source: isConfigured ? 'ENV_FALLBACK' : 'NONE',
         };
@@ -712,10 +755,14 @@ export class IntegrationSettingsService {
   async getFirebaseConfig(): Promise<FirebaseDynamicConfig> {
     const conf = await this.getIntegrationConfig(IntegrationProvider.FIREBASE);
     const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
+
     const projectId = String(
       creds.projectId ||
         creds.project_id ||
+        cfg.projectId ||
         process.env.FIREBASE_PROJECT_ID ||
+        process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
         'quikboom-crm-925d5',
     ).trim();
     const clientEmail = String(
@@ -730,6 +777,50 @@ export class IntegrationSettingsService {
         process.env.FIREBASE_PRIVATE_KEY ||
         '',
     ).trim();
+    const messagingSenderId = String(
+      creds.messagingSenderId ||
+        creds.messaging_sender_id ||
+        cfg.messagingSenderId ||
+        process.env.FIREBASE_MESSAGING_SENDER_ID ||
+        process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
+        '325119319653',
+    ).trim();
+    const apiKey = String(
+      creds.apiKey ||
+        creds.api_key ||
+        cfg.apiKey ||
+        process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+        '',
+    ).trim();
+    const appId = String(
+      creds.appId ||
+        creds.app_id ||
+        cfg.appId ||
+        process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
+        '',
+    ).trim();
+    const authDomain = String(
+      creds.authDomain ||
+        creds.auth_domain ||
+        cfg.authDomain ||
+        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
+        'quikboom-crm-925d5.firebaseapp.com',
+    ).trim();
+    const storageBucket = String(
+      creds.storageBucket ||
+        creds.storage_bucket ||
+        cfg.storageBucket ||
+        process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+        'quikboom-crm-925d5.firebasestorage.app',
+    ).trim();
+    const vapidKey = String(
+      creds.vapidKey ||
+        creds.vapid_key ||
+        cfg.vapidKey ||
+        process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
+        '',
+    ).trim();
+
     const isConfigured = Boolean(
       projectId &&
         (clientEmail ||
@@ -739,13 +830,21 @@ export class IntegrationSettingsService {
           process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
     );
     const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
 
     return {
       projectId,
       clientEmail: clientEmail || undefined,
       privateKey: privateKey || undefined,
+      messagingSenderId,
+      apiKey: apiKey || undefined,
+      appId: appId || undefined,
+      authDomain,
+      storageBucket,
+      vapidKey: vapidKey || undefined,
       isEnabled,
       isConfigured,
+      source,
     };
   }
 
@@ -878,8 +977,7 @@ export class IntegrationSettingsService {
         const trimmed = value.trim();
 
         if (
-          trimmed.includes('***') ||
-          trimmed === '******' ||
+          isMaskedSecret(trimmed) ||
           trimmed.length === 0
         ) {
           // Keep existing preserved value
@@ -928,6 +1026,27 @@ export class IntegrationSettingsService {
 
     // 4. Invalidate in-memory cache immediately
     this.clearCache(normProvider);
+
+    // 4b. If Firebase credentials were updated, reload FCM runtime instance
+    if (normProvider === IntegrationProvider.FIREBASE) {
+      const fcm = this.getFcmService();
+      if (fcm) {
+        try {
+          const fbConf = await this.getFirebaseConfig();
+          if (fbConf.isConfigured && fbConf.clientEmail && fbConf.privateKey) {
+            await fcm.initializeWithCredentials({
+              projectId: fbConf.projectId,
+              clientEmail: fbConf.clientEmail,
+              privateKey: fbConf.privateKey,
+            });
+          } else if (!fbConf.isEnabled) {
+            await fcm.invalidateFirebaseInstance();
+          }
+        } catch (fcmErr: any) {
+          this.logger.warn(`Failed to auto-reinitialize FCM on update: ${fcmErr?.message}`);
+        }
+      }
+    }
 
     // 5. Write audit log (NEVER store plain secret in audit log)
     try {

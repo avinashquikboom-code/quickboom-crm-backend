@@ -7,10 +7,10 @@ export class RegisterDeviceTokenDto {
   @IsNotEmpty()
   token: string;
 
-  @ApiPropertyOptional({ description: 'Client Platform', enum: ['ANDROID', 'IOS', 'WEB'], default: 'ANDROID' })
+  @ApiPropertyOptional({ description: 'Client Platform', enum: ['ANDROID', 'IOS', 'WEB', 'android', 'ios', 'web'], default: 'ANDROID' })
   @IsOptional()
   @IsString()
-  @IsIn(['ANDROID', 'IOS', 'WEB'])
+  @IsIn(['ANDROID', 'IOS', 'WEB', 'android', 'ios', 'web'])
   platform?: string;
 
   @ApiPropertyOptional({ description: 'Device Type', example: 'ADMIN_PANEL' })
