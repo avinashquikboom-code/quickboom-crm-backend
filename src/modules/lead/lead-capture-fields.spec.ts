@@ -72,6 +72,7 @@ describe('Lead Capture Field Mapping Tests (End-to-End)', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.lead.findFirst.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

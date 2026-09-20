@@ -1,9 +1,10 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, Inject, Optional, forwardRef } from '@nestjs/common';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LeadService } from '../lead/lead.service';
 import {
   ExtractPlacesDto,
   ImportToLeadsDto,
@@ -47,6 +48,9 @@ export class DataCaptureService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    @Optional()
+    @Inject(forwardRef(() => LeadService))
+    private readonly leadService?: LeadService,
   ) {}
 
   /**
@@ -1001,30 +1005,76 @@ export class DataCaptureService {
     // Resolve Contact details from place / rawData
     const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
 
-    const createdLead = await this.prisma.lead.create({
-      data: {
-        customerId: numCustomerId,
-        title: place.businessName,
-        firstName,
-        lastName,
-        companyName: place.businessName,
-        phone,
-        email,
-        website: place.website || undefined,
-        address: place.address && place.address !== 'N/A' ? place.address : undefined,
-        category: place.category || undefined,
-        googlePlaceId: place.googlePlaceId || undefined,
-        latitude: place.latitude || undefined,
-        longitude: place.longitude || undefined,
-        rating: place.rating || undefined,
-        reviewCount: place.reviewCount || undefined,
-        source: place.source || 'GOOGLE_PLACES',
-        status: 'NEW',
-        priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
-        value: 0,
-        createdById: numUserId,
-      },
-    });
+    let createdLead: any;
+    if (this.leadService) {
+      createdLead = await this.leadService.createLead(
+        numCustomerId,
+        numUserId,
+        {
+          title: place.businessName,
+          firstName,
+          lastName,
+          companyName: place.businessName,
+          phone,
+          email,
+          website: place.website || undefined,
+          address: place.address && place.address !== 'N/A' ? place.address : undefined,
+          category: place.category || undefined,
+          googlePlaceId: place.googlePlaceId || undefined,
+          latitude: place.latitude || undefined,
+          longitude: place.longitude || undefined,
+          rating: place.rating || undefined,
+          reviewCount: place.reviewCount || undefined,
+          source: place.source || 'GOOGLE_PLACES',
+          status: 'NEW',
+          priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
+          value: 0,
+        } as any,
+      );
+    } else {
+      let newStage = await this.prisma.leadStage.findFirst({
+        where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      if (!newStage) {
+        newStage = await this.prisma.leadStage.findFirst({
+          where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        });
+      }
+      if (!newStage) {
+        newStage = await this.prisma.leadStage.findFirst({
+          where: { key: 'NEW', deletedAt: null },
+          orderBy: { id: 'asc' },
+        });
+      }
+
+      createdLead = await this.prisma.lead.create({
+        data: {
+          customerId: numCustomerId,
+          title: place.businessName,
+          firstName,
+          lastName,
+          companyName: place.businessName,
+          phone,
+          email,
+          website: place.website || undefined,
+          address: place.address && place.address !== 'N/A' ? place.address : undefined,
+          category: place.category || undefined,
+          googlePlaceId: place.googlePlaceId || undefined,
+          latitude: place.latitude || undefined,
+          longitude: place.longitude || undefined,
+          rating: place.rating || undefined,
+          reviewCount: place.reviewCount || undefined,
+          source: place.source || 'GOOGLE_PLACES',
+          status: 'NEW',
+          stageId: newStage?.id || undefined,
+          priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
+          value: 0,
+          createdById: numUserId,
+        },
+      });
+    }
 
     // Create note with metadata
     await this.prisma.leadNote.create({
@@ -1245,31 +1295,77 @@ export class DataCaptureService {
 
       const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
 
-      // Create new Lead
-      const createdLead = await this.prisma.lead.create({
-        data: {
-          customerId: numCustomerId,
-          title: place.businessName,
-          firstName,
-          lastName,
-          companyName: place.businessName,
-          phone,
-          email,
-          website: place.website || undefined,
-          address: place.address && place.address !== 'N/A' ? place.address : undefined,
-          category: place.category || undefined,
-          googlePlaceId: place.googlePlaceId || undefined,
-          latitude: place.latitude || undefined,
-          longitude: place.longitude || undefined,
-          rating: place.rating || undefined,
-          reviewCount: place.reviewCount || undefined,
-          source: place.source || 'GOOGLE_PLACES',
-          status: 'NEW',
-          priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
-          value: 0,
-          createdById: numUserId,
-        },
-      });
+      // Create new Lead via LeadService (or fallback)
+      let createdLead: any;
+      if (this.leadService) {
+        createdLead = await this.leadService.createLead(
+          numCustomerId,
+          numUserId,
+          {
+            title: place.businessName,
+            firstName,
+            lastName,
+            companyName: place.businessName,
+            phone,
+            email,
+            website: place.website || undefined,
+            address: place.address && place.address !== 'N/A' ? place.address : undefined,
+            category: place.category || undefined,
+            googlePlaceId: place.googlePlaceId || undefined,
+            latitude: place.latitude || undefined,
+            longitude: place.longitude || undefined,
+            rating: place.rating || undefined,
+            reviewCount: place.reviewCount || undefined,
+            source: place.source || 'GOOGLE_PLACES',
+            status: 'NEW',
+            priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
+            value: 0,
+          } as any,
+        );
+      } else {
+        let newStage = await this.prisma.leadStage.findFirst({
+          where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        });
+        if (!newStage) {
+          newStage = await this.prisma.leadStage.findFirst({
+            where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
+            orderBy: { sortOrder: 'asc' },
+          });
+        }
+        if (!newStage) {
+          newStage = await this.prisma.leadStage.findFirst({
+            where: { key: 'NEW', deletedAt: null },
+            orderBy: { id: 'asc' },
+          });
+        }
+
+        createdLead = await this.prisma.lead.create({
+          data: {
+            customerId: numCustomerId,
+            title: place.businessName,
+            firstName,
+            lastName,
+            companyName: place.businessName,
+            phone,
+            email,
+            website: place.website || undefined,
+            address: place.address && place.address !== 'N/A' ? place.address : undefined,
+            category: place.category || undefined,
+            googlePlaceId: place.googlePlaceId || undefined,
+            latitude: place.latitude || undefined,
+            longitude: place.longitude || undefined,
+            rating: place.rating || undefined,
+            reviewCount: place.reviewCount || undefined,
+            source: place.source || 'GOOGLE_PLACES',
+            status: 'NEW',
+            stageId: newStage?.id || undefined,
+            priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
+            value: 0,
+            createdById: numUserId,
+          },
+        });
+      }
 
       // Attach note with metadata
       await this.prisma.leadNote.create({

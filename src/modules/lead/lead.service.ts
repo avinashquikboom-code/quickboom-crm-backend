@@ -475,17 +475,20 @@ export class LeadService {
     const hasRawEmail = Boolean(rawInputEmail && String(rawInputEmail).trim().length > 0 && !['contact@company.com', 'placeholder@company.com', 'example@company.com'].includes(String(rawInputEmail).trim().toLowerCase()));
     this.logger.log(`[NewLeadAutomation] 2. Email received:\n${hasRawEmail}`);
 
-    const isGoogleDiscovery =
+    const isGoogleLead =
       String(dto.source || '').toUpperCase().includes('GOOGLE') ||
       String(dto.source || '').toUpperCase().includes('DISCOVERY') ||
+      String(dto.source || '') === 'GOOGLE_PLACES' ||
       Boolean(
         (dto as any).user_column_data ||
         (dto as any).column_data ||
         (dto as any).google_key ||
         (dto as any).lead_id,
       );
+    const isGoogleDiscovery = isGoogleLead;
 
-    if (isGoogleDiscovery) {
+    if (isGoogleLead) {
+      this.logger.log('[GoogleLead]\nNew Google lead received');
       this.logger.log('[GoogleDiscovery]\nNew lead received');
     } else {
       this.logger.log('[LeadCapture]\nRequest received');
@@ -505,7 +508,7 @@ export class LeadService {
       (dto as any).contactNumber,
     );
 
-    if (!isGoogleDiscovery) {
+    if (!isGoogleLead) {
       this.logger.log(`[LeadCapture]\nFirst name present: ${hasFirstName}\nLast name present: ${hasLastName}\nEmail present: ${hasEmail}\nMobile present: ${hasMobile}`);
     }
 
@@ -525,7 +528,7 @@ export class LeadService {
 
     const cleaned = this.sanitizeLeadFields(dto);
 
-    if (isGoogleDiscovery) {
+    if (isGoogleLead) {
       this.logger.log(
         `[GoogleDiscovery]\nFirst name present: ${Boolean(cleaned.firstName)}\nLast name present: ${Boolean(cleaned.lastName)}\nEmail present: ${Boolean(cleaned.email)}\nMobile present: ${Boolean(cleaned.phone)}`,
       );
@@ -547,7 +550,7 @@ export class LeadService {
       lookupConditions.push({ email: cleaned.email });
     }
 
-    if (lookupConditions.length > 0 && isGoogleDiscovery) {
+    if (lookupConditions.length > 0 && isGoogleLead) {
       existingLead = await this.prisma.lead.findFirst({
         where: {
           customerId: numCustomerId,
@@ -560,9 +563,11 @@ export class LeadService {
       });
     }
 
-    if (existingLead && isGoogleDiscovery) {
+    if (existingLead && isGoogleLead) {
+      this.logger.log('[GoogleLead]\nExisting lead found: true');
       this.logger.log('[GoogleDiscovery]\nExisting lead found: true');
       const preservedStageName = existingLead.stage?.name || existingLead.status || 'Negotiation';
+      this.logger.log(`[GoogleLead]\nPreserving existing stage: ${preservedStageName}`);
       this.logger.log(`[GoogleDiscovery]\nPreserving existing stage: ${preservedStageName}`);
 
       // Update existing lead without overwriting non-empty fields with blank/null
@@ -591,11 +596,14 @@ export class LeadService {
       return this.getLeadById(customerId, existingLead.id);
     }
 
-    if (isGoogleDiscovery) {
+    if (isGoogleLead) {
+      this.logger.log('[GoogleLead]\nExisting lead found: false');
+      this.logger.log('[GoogleLead]\nInitial CRM stage resolved: NEW');
+      this.logger.log('[GoogleLead]\nCreating Lead');
       this.logger.log('[GoogleDiscovery]\nExisting lead found: false');
       this.logger.log('[GoogleDiscovery]\nAssigning initial CRM stage: New');
 
-      // For a BRAND-NEW Google Discovery lead, stage MUST always be New
+      // For a BRAND-NEW Google Discovery / Google Places lead, stage MUST always be New
       resolvedStatus = LeadStatus.NEW;
       let newStage = await this.prisma.leadStage.findFirst({
         where: {
@@ -684,7 +692,9 @@ export class LeadService {
     const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
     const savedEmailExists = Boolean(createdLead.email && createdLead.email.trim().length > 0);
 
-    if (isGoogleDiscovery) {
+    if (isGoogleLead) {
+      this.logger.log(`[GoogleLead]\nLead created:\nLead ID: ${createdLead.id}\nStage: NEW`);
+      this.logger.log('[GoogleLead]\nNew-stage automation triggered');
       this.logger.log(`[GoogleDiscovery]\nLead created:\nLead ID: ${createdLead.id}\nStage: ${initialStageName}`);
       this.logger.log('[GoogleDiscovery]\nNew-stage automation triggered');
     }
