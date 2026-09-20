@@ -28,6 +28,7 @@ import {
   UpdateLeadStageDto,
   UpdateLeadStatusDto,
   SendLeadWhatsAppDto,
+  SendLeadEmailDto,
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -125,11 +126,14 @@ export class LeadController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'stageId', required: false })
+  @ApiQuery({ name: 'dateFilter', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('stageId') stageId?: string,
@@ -148,7 +152,7 @@ export class LeadController {
   }
 
   @Post(':id/convert')
-  @ApiOperation({ summary: 'Convert qualified lead to Customer Company, Contact, and Deal' })
+  @ApiOperation({ summary: 'Convert lead to customer account' })
   async convert(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
@@ -158,7 +162,7 @@ export class LeadController {
     return this.leadService.convertLead(customerId, id, userId, dto);
   }
 
-  @Get('whatsapp-templates')
+  @Get(['whatsapp-templates', 'whatsapp/templates'])
   @ApiOperation({ summary: 'Get all available WhatsApp templates for leads' })
   async getWhatsAppTemplates() {
     return this.leadService.getWhatsAppTemplates();
@@ -170,11 +174,18 @@ export class LeadController {
     return this.leadService.getLeadStatus(customerId, id);
   }
 
+  @Get(':id/communications')
+  @ApiOperation({ summary: 'Get unified Email and WhatsApp communication history and delivery tracking' })
+  async getCommunications(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.getLeadCommunications(customerId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.getLeadById(customerId, id);
   }
+
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update lead details' })
@@ -291,6 +302,17 @@ export class LeadController {
     return this.leadService.sendLeadDetails(customerId, id, user);
   }
 
+  @Post(':id/send-email')
+  @ApiOperation({ summary: 'Send a custom email or details email to the lead via configured SMTP' })
+  async sendLeadEmail(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: SendLeadEmailDto,
+  ) {
+    return this.leadService.sendLeadEmail(customerId, id, user, dto);
+  }
+
   @Post(':id/send-whatsapp')
   @ApiOperation({ summary: 'Send a WhatsApp message or template to the lead phone' })
   async sendLeadWhatsApp(
@@ -302,3 +324,4 @@ export class LeadController {
     return this.leadService.sendLeadWhatsApp(customerId, id, userId, dto);
   }
 }
+

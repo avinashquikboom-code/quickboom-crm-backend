@@ -601,6 +601,19 @@ export class SendLeadWhatsAppDto {
   stageName?: string;
 }
 
+export class SendLeadEmailDto {
+  @ApiPropertyOptional({ example: 'Update regarding your inquiry' })
+  @IsString()
+  @IsOptional()
+  subject?: string;
+
+  @ApiPropertyOptional({ example: 'Hi Rahul, we have prepared your project proposal...' })
+  @IsString()
+  @IsOptional()
+  message?: string;
+}
+
+
 export class CreateLeadStageDto {
   @ApiProperty({ example: 'Interested' })
   @IsString()

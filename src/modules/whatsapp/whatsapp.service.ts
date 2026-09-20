@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -21,7 +22,17 @@ export class WhatsappService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
+
+  private getNotificationService(): any {
+    try {
+      if (!this.moduleRef) return null;
+      return this.moduleRef.get('NotificationService', { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Normalizes a phone number for WhatsApp Business API (E.164 digits without leading '+').
@@ -1325,6 +1336,64 @@ export class WhatsappService {
             },
           },
         });
+
+        // 1b. Send FCM Push Notification to assigned BPO / lead creator
+        try {
+          const lead = await this.prisma.lead?.findUnique?.({
+            where: { id: tl.leadId },
+            select: {
+              id: true,
+              title: true,
+              firstName: true,
+              phone: true,
+              customerId: true,
+              assignedToId: true,
+              createdById: true,
+            },
+          });
+
+          const recipientUserId = lead?.assignedToId || lead?.createdById;
+          const notificationService = this.getNotificationService();
+
+          if (notificationService && recipientUserId && lead?.customerId) {
+            const leadName = lead.firstName || lead.title || 'Lead';
+            let pushTitle = `WhatsApp: ${status.toUpperCase()}`;
+            let pushBody = `WhatsApp status for ${leadName}: ${status.toUpperCase()}`;
+
+            if (status === 'delivered') {
+              pushTitle = `WhatsApp Delivered: ${leadName}`;
+              pushBody = `Your message to ${lead.phone || leadName} was delivered successfully.`;
+            } else if (status === 'read') {
+              pushTitle = `WhatsApp Read: ${leadName}`;
+              pushBody = `${leadName} has read your WhatsApp message.`;
+            } else if (isFailed) {
+              pushTitle = `WhatsApp Failed: ${leadName}`;
+              pushBody = `Message to ${lead.phone || leadName} could not be delivered: ${errorMessage || errorCode || 'Failed'}`;
+            }
+
+            notificationService
+              .sendPushNotification({
+                userId: recipientUserId,
+                customerId: lead.customerId,
+                title: pushTitle,
+                body: pushBody,
+                type: 'WHATSAPP_STATUS',
+                data: {
+                  type: 'WHATSAPP_STATUS',
+                  communicationId: String(tl.id),
+                  leadId: String(lead.id),
+                  customerId: String(lead.customerId),
+                  status: status.toUpperCase(),
+                  channel: 'WHATSAPP',
+                },
+              })
+              .catch((pushErr: any) => {
+                this.logger.debug(`[WHATSAPP_STATUS_PUSH_DEBUG] ${pushErr?.message}`);
+              });
+          }
+        } catch (leadPushErr: any) {
+          this.logger.debug(`[WHATSAPP_STATUS_LEAD_ERR] ${leadPushErr?.message}`);
+        }
       }
     } catch (err: any) {
       this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating timeline for ${messageId}: ${err?.message}`);
@@ -1525,24 +1594,47 @@ export class WhatsappService {
             },
           });
 
-          // Send CRM notification to assigned user or lead creator
+          // Send CRM notification and FCM push notification to assigned user or lead creator
           const recipientUserId = matchingLead.assignedToId || matchingLead.createdById;
-          if (recipientUserId && matchingLead.customerId && this.prisma.notification?.create) {
-            await this.prisma.notification.create({
-              data: {
-                customerId: matchingLead.customerId,
-                userId: recipientUserId,
-                title: `New WhatsApp Message from ${senderLabel}`,
-                message: textContent.slice(0, 200),
-                type: 'WHATSAPP_INBOUND',
+          if (recipientUserId && matchingLead.customerId) {
+            const notificationService = this.getNotificationService();
+            if (notificationService) {
+              await notificationService
+                .sendPushNotification({
+                  customerId: matchingLead.customerId,
+                  userId: recipientUserId,
+                  title: `New WhatsApp from ${senderLabel}`,
+                  body: textContent.slice(0, 200),
+                  type: 'WHATSAPP_INCOMING',
+                  data: {
+                    type: 'WHATSAPP_INCOMING',
+                    leadId: String(matchingLead.id),
+                    customerId: String(matchingLead.customerId),
+                    whatsappMessageId: messageId,
+                    from: this.maskPhone(from),
+                    channel: 'WHATSAPP',
+                  },
+                })
+                .catch((err: any) => {
+                  this.logger.warn(`[WHATSAPP_INCOMING_PUSH_ERR] ${err?.message}`);
+                });
+            } else if (this.prisma.notification?.create) {
+              await this.prisma.notification.create({
                 data: {
-                  leadId: matchingLead.id,
-                  whatsappMessageId: messageId,
-                  from: this.maskPhone(from),
-                  type,
+                  customerId: matchingLead.customerId,
+                  userId: recipientUserId,
+                  title: `New WhatsApp Message from ${senderLabel}`,
+                  message: textContent.slice(0, 200),
+                  type: 'WHATSAPP_INBOUND',
+                  data: {
+                    leadId: matchingLead.id,
+                    whatsappMessageId: messageId,
+                    from: this.maskPhone(from),
+                    type,
+                  },
                 },
-              },
-            });
+              });
+            }
           }
         }
       } catch (err: any) {

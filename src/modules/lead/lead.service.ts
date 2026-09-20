@@ -1,6 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { LeadStatus } from '@prisma/client';
 import { LeadRepository } from './lead.repository';
+import { NotificationService } from '../notification/notification.service';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
@@ -18,6 +20,7 @@ import {
   UpdateLeadStageDto,
   UpdateLeadStatusDto,
   SendLeadWhatsAppDto,
+  SendLeadEmailDto,
   normalizeLeadStatus,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
@@ -60,7 +63,17 @@ export class LeadService {
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
+
+  private getNotificationService(): NotificationService | null {
+    if (!this.moduleRef) return null;
+    try {
+      return this.moduleRef.get(NotificationService, { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
     return this.leadRepository.getSummaryMetrics(customerId, user);
@@ -274,6 +287,25 @@ export class LeadService {
       this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] ${err?.message}`);
     });
 
+    if (assignment?.assignedToId) {
+      const notifService = this.getNotificationService();
+      if (notifService) {
+        notifService.sendPushNotification({
+          userId: Number(assignment.assignedToId),
+          customerId: Number(customerId),
+          title: 'New Lead Assigned',
+          body: `You have been assigned to lead "${lead.companyName || lead.title || lead.firstName || 'Lead #' + lead.id}".`,
+          type: 'LEAD_ASSIGNED',
+          data: {
+            leadId: String(lead.id),
+            customerId: String(customerId),
+            channel: 'LEAD',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
+      }
+    }
+
     return lead;
   }
 
@@ -434,6 +466,25 @@ export class LeadService {
       'LEAD_UPDATED',
       `Lead details updated`,
     );
+
+    if (assignment?.assignedToId && assignment.assignedToId !== lead.assignedToId) {
+      const notifService = this.getNotificationService();
+      if (notifService) {
+        notifService.sendPushNotification({
+          userId: Number(assignment.assignedToId),
+          customerId: Number(customerId),
+          title: 'New Lead Assigned',
+          body: `You have been assigned to lead "${lead.companyName || lead.title || lead.firstName || 'Lead #' + id}".`,
+          type: 'LEAD_ASSIGNED',
+          data: {
+            leadId: String(id),
+            customerId: String(customerId),
+            channel: 'LEAD',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
+      }
+    }
 
     const updatedLead = await this.getLeadById(customerId, id);
 
@@ -1176,28 +1227,374 @@ Source: ${lead.source}
 Sent by ${senderOrgName} via CRM.
     `.trim();
 
-    const result = await this.emailService.sendEmail({
-      to: recipient,
-      subject: `Lead Details: ${businessName}`,
-      html: htmlContent,
-      text: textContent,
-      recordType: 'lead',
-      recordId: lead.id,
-    }, user);
+    try {
+      const result = await this.emailService.sendEmail({
+        to: recipient,
+        subject: `Lead Details: ${businessName}`,
+        html: htmlContent,
+        text: textContent,
+        recordType: 'lead',
+        recordId: lead.id,
+      }, user);
 
-    // Write to activity timeline
-    await this.prisma.leadActivityTimeline.create({
-      data: {
-        leadId: lead.id,
-        action: 'EMAIL_SENT',
-        description: `Lead details dispatched via SMTP to ${recipient} (Message ID: ${result.messageId || 'sent'})`,
+      // Write to activity timeline
+      await this.prisma.leadActivityTimeline.create({
+        data: {
+          leadId: lead.id,
+          action: 'EMAIL_SENT',
+          description: `Lead details dispatched via SMTP to ${recipient} (Message ID: ${result.messageId || 'sent'})`,
+        },
+      }).catch(() => null);
+
+      return {
+        success: true,
+        message: `Lead details successfully sent to ${recipient}`,
+        messageId: result.messageId,
+      };
+    } catch (err: any) {
+      await this.prisma.leadActivityTimeline.create({
+        data: {
+          leadId: lead.id,
+          action: 'EMAIL_FAILED',
+          description: `Failed to send email to ${recipient}: ${err.message || 'SMTP Error'}`,
+        },
+      }).catch(() => null);
+
+      const targetUserId = lead.assignedToId || (user?.id ? Number(user.id) : undefined);
+      if (targetUserId && lead.customerId) {
+        const notifService = this.getNotificationService();
+        if (notifService) {
+          notifService.sendPushNotification({
+            userId: targetUserId,
+            customerId: lead.customerId,
+            title: 'Email Delivery Failed',
+            body: `Failed to send email to "${businessName}": ${err.message || 'SMTP Error'}`,
+            type: 'EMAIL_FAILED',
+            data: {
+              leadId: String(lead.id),
+              customerId: String(lead.customerId),
+              channel: 'EMAIL',
+              error: String(err.message || 'SMTP Error'),
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          }).catch((e) => this.logger.warn(`Failed to dispatch EMAIL_FAILED push: ${e.message}`));
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Sends custom email or details email to lead.
+   */
+  async sendLeadEmail(
+    customerId: number | string | undefined,
+    leadId: number | string,
+    user?: any,
+    dto?: SendLeadEmailDto,
+  ) {
+    if (!dto?.message && !dto?.subject) {
+      return this.sendLeadDetails(customerId, leadId, user);
+    }
+
+    const id = Number(leadId);
+    if (isNaN(id)) throw new BadRequestException('Invalid lead ID');
+    const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id,
+        ...(parsedCustomerId ? { customerId: parsedCustomerId } : {}),
+        deletedAt: null,
       },
-    }).catch(() => null);
+      include: {
+        customer: {
+          select: { name: true, companyName: true, email: true, phone: true },
+        },
+      },
+    });
+
+    if (!lead) throw new NotFoundException(`Lead record #${leadId} not found`);
+
+    const recipient = (lead.email || '').trim();
+    if (!recipient) {
+      throw new BadRequestException(`Lead has no email address configured.`);
+    }
+
+    if (!this.emailService) {
+      throw new BadRequestException('Email service is not available');
+    }
+
+    const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom CRM';
+    const subject = dto.subject?.trim() || `Update from ${senderOrgName}`;
+    const bodyContent = dto.message || '';
+
+    const htmlContent = wrapInQuikboomEmailHtml(
+      `<div style="font-size: 14px; line-height: 1.6; color: #334155; white-space: pre-wrap;">${bodyContent}</div>`,
+      { previewText: subject, companyName: senderOrgName },
+    );
+
+    try {
+      const result = await this.emailService.sendEmail({
+        to: recipient,
+        subject,
+        html: htmlContent,
+        text: bodyContent,
+        recordType: 'lead',
+        recordId: lead.id,
+      }, user);
+
+      await this.prisma.leadActivityTimeline.create({
+        data: {
+          leadId: lead.id,
+          action: 'EMAIL_SENT',
+          description: `Custom email sent to ${recipient}: "${subject}"`,
+        },
+      }).catch(() => null);
+
+      return {
+        success: true,
+        message: `Email successfully sent to ${recipient}`,
+        messageId: result.messageId,
+      };
+    } catch (err: any) {
+      await this.prisma.leadActivityTimeline.create({
+        data: {
+          leadId: lead.id,
+          action: 'EMAIL_FAILED',
+          description: `Failed to send email to ${recipient}: ${err.message || 'SMTP Error'}`,
+        },
+      }).catch(() => null);
+
+      const targetUserId = lead.assignedToId || (user?.id ? Number(user.id) : undefined);
+      if (targetUserId && lead.customerId) {
+        const notifService = this.getNotificationService();
+        if (notifService) {
+          notifService.sendPushNotification({
+            userId: targetUserId,
+            customerId: lead.customerId,
+            title: 'Email Delivery Failed',
+            body: `Failed to send email to "${recipient}": ${err.message || 'SMTP Error'}`,
+            type: 'EMAIL_FAILED',
+            data: {
+              leadId: String(lead.id),
+              customerId: String(lead.customerId),
+              channel: 'EMAIL',
+              error: String(err.message || 'SMTP Error'),
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          }).catch((e) => this.logger.warn(`Failed to dispatch EMAIL_FAILED push: ${e.message}`));
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Unified communication history for a lead (EmailLogs + WhatsApp / Email timelines)
+   */
+  async getLeadCommunications(customerId: number | string | undefined, leadId: number | string) {
+    const id = Number(leadId);
+    if (isNaN(id)) {
+      throw new BadRequestException('Invalid lead ID');
+    }
+    const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id,
+        ...(parsedCustomerId ? { customerId: parsedCustomerId } : {}),
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        customerId: true,
+        assignedToId: true,
+        firstName: true,
+        lastName: true,
+        companyName: true,
+        title: true,
+        email: true,
+        phone: true,
+      },
+    });
+
+    if (!lead) {
+      throw new NotFoundException(`Lead #${leadId} not found`);
+    }
+
+    // 1. Fetch email logs
+    const emailLogs = await this.prisma.emailLog.findMany({
+      where: {
+        leadId: id,
+        ...(parsedCustomerId ? { customerId: parsedCustomerId } : {}),
+      },
+      include: {
+        user: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    // 2. Fetch timeline records with communication actions
+    const commActions = [
+      'WHATSAPP_SENT',
+      'WHATSAPP_INCOMING',
+      'WHATSAPP_FAILED',
+      'LEAD_CREATED_WHATSAPP',
+      'EMAIL_SENT',
+      'EMAIL_FAILED',
+    ];
+    const timelineLogs = await this.prisma.leadActivityTimeline.findMany({
+      where: {
+        leadId: id,
+        action: { in: commActions },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    // 3. Build unified communication items
+    const items: Array<{
+      id: string;
+      channel: 'EMAIL' | 'WHATSAPP';
+      direction: 'OUTBOUND' | 'INBOUND';
+      action: string;
+      status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED';
+      title: string;
+      content: string;
+      recipient: string;
+      sender: string;
+      errorMessage: string | null;
+      providerMessageId: string | null;
+      createdAt: string;
+      metadata?: any;
+    }> = [];
+
+    for (const el of emailLogs) {
+      const senderName = el.user
+        ? `${el.user.firstName || ''} ${el.user.lastName || ''}`.trim() || el.user.email
+        : 'System / CRM';
+      const rawStatus = (el.status || 'SENT').toUpperCase();
+      let status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED' = 'SENT';
+      if (rawStatus === 'FAILED') status = 'FAILED';
+      else if (rawStatus === 'QUEUED') status = 'QUEUED';
+      else if (rawStatus === 'DELIVERED') status = 'DELIVERED';
+
+      items.push({
+        id: `email-${el.id}`,
+        channel: 'EMAIL',
+        direction: 'OUTBOUND',
+        action: 'EMAIL_SENT',
+        status,
+        title: el.subject || 'Email to Lead',
+        content: el.renderedContent
+          ? el.renderedContent.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().substring(0, 300)
+          : (el.subject || ''),
+        recipient: el.recipientEmail || lead.email || '',
+        sender: senderName,
+        errorMessage: el.errorMessage || null,
+        providerMessageId: el.providerMessageId || null,
+        createdAt: el.createdAt ? el.createdAt.toISOString() : new Date().toISOString(),
+        metadata: {
+          eventType: el.eventType,
+          emailLogId: el.id,
+        },
+      });
+    }
+
+    for (const tl of timelineLogs) {
+      const meta = (tl.metadata as any) || {};
+      const action = tl.action;
+
+      if (action === 'EMAIL_SENT' || action === 'EMAIL_FAILED') {
+        const isDuplicate = emailLogs.some((el) => {
+          const diff = Math.abs(new Date(el.createdAt).getTime() - new Date(tl.createdAt).getTime());
+          return diff < 60000;
+        });
+        if (isDuplicate) continue;
+
+        items.push({
+          id: `timeline-${tl.id}`,
+          channel: 'EMAIL',
+          direction: 'OUTBOUND',
+          action,
+          status: action === 'EMAIL_FAILED' ? 'FAILED' : 'SENT',
+          title: 'Email Communication',
+          content: tl.description || '',
+          recipient: lead.email || '',
+          sender: 'CRM',
+          errorMessage: action === 'EMAIL_FAILED' ? tl.description : null,
+          providerMessageId: meta.messageId || null,
+          createdAt: tl.createdAt.toISOString(),
+          metadata: meta,
+        });
+      } else if (action === 'WHATSAPP_INCOMING') {
+        items.push({
+          id: `timeline-${tl.id}`,
+          channel: 'WHATSAPP',
+          direction: 'INBOUND',
+          action,
+          status: 'RECEIVED',
+          title: `Incoming WhatsApp from ${meta.from || lead.phone || 'Lead'}`,
+          content: meta.text || tl.description || '',
+          recipient: 'CRM / You',
+          sender: meta.from || lead.phone || 'Lead',
+          errorMessage: null,
+          providerMessageId: meta.messageId || null,
+          createdAt: tl.createdAt.toISOString(),
+          metadata: meta,
+        });
+      } else {
+        let status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED' = 'SENT';
+        const metaStatus = (meta.status || '').toUpperCase();
+        if (action === 'WHATSAPP_FAILED' || metaStatus === 'FAILED') {
+          status = 'FAILED';
+        } else if (metaStatus === 'READ') {
+          status = 'READ';
+        } else if (metaStatus === 'DELIVERED') {
+          status = 'DELIVERED';
+        } else if (metaStatus === 'SENT' || metaStatus === 'SUCCESS') {
+          status = 'SENT';
+        }
+
+        items.push({
+          id: `timeline-${tl.id}`,
+          channel: 'WHATSAPP',
+          direction: 'OUTBOUND',
+          action,
+          status,
+          title: meta.stageName ? `WhatsApp: ${meta.stageName}` : 'WhatsApp Message',
+          content: tl.description || '',
+          recipient: meta.phone || lead.phone || '',
+          sender: 'CRM Team',
+          errorMessage: meta.errorReason || meta.errorCode || null,
+          providerMessageId: meta.messageId || null,
+          createdAt: tl.createdAt.toISOString(),
+          metadata: meta,
+        });
+      }
+    }
+
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const totalEmails = items.filter((i) => i.channel === 'EMAIL').length;
+    const totalWhatsApp = items.filter((i) => i.channel === 'WHATSAPP').length;
+    const lastItem = items[0];
 
     return {
-      success: true,
-      message: `Lead details successfully sent to ${recipient}`,
-      messageId: result.messageId,
+      leadId: id,
+      summary: {
+        totalCommunications: items.length,
+        totalEmails,
+        totalWhatsApp,
+        lastContactAt: lastItem ? lastItem.createdAt : null,
+        lastChannel: lastItem ? lastItem.channel : null,
+        lastStatus: lastItem ? lastItem.status : null,
+      },
+      communications: items,
     };
   }
 
@@ -1205,6 +1602,7 @@ Sent by ${senderOrgName} via CRM.
    * Returns all available WhatsApp templates for lead stages.
    */
   getWhatsAppTemplates() {
+    if (!this.whatsappService) return [];
     return this.whatsappService.getAllStageTemplates().map((tpl) => ({
       key: tpl.key,
       templateName: tpl.templateName,
