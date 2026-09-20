@@ -7,6 +7,8 @@ import {
   PREDEFINED_SYSTEM_TEMPLATES,
   DEFAULT_PUBLIC_LOGO_URL,
   DEFAULT_PRIMARY_COLOR,
+  resolvePublicLogoUrl,
+  wrapInQuikboomEmailHtml,
 } from './email-template.service';
 import * as nodemailer from 'nodemailer';
 import * as path from 'path';
@@ -107,12 +109,15 @@ export class EmailService {
         select: { logo: true },
       }).catch(() => null);
       if (cust?.logo) {
-        const l = cust.logo.trim();
-        if (l.startsWith('http://') || l.startsWith('https://')) {
-          publicLogoUrl = l;
-        } else if (l.startsWith('/')) {
-          publicLogoUrl = `https://admin.qbapp.online${l}`;
-        }
+        publicLogoUrl = resolvePublicLogoUrl(cust.logo);
+      }
+    } else if (this.prisma?.customer?.findFirst) {
+      const custWithLogo = await this.prisma.customer.findFirst({
+        where: { logo: { not: null } },
+        select: { logo: true },
+      }).catch(() => null);
+      if (custWithLogo?.logo) {
+        publicLogoUrl = resolvePublicLogoUrl(custWithLogo.logo);
       }
     }
 
@@ -126,18 +131,39 @@ export class EmailService {
       }
     }
 
-    if (htmlContent) {
-      // 1. Ensure public HTTPS logo (Gmail requires absolute, publicly reachable URL)
-      htmlContent = htmlContent
-        .replace(/cid:quikboom-logo/g, publicLogoUrl)
-        .replace(/src=["']\/logo\.png["']/g, `src="${publicLogoUrl}"`)
-        .replace(/src=["']\/app_logo\.png["']/g, `src="${publicLogoUrl}"`)
-        .replace(/src=["']logo\.png["']/g, `src="${publicLogoUrl}"`);
+    // Ensure email content is rich HTML with the company header and public HTTPS logo
+    if (!htmlContent && (dto.body || textContent)) {
+      htmlContent = wrapInQuikboomEmailHtml(dto.body || textContent, {
+        primaryColor,
+        logoSrc: publicLogoUrl,
+        companyName: (dto as any).companyName || 'QUIKBOOM',
+      });
+    } else if (htmlContent) {
+      if (
+        !htmlContent.includes('<html') &&
+        !htmlContent.includes('<!DOCTYPE') &&
+        !htmlContent.includes('<body') &&
+        !htmlContent.includes('<img')
+      ) {
+        htmlContent = wrapInQuikboomEmailHtml(htmlContent, {
+          primaryColor,
+          logoSrc: publicLogoUrl,
+          companyName: (dto as any).companyName || 'QUIKBOOM',
+        });
+      } else {
+        // Ensure all logo references in HTML use the verified absolute public HTTPS URL
+        htmlContent = htmlContent
+          .replace(/cid:quikboom-logo/g, publicLogoUrl)
+          .replace(/src=["']\/logo\.png["']/g, `src="${publicLogoUrl}"`)
+          .replace(/src=["']\/app_logo\.png["']/g, `src="${publicLogoUrl}"`)
+          .replace(/src=["']logo\.png["']/g, `src="${publicLogoUrl}"`)
+          .replace(/src=["']app_logo\.png["']/g, `src="${publicLogoUrl}"`);
+      }
 
-      // 2. Replace hardcoded dark/navy gradients with dynamic primary color
+      // Replace hardcoded dark/navy gradients with dynamic primary color
       htmlContent = htmlContent.replace(/linear-gradient\(135deg,\s*#0f172a,\s*#1e293b\)/g, primaryColor);
 
-      // 3. Ensure inline background styles on email headers
+      // Ensure inline background styles on email headers
       if (htmlContent.includes('class="email-header"') && !htmlContent.includes('class="email-header" style="background')) {
         htmlContent = htmlContent.replace(
           'class="email-header"',

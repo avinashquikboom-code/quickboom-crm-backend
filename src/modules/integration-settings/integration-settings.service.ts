@@ -1426,7 +1426,7 @@ export class IntegrationSettingsService {
           ...maskedCreds,
           phoneNumberId: creds.phoneNumberId || creds.phone_number_id || '',
           businessAccountId: creds.businessAccountId || creds.business_account_id || creds.wabaId || '',
-          apiVersion: creds.apiVersion || 'v19.0',
+          apiVersion: creds.apiVersion || 'v25.0',
           verifyToken: maskedCreds.verifyToken,
           appId: creds.appId || '',
           hasAccessToken: hasToken,
@@ -1591,17 +1591,19 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.WHATSAPP: {
-        const apiKey = resolvedCreds.apiKey || resolvedCreds.accessToken || resolvedCreds.access_token;
-        const phoneNumberId = resolvedCreds.phoneNumberId || resolvedCreds.phone_number_id;
+        const apiKey = (resolvedCreds.apiKey || resolvedCreds.accessToken || resolvedCreds.access_token || '').trim();
+        const phoneNumberId = (resolvedCreds.phoneNumberId || resolvedCreds.phone_number_id || '').trim();
+        const apiVersion = (resolvedCreds.apiVersion || 'v25.0').trim();
+        const testPhone = (testCreds.testPhone || testCreds.recipientPhone || testCreds.to || (dto?.credentials as any)?.testPhone || '').trim();
 
         if (!apiKey || !phoneNumberId) {
           throw new BadRequestException('WhatsApp Access Token and Phone Number ID are required to test connection');
         }
 
         try {
-          // Attempt verification call with Meta Cloud API endpoint
+          // 1. Verify Phone Number ID & credentials against Meta Cloud API endpoint
           const response = await axios.get(
-            `https://graph.facebook.com/v19.0/${phoneNumberId}`,
+            `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`,
             {
               headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -1609,39 +1611,83 @@ export class IntegrationSettingsService {
               params: {
                 fields: 'verified_name,code_verification_status,display_phone_number,quality_rating',
               },
-              timeout: 8000,
+              timeout: 10000,
             },
           );
+
+          let testMessageResult: any = null;
+          // 2. If testPhone provided, send a real test text message
+          if (testPhone) {
+            const rawPhone = testPhone.replace(/\D/g, '');
+            const normalizedPhone = rawPhone.length === 10 && /^[6-9]\d{9}$/.test(rawPhone) ? `91${rawPhone}` : rawPhone;
+            const messagePayload = {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: normalizedPhone,
+              type: 'text',
+              text: {
+                preview_url: false,
+                body: testCreds.message || 'What can I help you with today?',
+              },
+            };
+
+            const sendRes = await axios.post(
+              `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+              messagePayload,
+              {
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                  'Content-Type': 'application/json',
+                },
+                timeout: 10000,
+              },
+            );
+
+            testMessageResult = {
+              recipient: normalizedPhone,
+              wamid: sendRes.data?.messages?.[0]?.id,
+              status: 'SENT',
+            };
+          }
 
           return {
             success: true,
             provider: 'WHATSAPP',
             status: 'CONNECTED',
-            message: 'WhatsApp Business API configuration verified with Meta!',
+            message: testMessageResult
+              ? `WhatsApp configuration verified & test message sent to ${testPhone} (wamid: ${testMessageResult.wamid})!`
+              : 'WhatsApp Business API configuration verified with Meta!',
             details: {
               phoneNumberId,
+              apiVersion,
               verifiedName: response.data?.verified_name,
               displayPhoneNumber: response.data?.display_phone_number,
               qualityRating: response.data?.quality_rating,
-              tokenPrefix: apiKey.substring(0, 8) + '...',
+              codeVerificationStatus: response.data?.code_verification_status,
+              testMessage: testMessageResult,
             },
           };
         } catch (err: any) {
-          const errMsg = err?.response?.data?.error?.message || err?.message || 'Verification failed';
-          this.logger.warn(`[WHATSAPP_TEST_NOTICE] Meta Graph API check: ${errMsg}`);
-          if (err?.response?.status === 401 || err?.response?.status === 403) {
-            throw new BadRequestException(`WhatsApp authentication failed: ${errMsg}`);
+          const fbError = err?.response?.data?.error;
+          const errorCode = fbError?.code || err?.code || 'UNKNOWN';
+          const errorType = fbError?.type;
+          const errorSubcode = fbError?.error_subcode;
+          const fbtraceId = fbError?.fbtrace_id;
+          const rawErrMsg = fbError?.message || err?.message || 'Verification failed';
+
+          this.logger.warn(
+            `[WHATSAPP_TEST_ERROR]\nPhone Number ID: ${phoneNumberId}\nAPI Version: ${apiVersion}\nHTTP status: ${err?.response?.status || 'N/A'}\nError code: ${errorCode}\nError type: ${errorType || 'N/A'}\nError subcode: ${errorSubcode || 'N/A'}\nTrace ID: ${fbtraceId || 'N/A'}\nError message: ${rawErrMsg}`,
+          );
+
+          if (String(errorCode) === '190' || errorType === 'OAuthException') {
+            throw new BadRequestException(
+              `WhatsApp Access Token is invalid or expired (Meta Error 190). Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
+            );
           }
-          return {
-            success: true,
-            provider: 'WHATSAPP',
-            status: 'CONNECTED',
-            message: 'WhatsApp Business API configuration verified!',
-            details: {
-              phoneNumberId,
-              tokenPrefix: apiKey.substring(0, 8) + '...',
-            },
-          };
+
+          throw new BadRequestException(
+            `WhatsApp connection test failed (Code ${errorCode}): ${rawErrMsg}`,
+          );
         }
       }
 
@@ -2261,7 +2307,7 @@ export class IntegrationSettingsService {
     const creds = { ...(conf?.credentials || {}), ...(credentials || {}) };
     const accessToken = (creds.apiKey || creds.accessToken || '').trim();
     const businessAccountId = (creds.businessAccountId || creds.wabaId || '').trim();
-    const apiVersion = (creds.apiVersion || 'v19.0').trim();
+    const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
     if (!accessToken || !businessAccountId) {
       throw new BadRequestException('Meta Access Token and WhatsApp Business Account ID are required to subscribe webhook');

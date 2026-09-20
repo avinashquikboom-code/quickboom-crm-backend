@@ -14,7 +14,11 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { EmailTemplateService } from './email-template.service';
+import {
+  EmailTemplateService,
+  DEFAULT_PUBLIC_LOGO_URL,
+  DEFAULT_PRIMARY_COLOR,
+} from './email-template.service';
 import { EmailService } from './email.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
@@ -166,15 +170,22 @@ export class EmailTemplateController {
       variables: dto.variables,
     });
 
-    const isHtml = preview.body.includes('<') && preview.body.includes('>');
+    // Ensure the test email is dispatched as rich HTML with the company logo in the header
+    let finalHtml = preview.body;
+    if (!finalHtml.includes('<html') && !finalHtml.includes('<!DOCTYPE') && !finalHtml.includes('<body')) {
+      finalHtml = this.emailTemplateService.wrapInQuikboomEmailHtml(finalHtml, {
+        logoSrc: DEFAULT_PUBLIC_LOGO_URL,
+        primaryColor: DEFAULT_PRIMARY_COLOR,
+      });
+    }
 
     return this.emailService.sendEmail(
       {
         to: dto.to,
         subject: `[TEST] ${preview.subject}`,
         body: preview.body,
-        html: isHtml ? preview.body : undefined,
-        text: !isHtml ? preview.body : undefined,
+        html: finalHtml,
+        text: preview.body.replace(/<[^>]*>/g, '').trim(),
         recordType: 'EMAIL_TEMPLATE_TEST',
         recordId: dto.templateId ? String(dto.templateId) : undefined,
       },

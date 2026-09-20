@@ -111,7 +111,7 @@ describe('WhatsappService', () => {
       expect(result.success).toBe(true);
       expect(result.messageId).toBe('wamid.test.welcome.123');
       expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://graph.facebook.com/v19.0/109876543210/messages',
+        'https://graph.facebook.com/v25.0/109876543210/messages',
         expect.objectContaining({
           messaging_product: 'whatsapp',
           to: '919876543210',
@@ -228,7 +228,7 @@ describe('WhatsappService', () => {
       expect(result.success).toBe(true);
       expect(result.messageId).toBe('wamid.test.plan.456');
       expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://graph.facebook.com/v19.0/109876543210/messages',
+        'https://graph.facebook.com/v25.0/109876543210/messages',
         expect.objectContaining({
           messaging_product: 'whatsapp',
           to: '919876543210',
@@ -312,6 +312,26 @@ describe('WhatsappService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
+    });
+
+    it('handles Meta Error 190 with clear authentication failure details', async () => {
+      mockedAxios.post.mockRejectedValueOnce({
+        response: {
+          status: 400,
+          data: {
+            error: {
+              code: 190,
+              type: 'OAuthException',
+              message: 'Error validating access token: Session has expired.',
+            },
+          },
+        },
+      });
+
+      const result = await service.sendMessage('9876543210', 'Test message');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('190');
+      expect(result.details).toContain('WhatsApp authentication failed');
     });
   });
 });

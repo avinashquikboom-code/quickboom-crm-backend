@@ -17,6 +17,34 @@ export interface SystemTemplateDefinition {
 export const DEFAULT_PUBLIC_LOGO_URL = 'https://admin.qbapp.online/logo.png';
 export const DEFAULT_PRIMARY_COLOR = '#16A34A';
 
+/**
+ * Resolves any logo path/URL into a publicly accessible, absolute HTTPS URL.
+ * Handles /uploads/..., relative paths, localhost references, and ensures HTTPS.
+ */
+export function resolvePublicLogoUrl(rawLogo?: string | null): string {
+  if (!rawLogo || typeof rawLogo !== 'string' || !rawLogo.trim()) {
+    return DEFAULT_PUBLIC_LOGO_URL;
+  }
+  const trimmed = rawLogo.trim();
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+    if (/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(trimmed)) {
+      if (trimmed.includes('/uploads/')) {
+        return trimmed.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, 'https://api.qbapp.online');
+      }
+      return trimmed.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, 'https://admin.qbapp.online');
+    }
+    return trimmed.replace(/^http:\/\//i, 'https://');
+  }
+  if (trimmed.startsWith('/uploads/') || trimmed.startsWith('uploads/')) {
+    const cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    return `https://api.qbapp.online${cleanPath}`;
+  }
+  if (trimmed.startsWith('/')) {
+    return `https://admin.qbapp.online${trimmed}`;
+  }
+  return `https://admin.qbapp.online/${trimmed}`;
+}
+
 export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
   {
     key: 'EMAIL_OTP',
@@ -678,13 +706,19 @@ export interface WrapEmailOptions {
 
 export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOptions): string {
   if (!content) return '';
-  if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<body')) {
-    return content;
-  }
-
   const primaryColor = options?.primaryColor || DEFAULT_PRIMARY_COLOR;
-  const logoSrc = options?.logoSrc || DEFAULT_PUBLIC_LOGO_URL;
+  const logoSrc = resolvePublicLogoUrl(options?.logoSrc);
   const companyName = options?.companyName || 'QUIKBOOM';
+
+  if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<body')) {
+    // If it is already a full HTML document, ensure all logo instances point to public HTTPS URL
+    return content
+      .replace(/cid:quikboom-logo/g, logoSrc)
+      .replace(/src=["']\/logo\.png["']/g, `src="${logoSrc}"`)
+      .replace(/src=["']\/app_logo\.png["']/g, `src="${logoSrc}"`)
+      .replace(/src=["']logo\.png["']/g, `src="${logoSrc}"`)
+      .replace(/src=["']app_logo\.png["']/g, `src="${logoSrc}"`);
+  }
 
   const paragraphs = content
     .split(/\n\n+/)
@@ -709,7 +743,7 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
     .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
     .email-header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff; }
-    .email-header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0; }
+    .email-header img { max-height: 48px; width: auto; display: block; margin: 0 auto 12px; border: 0; }
     .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; }
     .email-header p { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); }
     .email-body { padding: 32px; font-size: 15px; line-height: 1.6; color: #334155; }
@@ -719,7 +753,13 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
 <body>
   <div class="email-container" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
     <div class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;">
-      <img src="${logoSrc}" alt="${companyName}" width="160" style="max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0;" />
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td align="center">
+            <img src="${logoSrc}" alt="${companyName}" width="160" style="display: block; width: 160px; max-width: 100%; height: auto; max-height: 52px; border: 0; margin: 0 auto 12px;" />
+          </td>
+        </tr>
+      </table>
       <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff;">${companyName}</h1>
       <p style="margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9);">${options?.previewText || 'Digital Marketing Agency'}</p>
     </div>
@@ -742,7 +782,14 @@ export function renderEmailTemplate(
   const missingVars = new Set<string>();
 
   const primaryColor = variables.primaryColor || options?.safeFallbacks?.primaryColor || DEFAULT_PRIMARY_COLOR;
-  const logoUrl = variables.logoUrl || options?.safeFallbacks?.logoUrl || DEFAULT_PUBLIC_LOGO_URL;
+  const rawLogo =
+    variables.logoUrl ||
+    variables.companyLogoUrl ||
+    variables.companyLogo ||
+    variables.logo ||
+    options?.safeFallbacks?.logoUrl ||
+    options?.safeFallbacks?.companyLogoUrl;
+  const logoUrl = resolvePublicLogoUrl(rawLogo);
 
   const defaultFallbacks: Record<string, string> = {
     leadTitle: 'Valued Client',
@@ -752,6 +799,10 @@ export function renderEmailTemplate(
     companyName: 'QUIKBOOM Digital Marketing Agency',
     primaryColor,
     logoUrl,
+    companyLogoUrl: logoUrl,
+    companyLogo: logoUrl,
+    logo: logoUrl,
+    publicLogoUrl: logoUrl,
     ...(options?.safeFallbacks || {}),
   };
 
@@ -785,6 +836,8 @@ export function renderEmailTemplate(
     .replace(/cid:quikboom-logo/g, logoUrl)
     .replace(/src=["']\/logo\.png["']/g, `src="${logoUrl}"`)
     .replace(/src=["']\/app_logo\.png["']/g, `src="${logoUrl}"`)
+    .replace(/src=["']logo\.png["']/g, `src="${logoUrl}"`)
+    .replace(/src=["']app_logo\.png["']/g, `src="${logoUrl}"`)
     .replace(/linear-gradient\(135deg,\s*#0f172a,\s*#1e293b\)/g, primaryColor);
 
   return {
@@ -1238,6 +1291,12 @@ export class EmailTemplateService {
       customerName: 'Mr. Raj Sharma',
       contactEmail: 'sales@quikboom.com',
       supportPhone: '+91 8000 123 456',
+      primaryColor: DEFAULT_PRIMARY_COLOR,
+      logoUrl: DEFAULT_PUBLIC_LOGO_URL,
+      companyLogoUrl: DEFAULT_PUBLIC_LOGO_URL,
+      companyLogo: DEFAULT_PUBLIC_LOGO_URL,
+      logo: DEFAULT_PUBLIC_LOGO_URL,
+      publicLogoUrl: DEFAULT_PUBLIC_LOGO_URL,
       ...(dto.variables || {}),
     };
 

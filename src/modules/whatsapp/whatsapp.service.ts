@@ -119,6 +119,7 @@ export class WhatsappService {
     const creds = config.credentials || {};
     const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+    const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
     if (!apiKey || !phoneNumberId) {
       this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
@@ -127,10 +128,10 @@ export class WhatsappService {
 
     const maskedPhone = this.maskPhone(normalizedTo);
     this.logger.log(
-      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nRecipient:\n${maskedPhone}\nTemplate:\n${templateName}\nStage:\n${stageName || 'N/A'}`
+      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nTemplate:\n${templateName}\nStage:\n${stageName || 'N/A'}`
     );
 
-    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -168,10 +169,25 @@ export class WhatsappService {
       const fbError = err?.response?.data?.error;
       const errorCode = fbError?.code || err?.code || 'UNKNOWN';
       const errorMessage = fbError?.message || err?.message || 'Meta API error';
+      const errorType = fbError?.type;
+      const errorSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
 
       this.logger.warn(
-        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError message:\n${errorMessage}`
+        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError type:\n${errorType || 'N/A'}\nError subcode:\n${errorSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nError message:\n${errorMessage}`
       );
+
+      // Handle Meta Authentication failure (Error 190 / OAuthException)
+      if (String(errorCode) === '190' || errorType === 'OAuthException') {
+        const authMsg = 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.';
+        this.logger.error(`[WHATSAPP_AUTH_FAILURE] Code 190 (OAuthException): ${errorMessage}`);
+        return {
+          success: false,
+          error: '190',
+          details: authMsg,
+          reason: authMsg,
+        };
+      }
 
       // If template not found (code 132001 or 100) and fallback text is provided, attempt text message
       if (fallbackText && (errorCode === 132001 || errorCode === 100 || String(errorMessage).toLowerCase().includes('template'))) {
@@ -208,6 +224,7 @@ export class WhatsappService {
     const creds = config.credentials || {};
     const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+    const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
     if (!apiKey || !phoneNumberId) {
       this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
@@ -216,10 +233,10 @@ export class WhatsappService {
 
     const maskedPhone = this.maskPhone(normalizedTo);
     this.logger.log(
-      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nRecipient:\n${maskedPhone}\nType:\ntext\nStage:\n${stageName || 'N/A'}`
+      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nType:\ntext\nStage:\n${stageName || 'N/A'}`
     );
 
-    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -248,10 +265,24 @@ export class WhatsappService {
       const fbError = err?.response?.data?.error;
       const errorCode = fbError?.code || err?.code || 'UNKNOWN';
       const errorMessage = fbError?.message || err?.message || 'Meta API error';
+      const errorType = fbError?.type;
+      const errorSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
 
       this.logger.error(
-        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError message:\n${errorMessage}`
+        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError type:\n${errorType || 'N/A'}\nError subcode:\n${errorSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nError message:\n${errorMessage}`
       );
+
+      if (String(errorCode) === '190' || errorType === 'OAuthException') {
+        const authMsg = 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.';
+        this.logger.error(`[WHATSAPP_AUTH_FAILURE] Code 190 (OAuthException): ${errorMessage}`);
+        return {
+          success: false,
+          error: '190',
+          details: authMsg,
+          reason: authMsg,
+        };
+      }
 
       return {
         success: false,
@@ -552,12 +583,13 @@ export class WhatsappService {
     const creds = config.credentials || {};
     const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+    const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
     if (!apiKey || !phoneNumberId) {
       return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
     }
 
-    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -589,7 +621,7 @@ export class WhatsappService {
     // 2. If Buffer provided, upload media to Meta Graph API
     if (pdfBuffer && pdfBuffer.length > 0) {
       try {
-        const mediaUrl = `https://graph.facebook.com/v19.0/${phoneNumberId}/media`;
+        const mediaUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`;
         const formData = new FormData();
         const blob = new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' });
         formData.append('file', blob, filename);
@@ -1427,6 +1459,30 @@ export class WhatsappService {
       }
     } catch (err: any) {
       this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating notification for ${messageId}: ${err?.message}`);
+    }
+
+    // 3. Update CommunicationHistory records that track this WhatsApp message
+    try {
+      if (this.prisma.communicationHistory?.findMany) {
+        const commHistories = await this.prisma.communicationHistory.findMany({
+          where: {
+            details: { contains: messageId },
+          },
+        });
+        for (const ch of commHistories) {
+          let updatedDetails = ch.details || '';
+          const statusTag = `Status: ${status.toUpperCase()}`;
+          if (!updatedDetails.includes(statusTag)) {
+            updatedDetails += `\n${statusTag}`;
+          }
+          await this.prisma.communicationHistory.update({
+            where: { id: ch.id },
+            data: { details: updatedDetails },
+          });
+        }
+      }
+    } catch (commErr: any) {
+      this.logger.debug(`[WHATSAPP_STATUS_COMM_HISTORY_ERR] ${commErr?.message}`);
     }
   }
 

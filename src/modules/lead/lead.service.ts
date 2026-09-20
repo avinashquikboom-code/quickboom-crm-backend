@@ -1770,7 +1770,7 @@ Sent by ${senderOrgName} via CRM.
       messageId: result.messageId,
       message: result.success
         ? `WhatsApp message sent successfully to ${phone}`
-        : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`,
+        : `WhatsApp message could not be sent: ${result.details || (String(result.reason || result.error) === '190' ? 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.' : (result.reason || result.error || 'Provider error'))}`,
       skipped: result.skipped,
       reason: result.reason || result.error,
     };
