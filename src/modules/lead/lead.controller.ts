@@ -181,9 +181,10 @@ export class LeadController {
   async update(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
+    @CurrentUser('id') userId: string,
     @Body() dto: UpdateLeadDto,
   ) {
-    return this.leadService.updateLead(customerId, id, dto);
+    return this.leadService.updateLead(customerId, id, dto, userId);
   }
 
   @Patch(':id/status')

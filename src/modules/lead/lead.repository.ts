@@ -532,7 +532,7 @@ export class LeadRepository {
       include: {
         customer: true,
         stage: true,
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
         notes: {
           include: { user: { select: { id: true, firstName: true, lastName: true } } },

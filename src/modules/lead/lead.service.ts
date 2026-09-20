@@ -31,7 +31,7 @@ import {
   renderEmailTemplate,
   wrapInQuikboomEmailHtml,
 } from '../email/email-template.service';
-import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { WhatsappService, STAGE_KEY_TO_WHATSAPP_KEY } from '../whatsapp/whatsapp.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 function maskEmail(email: string): string {
@@ -39,6 +39,13 @@ function maskEmail(email: string): string {
   const [user, domain] = email.split('@');
   if (user.length <= 2) return `${user[0]}***@${domain}`;
   return `${user[0]}***${user[user.length - 1]}@${domain}`;
+}
+
+function maskPhone(phone?: string | null): string {
+  if (!phone) return 'none';
+  const clean = phone.replace(/\D/g, '');
+  if (clean.length <= 4) return '****';
+  return `****${clean.slice(-4)}`;
 }
 
 @Injectable()
@@ -377,7 +384,7 @@ export class LeadService {
     };
   }
 
-  async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto) {
+  async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto, userId?: number | string) {
     const lead = await this.getLeadById(customerId, id);
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
@@ -437,7 +444,7 @@ export class LeadService {
         updatedLead,
         previousStageName,
         newStageName,
-        undefined,
+        userId,
         undefined,
         undefined,
         undefined,
@@ -448,7 +455,7 @@ export class LeadService {
         updatedLead,
         previousStageName,
         newStageName,
-        undefined,
+        userId,
         undefined,
         undefined,
         'LEAD_STAGE_CHANGED',
@@ -642,12 +649,13 @@ export class LeadService {
       }
 
       // 3. Resolve template mapping strictly for the NEW stage
-      const stageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const targetStageKey = normNewStage || normLeadStageKey;
       const templateKey =
-        (stageKey && TELECALLER_STATUS_TO_TEMPLATE_KEY[stageKey]) ||
-        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage] ||
-        (stageKey ? `QUIKBOOM_${stageKey}` : `QUIKBOOM_${normNewStage}`);
+        TELECALLER_STATUS_TO_TEMPLATE_KEY[targetStageKey] ||
+        (normLeadStageKey && TELECALLER_STATUS_TO_TEMPLATE_KEY[normLeadStageKey]) ||
+        `QUIKBOOM_${targetStageKey}`;
 
       let template: any = null;
       if (overrideTemplateId && this.emailTemplateService) {
@@ -832,6 +840,10 @@ export class LeadService {
         sendError = err?.message || 'Failed to dispatch email';
         this.logger.error(`[EMAIL] Failed to send lead ${eventType} email: ${sendError}`);
       }
+
+      this.logger.log(
+        `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${previousStageName || 'None'}\nNew Stage: ${newStageName}\nEmail:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template?.id || templateKey || 'N/A'}\nRecipient: ${maskEmail(recipientEmail)}\nProvider Status: ${status === 'SENT' ? 'SUCCESS' : 'FAILED'}`
+      );
 
       // 5. Store email delivery/log status in EmailLog table
       await this.prisma.emailLog.create({
@@ -1187,22 +1199,25 @@ Sent by ${senderOrgName} via CRM.
       };
     }
 
-    const stageName = dto?.stageName || lead.stage?.name || lead.status || 'NEW';
-    const normStage = stageName.trim().toUpperCase().replace(/[\s-]+/g, '_');
-    const stageKey = (lead.stage?.key ? String(lead.stage.key).trim().toUpperCase().replace(/[\s-]+/g, '_') : '') || normStage || 'NEW';
+    const targetStageName = dto?.stageName || lead.stage?.name || lead.status || 'NEW';
+    const normStage = targetStageName.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const rawKey = dto?.stageName
+      ? normStage
+      : (lead.stage?.key ? String(lead.stage.key).trim().toUpperCase().replace(/[\s-]+/g, '_') : normStage);
+    const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[rawKey] || rawKey || 'NEW';
 
     const template = typeof this.whatsappService?.getStageTemplate === 'function'
       ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
       : true;
     if (!template && !dto?.message) {
       this.logger.log(
-        `[WHATSAPP] Lead #${lead.id} stage is "${stageName}", but no WhatsApp template is configured for this stage. Skipping WhatsApp.`,
+        `[WHATSAPP] Lead #${lead.id} stage is "${targetStageName}", but no WhatsApp template is configured for this stage. Skipping WhatsApp.`,
       );
       return {
         success: false,
         skipped: true,
         reason: 'NO_TEMPLATE_CONFIGURED',
-        message: `No WhatsApp template is configured for stage "${stageName}". Skipping.`,
+        message: `No WhatsApp template is configured for stage "${targetStageName}". Skipping.`,
       };
     }
 
@@ -1254,7 +1269,7 @@ Sent by ${senderOrgName} via CRM.
       assignedEmployeeName,
       assignedEmployeeEmail,
       assignedEmployeePhone,
-      stage: stageName,
+      stage: targetStageName,
       startDate: lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '',
       startTime: lead.nextFollowUpTime || '',
     };
@@ -1266,6 +1281,7 @@ Sent by ${senderOrgName} via CRM.
         stageKey: String(stageKey),
         variables,
         customMessage: dto?.message,
+        stageName: targetStageName,
       });
     }
 
@@ -1279,31 +1295,38 @@ Sent by ${senderOrgName} via CRM.
           action,
           description: result.success
             ? (eventType === 'LEAD_CREATED'
-                ? `Welcome WhatsApp message sent to ${phone} for ${stageName} stage`
-                : `WhatsApp notification sent to ${phone} for stage ${stageName}`)
-            : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || 'Not delivered'}`,
+                ? `Welcome WhatsApp message sent to ${phone} for ${targetStageName} stage`
+                : `WhatsApp notification sent to ${phone} for stage ${targetStageName}`)
+            : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || result.error || 'Not delivered'}`,
           metadata: {
             eventType,
-            phone,
-            normalizedPhone,
-            stageName,
+            phone: maskPhone(phone),
+            normalizedPhone: maskPhone(normalizedPhone),
+            stageName: targetStageName,
             stageKey,
+            status: result.success ? 'Sent' : (result.skipped ? 'Skipped' : 'Failed'),
             success: result.success,
-            messageId: result.messageId,
-            reason: result.reason,
+            messageId: result.messageId || null,
+            errorCode: result.error || null,
+            errorReason: result.reason || null,
+            errorDetails: result.details || null,
           } as any,
         },
       })
       .catch(() => null);
+
+    this.logger.log(
+      `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${dto?.eventType === 'LEAD_CREATED' ? 'None' : (lead.stage?.name || 'N/A')}\nNew Stage: ${targetStageName}\nWhatsApp:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template && typeof template === 'object' ? template.templateName : stageKey}\nRecipient: ${maskPhone(phone)}\nProvider Status: ${result.success ? 'SUCCESS' : 'FAILED'}`
+    );
 
     return {
       success: result.success,
       messageId: result.messageId,
       message: result.success
         ? `WhatsApp message sent successfully to ${phone}`
-        : `WhatsApp message could not be sent: ${result.reason || 'Provider error'}`,
+        : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`,
       skipped: result.skipped,
-      reason: result.reason,
+      reason: result.reason || result.error,
     };
   }
 
@@ -1345,7 +1368,7 @@ Sent by ${senderOrgName} via CRM.
         return;
       }
 
-      // Check recent timeline debounce to avoid duplicate WhatsApp sends within 60s
+      // Check recent timeline debounce to avoid duplicate WhatsApp sends within 15s for the same stage
       let recentTimeline: any = null;
       if (this.prisma.leadActivityTimeline?.findFirst) {
         recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
@@ -1353,15 +1376,21 @@ Sent by ${senderOrgName} via CRM.
             leadId: Number(lead.id),
             action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP'] },
             createdAt: {
-              gte: new Date(Date.now() - 60000),
+              gte: new Date(Date.now() - 15000),
             },
           },
+          orderBy: { createdAt: 'desc' },
         }).catch(() => null);
       }
 
       if (recentTimeline) {
-        this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id}. Skipping.`);
-        return;
+        const meta = (recentTimeline.metadata as any) || {};
+        const recentStage = (meta.stageName || '').trim().toUpperCase();
+        const currentNewStage = (newStageName || '').trim().toUpperCase();
+        if (!recentStage || recentStage === currentNewStage || (eventType === 'LEAD_CREATED' && recentTimeline.action === 'LEAD_CREATED_WHATSAPP')) {
+          this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 15s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
+          return;
+        }
       }
 
       return await this.sendLeadWhatsApp(customerId, lead.id, userId, {

@@ -78,12 +78,18 @@ export class WhatsappService {
    * If template fails with code 132001 (Template not found) and fallbackText is provided,
    * gracefully falls back to sending a text message.
    */
+  /**
+   * Dispatches a WhatsApp template message using existing Meta Business Cloud API configuration.
+   * If template fails with code 132001 (Template not found) and fallbackText is provided,
+   * gracefully falls back to sending a text message.
+   */
   async sendTemplate(
     to: string,
     templateName: string,
     parameters: Array<{ type: 'text'; text: string }> = [],
     languageCode = 'en_US',
     fallbackText?: string,
+    stageName?: string,
   ): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
@@ -94,7 +100,7 @@ export class WhatsappService {
     // 1. Retrieve existing WhatsApp credentials from Integration Settings
     const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
     if (!config?.isEnabled) {
-      this.logger.log('[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message.');
+      this.logger.log(`[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message for ${this.maskPhone(normalizedTo)}.`);
       return { success: false, skipped: true, reason: 'INTEGRATION_DISABLED' };
     }
 
@@ -103,9 +109,14 @@ export class WhatsappService {
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
 
     if (!apiKey || !phoneNumberId) {
-      this.logger.warn('[WHATSAPP] Template not configured: missing API Access Token or Phone Number ID in Admin Settings');
+      this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
       return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
     }
+
+    const maskedPhone = this.maskPhone(normalizedTo);
+    this.logger.log(
+      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nRecipient:\n${maskedPhone}\nTemplate:\n${templateName}\nStage:\n${stageName || 'N/A'}`
+    );
 
     const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
     const headers = {
@@ -136,16 +147,24 @@ export class WhatsappService {
     try {
       const response = await axios.post(url, templatePayload, { headers, timeout: 10000 });
       const messageId = response.data?.messages?.[0]?.id;
+      this.logger.log(
+        `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
+      );
       return { success: true, messageId };
     } catch (err: any) {
+      const status = err?.response?.status;
       const fbError = err?.response?.data?.error;
       const errorCode = fbError?.code || err?.code || 'UNKNOWN';
       const errorMessage = fbError?.message || err?.message || 'Meta API error';
 
+      this.logger.warn(
+        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError message:\n${errorMessage}`
+      );
+
       // If template not found (code 132001 or 100) and fallback text is provided, attempt text message
       if (fallbackText && (errorCode === 132001 || errorCode === 100 || String(errorMessage).toLowerCase().includes('template'))) {
         this.logger.log(`[WHATSAPP] Template "${templateName}" not active on Meta. Falling back to direct message.`);
-        return this.sendMessage(normalizedTo, fallbackText);
+        return this.sendMessage(normalizedTo, fallbackText, stageName);
       }
 
       this.logger.error(`[WHATSAPP] WhatsApp API request failed: ${errorCode} - ${errorMessage}`);
@@ -153,6 +172,7 @@ export class WhatsappService {
         success: false,
         error: String(errorCode),
         details: errorMessage,
+        reason: String(errorCode),
       };
     }
   }
@@ -160,7 +180,7 @@ export class WhatsappService {
   /**
    * Dispatches a direct text message via Meta Business Cloud API.
    */
-  async sendMessage(to: string, text: string): Promise<WhatsAppSendResult> {
+  async sendMessage(to: string, text: string, stageName?: string): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
       this.logger.warn(`[WHATSAPP] No customer phone number found: invalid or empty (${this.maskPhone(to)})`);
@@ -178,9 +198,14 @@ export class WhatsappService {
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
 
     if (!apiKey || !phoneNumberId) {
-      this.logger.warn('[WHATSAPP] Template not configured: missing API Access Token or Phone Number ID in Admin Settings');
+      this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
       return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
     }
+
+    const maskedPhone = this.maskPhone(normalizedTo);
+    this.logger.log(
+      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nRecipient:\n${maskedPhone}\nType:\ntext\nStage:\n${stageName || 'N/A'}`
+    );
 
     const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
     const headers = {
@@ -202,16 +227,25 @@ export class WhatsappService {
     try {
       const response = await axios.post(url, payload, { headers, timeout: 10000 });
       const messageId = response.data?.messages?.[0]?.id;
+      this.logger.log(
+        `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
+      );
       return { success: true, messageId };
     } catch (err: any) {
+      const status = err?.response?.status;
       const fbError = err?.response?.data?.error;
       const errorCode = fbError?.code || err?.code || 'UNKNOWN';
       const errorMessage = fbError?.message || err?.message || 'Meta API error';
-      this.logger.error(`[WHATSAPP] WhatsApp API request failed: ${errorCode} - ${errorMessage}`);
+
+      this.logger.error(
+        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError message:\n${errorMessage}`
+      );
+
       return {
         success: false,
         error: String(errorCode),
         details: errorMessage,
+        reason: String(errorCode),
       };
     }
   }
@@ -480,12 +514,46 @@ export class WhatsappService {
   }
 
   /**
-   * Resolves a standard WhatsApp template for a given lead stage key.
+   * Extracts placeholders from template body (e.g. {{1}}, {{2}} or {{leadName}}, {{companyName}})
+   * and maps them to actual lead data in the exact order and count required by Meta WhatsApp Cloud API.
+   */
+  resolveTemplateParameters(
+    templateBody: string,
+    variables: Record<string, string>,
+  ): Array<{ type: 'text'; text: string }> {
+    const matches = templateBody.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g);
+    if (!matches || matches.length === 0) {
+      return [];
+    }
+
+    const positionalFallback: Record<string, string> = {
+      '1': variables.leadName || variables.leadTitle || 'Valued Prospect',
+      '2': variables.companyName || 'QUIKBOOM',
+      '3': variables.leadTitle || variables.userName || 'Marketing Solution',
+      '4': variables.userName || variables.assignedEmployeeName || 'QuickBoom Team',
+    };
+
+    return matches.map((rawTag) => {
+      const tag = rawTag.replace(/[\{\}\s]/g, '');
+      let val = variables[tag];
+      if (val === undefined && positionalFallback[tag] !== undefined) {
+        val = positionalFallback[tag];
+      }
+      return {
+        type: 'text' as const,
+        text: String(val !== undefined ? val : ''),
+      };
+    });
+  }
+
+  /**
+   * Resolves a standard WhatsApp template for a given lead stage key or alias.
    */
   getStageTemplate(stageKey?: string | null): LeadStageWhatsAppTemplate | null {
     if (!stageKey) return null;
     const normalized = stageKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
-    return LEAD_STAGE_WHATSAPP_TEMPLATES[normalized] || null;
+    const resolvedKey = STAGE_KEY_TO_WHATSAPP_KEY[normalized] || normalized;
+    return LEAD_STAGE_WHATSAPP_TEMPLATES[resolvedKey] || LEAD_STAGE_WHATSAPP_TEMPLATES[normalized] || null;
   }
 
   /**
@@ -504,8 +572,9 @@ export class WhatsappService {
     variables: Record<string, string>;
     customMessage?: string;
     fallbackText?: string;
+    stageName?: string;
   }): Promise<WhatsAppSendResult> {
-    const { to, stageKey, variables, customMessage } = params;
+    const { to, stageKey, variables, customMessage, stageName } = params;
     const template = this.getStageTemplate(stageKey);
 
     let messageText = customMessage;
@@ -526,7 +595,9 @@ export class WhatsappService {
     }
 
     const templateName = template?.templateName || 'lead_stage_update';
-    const templateParameters = Object.values(variables).map((v) => ({ type: 'text' as const, text: String(v) }));
+    const templateParameters = template
+      ? this.resolveTemplateParameters(template.body, variables)
+      : Object.values(variables).slice(0, 3).map((v) => ({ type: 'text' as const, text: String(v) }));
 
     return this.sendTemplate(
       to,
@@ -534,9 +605,85 @@ export class WhatsappService {
       templateParameters,
       'en_US',
       messageText,
+      stageName || template?.name || stageKey,
     );
   }
+
+  /**
+   * Generates safe diagnostic output for Section 17 without revealing secrets.
+   */
+  async getDiagnostics(stageKey?: string, phone?: string) {
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const creds = config?.credentials || {};
+    const hasToken = Boolean(creds.apiKey || creds.accessToken || creds.access_token);
+    const hasPhoneId = Boolean(creds.phoneNumberId || creds.phone_number_id);
+    const hasWabaId = Boolean(creds.businessAccountId || creds.wabaId);
+    const normalizedPhone = this.normalizePhoneNumber(phone);
+    const template = this.getStageTemplate(stageKey);
+
+    return {
+      provider: 'Meta WhatsApp Cloud API',
+      configuration: {
+        accessToken: hasToken ? 'PRESENT' : 'MISSING',
+        phoneNumberId: hasPhoneId ? 'PRESENT' : 'MISSING',
+        businessAccountId: hasWabaId ? 'PRESENT' : 'MISSING',
+        apiConfiguration: (hasToken && hasPhoneId) ? 'PRESENT' : 'MISSING',
+        source: config?.source || 'NONE',
+        isEnabled: Boolean(config?.isEnabled),
+      },
+      template: {
+        stage: stageKey || 'N/A',
+        templateFound: Boolean(template),
+        templateName: template?.templateName || 'N/A',
+        templateActive: true,
+        templateApprovedOrConfigured: Boolean(template),
+        language: 'en_US',
+        parametersCount: template ? (template.body.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || []).length : 0,
+      },
+      lead: {
+        phonePresent: Boolean(phone),
+        phoneFormatValid: Boolean(normalizedPhone),
+        maskedPhone: this.maskPhone(phone),
+      },
+      api: {
+        requestGenerated: Boolean(hasToken && hasPhoneId && normalizedPhone && template),
+      },
+    };
+  }
 }
+
+export const STAGE_KEY_TO_WHATSAPP_KEY: Record<string, string> = {
+  NEW: 'NEW',
+  NEW_LEAD: 'NEW',
+  CONTACTED: 'CONTACTED',
+  CALL_BACK: 'CONTACTED',
+  QUALIFIED: 'QUALIFIED',
+  DETAILS_SENT: 'DETAILS_SENT',
+  DETAILS_SEND: 'DETAILS_SENT',
+  COMPANY_DETAILS_SENT: 'DETAILS_SENT',
+  FOLLOW_UP: 'FOLLOW_UP',
+  FOLLOWUP: 'FOLLOW_UP',
+  CUSTOMER_FOLLOW_UP: 'FOLLOW_UP',
+  VISIT_SCHEDULED: 'VISIT_SCHEDULED',
+  VISIT: 'VISIT_SCHEDULED',
+  VISIT_DONE: 'VISIT_DONE',
+  VISIT_COMPLETED: 'VISIT_DONE',
+  PROPOSAL_SENT: 'PROPOSAL_SENT',
+  PROPOSAL: 'PROPOSAL_SENT',
+  NEGOTIATION: 'NEGOTIATION',
+  FINAL_CALL: 'FINAL_CALL',
+  FINAL_DISCUSSION: 'FINAL_CALL',
+  WON: 'WON',
+  CLOSED_WON: 'WON',
+  CONVERTED: 'WON',
+  DEAL_WON: 'WON',
+  WORK_STARTED: 'WON',
+  PAYMENT: 'PROPOSAL_SENT',
+  LOST: 'LOST',
+  CLOSED_LOST: 'LOST',
+  CANCELLED: 'LOST',
+  DEAL_LOST: 'LOST',
+};
 
 export interface LeadStageWhatsAppTemplate {
   key: string;

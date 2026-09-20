@@ -86,9 +86,18 @@ describe('Lead Stage Change Email Notification Tests', () => {
     stagesTable = [
       { id: 1, customerId: null, name: 'New', key: 'NEW', isActive: true, deletedAt: null },
       { id: 2, customerId: null, name: 'Contacted', key: 'CONTACTED', isActive: true, deletedAt: null },
+      { id: 3, customerId: null, name: 'Details Send', key: 'DETAILS_SEND', isActive: true, deletedAt: null },
+      { id: 4, customerId: null, name: 'Follow-up', key: 'FOLLOW_UP', isActive: true, deletedAt: null },
       { id: 5, customerId: null, name: 'Qualified', key: 'QUALIFIED', isActive: true, deletedAt: null },
       { id: 6, customerId: null, name: 'Proposal', key: 'PROPOSAL', isActive: true, deletedAt: null },
       { id: 7, customerId: null, name: 'Custom Review', key: 'CUSTOM_REVIEW', isActive: true, deletedAt: null },
+      { id: 8, customerId: null, name: 'Visit Scheduled', key: 'VISIT_SCHEDULED', isActive: true, deletedAt: null },
+      { id: 9, customerId: null, name: 'Visit Done', key: 'VISIT_DONE', isActive: true, deletedAt: null },
+      { id: 10, customerId: null, name: 'Negotiation', key: 'NEGOTIATION', isActive: true, deletedAt: null },
+      { id: 11, customerId: null, name: 'Final Call', key: 'FINAL_CALL', isActive: true, deletedAt: null },
+      { id: 12, customerId: null, name: 'Won', key: 'WON', isActive: true, deletedAt: null },
+      { id: 13, customerId: null, name: 'Lost', key: 'LOST', isActive: true, deletedAt: null },
+      { id: 14, customerId: null, name: 'Proposal Sent', key: 'PROPOSAL_SENT', isActive: true, deletedAt: null },
     ];
 
     emailLogsTable = [];
@@ -801,4 +810,53 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
+
+  it('CASE 22: All 11 CRM Lead Stages trigger their respective Email and WhatsApp templates', async () => {
+    const elevenStages = [
+      { id: 1, name: 'New', expectedEmailSubject: 'Thank You for Connecting with QUIKBOOM', expectedWhatsappKey: 'NEW' },
+      { id: 2, name: 'Contacted', expectedEmailSubject: 'Great Speaking With You – QUIKBOOM', expectedWhatsappKey: 'CONTACTED' },
+      { id: 3, name: 'Details Send', expectedEmailSubject: 'Company Details & Services', expectedWhatsappKey: 'DETAILS_SENT' },
+      { id: 4, name: 'Follow-up', expectedEmailSubject: 'Following Up on Our Discussion – QUIKBOOM', expectedWhatsappKey: 'FOLLOW_UP' },
+      { id: 8, name: 'Visit Scheduled', expectedEmailSubject: 'Your Meeting with QUIKBOOM is Scheduled', expectedWhatsappKey: 'VISIT_SCHEDULED' },
+      { id: 9, name: 'Visit Done', expectedEmailSubject: 'Thank You for Visiting QUIKBOOM', expectedWhatsappKey: 'VISIT_DONE' },
+      { id: 14, name: 'Proposal Sent', expectedEmailSubject: 'Your Digital Marketing Proposal from QUIKBOOM', expectedWhatsappKey: 'PROPOSAL_SENT' },
+      { id: 10, name: 'Negotiation', expectedEmailSubject: "Let's Discuss Your Proposal – QUIKBOOM", expectedWhatsappKey: 'NEGOTIATION' },
+      { id: 11, name: 'Final Call', expectedEmailSubject: 'Final Discussion Regarding Your Digital Marketing Requirements', expectedWhatsappKey: 'FINAL_CALL' },
+      { id: 12, name: 'Won', expectedEmailSubject: "Welcome to QUIKBOOM – Let's Grow Together!", expectedWhatsappKey: 'WON' },
+      { id: 13, name: 'Lost', expectedEmailSubject: 'Thank You for Considering QUIKBOOM', expectedWhatsappKey: 'LOST' },
+    ];
+
+    for (let i = 0; i < elevenStages.length; i++) {
+      const stage = elevenStages[i];
+      mockEmailService.sendEmail.mockClear();
+      mockWhatsappService.sendLeadStageMessage.mockClear();
+
+      // Reset lead to a different stage first to ensure transition
+      leadsTable[0].stageId = stage.id === 1 ? 2 : 1;
+      leadsTable[0].status = stage.id === 1 ? LeadStatus.CONTACTED : LeadStatus.NEW;
+      leadsTable[0].phone = '+919876543210';
+      leadsTable[0].email = 'lead@example.com';
+
+      await service.updateStatus(1, 101, 999, {
+        stageId: stage.id,
+      });
+
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+      expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'lead@example.com',
+          subject: expect.stringContaining(stage.expectedEmailSubject),
+        }),
+      );
+
+      expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+      expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: '919876543210',
+          stageKey: stage.expectedWhatsappKey,
+        }),
+      );
+    }
+  });
 });
+
