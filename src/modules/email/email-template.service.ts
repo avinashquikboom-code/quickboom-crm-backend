@@ -808,8 +808,14 @@ export function renderEmailTemplate(
 
   const replacer = (text: string): string => {
     if (!text || typeof text !== 'string') return '';
-    return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, varName) => {
-      const val = variables[varName];
+    return text.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (match, varName) => {
+      let val = variables[varName];
+      if ((val === undefined || val === null) && varName.includes('.')) {
+        val = varName.split('.').reduce((acc: any, part: string) => {
+          return acc && typeof acc === 'object' && acc[part] !== undefined ? acc[part] : undefined;
+        }, variables);
+      }
+
       if (val !== undefined && val !== null && String(val).trim() !== '') {
         return String(val);
       }
@@ -821,6 +827,22 @@ export function renderEmailTemplate(
 
       if (varName in defaultFallbacks) {
         return defaultFallbacks[varName];
+      }
+
+      if (varName === 'lead.name' && (variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle)) {
+        return String(variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle);
+      }
+      if (varName === 'lead.email' && (variables.leadEmail || variables.email || defaultFallbacks.email)) {
+        return String(variables.leadEmail || variables.email || defaultFallbacks.email);
+      }
+      if (varName === 'lead.phone' && (variables.leadPhone || variables.phone)) {
+        return String(variables.leadPhone || variables.phone);
+      }
+      if (varName === 'lead.company' && (variables.companyName || defaultFallbacks.companyName)) {
+        return String(variables.companyName || defaultFallbacks.companyName);
+      }
+      if (varName === 'lead.stage' && (variables.stage || variables.newStage || variables.stageName)) {
+        return String(variables.stage || variables.newStage || variables.stageName);
       }
 
       // Never leave raw placeholder

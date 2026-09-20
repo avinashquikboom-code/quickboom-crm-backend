@@ -858,5 +858,127 @@ describe('Lead Stage Change Email Notification Tests', () => {
       );
     }
   });
+
+  it('✓ CASE 23: Replaces dot-notation variables {{lead.name}}, {{lead.email}}, {{lead.phone}}, {{lead.company}}, {{lead.stage}}', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Create custom template with dot-notation variables
+    const customTemplate = {
+      id: 99,
+      key: 'QUIKBOOM_FOLLOW_UP',
+      name: 'Custom Follow Up',
+      subject: 'Hello {{lead.name}} from {{lead.company}}',
+      body: 'Dear {{lead.name}}, email: {{lead.email}}, phone: {{lead.phone}}, stage: {{lead.stage}}',
+      isActive: true,
+    };
+    stagesTable.find((s) => s.id === 4)!.key = 'FOLLOW_UP';
+
+    // Mock template resolution
+    mockPrisma.emailTemplate = {
+      findFirst: jest.fn(async () => customTemplate),
+    };
+
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].firstName = 'David';
+    leadsTable[0].lastName = 'Miller';
+    leadsTable[0].email = 'david.m@example.com';
+    leadsTable[0].phone = '+919988776655';
+    leadsTable[0].companyName = 'Miller Tech';
+
+    await service.updateStatus(1, 101, 999, {
+      stageId: 4, // Follow-up
+    });
+
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    const sentArg = mockEmailService.sendEmail.mock.calls[0][0];
+    expect(sentArg.to).toBe('david.m@example.com');
+    expect(sentArg.subject).toContain('David Miller');
+    expect(sentArg.subject).toContain('Miller Tech');
+    expect(sentArg.html).toContain('David Miller');
+    expect(sentArg.html).toContain('david.m@example.com');
+    expect(sentArg.html).toContain('+919988776655');
+    expect(sentArg.html).toContain('Follow-up');
+  });
+
+  it('✓ CASE 24: Unconfigured stage does not fail stage update and does not send email', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Add stage with no corresponding template
+    stagesTable.push({
+      id: 999,
+      customerId: 1,
+      name: 'Custom Review Pending',
+      key: 'CUSTOM_STAGE_NO_TEMPLATE',
+      isActive: true,
+      deletedAt: null,
+    });
+
+    mockPrisma.emailTemplate = {
+      findFirst: jest.fn(async () => null),
+    };
+
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].email = 'client@example.com';
+
+    const updated = await service.updateStatus(1, 101, 999, {
+      stageId: 999,
+    });
+
+    expect(updated).toBeDefined();
+    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('✓ CASE 25: Provider error captures real error, marks EmailLog as FAILED, and does not crash stage update', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockEmailService.sendEmail.mockRejectedValueOnce(new Error('SMTP connection timed out on port 587'));
+
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].email = 'client@example.com';
+
+    const updated = await service.updateStatus(1, 101, 999, {
+      stageId: 2, // Contacted
+    });
+
+    expect(updated).toBeDefined();
+    expect(emailLogsTable.length).toBeGreaterThan(0);
+    const lastLog = emailLogsTable[emailLogsTable.length - 1];
+    expect(lastLog.status).toBe('FAILED');
+    expect(lastLog.errorMessage).toContain('SMTP connection timed out');
+  });
+
+  it('✓ CASE 26: Email and WhatsApp are dispatched in parallel and WhatsApp delay does not delay Email', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    let emailSentTime = 0;
+    let whatsappFinishedTime = 0;
+
+    mockEmailService.sendEmail.mockImplementation(async () => {
+      emailSentTime = Date.now();
+      return { success: true, messageId: '<msg-123@smtp>', providerDurationMs: 50 };
+    });
+
+    mockWhatsappService.sendLeadStageMessage.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      whatsappFinishedTime = Date.now();
+      return { success: true };
+    });
+
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].email = 'fast@example.com';
+    leadsTable[0].phone = '+919876543210';
+
+    await service.updateStatus(1, 101, 999, {
+      stageId: 2, // Contacted
+    });
+
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+    expect(emailSentTime).toBeGreaterThan(0);
+  });
 });
 

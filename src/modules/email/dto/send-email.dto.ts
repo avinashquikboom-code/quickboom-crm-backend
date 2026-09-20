@@ -92,5 +92,9 @@ export class SendEmailDto {
   @ApiPropertyOptional({ description: 'Optional email file attachments (Buffer or path)' })
   @IsOptional()
   attachments?: any[];
+
+  @ApiPropertyOptional({ description: 'Skip writing generic EmailLog record when caller manages detailed log' })
+  @IsOptional()
+  skipEmailLog?: boolean;
 }
 

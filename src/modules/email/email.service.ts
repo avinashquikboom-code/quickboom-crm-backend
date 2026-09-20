@@ -12,16 +12,74 @@ import {
 } from './email-template.service';
 import * as nodemailer from 'nodemailer';
 import * as path from 'path';
+import * as fs from 'fs';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
+  private cachedTransporter: { key: string; transporter: nodemailer.Transporter } | null = null;
+  private cachedLogoPath: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     private readonly emailTemplateService: EmailTemplateService,
   ) {}
+
+  /**
+   * Returns a pooled nodemailer Transporter, reusing active connections and forcing IPv4
+   * to eliminate DNS/TCP connection latency.
+   */
+  private getTransporter(config: any): nodemailer.Transporter {
+    const key = `${config.host}:${config.port}:${config.username || ''}:${config.secure}`;
+    if (this.cachedTransporter && this.cachedTransporter.key === key) {
+      return this.cachedTransporter.transporter;
+    }
+
+    const transportOptions: any = {
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      family: 4, // Prevents OS IPv6 TCP timeout delays
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    };
+
+    if (config.username || config.password) {
+      transportOptions.auth = {
+        user: config.username,
+        pass: config.password,
+      };
+    }
+
+    if (!config.secure && config.port !== 465) {
+      transportOptions.tls = {
+        rejectUnauthorized: false,
+      };
+    }
+
+    const transporter = nodemailer.createTransport(transportOptions);
+    this.cachedTransporter = { key, transporter };
+    return transporter;
+  }
+
+  /**
+   * Resets the cached transporter pool if connection reset or credential change occurs.
+   */
+  public resetTransporterPool(): void {
+    if (this.cachedTransporter) {
+      try {
+        this.cachedTransporter.transporter.close();
+      } catch {
+        // ignore close error
+      }
+      this.cachedTransporter = null;
+    }
+  }
 
   /**
    * Retrieves the current SMTP integration status without exposing credentials.
@@ -212,27 +270,29 @@ export class EmailService {
     const cc = dto.cc ? (Array.isArray(dto.cc) ? dto.cc.join(', ') : String(dto.cc).trim()) : undefined;
     const bcc = dto.bcc ? (Array.isArray(dto.bcc) ? dto.bcc.join(', ') : String(dto.bcc).trim()) : undefined;
 
-    // 6. Send email
+    // 5. Send email via pooled transporter
     try {
-      const transporter = nodemailer.createTransport(transportOptions);
+      const transporter = this.getTransporter(config);
 
       // Attach QUIKBOOM logo as inline CID so email clients render <img src="cid:quikboom-logo">
       const logoAttachment: any[] = [];
       if (htmlContent && htmlContent.includes('cid:quikboom-logo')) {
         try {
-          // Resolve path relative to dist output (compiled assets) or source fallback
-          const logoPaths = [
-            path.resolve(__dirname, '../../assets/images/logo.png'),        // dist/src/assets/...
-            path.resolve(__dirname, '../../../src/assets/images/logo.png'), // dev source
-          ];
-          const fs = await import('fs');
-          const resolvedLogoPath = logoPaths.find((p) => {
-            try { return fs.statSync(p).isFile(); } catch { return false; }
-          });
-          if (resolvedLogoPath) {
+          if (!this.cachedLogoPath) {
+            const logoPaths = [
+              path.resolve(__dirname, '../../assets/images/logo.png'),        // dist/src/assets/...
+              path.resolve(__dirname, '../../../src/assets/images/logo.png'), // dev source
+            ];
+            const foundPath = logoPaths.find((p) => {
+              try { return fs.statSync(p).isFile(); } catch { return false; }
+            });
+            if (foundPath) this.cachedLogoPath = foundPath;
+          }
+
+          if (this.cachedLogoPath) {
             logoAttachment.push({
               filename: 'logo.png',
-              path: resolvedLogoPath,
+              path: this.cachedLogoPath,
               cid: 'quikboom-logo',
               contentDisposition: 'inline',
             });
@@ -259,11 +319,13 @@ export class EmailService {
       if (bcc) mailPayload.bcc = bcc;
       if (dto.icalEvent) mailPayload.icalEvent = dto.icalEvent;
 
+      const reqStart = Date.now();
       const info = await transporter.sendMail(mailPayload);
+      const reqDuration = Date.now() - reqStart;
 
-      this.logger.log(`[EMAIL_SENT] Successfully sent email to "${recipient}" with messageId: ${info.messageId}`);
+      this.logger.log(`[EMAIL_SENT] Successfully sent email to "${recipient}" with messageId: ${info.messageId} in ${reqDuration}ms`);
 
-      // 7. Audit log
+      // 6. Audit log
       await this.prisma.auditLog.create({
         data: {
           customerId,
@@ -280,6 +342,7 @@ export class EmailService {
             recordType: dto.recordType || null,
             recordId: dto.recordId ? String(dto.recordId) : null,
             messageId: info.messageId,
+            durationMs: reqDuration,
             sentAt: new Date().toISOString(),
           },
         },
@@ -287,8 +350,8 @@ export class EmailService {
         this.logger.warn(`[EMAIL_AUDIT_LOG_WARN] Failed to write email audit log: ${err?.message}`);
       });
 
-      // 8. Dedicated EmailLog record if available
-      if (this.prisma.emailLog) {
+      // 7. Dedicated EmailLog record (unless caller manages specialized stage/event log)
+      if (this.prisma.emailLog && !dto.skipEmailLog) {
         await this.prisma.emailLog.create({
           data: {
             customerId,
@@ -316,7 +379,7 @@ export class EmailService {
         });
       }
 
-      // 9. Contact communication history if recordType is contact
+      // 8. Contact communication history if recordType is contact
       if (dto.recordType?.toLowerCase() === 'contact' && dto.recordId) {
         const contactId = Number(dto.recordId);
         if (!isNaN(contactId)) {
@@ -338,11 +401,14 @@ export class EmailService {
         message: `Email successfully sent to ${recipient}`,
         messageId: info.messageId,
         envelope: info.envelope,
+        response: info.response,
+        providerDurationMs: reqDuration,
       };
     } catch (err: any) {
+      this.resetTransporterPool();
       this.logger.error(`[EMAIL_SEND_FAILED] To: "${recipient}", Error: ${err?.message}`);
 
-      if (this.prisma.emailLog) {
+      if (this.prisma.emailLog && !dto.skipEmailLog) {
         await this.prisma.emailLog.create({
           data: {
             customerId,
@@ -362,14 +428,16 @@ export class EmailService {
             renderedContent: htmlContent || textContent,
             eventType: dto.eventType || (dto.templateId ? 'TEMPLATE_SEND' : 'DIRECT_SEND'),
             status: 'FAILED',
-            errorMessage: err?.message || 'Unknown SMTP error',
+            errorMessage: err?.message || 'Email delivery failed',
             sentAt: new Date(),
           },
-        }).catch(() => null);
+        }).catch((logErr) => {
+          this.logger.warn(`[EMAIL_LOG_WARN] Failed to write failure EmailLog: ${logErr?.message}`);
+        });
       }
 
       throw new BadRequestException(
-        `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Unknown SMTP error'}`,
+        `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Email delivery failed'}`,
       );
     }
   }
