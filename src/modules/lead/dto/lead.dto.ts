@@ -567,6 +567,38 @@ export class UpdateLeadStatusDto {
   @IsString()
   @IsOptional()
   customBody?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  sendWhatsapp?: boolean;
+
+  @ApiPropertyOptional({ example: 'Hi Rahul...' })
+  @IsString()
+  @IsOptional()
+  whatsappMessage?: string;
+
+  @ApiPropertyOptional({ example: 'lead_stage_proposal' })
+  @IsString()
+  @IsOptional()
+  whatsappTemplateName?: string;
+}
+
+export class SendLeadWhatsAppDto {
+  @ApiPropertyOptional({ example: 'Hi Rahul, here is an update regarding your inquiry...' })
+  @IsString()
+  @IsOptional()
+  message?: string;
+
+  @ApiPropertyOptional({ example: 'lead_stage_proposal' })
+  @IsString()
+  @IsOptional()
+  templateName?: string;
+
+  @ApiPropertyOptional({ example: 'Proposal' })
+  @IsString()
+  @IsOptional()
+  stageName?: string;
 }
 
 export class CreateLeadStageDto {

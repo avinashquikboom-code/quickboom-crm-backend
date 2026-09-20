@@ -5,9 +5,10 @@ import { LeadRepository } from './lead.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { LeadLimitModule } from '../lead-limit/lead-limit.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-  imports: [SubscriptionModule, PrismaModule, forwardRef(() => LeadLimitModule)],
+  imports: [SubscriptionModule, PrismaModule, forwardRef(() => LeadLimitModule), WhatsappModule],
   controllers: [LeadController],
   providers: [LeadService, LeadRepository],
   exports: [LeadService, LeadRepository],

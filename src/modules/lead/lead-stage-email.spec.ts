@@ -4,6 +4,7 @@ import { LeadRepository } from './lead.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService } from '../email/email-template.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { LeadStatus } from '@prisma/client';
@@ -13,6 +14,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
   let repository: LeadRepository;
   let mockPrisma: any;
   let mockEmailService: any;
+  let mockWhatsappService: any;
 
   // In-memory data store
   let leadsTable: any[] = [];
@@ -47,6 +49,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
         firstName: 'Alice',
         lastName: 'Cooper',
         email: 'alice.contact@acme.com',
+        phone: '+919876543210',
         companyName: 'Acme Enterprises',
         status: LeadStatus.NEW,
         stageId: 1,
@@ -134,6 +137,13 @@ describe('Lead Stage Change Email Notification Tests', () => {
         create: jest.fn(async ({ data }) => data),
       },
       leadActivityTimeline: {
+        findFirst: jest.fn(async ({ where }) => {
+          return timelineTable.find((t) => {
+            if (where.leadId !== undefined && t.leadId !== where.leadId) return false;
+            if (where.action !== undefined && t.action !== where.action) return false;
+            return true;
+          }) || null;
+        }),
         create: jest.fn(async ({ data }) => {
           timelineTable.push(data);
           return data;
@@ -176,6 +186,18 @@ describe('Lead Stage Change Email Notification Tests', () => {
       }),
     };
 
+    mockWhatsappService = {
+      normalizePhoneNumber: jest.fn((phone) => {
+        if (!phone) return null;
+        const clean = phone.replace(/\D/g, '');
+        return clean.length >= 10 ? `91${clean.slice(-10)}` : null;
+      }),
+      sendLeadStageMessage: jest.fn().mockResolvedValue({
+        success: true,
+        messageId: 'wamid.test.stage.123',
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LeadService,
@@ -183,6 +205,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
         EmailTemplateService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: EmailService, useValue: mockEmailService },
+        { provide: WhatsappService, useValue: mockWhatsappService },
         { provide: PlanAccessService, useValue: { checkFeatureAccess: jest.fn() } },
         { provide: LeadLimitService, useValue: { checkLeadLimit: jest.fn() } },
       ],
@@ -460,5 +483,86 @@ describe('Lead Stage Change Email Notification Tests', () => {
         text: expect.stringContaining('Current Stage: Qualified'),
       }),
     );
+  });
+
+  it('CASE 11: Lead stage change with sendWhatsapp: true triggers WhatsApp to lead.phone', async () => {
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    // Reset lead 101 status
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].stageId = 1;
+
+    await service.updateStatus(1, 101, 999, {
+      status: LeadStatus.QUALIFIED,
+      stageId: 5,
+      sendWhatsapp: true,
+    });
+
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '919876543210',
+        stageKey: 'QUALIFIED',
+      }),
+    );
+    expect(mockPrisma.leadActivityTimeline.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        leadId: 101,
+        action: 'WHATSAPP_SENT',
+      }),
+    });
+  });
+
+  it('CASE 12: Lead without phone skips WhatsApp gracefully without throwing', async () => {
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    // Lead 102 has no phone
+    await service.updateStatus(1, 102, 999, {
+      status: LeadStatus.CONTACTED,
+      stageId: 2,
+      sendWhatsapp: true,
+    });
+
+    // Should not call sendLeadStageMessage because phone is null
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
+
+  it('CASE 13: Direct sendLeadWhatsApp endpoint works and logs to timeline', async () => {
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    const res = await service.sendLeadWhatsApp(1, 101, 999, {
+      message: 'Hello Alice, customized proposal attached',
+      stageName: 'Proposal',
+    });
+
+    expect(res.success).toBe(true);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '919876543210',
+        customMessage: 'Hello Alice, customized proposal attached',
+      }),
+    );
+  });
+
+  it('CASE 14: Duplicate WhatsApp request within 60s is debounced', async () => {
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    // Setup recent timeline entry within 60s
+    mockPrisma.leadActivityTimeline.findFirst = jest.fn().mockResolvedValue({
+      id: 99,
+      action: 'WHATSAPP_SENT',
+      createdAt: new Date(),
+    });
+
+    await service.handleLeadStageChangeWhatsappNotification(
+      1,
+      leadsTable[0],
+      'New',
+      'Contacted',
+      999,
+    );
+
+    // Should be debounced
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 });

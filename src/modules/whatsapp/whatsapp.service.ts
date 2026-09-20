@@ -478,4 +478,161 @@ export class WhatsappService {
       return { success: false, error: err?.message };
     }
   }
+
+  /**
+   * Resolves a standard WhatsApp template for a given lead stage key.
+   */
+  getStageTemplate(stageKey?: string | null): LeadStageWhatsAppTemplate | null {
+    if (!stageKey) return null;
+    const normalized = stageKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    return LEAD_STAGE_WHATSAPP_TEMPLATES[normalized] || null;
+  }
+
+  /**
+   * Dispatches a lead stage change notification via WhatsApp.
+   */
+  async sendLeadStageMessage(params: {
+    to: string;
+    stageKey: string;
+    variables: Record<string, string>;
+    customMessage?: string;
+    fallbackText?: string;
+  }): Promise<WhatsAppSendResult> {
+    const { to, stageKey, variables, customMessage } = params;
+    const template = this.getStageTemplate(stageKey);
+
+    let messageText = customMessage;
+    if (!messageText) {
+      if (template) {
+        let rendered = template.body;
+        for (const [k, v] of Object.entries(variables)) {
+          rendered = rendered.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), v || '');
+        }
+        messageText = rendered;
+      } else if (params.fallbackText) {
+        messageText = params.fallbackText;
+      }
+    }
+
+    if (!messageText) {
+      return { success: false, skipped: true, reason: 'NO_TEMPLATE_OR_MESSAGE' };
+    }
+
+    const templateName = template?.templateName || 'lead_stage_update';
+    const templateParameters = Object.values(variables).map((v) => ({ type: 'text' as const, text: String(v) }));
+
+    return this.sendTemplate(
+      to,
+      templateName,
+      templateParameters,
+      'en_US',
+      messageText,
+    );
+  }
 }
+
+export interface LeadStageWhatsAppTemplate {
+  key: string;
+  templateName: string;
+  name: string;
+  body: string;
+}
+
+export const LEAD_STAGE_WHATSAPP_TEMPLATES: Record<string, LeadStageWhatsAppTemplate> = {
+  NEW: {
+    key: 'NEW',
+    templateName: 'lead_stage_new',
+    name: 'New Lead Welcome',
+    body: 'Hi {{leadName}}, thank you for contacting {{companyName}}! We have received your inquiry regarding {{leadTitle}} and our team has been assigned to assist you.',
+  },
+  CONTACTED: {
+    key: 'CONTACTED',
+    templateName: 'lead_stage_contacted',
+    name: 'Contacted Stage',
+    body: 'Hi {{leadName}}, this is {{userName}} from {{companyName}}. It was great speaking with you regarding {{leadTitle}}. Please feel free to reply if you have any questions.',
+  },
+  QUALIFIED: {
+    key: 'QUALIFIED',
+    templateName: 'lead_stage_qualified',
+    name: 'Qualified Stage',
+    body: 'Hi {{leadName}}, we are pleased to inform you that your requirements for {{leadTitle}} have been qualified! Our team at {{companyName}} is now preparing the ideal solution for you.',
+  },
+  PROPOSAL: {
+    key: 'PROPOSAL',
+    templateName: 'lead_stage_proposal',
+    name: 'Proposal Stage',
+    body: 'Hi {{leadName}}, the customized proposal for {{leadTitle}} from {{companyName}} is ready. Please review it and let us know when we can discuss next steps.',
+  },
+  PROPOSAL_SENT: {
+    key: 'PROPOSAL_SENT',
+    templateName: 'lead_stage_proposal',
+    name: 'Proposal Sent Stage',
+    body: 'Hi {{leadName}}, the customized proposal for {{leadTitle}} from {{companyName}} is ready. Please review it and let us know when we can discuss next steps.',
+  },
+  NEGOTIATION: {
+    key: 'NEGOTIATION',
+    templateName: 'lead_stage_negotiation',
+    name: 'Negotiation Stage',
+    body: 'Hi {{leadName}}, following our discussion regarding {{leadTitle}}, we are finalizing the tailored scope and terms. Let us know if you need any adjustments.',
+  },
+  FINAL_CALL: {
+    key: 'FINAL_CALL',
+    templateName: 'lead_stage_final_call',
+    name: 'Final Call Stage',
+    body: 'Hi {{leadName}}, we are preparing the final confirmation for {{leadTitle}} from {{companyName}}. Looking forward to finalizing our collaboration!',
+  },
+  WON: {
+    key: 'WON',
+    templateName: 'lead_stage_won',
+    name: 'Won / Deal Closed',
+    body: 'Congratulations {{leadName}}! 🎉 We are delighted to confirm our partnership for {{leadTitle}}. Welcome to {{companyName}}!',
+  },
+  CONVERTED: {
+    key: 'CONVERTED',
+    templateName: 'lead_stage_won',
+    name: 'Converted Stage',
+    body: 'Congratulations {{leadName}}! 🎉 We are delighted to confirm our partnership for {{leadTitle}}. Welcome to {{companyName}}!',
+  },
+  LOST: {
+    key: 'LOST',
+    templateName: 'lead_stage_lost',
+    name: 'Lost Stage',
+    body: 'Hi {{leadName}}, thank you for considering {{companyName}} for {{leadTitle}}. While we could not move forward right now, we hope to collaborate in the future!',
+  },
+  CANCELLED: {
+    key: 'CANCELLED',
+    templateName: 'lead_stage_lost',
+    name: 'Cancelled Stage',
+    body: 'Hi {{leadName}}, thank you for considering {{companyName}} for {{leadTitle}}. While we could not move forward right now, we hope to collaborate in the future!',
+  },
+  DETAILS_SENT: {
+    key: 'DETAILS_SENT',
+    templateName: 'lead_stage_details_sent',
+    name: 'Details Sent Stage',
+    body: 'Hi {{leadName}}, we have sent the complete details and brochure for {{leadTitle}} to your email. Please review them at your convenience.',
+  },
+  FOLLOW_UP: {
+    key: 'FOLLOW_UP',
+    templateName: 'lead_stage_follow_up',
+    name: 'Follow Up Stage',
+    body: 'Hi {{leadName}}, following up on our recent discussion regarding {{leadTitle}}. Please let us know when you would be available for a quick catch-up.',
+  },
+  VISIT_SCHEDULED: {
+    key: 'VISIT_SCHEDULED',
+    templateName: 'lead_stage_visit_scheduled',
+    name: 'Visit Scheduled Stage',
+    body: 'Hi {{leadName}}, your appointment with {{companyName}} regarding {{leadTitle}} has been scheduled. We look forward to meeting with you!',
+  },
+  VISIT: {
+    key: 'VISIT',
+    templateName: 'lead_stage_visit_scheduled',
+    name: 'Visit Stage',
+    body: 'Hi {{leadName}}, your appointment with {{companyName}} regarding {{leadTitle}} has been scheduled. We look forward to meeting with you!',
+  },
+  VISIT_DONE: {
+    key: 'VISIT_DONE',
+    templateName: 'lead_stage_visit_done',
+    name: 'Visit Done Stage',
+    body: 'Hi {{leadName}}, thank you for meeting with {{companyName}} regarding {{leadTitle}}. We are compiling the action items discussed and will follow up shortly.',
+  },
+};

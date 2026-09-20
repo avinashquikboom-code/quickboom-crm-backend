@@ -17,6 +17,7 @@ import {
   UpdateLeadDto,
   UpdateLeadStageDto,
   UpdateLeadStatusDto,
+  SendLeadWhatsAppDto,
   normalizeLeadStatus,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
@@ -29,6 +30,7 @@ import {
   renderEmailTemplate,
   wrapInQuikboomEmailHtml,
 } from '../email/email-template.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 function maskEmail(email: string): string {
@@ -49,6 +51,7 @@ export class LeadService {
     @Optional() private readonly leadLimitService?: LeadLimitService,
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
+    @Optional() private readonly whatsappService?: WhatsappService,
   ) {}
 
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
@@ -497,6 +500,19 @@ export class LeadService {
         dto.templateId,
         dto.customSubject,
         dto.customBody,
+      );
+    }
+
+    // Trigger WhatsApp notification if sendWhatsapp is enabled
+    if (isStageChanged && dto.sendWhatsapp) {
+      await this.handleLeadStageChangeWhatsappNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+        userId,
+        dto.whatsappMessage,
+        dto.whatsappTemplateName,
       );
     }
 
@@ -1080,5 +1096,162 @@ Sent by ${senderOrgName} via CRM.
       message: `Lead details successfully sent to ${recipient}`,
       messageId: result.messageId,
     };
+  }
+
+  /**
+   * Dispatches a WhatsApp message for a lead and logs it to activity timeline.
+   */
+  async sendLeadWhatsApp(
+    customerId: number | string,
+    id: number | string,
+    userId?: number | string,
+    dto?: SendLeadWhatsAppDto,
+  ) {
+    const lead = await this.getLeadById(customerId, id);
+    if (!lead) {
+      throw new NotFoundException(`Lead #${id} not found`);
+    }
+
+    const phone = lead.phone ? String(lead.phone).trim() : '';
+    if (!phone) {
+      return {
+        success: false,
+        reason: 'NO_PHONE',
+        message: 'No phone number is registered for this lead.',
+      };
+    }
+
+    const normalizedPhone = this.whatsappService?.normalizePhoneNumber(phone);
+    if (!normalizedPhone) {
+      return {
+        success: false,
+        reason: 'INVALID_PHONE',
+        message: `Phone number "${phone}" is not a valid mobile number for WhatsApp.`,
+      };
+    }
+
+    const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
+    const companyName = lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency';
+    let userName = 'QuickBoom Team';
+    if (userId && this.prisma.user) {
+      const u = await this.prisma.user
+        .findUnique({
+          where: { id: Number(userId) },
+          select: { firstName: true, lastName: true },
+        })
+        .catch(() => null);
+      if (u) {
+        userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QuickBoom Team';
+      }
+    }
+
+    const stageKey = lead.stage?.key || lead.status || 'NEW';
+    const stageName = dto?.stageName || lead.stage?.name || lead.status || 'Updated';
+
+    const variables: Record<string, string> = {
+      leadName: leadFullName,
+      leadTitle: lead.title || leadFullName,
+      companyName,
+      userName,
+      stage: stageName,
+      startDate: lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '',
+      startTime: lead.nextFollowUpTime || '',
+    };
+
+    let result: any = { success: true, messageId: undefined, skipped: false };
+    if (this.whatsappService) {
+      result = await this.whatsappService.sendLeadStageMessage({
+        to: normalizedPhone,
+        stageKey: String(stageKey),
+        variables,
+        customMessage: dto?.message,
+      });
+    }
+
+    // Write to LeadActivityTimeline
+    await this.prisma.leadActivityTimeline
+      .create({
+        data: {
+          leadId: Number(lead.id),
+          action: 'WHATSAPP_SENT',
+          description: result.success
+            ? `WhatsApp notification sent to ${phone} for stage ${stageName}`
+            : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || 'Not delivered'}`,
+          metadata: {
+            phone,
+            normalizedPhone,
+            stageName,
+            stageKey,
+            success: result.success,
+            messageId: result.messageId,
+            reason: result.reason,
+          } as any,
+        },
+      })
+      .catch(() => null);
+
+    return {
+      success: result.success,
+      messageId: result.messageId,
+      message: result.success
+        ? `WhatsApp message sent successfully to ${phone}`
+        : `WhatsApp message could not be sent: ${result.reason || 'Provider error'}`,
+      skipped: result.skipped,
+      reason: result.reason,
+    };
+  }
+
+  /**
+   * Dispatches automatic WhatsApp notification upon lead stage change with debouncing.
+   */
+  async handleLeadStageChangeWhatsappNotification(
+    customerId: number | string,
+    lead: any,
+    previousStageName: string,
+    newStageName: string,
+    userId?: number | string,
+    customMessage?: string,
+    templateName?: string,
+  ) {
+    try {
+      this.logger.log(`[WHATSAPP] Handling stage change WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
+      if (!this.whatsappService) {
+        this.logger.warn(`[WHATSAPP] WhatsappService not available. Skipping.`);
+        return;
+      }
+
+      const phone = lead.phone ? String(lead.phone).trim() : '';
+      if (!phone) {
+        this.logger.warn(`[WHATSAPP] Lead #${lead.id} has no phone registered. Skipping.`);
+        return;
+      }
+
+      // Check recent timeline debounce to avoid duplicate WhatsApp sends within 60s
+      let recentTimeline: any = null;
+      if (this.prisma.leadActivityTimeline?.findFirst) {
+        recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
+          where: {
+            leadId: Number(lead.id),
+            action: 'WHATSAPP_SENT',
+            createdAt: {
+              gte: new Date(Date.now() - 60000),
+            },
+          },
+        }).catch(() => null);
+      }
+
+      if (recentTimeline) {
+        this.logger.log(`[WHATSAPP] Duplicate WhatsApp notification within 60s for lead #${lead.id}. Skipping.`);
+        return;
+      }
+
+      return await this.sendLeadWhatsApp(customerId, lead.id, userId, {
+        message: customMessage,
+        templateName,
+        stageName: newStageName,
+      });
+    } catch (err: any) {
+      this.logger.error(`[WHATSAPP] Failed to send lead stage change WhatsApp: ${err?.message}`);
+    }
   }
 }

@@ -27,6 +27,7 @@ import {
   UpdateLeadDto,
   UpdateLeadStageDto,
   UpdateLeadStatusDto,
+  SendLeadWhatsAppDto,
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -281,5 +282,16 @@ export class LeadController {
     @Param('id') id: string,
   ) {
     return this.leadService.sendLeadDetails(customerId, id, user);
+  }
+
+  @Post(':id/send-whatsapp')
+  @ApiOperation({ summary: 'Send a WhatsApp message or template to the lead phone' })
+  async sendLeadWhatsApp(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: SendLeadWhatsAppDto,
+  ) {
+    return this.leadService.sendLeadWhatsApp(customerId, id, userId, dto);
   }
 }
