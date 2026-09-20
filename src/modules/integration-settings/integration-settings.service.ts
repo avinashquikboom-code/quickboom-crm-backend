@@ -18,6 +18,7 @@ import {
   TestIntegrationDto,
 } from './dto/integration-settings.dto';
 import axios from 'axios';
+import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 const Razorpay = require('razorpay');
 import {
@@ -188,6 +189,10 @@ const SENSITIVE_FIELD_PATTERNS = [
 
 function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Webhook verify tokens must be readable by admins to paste into Meta Developer Dashboard
+  if (normalized.includes('verifytoken') || normalized.includes('webhookverifytoken')) {
+    return false;
+  }
   return SENSITIVE_FIELD_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
@@ -1397,6 +1402,39 @@ export class IntegrationSettingsService {
       }
     }
 
+    if (norm === IntegrationProvider.WHATSAPP) {
+      const creds = conf.credentials || {};
+      const hasToken = Boolean(creds.apiKey || creds.accessToken);
+      const hasAppSecret = Boolean(creds.appSecret);
+      if (!maskedCreds.verifyToken) {
+        maskedCreds.verifyToken = '3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a';
+      }
+      return {
+        provider: conf.provider,
+        isEnabled: conf.isEnabled,
+        environment: conf.environment,
+        credentials: {
+          ...maskedCreds,
+          phoneNumberId: creds.phoneNumberId || creds.phone_number_id || '',
+          businessAccountId: creds.businessAccountId || creds.business_account_id || creds.wabaId || '',
+          apiVersion: creds.apiVersion || 'v19.0',
+          verifyToken: maskedCreds.verifyToken,
+          appId: creds.appId || '',
+          hasAccessToken: hasToken,
+          hasAppSecret,
+          isTokenSaved: hasToken,
+          isAppSecretSaved: hasAppSecret,
+        },
+        config: {
+          ...(conf.config || {}),
+          webhookUrl: 'https://api.qbapp.online/api/v1/webhooks/whatsapp',
+        },
+        source: conf.source,
+        configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
+        updatedAt: conf.updatedAt || null,
+      };
+    }
+
     return {
       provider: conf.provider,
       isEnabled: conf.isEnabled,
@@ -2202,6 +2240,46 @@ export class IntegrationSettingsService {
 
       default:
         throw new BadRequestException(`Unsupported integration provider: ${provider}`);
+    }
+  }
+
+  /**
+   * Auto-subscribes the WhatsApp Business Account to webhook events using Meta Cloud API.
+   * Calls: POST https://graph.facebook.com/{apiVersion}/{businessAccountId}/subscribed_apps
+   */
+  async subscribeWhatsappWebhook(credentials?: any) {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.WHATSAPP);
+    const creds = { ...(conf?.credentials || {}), ...(credentials || {}) };
+    const accessToken = (creds.apiKey || creds.accessToken || '').trim();
+    const businessAccountId = (creds.businessAccountId || creds.wabaId || '').trim();
+    const apiVersion = (creds.apiVersion || 'v19.0').trim();
+
+    if (!accessToken || !businessAccountId) {
+      throw new BadRequestException('Meta Access Token and WhatsApp Business Account ID are required to subscribe webhook');
+    }
+
+    try {
+      const response = await axios.post(
+        `https://graph.facebook.com/${apiVersion}/${businessAccountId}/subscribed_apps`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          timeout: 10000,
+        },
+      );
+
+      return {
+        success: true,
+        message: 'Successfully subscribed to WhatsApp webhook messages with Meta!',
+        details: response.data,
+      };
+    } catch (err: any) {
+      const fbError = err?.response?.data?.error;
+      const msg = fbError?.message || err?.message || 'Failed to auto-subscribe webhook with Meta';
+      this.logger.error(`[WHATSAPP_SUBSCRIBE_FAILED] ${msg}`);
+      throw new BadRequestException(`Meta webhook subscription failed: ${msg}`);
     }
   }
 

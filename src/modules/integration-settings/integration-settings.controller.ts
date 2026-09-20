@@ -152,4 +152,17 @@ export class IntegrationSettingsController {
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.sendFirebaseTestNotification(dto, adminUserId);
   }
+
+  @Post(':provider/subscribe')
+  @ApiOperation({
+    summary: 'Auto-subscribe WhatsApp Business Account to webhook events via Meta Cloud API',
+  })
+  async subscribeWebhook(
+    @Param('provider') provider: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    return this.integrationSettingsService.subscribeWhatsappWebhook(dto?.credentials);
+  }
 }
