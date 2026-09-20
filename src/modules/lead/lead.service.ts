@@ -486,14 +486,17 @@ export class LeadService {
 
     const updatedLead = await this.getLeadById(customerId, id);
 
-    // If stage actually changed, trigger automatic customer email notification
-    if (isStageChanged) {
+    // If stage actually changed, trigger automatic customer email notification unless explicitly skipped
+    if (isStageChanged && dto.sendEmail !== false) {
       await this.handleLeadStageChangeNotification(
         customerId,
         updatedLead,
         previousStageName,
         newStageName,
         userId,
+        dto.templateId,
+        dto.customSubject,
+        dto.customBody,
       );
     }
 
@@ -510,6 +513,9 @@ export class LeadService {
     previousStageName: string,
     newStageName: string,
     userId?: number | string,
+    overrideTemplateId?: number,
+    customSubject?: string,
+    customBody?: string,
   ) {
     try {
       this.logger.log(`[LEAD] Stage change detected`);
@@ -565,14 +571,18 @@ export class LeadService {
         null;
 
       let template: any = null;
-      if (templateKey && this.emailTemplateService) {
+      if (overrideTemplateId && this.emailTemplateService) {
+        template = await this.emailTemplateService.findOne(Number(overrideTemplateId), lead.customerId).catch(() => null);
+      }
+      if (!template && templateKey && this.emailTemplateService) {
         template = await this.emailTemplateService.findByKey(templateKey, lead.customerId).catch(() => null);
-        if (template && !template.isActive) {
-          this.logger.log(
-            `[EMAIL] Email template "${templateKey}" is inactive. Skipping automatic email for lead #${lead.id}.`,
-          );
-          return;
-        }
+      }
+
+      if (template && !template.isActive) {
+        this.logger.log(
+          `[EMAIL] Email template "${templateKey || template.key}" is inactive. Skipping automatic email for lead #${lead.id}.`,
+        );
+        return;
       }
 
       // Build context variables with Lead full name
@@ -602,11 +612,16 @@ export class LeadService {
         lead.customer?.email ||
         'sales@quikboom.com';
 
-      let emailSubject = 'Your Lead Status Has Been Updated';
+      let emailSubject = customSubject || 'Your Lead Status Has Been Updated';
       let htmlContent = '';
       let textContent = '';
 
-      if (template) {
+      if (customBody) {
+        textContent = customBody;
+        htmlContent = customBody.includes('<') && customBody.includes('>')
+          ? customBody
+          : wrapInQuikboomEmailHtml(customBody);
+      } else if (template) {
         let startDate = '';
         let startTime = '';
 
@@ -652,7 +667,7 @@ export class LeadService {
           variables,
         );
 
-        emailSubject = rendered.subject;
+        emailSubject = customSubject || rendered.subject;
         textContent = rendered.body;
         htmlContent = wrapInQuikboomEmailHtml(rendered.body);
       } else {

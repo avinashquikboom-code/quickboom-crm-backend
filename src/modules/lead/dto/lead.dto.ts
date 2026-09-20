@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsNotEmpty,
@@ -545,6 +546,27 @@ export class UpdateLeadStatusDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  sendEmail?: boolean;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  templateId?: number;
+
+  @ApiPropertyOptional({ example: 'Your Lead Status Has Been Updated' })
+  @IsString()
+  @IsOptional()
+  customSubject?: string;
+
+  @ApiPropertyOptional({ example: 'Dear Rahul...' })
+  @IsString()
+  @IsOptional()
+  customBody?: string;
 }
 
 export class CreateLeadStageDto {
