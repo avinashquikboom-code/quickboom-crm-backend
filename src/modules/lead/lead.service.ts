@@ -1099,6 +1099,19 @@ Sent by ${senderOrgName} via CRM.
   }
 
   /**
+   * Returns all available WhatsApp templates for lead stages.
+   */
+  getWhatsAppTemplates() {
+    return this.whatsappService.getAllStageTemplates().map((tpl) => ({
+      key: tpl.key,
+      templateName: tpl.templateName,
+      title: `${tpl.name} WhatsApp`,
+      name: tpl.name,
+      body: tpl.body,
+    }));
+  }
+
+  /**
    * Dispatches a WhatsApp message for a lead and logs it to activity timeline.
    */
   async sendLeadWhatsApp(

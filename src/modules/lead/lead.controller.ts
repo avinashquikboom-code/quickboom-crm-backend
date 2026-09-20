@@ -158,6 +158,12 @@ export class LeadController {
     return this.leadService.convertLead(customerId, id, userId, dto);
   }
 
+  @Get('whatsapp-templates')
+  @ApiOperation({ summary: 'Get all available WhatsApp templates for leads' })
+  async getWhatsAppTemplates() {
+    return this.leadService.getWhatsAppTemplates();
+  }
+
   @Get(':id/status')
   @ApiOperation({ summary: 'Get lead status and stage details by ID' })
   async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string) {

@@ -489,6 +489,13 @@ export class WhatsappService {
   }
 
   /**
+   * Returns all available lead stage WhatsApp templates.
+   */
+  getAllStageTemplates(): LeadStageWhatsAppTemplate[] {
+    return Object.values(LEAD_STAGE_WHATSAPP_TEMPLATES);
+  }
+
+  /**
    * Dispatches a lead stage change notification via WhatsApp.
    */
   async sendLeadStageMessage(params: {
