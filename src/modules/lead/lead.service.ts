@@ -344,10 +344,12 @@ export class LeadService {
 
     let resolvedStageId: number | undefined = dto.stageId !== undefined ? (dto.stageId ? Number(dto.stageId) : undefined) : undefined;
     let resolvedStatus: LeadStatus | undefined = undefined;
+    let stageName: string | undefined = undefined;
 
     if (resolvedStageId) {
       const stage = await this.leadRepository.findStageById(resolvedStageId);
       if (stage) {
+        stageName = stage.name;
         const normKey = normalizeLeadStatus(stage.key);
         if (ALL_LEAD_STATUSES.includes(normKey)) {
           resolvedStatus = normKey as LeadStatus;
@@ -375,13 +377,31 @@ export class LeadService {
       ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
     };
 
+    const previousStageName = lead.stage?.name || lead.status || 'NEW';
+    const isStageChanged =
+      (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
+      (resolvedStatus !== undefined && resolvedStatus !== lead.status);
+
     await this.leadRepository.update(customerId, id, sanitizedDto as any);
     await this.leadRepository.logTimeline(
       id,
       'LEAD_UPDATED',
       `Lead details updated`,
     );
-    return this.getLeadById(customerId, id);
+
+    const updatedLead = await this.getLeadById(customerId, id);
+
+    if (isStageChanged) {
+      const newStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
+      await this.handleLeadStageChangeNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+      );
+    }
+
+    return updatedLead;
   }
 
   async updateStatus(customerId: number | string, id: number | string, userId: number | string, dto: UpdateLeadStatusDto) {
@@ -496,13 +516,13 @@ export class LeadService {
       this.logger.log(`[LEAD] Previous stage: ${previousStageName}`);
       this.logger.log(`[LEAD] New stage: ${newStageName}`);
 
-      // 1. Resolve recipient email: prioritize customer's registered email (Customer A), fallback to lead contact email
+      // 1. Resolve recipient email: prioritize the email address stored directly on the Lead record
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      let recipientEmail = (lead.customer?.email || '').trim();
+      let recipientEmail = (lead.email || '').trim();
 
       if (!recipientEmail || !emailRegex.test(recipientEmail)) {
-        if (lead.email && emailRegex.test(lead.email.trim())) {
-          recipientEmail = lead.email.trim();
+        if (lead.customer?.email && emailRegex.test(lead.customer.email.trim())) {
+          recipientEmail = lead.customer.email.trim();
         } else {
           recipientEmail = '';
         }
@@ -510,11 +530,11 @@ export class LeadService {
 
       // Handle missing email gracefully
       if (!recipientEmail) {
-        this.logger.warn(`[EMAIL] Customer email not available for lead ${lead.id}`);
+        this.logger.warn(`[EMAIL] Recipient email not available on lead #${lead.id}`);
         return;
       }
 
-      this.logger.log(`[EMAIL] Customer email found: ${maskEmail(recipientEmail)}`);
+      this.logger.log(`[EMAIL] Lead notification recipient: ${maskEmail(recipientEmail)}`);
 
       // 2. Prevent duplicate notifications (debounce identical transitions within 60 seconds)
       const recentLog = await this.prisma.emailLog.findFirst({
@@ -536,127 +556,17 @@ export class LeadService {
         return;
       }
 
-      // 3. Resolve template mapping from lead status / stage
-      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normNewStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const templateKey =
-        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage] ||
-        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStatus] ||
-        null;
-
-      let template: any = null;
-      if (templateKey && this.emailTemplateService) {
-        template = await this.emailTemplateService.findByKey(templateKey, lead.customerId);
-        if (template && !template.isActive) {
-          this.logger.log(
-            `[EMAIL] Email template "${templateKey}" is inactive. Skipping automatic email for lead #${lead.id}.`,
-          );
-          return;
-        }
-      }
-
-      // Build context variables
+      // 3. Build context variables with Lead full name
       const leadTitle =
+        `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
         lead.title ||
         lead.companyName ||
-        `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
         'Valued Client';
 
-      let userName = 'QUIKBOOM Team';
-      if (lead.user?.name) {
-        userName = lead.user.name;
-      } else if (userId && this.prisma.user) {
-        const u = await this.prisma.user
-          .findUnique({
-            where: { id: Number(userId) },
-            select: { firstName: true, lastName: true },
-          })
-          .catch(() => null);
-        if (u) {
-          userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QUIKBOOM Team';
-        }
-      }
+      const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom Team';
+      const emailSubject = 'Your Lead Status Has Been Updated';
 
-      const senderEmail =
-        lead.user?.email ||
-        lead.customer?.email ||
-        'sales@quikboom.com';
-
-      let startDate = '';
-      let startTime = '';
-
-      if (templateKey === 'QUIKBOOM_VISIT_SCHEDULED') {
-        const scheduledVisit = await this.prisma.visit
-          .findFirst({
-            where: {
-              leadId: Number(lead.id),
-              status: 'SCHEDULED',
-            },
-            orderBy: { date: 'desc' },
-          })
-          .catch(() => null);
-
-        if (scheduledVisit?.date) {
-          startDate = new Intl.DateTimeFormat('en-IN', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          }).format(new Date(scheduledVisit.date));
-          startTime = scheduledVisit.time || '';
-        } else if (lead.nextFollowUpDate) {
-          startDate = new Intl.DateTimeFormat('en-IN', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          }).format(new Date(lead.nextFollowUpDate));
-          startTime = lead.nextFollowUpTime || '';
-        }
-
-        // Section 8 & 16: Handle missing variables safely. Never send raw placeholders.
-        if (!startDate || !startTime) {
-          this.logger.warn(
-            `[EMAIL] Scheduled visit details (startDate/startTime) missing for lead #${lead.id}. Cannot send ${templateKey} without scheduled visit details.`,
-          );
-          return;
-        }
-      }
-
-      let emailSubject = 'Your Lead Status Has Been Updated';
-      let htmlContent = '';
-      let textContent = '';
-
-      if (template) {
-        const variables: Record<string, any> = {
-          leadTitle,
-          userName,
-          email: senderEmail,
-          startDate,
-          startTime,
-          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
-        };
-
-        const rendered = renderEmailTemplate(
-          { subject: template.subject, body: template.body },
-          variables,
-          {
-            requiredVariables: templateKey === 'QUIKBOOM_VISIT_SCHEDULED' ? ['startDate', 'startTime', 'leadTitle'] : ['leadTitle'],
-          },
-        );
-
-        emailSubject = rendered.subject;
-        textContent = rendered.body;
-        htmlContent = wrapInQuikboomEmailHtml(rendered.body);
-      } else {
-        // Fallback generic stage update notification for non-template stages
-        const customerName =
-          lead.customer?.companyName ||
-          lead.customer?.name ||
-          `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
-          'Valued Customer';
-        const leadName = leadTitle;
-        const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuikBoom Team';
-
-        htmlContent = `
+      const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -691,56 +601,45 @@ export class LeadService {
     </div>
     <div class="body">
       <p class="intro">
-        Hello <strong>${customerName}</strong>,<br><br>
-        We wanted to let you know that the status of your request has been updated.
+        Hello <strong>${leadTitle}</strong>,<br><br>
+        Your lead stage has been updated in QuickBoom CRM.
       </p>
 
       <div class="status-box">
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
-            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Previous Status:</td>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Previous Stage:</td>
             <td style="padding: 6px 0;"><span class="status-pill-old">${previousStageName}</span></td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">New Status:</td>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">Current Stage:</td>
             <td style="padding: 6px 0;"><span class="status-pill-new">${newStageName}</span></td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">Lead:</td>
-            <td style="padding: 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">${leadName}</td>
           </tr>
         </table>
       </div>
 
       <p class="closing">
         Thank you,<br>
-        <strong>QuikBoom Team</strong>
+        <strong>QuickBoom Team</strong>
       </p>
     </div>
     <div class="footer">
-      Sent via <strong>${senderOrgName}</strong> • QuikBoom CRM
+      Sent via <strong>QuickBoom CRM</strong>
     </div>
   </div>
 </body>
 </html>`.trim();
 
-        textContent = `
-Hello ${customerName},
+      const textContent = `
+Hello ${leadTitle},
 
-We wanted to let you know that the status of your request has been updated.
+Your lead stage has been updated in QuickBoom CRM.
 
-Previous Status:
-${previousStageName}
-
-New Status:
-${newStageName}
-
-Lead:
-${leadName}
+Previous Stage: ${previousStageName}
+Current Stage: ${newStageName}
 
 Thank you,
-QuikBoom Team`.trim();
-      }
+QuickBoom Team`.trim();
 
       // 4. Send email via existing EmailService
       let messageId: string | null = null;
@@ -759,7 +658,6 @@ QuikBoom Team`.trim();
           text: textContent,
           recordType: 'lead',
           recordId: lead.id,
-          templateId: template?.id || undefined,
           eventType: 'LEAD_STAGE_CHANGED',
         });
 
@@ -777,8 +675,8 @@ QuikBoom Team`.trim();
           leadId: Number(lead.id),
           customerId: lead.customerId ? Number(lead.customerId) : null,
           userId: userId ? Number(userId) : null,
-          templateId: template?.id || null,
-          identifierKey: templateKey || null,
+          templateId: null,
+          identifierKey: 'LEAD_STAGE_UPDATED',
           recipientEmail,
           subject: emailSubject,
           renderedContent: htmlContent,

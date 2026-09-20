@@ -196,7 +196,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
     jest.clearAllMocks();
   });
 
-  it('CASE 1: Lead stage changes NEW → CONTACTED -> Selects QUIKBOOM_CONTACTED template, interpolates variables, and sends email', async () => {
+  it('CASE 1: Lead stage changes NEW → CONTACTED -> Sends standard stage update email without template selection', async () => {
     const updated = await service.updateStatus(1, 101, 999, {
       status: LeadStatus.CONTACTED,
       stageId: 2,
@@ -208,21 +208,31 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-a@acme.com',
-        subject: 'Great Speaking With You – QUIKBOOM',
+        to: 'alice.contact@acme.com',
+        subject: 'Your Lead Status Has Been Updated',
         recordType: 'lead',
         recordId: 101,
-        html: expect.stringContaining('Dear ERP Modernization Deal'),
-        text: expect.stringContaining('Dear ERP Modernization Deal'),
+        html: expect.stringContaining('Hello <strong>Alice Cooper</strong>'),
+        text: expect.stringContaining('Hello Alice Cooper'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Previous Stage: New'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Current Stage: Contacted'),
       }),
     );
 
-    // Verify EmailLog created with status SENT, templateId, and identifierKey
+    // Verify EmailLog created with status SENT and identifierKey LEAD_STAGE_UPDATED
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         leadId: 101,
-        recipientEmail: 'customer-a@acme.com',
-        identifierKey: 'QUIKBOOM_CONTACTED',
+        recipientEmail: 'alice.contact@acme.com',
+        identifierKey: 'LEAD_STAGE_UPDATED',
         eventType: 'LEAD_STAGE_CHANGED',
         previousStage: 'New',
         newStage: 'Contacted',
@@ -248,9 +258,9 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-a@acme.com',
+        to: 'alice.contact@acme.com',
         subject: 'Your Lead Status Has Been Updated',
-        text: expect.stringContaining('Previous Status:\nContacted'),
+        text: expect.stringContaining('Previous Stage: Contacted'),
       }),
     );
   });
@@ -329,7 +339,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it('CASE 7: Lead belongs to Customer A -> Email goes ONLY to Customer A registered email, not Customer B or admin', async () => {
+  it('CASE 7: Lead belongs to Customer A -> Email goes ONLY to Lead registered email, not Customer B or admin', async () => {
     // Customer A lead (101)
     await service.updateStatus(1, 101, 999, {
       status: LeadStatus.CONTACTED,
@@ -338,12 +348,12 @@ describe('Lead Stage Change Email Notification Tests', () => {
 
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-a@acme.com',
+        to: 'alice.contact@acme.com',
       }),
     );
     expect(mockEmailService.sendEmail).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-b@beta.com',
+        to: 'charlie.contact@beta.com',
       }),
     );
 
@@ -356,27 +366,18 @@ describe('Lead Stage Change Email Notification Tests', () => {
 
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-b@beta.com',
+        to: 'charlie.contact@beta.com',
       }),
     );
     expect(mockEmailService.sendEmail).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-a@acme.com',
+        to: 'alice.contact@acme.com',
       }),
     );
   });
 
-  it('CASE 8: Lead stage changes to VISIT_SCHEDULED -> populates startDate and startTime from actual visit and sends QUIKBOOM_VISIT_SCHEDULED', async () => {
+  it('CASE 8: Lead stage changes to any stage (e.g. VISIT_SCHEDULED) -> sends standard stage update email directly to lead without template lookup', async () => {
     mockEmailService.sendEmail.mockClear();
-
-    // Mock scheduled visit record
-    mockPrisma.visit.findFirst.mockResolvedValueOnce({
-      id: 501,
-      leadId: 101,
-      status: 'SCHEDULED',
-      date: new Date('2026-09-25T11:30:00Z'),
-      time: '11:30 AM',
-    });
 
     await service.handleLeadStageChangeNotification(
       1,
@@ -389,58 +390,90 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'customer-a@acme.com',
-        subject: 'Your Meeting with QUIKBOOM is Scheduled',
-        text: expect.stringContaining('11:30 AM'),
+        to: 'alice.contact@acme.com',
+        subject: 'Your Lead Status Has Been Updated',
+        text: expect.stringContaining('Previous Stage: Follow-Up'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Current Stage: Visit Scheduled'),
       }),
     );
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         leadId: 101,
-        identifierKey: 'QUIKBOOM_VISIT_SCHEDULED',
+        identifierKey: 'LEAD_STAGE_UPDATED',
         status: 'SENT',
       }),
     });
   });
 
-  it('CASE 9: Lead stage changes to VISIT_SCHEDULED but visit data missing -> handles gracefully without sending raw placeholders', async () => {
-    mockEmailService.sendEmail.mockClear();
-    mockPrisma.visit.findFirst.mockResolvedValueOnce(null);
-
-    await service.handleLeadStageChangeNotification(
-      1,
-      { ...leadsTable[0], customer: customersTable[0], status: 'VISIT_SCHEDULED' },
-      'Follow-Up',
-      'Visit Scheduled',
-      999,
-    );
-
-    // Should NOT send email with empty/missing required visit variables
-    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
-  });
-
-  it('CASE 10: Inactive template -> skips automatic sending', async () => {
+  it('CASE 9: Prompt Requirement: Rahul Sharma New → Qualified sends formatted email to rahul@example.com', async () => {
     mockEmailService.sendEmail.mockClear();
 
-    // Inactive template in DB
-    mockPrisma.emailTemplate.findFirst.mockResolvedValueOnce({
-      id: 99,
-      key: 'QUIKBOOM_CONTACTED',
-      name: 'Customer Contacted – QUIKBOOM',
-      subject: 'Test Subject',
-      body: 'Test Body',
-      isActive: false,
+    // Add Rahul Sharma lead
+    const rahulLead = {
+      id: 301,
+      customerId: 1,
+      title: 'Enterprise Solution',
+      firstName: 'Rahul',
+      lastName: 'Sharma',
+      email: 'rahul@example.com',
+      companyName: 'Sharma Infotech',
+      status: LeadStatus.NEW,
+      stageId: 1,
+      deletedAt: null,
+    };
+    leadsTable.push(rahulLead);
+
+    const updated = await service.updateStatus(1, 301, 999, {
+      status: LeadStatus.QUALIFIED,
+      stageId: 5,
     });
 
-    await service.handleLeadStageChangeNotification(
-      1,
-      leadsTable[0],
-      'New',
-      'Contacted',
-      999,
-    );
+    expect(updated.status).toBe(LeadStatus.QUALIFIED);
+    expect(updated.stageId).toBe(5);
 
-    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'rahul@example.com',
+        subject: 'Your Lead Status Has Been Updated',
+        text: expect.stringContaining('Hello Rahul Sharma'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Previous Stage: New'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Current Stage: Qualified'),
+      }),
+    );
+  });
+
+  it('CASE 10: Updating lead stage via updateLead also triggers standard stage update email', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Reset lead 101 status
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].stageId = 1;
+
+    await service.updateLead(1, 101, {
+      stageId: 5,
+    });
+
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'alice.contact@acme.com',
+        subject: 'Your Lead Status Has Been Updated',
+        text: expect.stringContaining('Current Stage: Qualified'),
+      }),
+    );
   });
 });
