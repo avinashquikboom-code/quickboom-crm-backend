@@ -734,6 +734,38 @@ export class LeadService {
         senderEmail = lead.customer.email.trim();
       }
 
+      // Resolve primaryColor from lead stage, database lead_stages, or Admin Panel fallback (#16A34A)
+      let primaryColor = lead.stage?.color || null;
+      if (!primaryColor && newStageName) {
+        const st = await this.prisma.leadStage.findFirst({
+          where: {
+            OR: [
+              { name: { equals: newStageName, mode: 'insensitive' } },
+              { key: { equals: normNewStage, mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+          },
+          select: { color: true },
+        }).catch(() => null);
+        if (st?.color) {
+          primaryColor = st.color;
+        }
+      }
+      if (!primaryColor) {
+        primaryColor = process.env.PRIMARY_COLOR || '#16A34A';
+      }
+
+      // Resolve public HTTPS logo URL (absolute, public without auth)
+      let logoUrl = 'https://admin.qbapp.online/logo.png';
+      if (lead.customer?.logo) {
+        const l = String(lead.customer.logo).trim();
+        if (l.startsWith('http://') || l.startsWith('https://')) {
+          logoUrl = l;
+        } else if (l.startsWith('/')) {
+          logoUrl = `https://admin.qbapp.online${l}`;
+        }
+      }
+
       let emailSubject = customSubject || 'Your Lead Status Has Been Updated';
       let htmlContent = '';
       let textContent = '';
@@ -742,7 +774,7 @@ export class LeadService {
         textContent = customBody;
         htmlContent = customBody.includes('<') && customBody.includes('>')
           ? customBody
-          : wrapInQuikboomEmailHtml(customBody);
+          : wrapInQuikboomEmailHtml(customBody, { primaryColor, logoSrc: logoUrl });
       } else if (template) {
         let startDate = '';
         let startTime = '';
@@ -800,6 +832,8 @@ export class LeadService {
           startDate: startDate || 'To be communicated',
           startTime: startTime || '',
           loginUrl: 'https://quikboom.com/login',
+          primaryColor,
+          logoUrl,
         };
 
         const rendered = renderEmailTemplate(
@@ -809,7 +843,7 @@ export class LeadService {
 
         emailSubject = customSubject || rendered.subject;
         textContent = rendered.body;
-        htmlContent = wrapInQuikboomEmailHtml(rendered.body);
+        htmlContent = wrapInQuikboomEmailHtml(rendered.body, { primaryColor, logoSrc: logoUrl });
       }
 
       // 4. Send email via existing EmailService
@@ -964,7 +998,7 @@ export class LeadService {
           select: { firstName: true, lastName: true, email: true, phone: true },
         },
         customer: {
-          select: { name: true, companyName: true, email: true, phone: true },
+          select: { name: true, companyName: true, email: true, phone: true, logo: true },
         },
       },
     });
@@ -995,6 +1029,18 @@ export class LeadService {
     const businessName = lead.companyName || lead.title || 'Client Organization';
     const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom CRM';
 
+    const primaryColor = lead.stage?.color || process.env.PRIMARY_COLOR || '#16A34A';
+    let logoUrl = 'https://admin.qbapp.online/logo.png';
+    const customerObj = lead.customer as any;
+    if (customerObj?.logo) {
+      const l = String(customerObj.logo).trim();
+      if (l.startsWith('http://') || l.startsWith('https://')) {
+        logoUrl = l;
+      } else if (l.startsWith('/')) {
+        logoUrl = `https://admin.qbapp.online${l}`;
+      }
+    }
+
     // HTML Email Template
     const htmlContent = `
 <!DOCTYPE html>
@@ -1004,9 +1050,10 @@ export class LeadService {
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
     .card { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
-    .header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; }
-    .header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; color: #ffffff; text-align: center; }
+    .header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0; }
+    .header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #ffffff; }
+    .header p { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); }
     .body { padding: 32px; }
     .intro { font-size: 14px; line-height: 1.6; margin-bottom: 24px; color: #334155; }
     .section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 12px; }
@@ -1020,10 +1067,11 @@ export class LeadService {
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="header">
-      <h1>${businessName}</h1>
-      <p>Lead Reference #${lead.id} • Registered Profile Details</p>
+  <div class="card" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
+    <div class="header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; color: #ffffff; text-align: center;">
+      <img src="${logoUrl}" alt="${senderOrgName}" width="160" style="max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0;" />
+      <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #ffffff;">${businessName}</h1>
+      <p style="margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9);">Lead Reference #${lead.id} • Registered Profile Details</p>
     </div>
     <div class="body">
       <p class="intro">

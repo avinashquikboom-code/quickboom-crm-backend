@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -905,7 +906,618 @@ export class WhatsappService {
       api: {
         requestGenerated: Boolean(hasToken && hasPhoneId && normalizedPhone && template),
       },
+      webhook: {
+        route: '/api/v1/webhooks/whatsapp',
+        verifyTokenConfigured: Boolean(creds.verifyToken || process.env.WHATSAPP_VERIFY_TOKEN),
+        appSecretConfigured: Boolean(creds.appSecret || process.env.WHATSAPP_APP_SECRET),
+      },
     };
+  }
+
+  // In-memory cache for event deduplication/idempotency (24h TTL)
+  private readonly processedEvents = new Map<string, number>();
+
+  /**
+   * Safe event idempotency check to avoid duplicate processing of Meta retried webhooks.
+   */
+  private isEventDuplicate(key: string): boolean {
+    const processedAt = this.processedEvents.get(key);
+    if (processedAt && Date.now() - processedAt < 24 * 60 * 60 * 1000) {
+      return true;
+    }
+    return false;
+  }
+
+  private markEventProcessed(key: string): void {
+    if (this.processedEvents.size > 5000) {
+      const now = Date.now();
+      for (const [k, v] of this.processedEvents.entries()) {
+        if (now - v > 24 * 60 * 60 * 1000) {
+          this.processedEvents.delete(k);
+        }
+      }
+    }
+    this.processedEvents.set(key, Date.now());
+  }
+
+  /**
+   * Retrieves full resolved WhatsApp credentials from Integration Settings / environment.
+   */
+  async getWhatsAppCredentials(): Promise<{
+    isEnabled: boolean;
+    apiKey: string;
+    accessToken: string;
+    phoneNumberId: string;
+    businessAccountId: string;
+    verifyToken: string;
+    appSecret: string;
+    config: Record<string, any>;
+  }> {
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const creds = config?.credentials || {};
+    const apiKey = (
+      creds.apiKey ||
+      creds.accessToken ||
+      creds.access_token ||
+      process.env.WHATSAPP_API_KEY ||
+      process.env.WHATSAPP_ACCESS_TOKEN ||
+      ''
+    ).trim();
+    const phoneNumberId = (
+      creds.phoneNumberId ||
+      creds.phone_number_id ||
+      process.env.WHATSAPP_PHONE_NUMBER_ID ||
+      ''
+    ).trim();
+    const businessAccountId = (
+      creds.businessAccountId ||
+      creds.business_account_id ||
+      creds.wabaId ||
+      process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
+      process.env.WHATSAPP_WABA_ID ||
+      ''
+    ).trim();
+    const verifyToken = (
+      creds.verifyToken ||
+      creds.webhookVerifyToken ||
+      creds.verify_token ||
+      process.env.WHATSAPP_VERIFY_TOKEN ||
+      process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
+      ''
+    ).trim();
+    const appSecret = (
+      creds.appSecret ||
+      creds.app_secret ||
+      creds.clientSecret ||
+      process.env.WHATSAPP_APP_SECRET ||
+      process.env.META_APP_SECRET ||
+      ''
+    ).trim();
+
+    return {
+      isEnabled: Boolean(config?.isEnabled),
+      apiKey,
+      accessToken: apiKey,
+      phoneNumberId,
+      businessAccountId,
+      verifyToken,
+      appSecret,
+      config: config?.config || {},
+    };
+  }
+
+  /**
+   * Verifies incoming Meta Cloud API webhook GET verification request.
+   */
+  async verifyWebhookToken(
+    mode?: string,
+    token?: string,
+    challenge?: string,
+  ): Promise<{ valid: boolean; challenge?: string; reason?: string }> {
+    const creds = await this.getWhatsAppCredentials();
+    const configuredToken = creds.verifyToken;
+
+    if (!configuredToken) {
+      this.logger.warn('[WHATSAPP_WEBHOOK] No verifyToken configured in WhatsApp settings or env WHATSAPP_VERIFY_TOKEN');
+      return { valid: false, reason: 'VERIFY_TOKEN_NOT_CONFIGURED' };
+    }
+
+    if (mode === 'subscribe' && token && token === configuredToken) {
+      this.logger.log('[WHATSAPP_WEBHOOK] Verification successful for Meta WhatsApp Cloud API');
+      return { valid: true, challenge };
+    }
+
+    this.logger.warn(`[WHATSAPP_WEBHOOK] Verification failed: mode=${mode}, token mismatch`);
+    return { valid: false, reason: 'TOKEN_MISMATCH' };
+  }
+
+  /**
+   * Verifies X-Hub-Signature-256 HMAC-SHA256 signature using Meta App Secret.
+   */
+  async verifyMetaSignature(rawBody: string, signatureHeader?: string): Promise<boolean> {
+    const creds = await this.getWhatsAppCredentials();
+    if (!creds.appSecret) {
+      // App secret not configured, bypass signature check safely
+      return true;
+    }
+
+    if (!signatureHeader || typeof signatureHeader !== 'string') {
+      this.logger.warn('[WHATSAPP_WEBHOOK] Missing X-Hub-Signature-256 header while App Secret is configured');
+      return false;
+    }
+
+    try {
+      const parts = signatureHeader.split('=');
+      if (parts.length !== 2 || parts[0] !== 'sha256') {
+        return false;
+      }
+      const expectedHash = parts[1];
+      const actualHash = crypto
+        .createHmac('sha256', creds.appSecret)
+        .update(rawBody, 'utf8')
+        .digest('hex');
+
+      const expectedBuf = Buffer.from(expectedHash, 'hex');
+      const actualBuf = Buffer.from(actualHash, 'hex');
+
+      if (expectedBuf.length !== actualBuf.length) return false;
+      return crypto.timingSafeEqual(expectedBuf, actualBuf);
+    } catch (err: any) {
+      this.logger.error(`[WHATSAPP_WEBHOOK] Signature verification error: ${err?.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to extract readable summary text from various WhatsApp Cloud API message types.
+   */
+  extractMessageText(message: any): string {
+    if (!message) return '';
+    const type = message.type;
+    switch (type) {
+      case 'text':
+        return message.text?.body || '';
+      case 'image':
+        return message.image?.caption ? `[Image] ${message.image.caption}` : '[Image]';
+      case 'document': {
+        const filename = message.document?.filename;
+        const caption = message.document?.caption;
+        return filename ? `[Document: ${filename}]${caption ? ` ${caption}` : ''}` : '[Document]';
+      }
+      case 'audio':
+        return message.audio?.voice ? '[Voice Note]' : '[Audio Message]';
+      case 'video':
+        return message.video?.caption ? `[Video] ${message.video.caption}` : '[Video]';
+      case 'location': {
+        const loc = message.location;
+        if (!loc) return '[Location]';
+        const name = loc.name ? ` (${loc.name})` : '';
+        return `[Location: ${loc.latitude}, ${loc.longitude}${name}]`;
+      }
+      case 'contacts': {
+        const c = message.contacts?.[0];
+        const name = c?.name?.formatted_name || 'Contact';
+        const phone = c?.phones?.[0]?.phone || '';
+        return `[Contact: ${name} ${phone}]`.trim();
+      }
+      case 'interactive': {
+        const reply = message.interactive?.button_reply || message.interactive?.list_reply;
+        return reply?.title ? `[Reply: ${reply.title}]` : '[Interactive Response]';
+      }
+      case 'button':
+        return message.button?.text ? `[Button: ${message.button.text}]` : '[Button Click]';
+      case 'reaction':
+        return message.reaction?.emoji ? `[Reaction: ${message.reaction.emoji}]` : '[Reaction]';
+      default:
+        return `[Unsupported message type: ${type || 'unknown'}]`;
+    }
+  }
+
+  /**
+   * Primary processing entry point for incoming Meta WhatsApp Cloud API webhooks.
+   */
+  async processWebhookPayload(payload: any): Promise<{
+    processed: boolean;
+    statusesCount: number;
+    messagesCount: number;
+  }> {
+    if (!payload || typeof payload !== 'object') {
+      return { processed: false, statusesCount: 0, messagesCount: 0 };
+    }
+
+    if (payload.object && payload.object !== 'whatsapp_business_account') {
+      this.logger.log(`[WHATSAPP_WEBHOOK] Ignored non-whatsapp object: ${payload.object}`);
+      return { processed: false, statusesCount: 0, messagesCount: 0 };
+    }
+
+    const entries = Array.isArray(payload.entry) ? payload.entry : [];
+    let statusesCount = 0;
+    let messagesCount = 0;
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const val = change.value;
+        if (!val || typeof val !== 'object') continue;
+
+        const metadata = val.metadata || {};
+        const displayPhoneNumber = metadata.display_phone_number;
+        const phoneNumberId = metadata.phone_number_id;
+        const contacts = Array.isArray(val.contacts) ? val.contacts : [];
+
+        // 1. Process Status Updates
+        if (Array.isArray(val.statuses)) {
+          for (const statusObj of val.statuses) {
+            const messageId = statusObj.id;
+            const statusStr = (statusObj.status || '').toLowerCase();
+            const recipientPhone = statusObj.recipient_id;
+
+            this.logger.log(
+              `WhatsApp Webhook Received\nEvent: message_status\nMessage ID: ${messageId || 'N/A'}\nStatus: ${statusStr}\nPhone: ${this.maskPhone(recipientPhone)}`
+            );
+
+            if (!messageId || !statusStr) continue;
+
+            // Idempotency check
+            const eventKey = `status:${messageId}:${statusStr}`;
+            if (this.isEventDuplicate(eventKey)) {
+              this.logger.log(`[WHATSAPP_WEBHOOK_IDEMPOTENT] Duplicate status ${statusStr} for message ${messageId}. Skipping.`);
+              continue;
+            }
+            this.markEventProcessed(eventKey);
+            statusesCount++;
+
+            await this.updateMessageStatus(messageId, statusStr, statusObj);
+          }
+        }
+
+        // 2. Process Incoming Messages
+        if (Array.isArray(val.messages)) {
+          for (const msg of val.messages) {
+            const messageId = msg.id;
+            const from = msg.from;
+            const type = msg.type || 'text';
+            const msgTimestamp = msg.timestamp;
+
+            this.logger.log(
+              `WhatsApp Webhook Received\nEvent: incoming_message\nMessage ID: ${messageId || 'N/A'}\nPhone: ${this.maskPhone(from)}\nType: ${type}`
+            );
+
+            if (!messageId || !from) continue;
+
+            // Idempotency check
+            const eventKey = `msg:${messageId}`;
+            if (this.isEventDuplicate(eventKey)) {
+              this.logger.log(`[WHATSAPP_WEBHOOK_IDEMPOTENT] Duplicate incoming message ${messageId}. Skipping.`);
+              continue;
+            }
+            this.markEventProcessed(eventKey);
+            messagesCount++;
+
+            const contactProfile = contacts.find((c: any) => c.wa_id === from) || contacts[0];
+            const contactName = contactProfile?.profile?.name || '';
+            const textContent = this.extractMessageText(msg);
+
+            await this.handleIncomingMessage({
+              messageId,
+              from,
+              type,
+              textContent,
+              timestamp: msgTimestamp,
+              contactName,
+              phoneNumberId,
+              displayPhoneNumber,
+              rawMessage: msg,
+            });
+          }
+        }
+
+        // 3. Process errors if present
+        if (Array.isArray(val.errors)) {
+          for (const err of val.errors) {
+            this.logger.warn(`[WHATSAPP_WEBHOOK_ERROR] Code ${err.code}: ${err.title || err.message}`);
+          }
+        }
+      }
+    }
+
+    return { processed: true, statusesCount, messagesCount };
+  }
+
+  /**
+   * Updates existing CRM communication/activity records for an outbound message status event.
+   */
+  private async updateMessageStatus(messageId: string, status: string, rawStatus: any) {
+    const isFailed = status === 'failed';
+    const errObj = isFailed && Array.isArray(rawStatus.errors) && rawStatus.errors[0] ? rawStatus.errors[0] : null;
+    const errorCode = errObj?.code ? String(errObj.code) : undefined;
+    const errorMessage = errObj?.message || errObj?.title || undefined;
+
+    // 1. Update LeadActivityTimeline records that track this WhatsApp message
+    try {
+      const timelines = await this.prisma.leadActivityTimeline.findMany({
+        where: {
+          metadata: {
+            path: ['messageId'],
+            equals: messageId,
+          },
+        },
+      });
+
+      for (const tl of timelines) {
+        const currentMeta = (tl.metadata as Record<string, any>) || {};
+        let newDescription = tl.description;
+
+        if (status === 'delivered') {
+          if (!newDescription.includes('(Delivered)')) {
+            newDescription = `${newDescription.replace(/\s*\(Sent\)/g, '').replace(/\s*\(Pending\)/g, '')} (Delivered)`;
+          }
+        } else if (status === 'read') {
+          if (!newDescription.includes('(Read)')) {
+            newDescription = `${newDescription.replace(/\s*\(Sent\)/g, '').replace(/\s*\(Delivered\)/g, '')} (Read)`;
+          }
+        } else if (isFailed) {
+          if (!newDescription.includes('(Failed')) {
+            newDescription = `${newDescription} (Failed: ${errorMessage || errorCode || 'Not delivered'})`;
+          }
+        }
+
+        await this.prisma.leadActivityTimeline.update({
+          where: { id: tl.id },
+          data: {
+            description: newDescription,
+            metadata: {
+              ...currentMeta,
+              status: status.toUpperCase(),
+              statusUpdatedAt: new Date(Number(rawStatus.timestamp) * 1000 || Date.now()),
+              ...(errorCode ? { errorCode } : {}),
+              ...(errorMessage ? { errorMessage } : {}),
+            },
+          },
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating timeline for ${messageId}: ${err?.message}`);
+    }
+
+    // 2. Update Notification records that track this WhatsApp message
+    try {
+      const notifs = await this.prisma.notification.findMany({
+        where: {
+          data: {
+            path: ['whatsappMessageId'],
+            equals: messageId,
+          },
+        },
+      });
+
+      for (const notif of notifs) {
+        const notifData = (notif.data as Record<string, any>) || {};
+        await this.prisma.notification.update({
+          where: { id: notif.id },
+          data: {
+            data: {
+              ...notifData,
+              whatsappStatus: status.toUpperCase(),
+              whatsappStatusUpdatedAt: new Date(Number(rawStatus.timestamp) * 1000 || Date.now()),
+              ...(errorCode ? { whatsappErrorCode: errorCode } : {}),
+              ...(errorMessage ? { whatsappErrorMessage: errorMessage } : {}),
+            },
+          },
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating notification for ${messageId}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Matches sender to an existing Lead or Contact, creates activity timeline/notification,
+   * or safely registers a new inbound lead if sender is new.
+   */
+  private async handleIncomingMessage(params: {
+    messageId: string;
+    from: string;
+    type: string;
+    textContent: string;
+    timestamp?: string;
+    contactName?: string;
+    phoneNumberId?: string;
+    displayPhoneNumber?: string;
+    rawMessage?: any;
+  }) {
+    const { messageId, from, type, textContent, timestamp, contactName, phoneNumberId, displayPhoneNumber } = params;
+
+    const normalized = this.normalizePhoneNumber(from) || from;
+    const digitsOnly = from.replace(/\D/g, '');
+    const last10 = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+    const msgDate = new Date(Number(timestamp) * 1000 || Date.now());
+
+    // 1. Check existing Lead
+    let matchingLead: any = null;
+    try {
+      if (this.prisma.lead?.findFirst) {
+        matchingLead = await this.prisma.lead.findFirst({
+          where: {
+            OR: [
+              { phone: normalized },
+              { phone: `+${normalized}` },
+              { phone: digitsOnly },
+              { phone: last10 },
+              { phone: { endsWith: last10 } },
+            ],
+            deletedAt: null,
+          },
+          include: {
+            customer: true,
+            assignedTo: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[WHATSAPP_LEAD_LOOKUP_WARN] ${err?.message}`);
+    }
+
+    // 2. Check existing Contact
+    let matchingContact: any = null;
+    try {
+      if (this.prisma.contact?.findFirst) {
+        matchingContact = await this.prisma.contact.findFirst({
+          where: {
+            OR: [
+              { phone: normalized },
+              { phone: digitsOnly },
+              { phone: last10 },
+              { phone: { endsWith: last10 } },
+              { mobile: normalized },
+              { mobile: digitsOnly },
+              { mobile: last10 },
+              { mobile: { endsWith: last10 } },
+              { alternateMobile: { endsWith: last10 } },
+            ],
+            deletedAt: null,
+          },
+          include: {
+            customer: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[WHATSAPP_CONTACT_LOOKUP_WARN] ${err?.message}`);
+    }
+
+    // 3. If neither Lead nor Contact exists, create a new Lead
+    if (!matchingLead && !matchingContact) {
+      try {
+        const defaultCustomer = await this.prisma.customer?.findFirst?.({
+          where: { deletedAt: null },
+          include: {
+            users: {
+              where: { deletedAt: null },
+              take: 1,
+            },
+          },
+          orderBy: { id: 'asc' },
+        });
+
+        if (defaultCustomer) {
+          const newStage = await this.prisma.leadStage?.findFirst?.({
+            where: {
+              customerId: defaultCustomer.id,
+              key: 'NEW',
+              deletedAt: null,
+            },
+          });
+
+          const nameParts = (contactName || '').trim().split(/\s+/);
+          const fName = nameParts[0] || 'WhatsApp';
+          const lName = nameParts.slice(1).join(' ') || `Lead (${last10})`;
+
+          matchingLead = await this.prisma.lead?.create?.({
+            data: {
+              customerId: defaultCustomer.id,
+              createdById: defaultCustomer.users?.[0]?.id || 1,
+              title: `WhatsApp Inquiry: ${contactName || this.maskPhone(from)}`,
+              firstName: fName,
+              lastName: lName,
+              phone: from,
+              source: 'WHATSAPP',
+              status: 'NEW',
+              stageId: newStage?.id || null,
+            },
+            include: {
+              customer: true,
+              assignedTo: true,
+            },
+          });
+
+          this.logger.log(`[WHATSAPP_WEBHOOK] Created new Lead #${matchingLead?.id} for inbound sender ${this.maskPhone(from)}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[WHATSAPP_WEBHOOK] Could not auto-create lead: ${err?.message}`);
+      }
+    }
+
+    // 4. Record Lead Activity if lead exists
+    if (matchingLead) {
+      try {
+        // Check if timeline entry already exists for this messageId
+        const existingEntry = await this.prisma.leadActivityTimeline?.findFirst?.({
+          where: {
+            metadata: {
+              path: ['messageId'],
+              equals: messageId,
+            },
+          },
+        });
+
+        if (!existingEntry && this.prisma.leadActivityTimeline?.create) {
+          const senderLabel = contactName || matchingLead.firstName || this.maskPhone(from);
+          await this.prisma.leadActivityTimeline.create({
+            data: {
+              leadId: matchingLead.id,
+              action: 'WHATSAPP_INBOUND',
+              description: `Incoming WhatsApp message from ${senderLabel}: "${textContent.slice(0, 150)}"`,
+              metadata: {
+                messageId,
+                from: this.maskPhone(from),
+                normalizedPhone: this.maskPhone(normalized),
+                contactName: contactName || null,
+                type,
+                text: textContent,
+                timestamp: msgDate,
+                status: 'RECEIVED',
+                phoneNumberId: phoneNumberId || null,
+                displayPhoneNumber: displayPhoneNumber || null,
+              },
+            },
+          });
+
+          // Send CRM notification to assigned user or lead creator
+          const recipientUserId = matchingLead.assignedToId || matchingLead.createdById;
+          if (recipientUserId && matchingLead.customerId && this.prisma.notification?.create) {
+            await this.prisma.notification.create({
+              data: {
+                customerId: matchingLead.customerId,
+                userId: recipientUserId,
+                title: `New WhatsApp Message from ${senderLabel}`,
+                message: textContent.slice(0, 200),
+                type: 'WHATSAPP_INBOUND',
+                data: {
+                  leadId: matchingLead.id,
+                  whatsappMessageId: messageId,
+                  from: this.maskPhone(from),
+                  type,
+                },
+              },
+            });
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[WHATSAPP_TIMELINE_RECORD_ERR] ${err?.message}`);
+      }
+    }
+
+    // 5. Record CommunicationHistory if Contact exists
+    if (matchingContact) {
+      try {
+        if (this.prisma.communicationHistory?.create) {
+          await this.prisma.communicationHistory.create({
+            data: {
+              contactId: matchingContact.id,
+              type: 'WHATSAPP',
+              summary: `Inbound WhatsApp (${type}): ${textContent.slice(0, 100)}`,
+              details: `From: ${contactName || this.maskPhone(from)}\nMessage ID: ${messageId}\nContent:\n${textContent}`,
+              timestamp: msgDate,
+            },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`[WHATSAPP_COMM_HISTORY_ERR] ${err?.message}`);
+      }
+    }
   }
 }
 

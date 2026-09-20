@@ -2,7 +2,12 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { SendEmailDto } from './dto/send-email.dto';
-import { EmailTemplateService, PREDEFINED_SYSTEM_TEMPLATES } from './email-template.service';
+import {
+  EmailTemplateService,
+  PREDEFINED_SYSTEM_TEMPLATES,
+  DEFAULT_PUBLIC_LOGO_URL,
+  DEFAULT_PRIMARY_COLOR,
+} from './email-template.service';
 import * as nodemailer from 'nodemailer';
 import * as path from 'path';
 
@@ -34,7 +39,7 @@ export class EmailService {
   }
 
   /**
-   * Sends an email via the configured SMTP server.
+   * Main email sending method using dynamic SMTP configuration and template interpolation.
    */
   async sendEmail(dto: SendEmailDto, user?: any) {
     // 1. Fetch dynamic SMTP configuration
@@ -78,11 +83,69 @@ export class EmailService {
       throw new BadRequestException('Email subject cannot be empty');
     }
 
-    const htmlContent = dto.html || (dto.body && dto.body.includes('<') ? dto.body : undefined);
+    let htmlContent = dto.html || (dto.body && dto.body.includes('<') ? dto.body : undefined);
     const textContent = dto.text || (!htmlContent ? dto.body : undefined);
 
     if (!htmlContent && !textContent) {
       throw new BadRequestException('Email body cannot be empty');
+    }
+
+    const customerId = user?.customerId ? Number(user.customerId) : null;
+    const userId = user?.id ? Number(user.id) : null;
+
+    // Resolve branding: public HTTPS logo URL & dynamic primary color
+    let publicLogoUrl = DEFAULT_PUBLIC_LOGO_URL;
+    let primaryColor = process.env.PRIMARY_COLOR || DEFAULT_PRIMARY_COLOR;
+
+    if (customerId && this.prisma?.customer?.findUnique) {
+      const cust = await this.prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { logo: true },
+      }).catch(() => null);
+      if (cust?.logo) {
+        const l = cust.logo.trim();
+        if (l.startsWith('http://') || l.startsWith('https://')) {
+          publicLogoUrl = l;
+        } else if (l.startsWith('/')) {
+          publicLogoUrl = `https://admin.qbapp.online${l}`;
+        }
+      }
+    }
+
+    if (dto.recordType === 'lead' && dto.recordId && this.prisma?.lead?.findUnique) {
+      const leadRec = await this.prisma.lead.findUnique({
+        where: { id: Number(dto.recordId) },
+        include: { stage: true },
+      }).catch(() => null);
+      if (leadRec?.stage?.color) {
+        primaryColor = leadRec.stage.color;
+      }
+    }
+
+    if (htmlContent) {
+      // 1. Ensure public HTTPS logo (Gmail requires absolute, publicly reachable URL)
+      htmlContent = htmlContent
+        .replace(/cid:quikboom-logo/g, publicLogoUrl)
+        .replace(/src=["']\/logo\.png["']/g, `src="${publicLogoUrl}"`)
+        .replace(/src=["']\/app_logo\.png["']/g, `src="${publicLogoUrl}"`)
+        .replace(/src=["']logo\.png["']/g, `src="${publicLogoUrl}"`);
+
+      // 2. Replace hardcoded dark/navy gradients with dynamic primary color
+      htmlContent = htmlContent.replace(/linear-gradient\(135deg,\s*#0f172a,\s*#1e293b\)/g, primaryColor);
+
+      // 3. Ensure inline background styles on email headers
+      if (htmlContent.includes('class="email-header"') && !htmlContent.includes('class="email-header" style="background')) {
+        htmlContent = htmlContent.replace(
+          'class="email-header"',
+          `class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`,
+        );
+      }
+      if (htmlContent.includes('class="header"') && !htmlContent.includes('class="header" style="background')) {
+        htmlContent = htmlContent.replace(
+          'class="header"',
+          `class="header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`,
+        );
+      }
     }
 
     // 4. Resolve sender
@@ -119,9 +182,6 @@ export class EmailService {
     const cc = dto.cc ? (Array.isArray(dto.cc) ? dto.cc.join(', ') : String(dto.cc).trim()) : undefined;
     const bcc = dto.bcc ? (Array.isArray(dto.bcc) ? dto.bcc.join(', ') : String(dto.bcc).trim()) : undefined;
 
-    const customerId = user?.customerId ? Number(user.customerId) : null;
-    const userId = user?.id ? Number(user.id) : null;
-
     // 6. Send email
     try {
       const transporter = nodemailer.createTransport(transportOptions);
@@ -147,7 +207,8 @@ export class EmailService {
               contentDisposition: 'inline',
             });
           } else {
-            this.logger.warn('[EMAIL_LOGO] Could not resolve logo.png path for CID attachment');
+            this.logger.warn('[EMAIL_LOGO] Could not resolve logo.png path for CID attachment, rewriting to public HTTPS URL');
+            htmlContent = htmlContent.replace(/cid:quikboom-logo/g, publicLogoUrl);
           }
         } catch (logoErr: any) {
           this.logger.warn(`[EMAIL_LOGO] Failed to attach logo: ${logoErr?.message}`);

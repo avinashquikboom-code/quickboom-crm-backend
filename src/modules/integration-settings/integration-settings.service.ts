@@ -397,6 +397,21 @@ export class IntegrationSettingsService {
           ''
         ).trim();
         const phoneNumberId = (process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+        const businessAccountId = (
+          process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
+          process.env.WHATSAPP_WABA_ID ||
+          ''
+        ).trim();
+        const verifyToken = (
+          process.env.WHATSAPP_VERIFY_TOKEN ||
+          process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
+          ''
+        ).trim();
+        const appSecret = (
+          process.env.WHATSAPP_APP_SECRET ||
+          process.env.META_APP_SECRET ||
+          ''
+        ).trim();
 
         return {
           provider: IntegrationProvider.WHATSAPP,
@@ -404,7 +419,11 @@ export class IntegrationSettingsService {
           environment: 'LIVE',
           credentials: {
             apiKey,
+            accessToken: apiKey,
             phoneNumberId,
+            businessAccountId,
+            verifyToken,
+            appSecret,
           },
           config: {},
           source: 'ENV_FALLBACK',

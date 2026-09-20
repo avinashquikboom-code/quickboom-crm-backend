@@ -14,6 +14,9 @@ export interface SystemTemplateDefinition {
   supportedVariables: string[];
 }
 
+export const DEFAULT_PUBLIC_LOGO_URL = 'https://admin.qbapp.online/logo.png';
+export const DEFAULT_PRIMARY_COLOR = '#16A34A';
+
 export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
   {
     key: 'EMAIL_OTP',
@@ -21,16 +24,16 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'AUTH',
     subject: 'Your OTP for {{companyName}}',
     description: 'Sent when a user requests an email verification code for login or password reset',
-    supportedVariables: ['companyName', 'userName', 'otp'],
+    supportedVariables: ['companyName', 'userName', 'otp', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #0f172a; margin-top: 0; margin-bottom: 16px; font-size: 20px;">Verification Code</h2>
   <p style="color: #475569; font-size: 15px; margin-bottom: 12px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px; margin-bottom: 20px;">Your verification OTP is:</p>
   <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
-    <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #16a34a; font-family: monospace;">{{otp}}</span>
+    <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: {{primaryColor}}; font-family: monospace;">{{otp}}</span>
   </div>
   <p style="color: #64748b; font-size: 14px; margin-top: 16px;">This OTP will expire in <strong>5 minutes</strong>.</p>
   <p style="color: #94a3b8; font-size: 13px; margin-top: 24px;">If you did not request this verification code, please ignore this email or contact support immediately.</p>
@@ -44,16 +47,16 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'AUTH',
     subject: 'Reset your {{companyName}} password',
     description: 'Sent when an employee or administrator requests a password reset link or OTP',
-    supportedVariables: ['companyName', 'userName', 'resetLink', 'otp'],
+    supportedVariables: ['companyName', 'userName', 'resetLink', 'otp', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #0f172a; margin-top: 0;">Password Reset Request</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
   <p style="color: #475569; font-size: 15px;">We received a request to reset your password for {{companyName}}.</p>
   <div style="margin: 24px 0;">
-    <a href="{{resetLink}}" style="background-color: #16a34a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Reset Password</a>
+    <a href="{{resetLink}}" style="background-color: {{primaryColor}}; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Reset Password</a>
   </div>
   <p style="color: #64748b; font-size: 14px;">Alternatively, enter this OTP: <strong>{{otp}}</strong></p>
   <p style="color: #94a3b8; font-size: 13px; margin-top: 24px;">This request will expire in 15 minutes. If you did not make this request, you can safely ignore this email.</p>
@@ -67,10 +70,10 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'HR',
     subject: 'Welcome to {{companyName}}, {{userName}}!',
     description: 'Sent to newly created employees with their onboarding login details',
-    supportedVariables: ['companyName', 'userName', 'email', 'temporaryPassword', 'loginUrl', 'designation'],
+    supportedVariables: ['companyName', 'userName', 'email', 'temporaryPassword', 'loginUrl', 'designation', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #0f172a; margin-top: 0;">Welcome to {{companyName}}!</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
@@ -80,7 +83,7 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Temporary Password:</strong> {{temporaryPassword}}</p>
   </div>
   <p style="margin: 24px 0;">
-    <a href="{{loginUrl}}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Access Employee Portal</a>
+    <a href="{{loginUrl}}" style="background-color: {{primaryColor}}; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Access Employee Portal</a>
   </p>
   <p style="color: #64748b; font-size: 13px;">Please change your password upon your first login.</p>
   <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
@@ -93,10 +96,10 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'LEAVE',
     subject: 'Leave Approved: {{leaveType}} ({{startDate}} to {{endDate}})',
     description: 'Sent to employee when their leave application is approved by manager or HR',
-    supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'remarks'],
+    supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'remarks', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #16a34a; margin-top: 0;">Leave Approved</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
@@ -115,10 +118,10 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'LEAVE',
     subject: 'Leave Update: {{leaveType}} ({{startDate}} to {{endDate}})',
     description: 'Sent to employee when their leave application cannot be approved',
-    supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'rejectionReason'],
+    supportedVariables: ['companyName', 'userName', 'leaveType', 'startDate', 'endDate', 'approverName', 'rejectionReason', 'logoUrl'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #dc2626; margin-top: 0;">Leave Application Update</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{userName}},</p>
@@ -137,10 +140,10 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'CRM',
     subject: 'New Lead Assigned: {{leadTitle}}',
     description: 'Sent to sales representative or contact when a lead is created or shared',
-    supportedVariables: ['companyName', 'recipientName', 'leadTitle', 'leadContact', 'leadPhone', 'leadCity', 'leadValue', 'leadNotes'],
+    supportedVariables: ['companyName', 'recipientName', 'leadTitle', 'leadContact', 'leadPhone', 'leadCity', 'leadValue', 'leadNotes', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #0f172a; margin-top: 0;">Lead Details</h2>
   <p style="color: #475569; font-size: 15px;">Hello {{recipientName}},</p>
@@ -162,10 +165,10 @@ export const PREDEFINED_SYSTEM_TEMPLATES: SystemTemplateDefinition[] = [
     category: 'CRM',
     subject: 'Welcome to {{companyName}}!',
     description: 'Sent to newly converted customers or registered enterprise clients',
-    supportedVariables: ['companyName', 'customerName', 'contactEmail', 'supportPhone'],
+    supportedVariables: ['companyName', 'customerName', 'contactEmail', 'supportPhone', 'logoUrl', 'primaryColor'],
     body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
   <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
-    <img src="cid:quikboom-logo" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block;" />
+    <img src="{{logoUrl}}" alt="QUIKBOOM" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
   </div>
   <h2 style="color: #0f172a; margin-top: 0;">Welcome to {{companyName}}!</h2>
   <p style="color: #475569; font-size: 15px;">Dear {{customerName}},</p>
@@ -618,14 +621,22 @@ export interface RenderedTemplateResult {
   missingVariables: string[];
 }
 
-export function wrapInQuikboomEmailHtml(content: string, options?: { previewText?: string; companyName?: string; logoSrc?: string }): string {
+export interface WrapEmailOptions {
+  previewText?: string;
+  companyName?: string;
+  logoSrc?: string;
+  primaryColor?: string;
+}
+
+export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOptions): string {
   if (!content) return '';
   if (content.includes('<html') || content.includes('<!DOCTYPE') || content.includes('<body')) {
     return content;
   }
 
-  // Use CID for actual email sends; fallback to /logo.png for web previews
-  const logoSrc = options?.logoSrc ?? 'cid:quikboom-logo';
+  const primaryColor = options?.primaryColor || DEFAULT_PRIMARY_COLOR;
+  const logoSrc = options?.logoSrc || DEFAULT_PUBLIC_LOGO_URL;
+  const companyName = options?.companyName || 'QUIKBOOM';
 
   const paragraphs = content
     .split(/\n\n+/)
@@ -634,7 +645,7 @@ export function wrapInQuikboomEmailHtml(content: string, options?: { previewText
       if (!trimmed) return '';
       if (trimmed.includes('<p') || trimmed.includes('<div') || trimmed.includes('<table')) return trimmed;
       if (trimmed === 'Visit QUIKBOOM Website' || trimmed.includes('Visit QUIKBOOM Website')) {
-        return `<p style="margin: 20px 0; text-align: center;"><a href="https://quikboom.com" style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">Visit QUIKBOOM Website &rarr;</a></p>`;
+        return `<p style="margin: 20px 0; text-align: center;"><a href="https://quikboom.com" style="display: inline-block; padding: 12px 28px; background-color: ${primaryColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">Visit QUIKBOOM Website &rarr;</a></p>`;
       }
       return `<p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #334155;">${trimmed.replace(/\n/g, '<br/>')}</p>`;
     })
@@ -649,26 +660,26 @@ export function wrapInQuikboomEmailHtml(content: string, options?: { previewText
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
     .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .email-header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 24px 32px; text-align: center; color: #ffffff; }
-    .email-header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 10px; }
-    .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
-    .email-header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .email-header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff; }
+    .email-header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0; }
+    .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; }
+    .email-header p { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); }
     .email-body { padding: 32px; font-size: 15px; line-height: 1.6; color: #334155; }
     .email-footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
   </style>
 </head>
 <body>
-  <div class="email-container">
-    <div class="email-header">
-      <img src="${logoSrc}" alt="QUIKBOOM" />
-      <h1>QUIKBOOM</h1>
-      <p>Digital Marketing Agency</p>
+  <div class="email-container" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
+    <div class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;">
+      <img src="${logoSrc}" alt="${companyName}" width="160" style="max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0;" />
+      <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff;">${companyName}</h1>
+      <p style="margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9);">${options?.previewText || 'Digital Marketing Agency'}</p>
     </div>
-    <div class="email-body">
+    <div class="email-body" style="padding: 32px; font-size: 15px; line-height: 1.6; color: #334155;">
       ${paragraphs}
     </div>
-    <div class="email-footer">
-      Sent via <strong>QUIKBOOM Digital Marketing Agency</strong> &bull; CRM
+    <div class="email-footer" style="padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center;">
+      Sent via <strong>${companyName}</strong> &bull; CRM
     </div>
   </div>
 </body>
@@ -682,12 +693,17 @@ export function renderEmailTemplate(
 ): RenderedTemplateResult {
   const missingVars = new Set<string>();
 
+  const primaryColor = variables.primaryColor || options?.safeFallbacks?.primaryColor || DEFAULT_PRIMARY_COLOR;
+  const logoUrl = variables.logoUrl || options?.safeFallbacks?.logoUrl || DEFAULT_PUBLIC_LOGO_URL;
+
   const defaultFallbacks: Record<string, string> = {
     leadTitle: 'Valued Client',
     customerName: 'Valued Client',
     userName: 'QUIKBOOM Team',
     email: 'support@quikboom.com',
     companyName: 'QUIKBOOM Digital Marketing Agency',
+    primaryColor,
+    logoUrl,
     ...(options?.safeFallbacks || {}),
   };
 
@@ -713,8 +729,15 @@ export function renderEmailTemplate(
     });
   };
 
-  const renderedSubject = replacer(template.subject);
-  const renderedBody = replacer(template.body);
+  let renderedSubject = replacer(template.subject);
+  let renderedBody = replacer(template.body);
+
+  // Post-processing for absolute public HTTPS logo and email-safe colors:
+  renderedBody = renderedBody
+    .replace(/cid:quikboom-logo/g, logoUrl)
+    .replace(/src=["']\/logo\.png["']/g, `src="${logoUrl}"`)
+    .replace(/src=["']\/app_logo\.png["']/g, `src="${logoUrl}"`)
+    .replace(/linear-gradient\(135deg,\s*#0f172a,\s*#1e293b\)/g, primaryColor);
 
   return {
     subject: renderedSubject,
@@ -737,6 +760,10 @@ export class EmailTemplateService {
       identifierKey: t.key,
       templateName: t.name,
     };
+  }
+
+  wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOptions): string {
+    return wrapInQuikboomEmailHtml(content, options);
   }
 
   /**

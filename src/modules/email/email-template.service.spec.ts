@@ -154,5 +154,50 @@ QUIKBOOM Digital Marketing Agency`,
       expect(res.missingVariables).toContain('leadTitle');
       expect(res.missingVariables).toContain('startDate');
     });
+
+    it('should inject dynamic primary color and absolute HTTPS logo into rendered email template', () => {
+      const template = {
+        subject: 'Welcome',
+        body: '<p>Click <a href="#" style="background-color: {{primaryColor}}">CTA</a></p><img src="cid:quikboom-logo" />',
+      };
+      const res = service.renderEmailTemplate(template, {
+        primaryColor: '#16A34A',
+        logoUrl: 'https://admin.qbapp.online/logo.png',
+      });
+      expect(res.body).toContain('background-color: #16A34A');
+      expect(res.body).toContain('src="https://admin.qbapp.online/logo.png"');
+      expect(res.body).not.toContain('cid:quikboom-logo');
+    });
+  });
+
+  describe('wrapInQuikboomEmailHtml (Dynamic Primary Color & Public HTTPS Logo)', () => {
+    it('should dynamically render the configured primary color into inline header and button styles', () => {
+      const customPrimaryColor = '#16A34A';
+      const html = service.wrapInQuikboomEmailHtml('Welcome to our service.\n\nVisit QUIKBOOM Website', {
+        primaryColor: customPrimaryColor,
+        logoSrc: 'https://admin.qbapp.online/logo.png',
+      });
+
+      // Header background must use email-safe inline style with primary color
+      expect(html).toContain(`style="background-color: ${customPrimaryColor}; background: ${customPrimaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`);
+      // Button must use email-safe inline style with primary color
+      expect(html).toContain(`background-color: ${customPrimaryColor}`);
+      // Logo must be absolute public HTTPS URL
+      expect(html).toContain('src="https://admin.qbapp.online/logo.png"');
+      // No CSS variables or broken CIDs
+      expect(html).not.toContain('var(--');
+      expect(html).not.toContain('hsl(');
+      expect(html).not.toContain('cid:quikboom-logo');
+      expect(html).not.toContain('linear-gradient(135deg, #0f172a, #1e293b)');
+    });
+
+    it('should use default primary color (#16A34A) and public HTTPS logo when options are omitted', () => {
+      const html = service.wrapInQuikboomEmailHtml('Hello World');
+
+      expect(html).toContain('style="background-color: #16A34A; background: #16A34A;');
+      expect(html).toContain('src="https://admin.qbapp.online/logo.png"');
+      expect(html).not.toContain('cid:quikboom-logo');
+      expect(html).not.toContain('#0f172a');
+    });
   });
 });
