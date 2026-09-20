@@ -379,6 +379,28 @@ export class LeadService {
       cleaned.location = cleaned.city;
     }
 
+    // Strip transient webhook / mapper fields so Prisma model does not receive unknown properties
+    delete cleaned.lead_stage;
+    delete cleaned.user_column_data;
+    delete cleaned.column_data;
+    delete cleaned.form_data;
+    delete cleaned.fields;
+    delete cleaned.google_key;
+    delete cleaned.lead_id;
+    delete cleaned.place_id;
+    delete cleaned.lead_data;
+    delete cleaned.google_lead;
+    delete cleaned.user_email;
+    delete cleaned.email_address;
+    delete cleaned.emailAddress;
+    delete cleaned.user_phone;
+    delete cleaned.user_phone_number;
+    delete cleaned.phone_number;
+    delete cleaned.mobileNumber;
+    delete cleaned.contactNumber;
+    delete cleaned.first_name;
+    delete cleaned.last_name;
+
     return cleaned;
   }
 
@@ -464,7 +486,7 @@ export class LeadService {
       );
 
     if (isGoogleDiscovery) {
-      this.logger.log('[GoogleDiscovery]\nLead received');
+      this.logger.log('[GoogleDiscovery]\nNew lead received');
     } else {
       this.logger.log('[LeadCapture]\nRequest received');
     }
@@ -501,21 +523,6 @@ export class LeadService {
     let resolvedStageId: number | undefined = dto.stageId ? Number(dto.stageId) : undefined;
     let resolvedStatus: LeadStatus = LeadStatus.NEW;
 
-    if (resolvedStageId) {
-      const stage = await this.leadRepository.findStageById(resolvedStageId);
-      if (stage) {
-        const normKey = normalizeLeadStatus(stage.key);
-        if (ALL_LEAD_STATUSES.includes(normKey)) {
-          resolvedStatus = normKey as LeadStatus;
-        }
-      }
-    } else if (dto.status) {
-      const normStatus = normalizeLeadStatus(dto.status);
-      if (ALL_LEAD_STATUSES.includes(normStatus)) {
-        resolvedStatus = normStatus as LeadStatus;
-      }
-    }
-
     const cleaned = this.sanitizeLeadFields(dto);
 
     if (isGoogleDiscovery) {
@@ -547,10 +554,17 @@ export class LeadService {
           deletedAt: null,
           OR: lookupConditions,
         },
+        include: {
+          stage: true,
+        },
       });
     }
 
     if (existingLead && isGoogleDiscovery) {
+      this.logger.log('[GoogleDiscovery]\nExisting lead found: true');
+      const preservedStageName = existingLead.stage?.name || existingLead.status || 'Negotiation';
+      this.logger.log(`[GoogleDiscovery]\nPreserving existing stage: ${preservedStageName}`);
+
       // Update existing lead without overwriting non-empty fields with blank/null
       const updateData: any = {};
       if (cleaned.firstName) updateData.firstName = cleaned.firstName;
@@ -575,6 +589,61 @@ export class LeadService {
       this.logger.log(`[GoogleDiscovery]\nCreating/updating Lead\n\nLead ID: ${existingLead.id}`);
 
       return this.getLeadById(customerId, existingLead.id);
+    }
+
+    if (isGoogleDiscovery) {
+      this.logger.log('[GoogleDiscovery]\nExisting lead found: false');
+      this.logger.log('[GoogleDiscovery]\nAssigning initial CRM stage: New');
+
+      // For a BRAND-NEW Google Discovery lead, stage MUST always be New
+      resolvedStatus = LeadStatus.NEW;
+      let newStage = await this.prisma.leadStage.findFirst({
+        where: {
+          customerId: numCustomerId,
+          key: 'NEW',
+          deletedAt: null,
+          isActive: true,
+        },
+        orderBy: { sortOrder: 'asc' },
+      });
+      if (!newStage) {
+        newStage = await this.prisma.leadStage.findFirst({
+          where: {
+            customerId: null,
+            key: 'NEW',
+            deletedAt: null,
+            isActive: true,
+          },
+          orderBy: { sortOrder: 'asc' },
+        });
+      }
+      if (!newStage) {
+        newStage = await this.prisma.leadStage.findFirst({
+          where: {
+            key: 'NEW',
+            deletedAt: null,
+          },
+          orderBy: { id: 'asc' },
+        });
+      }
+      if (newStage) {
+        resolvedStageId = newStage.id;
+      }
+    } else {
+      if (resolvedStageId) {
+        const stage = await this.leadRepository.findStageById(resolvedStageId);
+        if (stage) {
+          const normKey = normalizeLeadStatus(stage.key);
+          if (ALL_LEAD_STATUSES.includes(normKey)) {
+            resolvedStatus = normKey as LeadStatus;
+          }
+        }
+      } else if (dto.status) {
+        const normStatus = normalizeLeadStatus(dto.status);
+        if (ALL_LEAD_STATUSES.includes(normStatus)) {
+          resolvedStatus = normStatus as LeadStatus;
+        }
+      }
     }
 
     const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
@@ -614,6 +683,11 @@ export class LeadService {
     const createdLead = await this.getLeadById(customerId, lead.id).catch(() => lead);
     const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
     const savedEmailExists = Boolean(createdLead.email && createdLead.email.trim().length > 0);
+
+    if (isGoogleDiscovery) {
+      this.logger.log(`[GoogleDiscovery]\nLead created:\nLead ID: ${createdLead.id}\nStage: ${initialStageName}`);
+      this.logger.log('[GoogleDiscovery]\nNew-stage automation triggered');
+    }
 
     this.logger.log(`[NewLeadAutomation] 3. Lead created:\nLead ID = ${createdLead.id}`);
     this.logger.log(`[NewLeadAutomation] 4. Saved email exists:\n${savedEmailExists}`);

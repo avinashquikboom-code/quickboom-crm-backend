@@ -554,5 +554,109 @@ describe('Lead Capture Field Mapping Tests (End-to-End)', () => {
       expect(result.id).toBe(305);
     });
   });
+
+  describe('11. Force stage NEW for new Google Discovery Leads even with payload lead_stage', () => {
+    it('should force stage New and status NEW for brand-new Google lead regardless of payload lead_stage', async () => {
+      // Mock duplicate check returning null (brand-new lead)
+      mockPrisma.lead.findFirst.mockResolvedValueOnce(null);
+
+      // Mock finding the customer's active NEW stage (e.g. id 16)
+      mockPrisma.leadStage.findFirst.mockResolvedValueOnce({
+        id: 16,
+        customerId: 1,
+        key: 'NEW',
+        name: 'New',
+        isActive: true,
+      });
+
+      mockPrisma.lead.create.mockResolvedValue({
+        id: 306,
+        title: 'New Google Lead',
+        firstName: 'John',
+        lastName: 'Doe',
+        phone: '+919876543210',
+        email: 'john@example.com',
+        source: 'Google Discovery',
+        status: 'NEW',
+        stageId: 16,
+      });
+
+      mockPrisma.lead.findFirst.mockResolvedValueOnce({
+        id: 306,
+        title: 'New Google Lead',
+        firstName: 'John',
+        lastName: 'Doe',
+        phone: '+919876543210',
+        email: 'john@example.com',
+        source: 'Google Discovery',
+        status: 'NEW',
+        stageId: 16,
+        stage: { id: 16, name: 'New' },
+      });
+
+      const payload = {
+        source: 'Google Discovery',
+        first_name: 'John',
+        last_name: 'Doe',
+        email: 'john@example.com',
+        phone: '+919876543210',
+        lead_stage: 'Follow-up', // External lead_stage MUST BE IGNORED
+        status: 'FOLLOW_UP',      // Must be overridden to NEW
+      };
+
+      const result = await leadService.createLead(1, { id: 1, role: 'SUPER_ADMIN' }, payload as any);
+
+      const lastCreateCall = mockPrisma.lead.create.mock.calls[mockPrisma.lead.create.mock.calls.length - 1][0];
+      expect(lastCreateCall.data.status).toBe('NEW');
+      expect(lastCreateCall.data.stageId).toBe(16);
+      expect(result.id).toBe(306);
+    });
+  });
+
+  describe('12. Existing Google Discovery Lead retains current stage', () => {
+    it('should preserve stage Negotiation when duplicate Google update arrives', async () => {
+      const existingLead = {
+        id: 307,
+        customerId: 1,
+        title: 'Existing Negotiation Lead',
+        firstName: 'Jane',
+        lastName: 'Smith',
+        email: 'jane@example.com',
+        phone: '+919988776655',
+        status: 'NEGOTIATION',
+        stageId: 24,
+        stage: { id: 24, name: 'Negotiation' },
+        source: 'Google Discovery',
+      };
+
+      // Mock finding duplicate
+      mockPrisma.lead.findFirst.mockResolvedValueOnce(existingLead);
+      // Mock getLeadById returning updated lead with Negotiation stage intact
+      mockPrisma.lead.findFirst.mockResolvedValueOnce(existingLead);
+
+      const updatePayload = {
+        source: 'Google Discovery',
+        email: 'jane@example.com',
+        phone: '+919988776655',
+        company_name: 'Updated Company Name',
+        lead_stage: 'Follow-up',
+      };
+
+      const result = await leadService.createLead(1, { id: 1, role: 'SUPER_ADMIN' }, updatePayload as any);
+
+      // Verify update did NOT touch status or stageId
+      expect(mockPrisma.lead.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 307, customerId: 1 }),
+        }),
+      );
+      const updateData = mockPrisma.lead.updateMany.mock.calls[mockPrisma.lead.updateMany.mock.calls.length - 1][0].data;
+      expect(updateData.status).toBeUndefined();
+      expect(updateData.stageId).toBeUndefined();
+      expect(updateData.companyName).toBe('Updated Company Name');
+      expect(result.status).toBe('NEGOTIATION');
+      expect(result.stage?.name).toBe('Negotiation');
+    });
+  });
 });
 
