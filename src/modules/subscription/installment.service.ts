@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { ScheduleService } from '../schedule/schedule.service';
 import {
   InstallmentStatus,
   SubscriptionStatus,
@@ -88,6 +89,7 @@ export class InstallmentService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly scheduleService?: ScheduleService,
   ) {}
 
   /**
@@ -859,7 +861,21 @@ export class InstallmentService {
       `[PLAN_PURCHASE]\ncustomerId: ${numCustomerId}\nplanId: ${plan.id}\npurchaseDate: ${now.toISOString().split('T')[0]}\npaymentStatus: PARTIALLY_PAID\nsubscriptionId: ${newSubResult.newSub.id}`,
     );
 
-    // Trigger Plan Purchase Success Notification
+    // Trigger Plan Purchase Calendar Email & Notification
+    try {
+      if (this.scheduleService) {
+        await this.scheduleService.generateSchedulesForSubscription(newSubResult.newSub.id);
+        await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
+          customerId: numCustomerId,
+          subscriptionId: newSubResult.newSub.id,
+          planId: plan.id,
+          paymentId: newSubResult.payment.paymentId,
+        });
+      }
+    } catch (schedErr: any) {
+      this.logger.warn(`Non-fatal: Installment plan schedule email warning: ${schedErr?.message}`);
+    }
+
     try {
       if (this.notificationService) {
         await this.notificationService.sendPlanPurchaseSuccessNotification({

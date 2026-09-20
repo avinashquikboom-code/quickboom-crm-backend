@@ -524,6 +524,54 @@ QUIKBOOM Digital Marketing Agency`,
 </div>`,
   },
   {
+    key: 'PLAN_PURCHASE_CALENDAR_SCHEDULE',
+    name: 'Plan Purchase Calendar Schedule',
+    category: 'CALENDAR',
+    subject: 'Your Scheduled Appointment for {{planName}} Plan – {{companyName}}',
+    description: 'Sent automatically when a customer purchases a plan, containing their appointment schedule, .ics calendar invitation, and appointment confirmation document',
+    supportedVariables: [
+      'customerName',
+      'customerEmail',
+      'planName',
+      'appointmentTitle',
+      'appointmentDate',
+      'date',
+      'startTime',
+      'endTime',
+      'timezone',
+      'location',
+      'meetingLink',
+      'assignedEmployeeName',
+      'assignedEmployeeEmail',
+      'companyName',
+      'logoUrl',
+      'primaryColor',
+    ],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <img src="{{logoUrl}}" alt="{{companyName}}" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
+    <h2 style="color: #0f172a; margin: 12px 0 0; font-size: 20px;">Plan Activated & Schedule Confirmed 📅</h2>
+    <p style="color: {{primaryColor}}; font-size: 14px; font-weight: bold; margin: 4px 0 0;">{{planName}}</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Hello {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">Your <strong>{{planName}}</strong> plan has been successfully activated.</p>
+  <p style="color: #334155; font-size: 15px;">Your scheduled appointment:</p>
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Appointment / Purpose:</strong> {{appointmentTitle}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Date:</strong> {{appointmentDate}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Time:</strong> {{startTime}} - {{endTime}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Timezone:</strong> {{timezone}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Location:</strong> {{location}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Meeting Link:</strong> <a href="{{meetingLink}}" style="color: {{primaryColor}}; text-decoration: underline;">{{meetingLink}}</a></p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Assigned Representative:</strong> {{assignedEmployeeName}}</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">An interactive calendar invite (<code>appointment.ics</code>) is attached with this email so you can add this appointment to your calendar with one click.</p>
+  <p style="color: #475569; font-size: 14px;">Please keep this schedule for your reference.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Regards,<br /><strong style="color: #475569;">{{assignedEmployeeName}}</strong><br />{{companyName}}</p>
+</div>`,
+  },
+  {
     key: 'CALENDAR_SCHEDULED',
     name: 'Appointment / Meeting Scheduled',
     category: 'CALENDAR',

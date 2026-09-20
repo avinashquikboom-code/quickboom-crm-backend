@@ -671,6 +671,12 @@ export class CustomPlanService {
       this.logger.log(`[CUSTOM_PLAN] Generating schedules for customer ID: ${numCustomerId}`);
       await this.workService.generatePlanSchedules(numCustomerId, result.subscription.id);
       await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+      await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
+        customerId: numCustomerId,
+        subscriptionId: result.subscription.id,
+        planId: (result.subscription as any).planId || 1,
+        paymentId: rzpPaymentId,
+      });
     } catch (err: any) {
       this.logger.error(`Failed to auto-generate schedules for custom plan: ${err?.message}`, err?.stack);
     }

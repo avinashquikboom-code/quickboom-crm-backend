@@ -691,10 +691,16 @@ export class PaymentService {
       };
     });
 
-    // 4. Trigger Automatic Dynamic Schedule Generation
+    // 4. Trigger Automatic Dynamic Schedule Generation & Calendar Email Automation
     try {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
+        await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
+          customerId,
+          subscriptionId: result.subscription.id,
+          planId: plan.id,
+          paymentId: dto.razorpay_payment_id,
+        });
       }
       await this.workService.generatePlanSchedules(customerId, result.subscription.id);
     } catch (schedErr: any) {
@@ -1016,6 +1022,23 @@ export class PaymentService {
           orderBy: { createdAt: 'desc' },
         });
         if (activeSub) {
+          try {
+            if (this.scheduleService) {
+              await this.scheduleService.generateSchedulesForSubscription(activeSub.id);
+              await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
+                customerId,
+                subscriptionId: activeSub.id,
+                planId: plan.id,
+                paymentId,
+              });
+            }
+            if (this.workService) {
+              await this.workService.generatePlanSchedules(customerId, activeSub.id);
+            }
+          } catch (schedErr: any) {
+            this.logger.warn(`[WEBHOOK_SCHEDULE_WARN] Schedule generation notice: ${schedErr?.message}`);
+          }
+
           await this.notificationService.sendPlanPurchaseSuccessNotification({
             customerId,
             subscriptionId: activeSub.id,

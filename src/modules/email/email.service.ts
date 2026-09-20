@@ -90,7 +90,11 @@ export class EmailService {
       throw new BadRequestException('Email body cannot be empty');
     }
 
-    const customerId = user?.customerId ? Number(user.customerId) : null;
+    const customerId = user?.customerId
+      ? Number(user.customerId)
+      : dto.recordType?.toLowerCase() === 'customer' && dto.recordId
+      ? Number(dto.recordId)
+      : null;
     const userId = user?.id ? Number(user.id) : null;
 
     // Resolve branding: public HTTPS logo URL & dynamic primary color
@@ -227,6 +231,7 @@ export class EmailService {
       };
       if (cc) mailPayload.cc = cc;
       if (bcc) mailPayload.bcc = bcc;
+      if (dto.icalEvent) mailPayload.icalEvent = dto.icalEvent;
 
       const info = await transporter.sendMail(mailPayload);
 
@@ -263,7 +268,15 @@ export class EmailService {
             customerId,
             userId,
             templateId: dto.templateId ? Number(dto.templateId) : null,
-            leadId: dto.recordType?.toLowerCase() === 'lead' && dto.recordId ? Number(dto.recordId) : null,
+            leadId: dto.leadId
+              ? Number(dto.leadId)
+              : dto.recordType?.toLowerCase() === 'lead' && dto.recordId
+              ? Number(dto.recordId)
+              : null,
+            appointmentId: dto.appointmentId ? Number(dto.appointmentId) : null,
+            planId: dto.planId ? Number(dto.planId) : null,
+            channel: dto.channel || 'EMAIL',
+            identifierKey: dto.identifierKey || null,
             recipientEmail: recipient,
             subject,
             renderedContent: htmlContent || textContent,
@@ -309,7 +322,15 @@ export class EmailService {
             customerId,
             userId,
             templateId: dto.templateId ? Number(dto.templateId) : null,
-            leadId: dto.recordType?.toLowerCase() === 'lead' && dto.recordId ? Number(dto.recordId) : null,
+            leadId: dto.leadId
+              ? Number(dto.leadId)
+              : dto.recordType?.toLowerCase() === 'lead' && dto.recordId
+              ? Number(dto.recordId)
+              : null,
+            appointmentId: dto.appointmentId ? Number(dto.appointmentId) : null,
+            planId: dto.planId ? Number(dto.planId) : null,
+            channel: dto.channel || 'EMAIL',
+            identifierKey: dto.identifierKey || null,
             recipientEmail: recipient,
             subject,
             renderedContent: htmlContent || textContent,

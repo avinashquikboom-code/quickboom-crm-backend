@@ -1,12 +1,23 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 import { ScheduleStatus } from '@prisma/client';
 import { generateMonthlyScheduleIntervals } from '../../common/utils/subscription-date.util';
+import { EmailService } from '../email/email.service';
+import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
+import { generateICalendarInvite } from '../../common/utils/calendar-ics.util';
+import { generateCalendarAppointmentPdfBuffer } from '../../common/utils/calendar-pdf.util';
+import { BUSINESS_TIMEZONE } from '../../common/utils/timezone.util';
 
 @Injectable()
 export class ScheduleService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ScheduleService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly emailService?: EmailService,
+    @Optional() private readonly emailTemplateService?: EmailTemplateService,
+  ) {}
 
   /**
    * Automatically generate monthly schedules for a Customer Subscription.
@@ -337,7 +348,29 @@ export class ScheduleService {
       throw new NotFoundException(`Schedule with ID ${id} not found`);
     }
 
-    return item;
+    const communications = this.prisma.emailLog
+      ? await this.prisma.emailLog.findMany({
+          where: { appointmentId: numId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            channel: true,
+            eventType: true,
+            recipientEmail: true,
+            subject: true,
+            status: true,
+            errorMessage: true,
+            providerMessageId: true,
+            sentAt: true,
+            createdAt: true,
+          },
+        })
+      : [];
+
+    return {
+      ...item,
+      communications,
+    };
   }
 
   async create(scopedCustomerId: number | string | undefined, dto: CreateScheduleDto) {
@@ -399,5 +432,370 @@ export class ScheduleService {
         status: ScheduleStatus.CANCELLED,
       },
     });
+  }
+
+  /**
+   * Automates sending the customer's calendar schedule, RFC 5545 .ics invitation,
+   * and appointment PDF to Customer.email upon confirmed successful plan payment.
+   *
+   * Enforces strict idempotency, customer email validation, safe error handling,
+   * dynamic branding, and assigned employee resolution.
+   */
+  async sendPlanPurchaseCalendarScheduleEmail(params: {
+    customerId: number;
+    subscriptionId: number;
+    planId?: number;
+    paymentId?: string | number;
+  }): Promise<{ success: boolean; skipped?: boolean; reason?: string; emailLogId?: number }> {
+    const { customerId, subscriptionId } = params;
+    this.logger.log(`[PLAN_CALENDAR_EMAIL] Initiating calendar email automation for customerId=${customerId}, subscriptionId=${subscriptionId}`);
+
+    try {
+      // 1. Retrieve customer details
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: Number(customerId) },
+        include: {
+          assignedEmployeeRel: true,
+        },
+      });
+
+      if (!customer) {
+        this.logger.warn(`[PLAN_CALENDAR_EMAIL] Customer #${customerId} not found`);
+        return { success: false, reason: 'CUSTOMER_NOT_FOUND' };
+      }
+
+      // Check if customer has associated lead for mobile BPO timeline linkage
+      const lead = await this.prisma.lead.findFirst({
+        where: { customerId: Number(customerId), deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+
+      // 2. Resolve Plan
+      const sub = await this.prisma.customerSubscription.findUnique({
+        where: { id: Number(subscriptionId) },
+        include: { plan: true },
+      });
+
+      let plan = sub?.plan;
+      if (!plan && params.planId) {
+        plan = await this.prisma.plan.findUnique({ where: { id: Number(params.planId) } });
+      }
+
+      const planName = plan?.name || 'Customer Plan';
+      const planId = plan?.id || params.planId || 0;
+
+      // 3. Ensure monthly schedules are generated/retrieved for this subscription
+      try {
+        await this.generateSchedulesForSubscription(subscriptionId);
+      } catch (genErr: any) {
+        this.logger.warn(`[PLAN_CALENDAR_EMAIL] Schedule generation notice: ${genErr?.message}`);
+      }
+
+      // Retrieve primary upcoming schedule for this subscription
+      const schedule = await this.prisma.monthlySchedule.findFirst({
+        where: {
+          customerId: Number(customerId),
+          subscriptionId: Number(subscriptionId),
+          deletedAt: null,
+        },
+        orderBy: [{ year: 'asc' }, { month: 'asc' }, { startDate: 'asc' }],
+        include: {
+          assignedEmployee: true,
+          plan: true,
+        },
+      });
+
+      const appointmentId = schedule?.id || 0;
+      const identifierKey = `PLAN_PURCHASE_CALENDAR_SCHEDULE:${customerId}:${planId}:${appointmentId}`;
+
+      // 4. Idempotency Check: Don't send duplicate emails for the same purchase / calendar event
+      if (this.prisma.emailLog) {
+        const existingSent = await this.prisma.emailLog.findFirst({
+          where: {
+            customerId: Number(customerId),
+            planId: planId || undefined,
+            appointmentId: appointmentId || undefined,
+            eventType: 'PLAN_PURCHASE_CALENDAR_SCHEDULE',
+            status: 'SENT',
+          },
+        });
+
+        if (existingSent) {
+          this.logger.log(
+            `[PLAN_CALENDAR_EMAIL_IDEMPOTENT] Calendar schedule email already sent for customer #${customerId}, plan #${planId}, appointment #${appointmentId}. Skipping duplicate.`,
+          );
+          return {
+            success: true,
+            skipped: true,
+            emailLogId: existingSent.id,
+            reason: 'DUPLICATE_PREVENTED',
+          };
+        }
+      }
+
+      // 5. Customer Email Validation
+      // Use customer's actual registered email address (Customer.email)
+      const rawEmail = (customer.email || '').trim();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const isEmailValid = rawEmail && emailRegex.test(rawEmail);
+
+      if (!isEmailValid) {
+        this.logger.warn(
+          `[PLAN_CALENDAR_EMAIL_INVALID] Customer #${customerId} (${customer.name}) has no valid registered email: "${rawEmail}". Payment remains successful.`,
+        );
+
+        let failedLogId: number | undefined;
+        if (this.prisma.emailLog) {
+          const failedLog = await this.prisma.emailLog.create({
+            data: {
+              customerId: Number(customerId),
+              leadId: lead?.id || null,
+              appointmentId: appointmentId || null,
+              planId: planId || null,
+              channel: 'EMAIL',
+              identifierKey,
+              recipientEmail: rawEmail || 'MISSING_CUSTOMER_EMAIL',
+              subject: `Your Scheduled Appointment for ${planName} Plan`,
+              renderedContent: 'Customer registered email is missing or invalid. Automated calendar schedule email skipped.',
+              eventType: 'PLAN_PURCHASE_CALENDAR_SCHEDULE',
+              status: 'FAILED',
+              errorMessage: 'Customer registered email is missing or invalid',
+              sentAt: new Date(),
+            },
+          }).catch((err) => {
+            this.logger.warn(`[EMAIL_LOG_FAILED_WARN] Failed recording missing email status: ${err?.message}`);
+            return null;
+          });
+          failedLogId = failedLog?.id;
+        }
+
+        return {
+          success: false,
+          skipped: false,
+          reason: 'MISSING_OR_INVALID_CUSTOMER_EMAIL',
+          emailLogId: failedLogId,
+        };
+      }
+
+      const customerEmail = rawEmail;
+      const customerName = customer.name || customer.companyName || 'Valued Customer';
+      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+
+      // 6. Assigned Employee Resolution
+      // Use existing customer / schedule assigned employee relationship
+      let assignedEmployeeName = '';
+      let assignedEmployeeEmail = '';
+
+      if (schedule?.assignedEmployee) {
+        assignedEmployeeName = `${schedule.assignedEmployee.firstName || ''} ${schedule.assignedEmployee.lastName || ''}`.trim();
+        assignedEmployeeEmail = schedule.assignedEmployee.email || '';
+      } else if (customer.assignedEmployeeRel) {
+        assignedEmployeeName = `${customer.assignedEmployeeRel.firstName || ''} ${customer.assignedEmployeeRel.lastName || ''}`.trim();
+        assignedEmployeeEmail = customer.assignedEmployeeRel.email || '';
+      } else if (customer.assignedEmployee) {
+        const emp = await this.prisma.employee.findFirst({
+          where: {
+            customerId: Number(customerId),
+            OR: [
+              { firstName: { contains: customer.assignedEmployee, mode: 'insensitive' } },
+              { lastName: { contains: customer.assignedEmployee, mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (emp) {
+          assignedEmployeeName = `${emp.firstName || ''} ${emp.lastName || ''}`.trim();
+          assignedEmployeeEmail = emp.email || '';
+        }
+      }
+
+      if (!assignedEmployeeName) {
+        assignedEmployeeName = `${companyName} Account Executive`;
+      }
+      if (!assignedEmployeeEmail) {
+        const smtpConfig = await this.prisma.integrationSetting.findFirst({
+          where: { provider: 'SMTP', isEnabled: true, deletedAt: null },
+        }).catch(() => null);
+        const configJson = (smtpConfig?.config as any) || {};
+        assignedEmployeeEmail = configJson.fromEmail || 'support@quikboom.com';
+      }
+
+      // 7. Schedule Date & Time Resolution
+      const scheduleStartDate = schedule?.startDate ? new Date(schedule.startDate) : new Date();
+      // Schedule default appointment time: 10:00 AM IST on schedule date
+      const appointmentStart = new Date(scheduleStartDate);
+      if (appointmentStart.getHours() === 0 && appointmentStart.getMinutes() === 0) {
+        appointmentStart.setHours(10, 0, 0, 0);
+      }
+      const appointmentEnd = new Date(appointmentStart.getTime() + 60 * 60 * 1000); // 1 hour duration
+
+      const timezone = BUSINESS_TIMEZONE; // Asia/Kolkata
+      const appointmentDateStr = appointmentStart.toLocaleDateString('en-IN', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      const startTimeStr = '10:00 AM';
+      const endTimeStr = '11:00 AM';
+      const appointmentTitle = schedule?.title || `${planName} - Strategy & Kickoff Consultation`;
+      const location = customer.city
+        ? `${customer.city}, ${customer.state || 'India'}`
+        : 'Online Video Conference / QuikBoom Office';
+      const meetingLink = 'https://meet.google.com/qbm-crm-sync';
+
+      // 8. Generate iCalendar (.ics) event
+      const icsUid = `qb-schedule-${appointmentId || subscriptionId}-${customerId}@${customer.domain || 'quikboom.com'}`;
+      const icsContent = generateICalendarInvite({
+        uid: icsUid,
+        title: appointmentTitle,
+        description: `Your ${planName} appointment with ${assignedEmployeeName}.\\nMeeting Link: ${meetingLink}\\nNotes: ${schedule?.notes || 'Subscription plan active schedule'}`,
+        location,
+        url: meetingLink,
+        startDate: appointmentStart,
+        endDate: appointmentEnd,
+        timezone,
+        organizerName: assignedEmployeeName,
+        organizerEmail: assignedEmployeeEmail,
+        attendeeName: customerName,
+        attendeeEmail: customerEmail,
+        status: 'CONFIRMED',
+      });
+
+      // 9. Generate Calendar Appointment PDF (reuse existing generator)
+      let pdfBuffer: Buffer | null = null;
+      try {
+        pdfBuffer = await generateCalendarAppointmentPdfBuffer({
+          appointmentNo: `SCH-${appointmentId || subscriptionId}`,
+          customerName,
+          companyName,
+          eventTitle: appointmentTitle,
+          date: appointmentDateStr,
+          time: `${startTimeStr} - ${endTimeStr}`,
+          duration: '60 minutes',
+          location,
+          assignedEmployeeName,
+          assignedEmployeeEmail,
+          customerEmail,
+          customerPhone: customer.phone || undefined,
+          notes: schedule?.notes || `Auto-generated schedule for ${planName}`,
+        });
+      } catch (pdfErr: any) {
+        this.logger.warn(`[PLAN_CALENDAR_EMAIL] PDF generation warning: ${pdfErr?.message}`);
+      }
+
+      // 10. Resolve Email Template & Render
+      let template: any = null;
+      if (this.emailTemplateService) {
+        template = await this.emailTemplateService.findByKey('PLAN_PURCHASE_CALENDAR_SCHEDULE', customerId);
+      }
+
+      const templateVariables = {
+        customerName,
+        customerEmail,
+        planName,
+        appointmentTitle,
+        appointmentDate: appointmentDateStr,
+        date: appointmentDateStr,
+        startTime: startTimeStr,
+        endTime: endTimeStr,
+        timezone,
+        location,
+        meetingLink,
+        assignedEmployeeName,
+        assignedEmployeeEmail,
+        companyName,
+      };
+
+      const rendered = renderEmailTemplate(
+        {
+          subject: template?.subject || 'Your Scheduled Appointment for {{planName}} Plan – {{companyName}}',
+          body: template?.body || '',
+        },
+        templateVariables,
+      );
+
+      // 11. Prepare attachments: appointment.ics (text/calendar) + PDF document
+      const attachments: any[] = [
+        {
+          filename: 'appointment.ics',
+          content: Buffer.from(icsContent, 'utf-8'),
+          contentType: 'text/calendar; charset=utf-8; method=REQUEST',
+        },
+      ];
+
+      if (pdfBuffer) {
+        attachments.push({
+          filename: `Appointment-SCH-${appointmentId || subscriptionId}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      }
+
+      // 12. Dispatch email via EmailService
+      if (this.emailService) {
+        const sendResult = await this.emailService.sendEmail(
+          {
+            to: customerEmail,
+            subject: rendered.subject,
+            html: rendered.body,
+            text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+            recordType: 'customer',
+            recordId: customerId,
+            leadId: lead?.id,
+            appointmentId: appointmentId || undefined,
+            planId: planId || undefined,
+            channel: 'EMAIL',
+            identifierKey,
+            eventType: 'PLAN_PURCHASE_CALENDAR_SCHEDULE',
+            templateId: template?.id,
+            attachments,
+            icalEvent: {
+              filename: 'appointment.ics',
+              method: 'REQUEST',
+              content: icsContent,
+            },
+          },
+          { customerId },
+        );
+
+        this.logger.log(
+          `[PLAN_CALENDAR_EMAIL_SUCCESS] Calendar schedule email successfully sent to ${customerEmail} (messageId: ${sendResult.messageId})`,
+        );
+
+        return {
+          success: true,
+          skipped: false,
+          emailLogId: (sendResult as any)?.emailLogId,
+        };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      this.logger.error(`[PLAN_CALENDAR_EMAIL_FAILED] Error sending calendar schedule email: ${err?.message}`, err?.stack);
+
+      // Safe error recording in EmailLog without throwing or breaking payment confirmation
+      if (this.prisma.emailLog) {
+        await this.prisma.emailLog.create({
+          data: {
+            customerId: Number(customerId),
+            planId: params.planId ? Number(params.planId) : null,
+            channel: 'EMAIL',
+            recipientEmail: 'FAILED_SEND',
+            subject: 'Scheduled Appointment',
+            renderedContent: 'Failed to send calendar invitation due to internal error',
+            eventType: 'PLAN_PURCHASE_CALENDAR_SCHEDULE',
+            status: 'FAILED',
+            errorMessage: err?.message || 'Unknown calendar email error',
+            sentAt: new Date(),
+          },
+        }).catch(() => null);
+      }
+
+      return {
+        success: false,
+        reason: err?.message || 'INTERNAL_ERROR',
+      };
+    }
   }
 }

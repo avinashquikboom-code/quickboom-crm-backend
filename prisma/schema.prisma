@@ -3081,6 +3081,9 @@ model EmailLog {
   leadId            Int?
   contactId         Int?
   templateId        Int?
+  appointmentId     Int?
+  planId            Int?
+  channel           String?        @default("EMAIL")
   identifierKey     String?
   recipientEmail    String
   subject           String
@@ -3103,6 +3106,8 @@ model EmailLog {
   @@index([userId])
   @@index([leadId])
   @@index([templateId])
+  @@index([appointmentId])
+  @@index([planId])
   @@index([identifierKey])
   @@index([recipientEmail])
   @@index([eventType])

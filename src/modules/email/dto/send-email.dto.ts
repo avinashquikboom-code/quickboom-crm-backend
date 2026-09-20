@@ -63,6 +63,32 @@ export class SendEmailDto {
   @IsOptional()
   eventType?: string;
 
+  @ApiPropertyOptional({ description: 'Unique identifier or idempotency key' })
+  @IsString()
+  @IsOptional()
+  identifierKey?: string;
+
+  @ApiPropertyOptional({ description: 'Associated appointment or schedule ID' })
+  @IsOptional()
+  appointmentId?: number;
+
+  @ApiPropertyOptional({ description: 'Associated lead ID' })
+  @IsOptional()
+  leadId?: number;
+
+  @ApiPropertyOptional({ description: 'Associated plan ID' })
+  @IsOptional()
+  planId?: number;
+
+  @ApiPropertyOptional({ description: 'Communication channel', example: 'EMAIL' })
+  @IsString()
+  @IsOptional()
+  channel?: string;
+
+  @ApiPropertyOptional({ description: 'Calendar iCal event structure for interactive calendar invites' })
+  @IsOptional()
+  icalEvent?: any;
+
   @ApiPropertyOptional({ description: 'Optional email file attachments (Buffer or path)' })
   @IsOptional()
   attachments?: any[];

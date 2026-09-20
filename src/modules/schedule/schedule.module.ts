@@ -4,9 +4,10 @@ import { ScheduleController } from './schedule.controller';
 import { MobileScheduleController } from './mobile-schedule.controller';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { WorkModule } from '../work/work.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [PrismaModule, WorkModule],
+  imports: [PrismaModule, WorkModule, EmailModule],
   controllers: [ScheduleController, MobileScheduleController],
   providers: [ScheduleService],
   exports: [ScheduleService],

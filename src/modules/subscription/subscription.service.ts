@@ -2948,10 +2948,16 @@ export class SubscriptionService {
       }
     });
 
-    // 7. Auto-generate Schedules & Work Deliverables
+    // 7. Auto-generate Schedules, Calendar Email Automation & Work Deliverables
     try {
       if (this.scheduleService) {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
+        await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
+          customerId: sub.customerId,
+          subscriptionId: sub.id,
+          planId: plan.id,
+          paymentId: payment.id,
+        });
       }
       if (this.workService) {
         await this.workService.generatePlanSchedules(sub.customerId, sub.id);
