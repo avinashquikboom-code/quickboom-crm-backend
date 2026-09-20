@@ -27,6 +27,7 @@ import { EmailService } from '../email/email.service';
 import {
   EmailTemplateService,
   TELECALLER_STATUS_TO_TEMPLATE_KEY,
+  PREDEFINED_SYSTEM_TEMPLATES,
   renderEmailTemplate,
   wrapInQuikboomEmailHtml,
 } from '../email/email-template.service';
@@ -231,6 +232,41 @@ export class LeadService {
       `Lead "${lead.title}" was created via ${dto.source || 'WEBSITE'}`,
       { source: dto.source, value: dto.value },
     );
+
+    // Retrieve fresh lead with stage and customer relations populated
+    const createdLead = await this.getLeadById(customerId, lead.id).catch(() => lead);
+    const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
+
+    // Automated communication for NEW LEAD CREATED
+    // 1. Email automation using initial stage template:
+    await this.handleLeadStageChangeNotification(
+      customerId,
+      createdLead,
+      '',
+      initialStageName,
+      userId,
+      undefined,
+      undefined,
+      undefined,
+      'LEAD_CREATED',
+    ).catch((err) => {
+      this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] ${err?.message}`);
+    });
+
+    // 2. WhatsApp automation using initial stage template:
+    await this.handleLeadStageChangeWhatsappNotification(
+      customerId,
+      createdLead,
+      '',
+      initialStageName,
+      userId,
+      undefined,
+      undefined,
+      'LEAD_CREATED',
+    ).catch((err) => {
+      this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] ${err?.message}`);
+    });
+
     return lead;
   }
 
@@ -401,6 +437,21 @@ export class LeadService {
         updatedLead,
         previousStageName,
         newStageName,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'LEAD_STAGE_CHANGED',
+      );
+      await this.handleLeadStageChangeWhatsappNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+        undefined,
+        undefined,
+        undefined,
+        'LEAD_STAGE_CHANGED',
       );
     }
 
@@ -500,11 +551,12 @@ export class LeadService {
         dto.templateId,
         dto.customSubject,
         dto.customBody,
+        'LEAD_STAGE_CHANGED',
       );
     }
 
-    // Trigger WhatsApp notification if sendWhatsapp is enabled
-    if (isStageChanged && dto.sendWhatsapp) {
+    // Trigger WhatsApp notification automatically unless explicitly skipped
+    if (isStageChanged && dto.sendWhatsapp !== false) {
       await this.handleLeadStageChangeWhatsappNotification(
         customerId,
         updatedLead,
@@ -513,6 +565,7 @@ export class LeadService {
         userId,
         dto.whatsappMessage,
         dto.whatsappTemplateName,
+        'LEAD_STAGE_CHANGED',
       );
     }
 
@@ -532,39 +585,49 @@ export class LeadService {
     overrideTemplateId?: number,
     customSubject?: string,
     customBody?: string,
+    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
   ) {
     try {
-      this.logger.log(`[LEAD] Stage change detected`);
-      this.logger.log(`[LEAD] Previous stage: ${previousStageName}`);
+      this.logger.log(`[LEAD] ${eventType} detected`);
+      if (previousStageName) this.logger.log(`[LEAD] Previous stage: ${previousStageName}`);
       this.logger.log(`[LEAD] New stage: ${newStageName}`);
 
-      // 1. Resolve recipient email: prioritize the email address stored directly on the Lead record
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      let recipientEmail = (lead.email || '').trim();
-
-      if (!recipientEmail || !emailRegex.test(recipientEmail)) {
-        if (lead.customer?.email && emailRegex.test(lead.customer.email.trim())) {
-          recipientEmail = lead.customer.email.trim();
-        } else {
-          recipientEmail = '';
-        }
+      // 0. Do NOT send email if stage did not actually change (for stage change events)
+      if (
+        eventType === 'LEAD_STAGE_CHANGED' &&
+        previousStageName &&
+        newStageName &&
+        previousStageName.trim().toUpperCase() === newStageName.trim().toUpperCase()
+      ) {
+        this.logger.log(
+          `[EMAIL] Stage unchanged (${previousStageName} → ${newStageName}). Skipping automatic email.`,
+        );
+        return;
       }
 
-      // Handle missing email gracefully
-      if (!recipientEmail) {
-        this.logger.warn(`[EMAIL] Recipient email not available on lead #${lead.id}`);
+      // 1. Resolve recipient email: strictly comes from the Lead record's email field
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const recipientEmail = (lead.email || '').trim();
+
+      // Handle missing or invalid email gracefully
+      if (!recipientEmail || !emailRegex.test(recipientEmail)) {
+        this.logger.log(`[EMAIL] Recipient email not available on lead #${lead.id}. ${eventType === 'LEAD_CREATED' ? 'Lead created' : 'Stage updated'} successfully, skipping email.`);
         return;
       }
 
       this.logger.log(`[EMAIL] Lead notification recipient: ${maskEmail(recipientEmail)}`);
 
-      // 2. Prevent duplicate notifications (debounce identical transitions within 60 seconds)
+      // 2. Prevent duplicate notifications (debounce identical transitions/events within 60 seconds)
       const recentLog = await this.prisma.emailLog.findFirst({
         where: {
           leadId: Number(lead.id),
-          eventType: 'LEAD_STAGE_CHANGED',
-          previousStage: String(previousStageName),
-          newStage: String(newStageName),
+          eventType,
+          ...(eventType === 'LEAD_STAGE_CHANGED'
+            ? {
+                previousStage: String(previousStageName),
+                newStage: String(newStageName),
+              }
+            : {}),
           createdAt: {
             gte: new Date(Date.now() - 60000),
           },
@@ -573,18 +636,18 @@ export class LeadService {
 
       if (recentLog) {
         this.logger.log(
-          `[LEAD] Duplicate stage change notification detected for lead #${lead.id} (${previousStageName} → ${newStageName}). Skipping redundant email.`,
+          `[LEAD] Duplicate ${eventType} email notification detected for lead #${lead.id}. Skipping redundant email.`,
         );
         return;
       }
 
-      // 3. Resolve template mapping from lead status / stage automatically
+      // 3. Resolve template mapping strictly for the NEW stage
+      const stageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normNewStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const templateKey =
+        (stageKey && TELECALLER_STATUS_TO_TEMPLATE_KEY[stageKey]) ||
         TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage] ||
-        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStatus] ||
-        null;
+        (stageKey ? `QUIKBOOM_${stageKey}` : `QUIKBOOM_${normNewStage}`);
 
       let template: any = null;
       if (overrideTemplateId && this.emailTemplateService) {
@@ -593,10 +656,24 @@ export class LeadService {
       if (!template && templateKey && this.emailTemplateService) {
         template = await this.emailTemplateService.findByKey(templateKey, lead.customerId).catch(() => null);
       }
+      if (!template && this.emailTemplateService) {
+        // Also check predefined system fallback templates
+        template = PREDEFINED_SYSTEM_TEMPLATES.find(
+          (t) => t.key === templateKey || t.key === `QUIKBOOM_${normNewStage}`
+        ) || null;
+      }
 
-      if (template && !template.isActive) {
+      if (template && template.isActive === false) {
         this.logger.log(
           `[EMAIL] Email template "${templateKey || template.key}" is inactive. Skipping automatic email for lead #${lead.id}.`,
+        );
+        return;
+      }
+
+      // If no template is configured for this stage, do NOT send generic or random template
+      if (!template && !customBody) {
+        this.logger.log(
+          `[EMAIL] ${eventType === 'LEAD_CREATED' ? 'New lead created' : 'Lead stage updated'}, but no email template is configured for the "${newStageName}" stage. Skipping email.`,
         );
         return;
       }
@@ -608,25 +685,46 @@ export class LeadService {
         lead.companyName ||
         'Valued Client';
 
+      // Resolve assigned employee details for signature (or fallback to user/customer)
       let userName = 'QuickBoom Team';
-      if (lead.user?.name) {
+      let senderEmail = 'sales@quikboom.com';
+      let assignedEmployeeName = 'QuickBoom Team';
+      let assignedEmployeeEmail = 'sales@quikboom.com';
+
+      if (lead.assignedTo) {
+        const repName = `${lead.assignedTo.firstName || ''} ${lead.assignedTo.lastName || ''}`.trim();
+        if (repName) {
+          userName = repName;
+          assignedEmployeeName = repName;
+        }
+        if (lead.assignedTo.email) {
+          senderEmail = lead.assignedTo.email.trim();
+          assignedEmployeeEmail = lead.assignedTo.email.trim();
+        }
+      } else if (lead.user?.name) {
         userName = lead.user.name;
+        if (lead.user.email) senderEmail = lead.user.email;
       } else if (userId && this.prisma.user) {
         const u = await this.prisma.user
           .findUnique({
             where: { id: Number(userId) },
-            select: { firstName: true, lastName: true },
+            select: { firstName: true, lastName: true, email: true },
           })
           .catch(() => null);
         if (u) {
-          userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QuickBoom Team';
+          const uName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+          if (uName) {
+            userName = uName;
+            assignedEmployeeName = uName;
+          }
+          if (u.email) {
+            senderEmail = u.email.trim();
+            assignedEmployeeEmail = u.email.trim();
+          }
         }
+      } else if (lead.customer?.email) {
+        senderEmail = lead.customer.email.trim();
       }
-
-      const senderEmail =
-        lead.user?.email ||
-        lead.customer?.email ||
-        'sales@quikboom.com';
 
       let emailSubject = customSubject || 'Your Lead Status Has Been Updated';
       let htmlContent = '';
@@ -671,11 +769,29 @@ export class LeadService {
 
         const variables: Record<string, any> = {
           leadTitle,
-          userName,
+          leadName: leadTitle,
+          leadFirstName: (lead.firstName || '').trim() || leadTitle,
+          name: leadTitle,
+          customerName: leadTitle,
+          recipientName: leadTitle,
+          leadEmail: recipientEmail,
           email: senderEmail,
+          senderEmail,
+          userName,
+          senderName: userName,
+          assignedUser: userName,
+          assignedEmployee: userName,
+          assignedEmployeeName,
+          assignedEmployeeEmail,
+          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
+          company: lead.companyName || 'your company',
+          stage: newStageName,
+          stageName: newStageName,
+          newStage: newStageName,
+          previousStage: previousStageName,
           startDate: startDate || 'To be communicated',
           startTime: startTime || '',
-          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
+          loginUrl: 'https://quikboom.com/login',
         };
 
         const rendered = renderEmailTemplate(
@@ -686,84 +802,6 @@ export class LeadService {
         emailSubject = customSubject || rendered.subject;
         textContent = rendered.body;
         htmlContent = wrapInQuikboomEmailHtml(rendered.body);
-      } else {
-        // Standard clean stage update notification for stages without custom template (e.g. Qualified)
-        const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom Team';
-
-        htmlContent = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your Lead Status Has Been Updated</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
-    .card { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 28px 32px; color: #ffffff; }
-    .header h1 { margin: 0 0 6px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
-    .header p { margin: 0; font-size: 13px; color: #94a3b8; }
-    .body { padding: 32px; }
-    .intro { font-size: 15px; line-height: 1.6; margin-bottom: 20px; color: #334155; }
-    .status-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 20px 0; }
-    .status-pill-old { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
-    .status-pill-new { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
-    .details-table { width: 100%; border-collapse: collapse; margin-top: 16px; border-top: 1px solid #e2e8f0; }
-    .details-table td { padding: 10px 0; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
-    .details-table tr:last-child td { border-bottom: none; }
-    .label { font-weight: 700; color: #64748b; width: 40%; }
-    .value { font-weight: 600; color: #0f172a; }
-    .closing { font-size: 14px; color: #475569; margin-top: 24px; line-height: 1.6; }
-    .footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="header">
-      <h1>Your Lead Status Has Been Updated</h1>
-      <p>Notification from ${senderOrgName}</p>
-    </div>
-    <div class="body">
-      <p class="intro">
-        Hello <strong>${leadTitle}</strong>,<br><br>
-        Your lead stage has been updated in QuickBoom CRM.
-      </p>
-
-      <div class="status-box">
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Previous Stage:</td>
-            <td style="padding: 6px 0;"><span class="status-pill-old">${previousStageName}</span></td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #64748b;">Current Stage:</td>
-            <td style="padding: 6px 0;"><span class="status-pill-new">${newStageName}</span></td>
-          </tr>
-        </table>
-      </div>
-
-      <p class="closing">
-        Thank you,<br>
-        <strong>QuickBoom Team</strong>
-      </p>
-    </div>
-    <div class="footer">
-      Sent via <strong>QuickBoom CRM</strong>
-    </div>
-  </div>
-</body>
-</html>`.trim();
-
-        textContent = `
-Hello ${leadTitle},
-
-Your lead stage has been updated in QuickBoom CRM.
-
-Previous Stage: ${previousStageName}
-Current Stage: ${newStageName}
-
-Thank you,
-QuickBoom Team`.trim();
       }
 
       // 4. Send email via existing EmailService
@@ -784,15 +822,15 @@ QuickBoom Team`.trim();
           recordType: 'lead',
           recordId: lead.id,
           templateId: template?.id || undefined,
-          eventType: 'LEAD_STAGE_CHANGED',
+          eventType,
         });
 
         messageId = sendResult?.messageId || null;
-        this.logger.log(`[EMAIL] Lead stage change email sent successfully`);
+        this.logger.log(`[EMAIL] Lead ${eventType} email sent successfully`);
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
-        this.logger.error(`[EMAIL] Failed to send lead stage change email: ${sendError}`);
+        this.logger.error(`[EMAIL] Failed to send lead ${eventType} email: ${sendError}`);
       }
 
       // 5. Store email delivery/log status in EmailLog table
@@ -802,12 +840,12 @@ QuickBoom Team`.trim();
           customerId: lead.customerId ? Number(lead.customerId) : null,
           userId: userId ? Number(userId) : null,
           templateId: template?.id || null,
-          identifierKey: templateKey || 'LEAD_STAGE_UPDATED',
+          identifierKey: templateKey || (eventType === 'LEAD_CREATED' ? 'QUIKBOOM_NEW_LEAD' : 'LEAD_STAGE_UPDATED'),
           recipientEmail,
           subject: emailSubject,
           renderedContent: htmlContent,
-          eventType: 'LEAD_STAGE_CHANGED',
-          previousStage: String(previousStageName),
+          eventType,
+          previousStage: previousStageName ? String(previousStageName) : null,
           newStage: String(newStageName),
           status,
           providerMessageId: messageId,
@@ -821,11 +859,16 @@ QuickBoom Team`.trim();
       // 6. Record timeline event
       await this.leadRepository.logTimeline(
         lead.id,
-        'STAGE_CHANGE_EMAIL',
+        eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
         status === 'SENT'
-          ? `Stage transition email sent to ${maskEmail(recipientEmail)} (${previousStageName} → ${newStageName})`
-          : `Stage transition email failed for ${maskEmail(recipientEmail)}: ${sendError}`,
+          ? (eventType === 'LEAD_CREATED'
+              ? `Welcome email sent to ${maskEmail(recipientEmail)} (${newStageName} stage)`
+              : `Stage transition email sent to ${maskEmail(recipientEmail)} (${previousStageName} → ${newStageName})`)
+          : (eventType === 'LEAD_CREATED'
+              ? `Welcome email failed for ${maskEmail(recipientEmail)}: ${sendError}`
+              : `Stage transition email failed for ${maskEmail(recipientEmail)}: ${sendError}`),
         {
+          eventType,
           previousStage: previousStageName,
           newStage: newStageName,
           recipientEmail: maskEmail(recipientEmail),
@@ -1118,7 +1161,7 @@ Sent by ${senderOrgName} via CRM.
     customerId: number | string,
     id: number | string,
     userId?: number | string,
-    dto?: SendLeadWhatsAppDto,
+    dto?: SendLeadWhatsAppDto & { eventType?: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' },
   ) {
     const lead = await this.getLeadById(customerId, id);
     if (!lead) {
@@ -1129,6 +1172,7 @@ Sent by ${senderOrgName} via CRM.
     if (!phone) {
       return {
         success: false,
+        skipped: true,
         reason: 'NO_PHONE',
         message: 'No phone number is registered for this lead.',
       };
@@ -1143,29 +1187,73 @@ Sent by ${senderOrgName} via CRM.
       };
     }
 
+    const stageName = dto?.stageName || lead.stage?.name || lead.status || 'NEW';
+    const normStage = stageName.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const stageKey = (lead.stage?.key ? String(lead.stage.key).trim().toUpperCase().replace(/[\s-]+/g, '_') : '') || normStage || 'NEW';
+
+    const template = typeof this.whatsappService?.getStageTemplate === 'function'
+      ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
+      : true;
+    if (!template && !dto?.message) {
+      this.logger.log(
+        `[WHATSAPP] Lead #${lead.id} stage is "${stageName}", but no WhatsApp template is configured for this stage. Skipping WhatsApp.`,
+      );
+      return {
+        success: false,
+        skipped: true,
+        reason: 'NO_TEMPLATE_CONFIGURED',
+        message: `No WhatsApp template is configured for stage "${stageName}". Skipping.`,
+      };
+    }
+
     const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
     const companyName = lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency';
+
     let userName = 'QuickBoom Team';
-    if (userId && this.prisma.user) {
+    let assignedEmployeeName = 'QuickBoom Team';
+    let assignedEmployeeEmail = '';
+    let assignedEmployeePhone = '';
+
+    const assignedUser = lead.assignedTo || (lead.assignedToId && this.prisma.user ? await this.prisma.user.findUnique({
+      where: { id: lead.assignedToId },
+      select: { firstName: true, lastName: true, email: true, phone: true },
+    }).catch(() => null) : null);
+
+    if (assignedUser) {
+      const repName = `${assignedUser.firstName || ''} ${assignedUser.lastName || ''}`.trim();
+      if (repName) {
+        userName = repName;
+        assignedEmployeeName = repName;
+      }
+      if (assignedUser.email) assignedEmployeeEmail = assignedUser.email.trim();
+      if (assignedUser.phone) assignedEmployeePhone = assignedUser.phone.trim();
+    } else if (userId && this.prisma.user) {
       const u = await this.prisma.user
         .findUnique({
           where: { id: Number(userId) },
-          select: { firstName: true, lastName: true },
+          select: { firstName: true, lastName: true, email: true, phone: true },
         })
         .catch(() => null);
       if (u) {
-        userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QuickBoom Team';
+        const uName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+        if (uName) {
+          userName = uName;
+          assignedEmployeeName = uName;
+        }
+        if (u.email) assignedEmployeeEmail = u.email.trim();
+        if (u.phone) assignedEmployeePhone = u.phone.trim();
       }
     }
-
-    const stageKey = lead.stage?.key || lead.status || 'NEW';
-    const stageName = dto?.stageName || lead.stage?.name || lead.status || 'Updated';
 
     const variables: Record<string, string> = {
       leadName: leadFullName,
       leadTitle: lead.title || leadFullName,
       companyName,
       userName,
+      assignedUser: userName,
+      assignedEmployeeName,
+      assignedEmployeeEmail,
+      assignedEmployeePhone,
       stage: stageName,
       startDate: lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '',
       startTime: lead.nextFollowUpTime || '',
@@ -1182,15 +1270,20 @@ Sent by ${senderOrgName} via CRM.
     }
 
     // Write to LeadActivityTimeline
+    const eventType = dto?.eventType || 'LEAD_STAGE_CHANGED';
+    const action = eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'WHATSAPP_SENT';
     await this.prisma.leadActivityTimeline
       .create({
         data: {
           leadId: Number(lead.id),
-          action: 'WHATSAPP_SENT',
+          action,
           description: result.success
-            ? `WhatsApp notification sent to ${phone} for stage ${stageName}`
+            ? (eventType === 'LEAD_CREATED'
+                ? `Welcome WhatsApp message sent to ${phone} for ${stageName} stage`
+                : `WhatsApp notification sent to ${phone} for stage ${stageName}`)
             : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || 'Not delivered'}`,
           metadata: {
+            eventType,
             phone,
             normalizedPhone,
             stageName,
@@ -1215,7 +1308,7 @@ Sent by ${senderOrgName} via CRM.
   }
 
   /**
-   * Dispatches automatic WhatsApp notification upon lead stage change with debouncing.
+   * Dispatches automatic WhatsApp notification upon lead creation or stage change with debouncing.
    */
   async handleLeadStageChangeWhatsappNotification(
     customerId: number | string,
@@ -1225,9 +1318,22 @@ Sent by ${senderOrgName} via CRM.
     userId?: number | string,
     customMessage?: string,
     templateName?: string,
+    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
   ) {
     try {
-      this.logger.log(`[WHATSAPP] Handling stage change WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
+      this.logger.log(`[WHATSAPP] Handling ${eventType} WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
+
+      // 0. Do NOT send if stage did not actually change for stage change events
+      if (
+        eventType === 'LEAD_STAGE_CHANGED' &&
+        previousStageName &&
+        newStageName &&
+        previousStageName.trim().toUpperCase() === newStageName.trim().toUpperCase()
+      ) {
+        this.logger.log(`[WHATSAPP] Stage unchanged (${previousStageName} → ${newStageName}). Skipping automatic WhatsApp.`);
+        return;
+      }
+
       if (!this.whatsappService) {
         this.logger.warn(`[WHATSAPP] WhatsappService not available. Skipping.`);
         return;
@@ -1245,7 +1351,7 @@ Sent by ${senderOrgName} via CRM.
         recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
           where: {
             leadId: Number(lead.id),
-            action: 'WHATSAPP_SENT',
+            action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP'] },
             createdAt: {
               gte: new Date(Date.now() - 60000),
             },
@@ -1254,7 +1360,7 @@ Sent by ${senderOrgName} via CRM.
       }
 
       if (recentTimeline) {
-        this.logger.log(`[WHATSAPP] Duplicate WhatsApp notification within 60s for lead #${lead.id}. Skipping.`);
+        this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id}. Skipping.`);
         return;
       }
 
@@ -1262,9 +1368,10 @@ Sent by ${senderOrgName} via CRM.
         message: customMessage,
         templateName,
         stageName: newStageName,
+        eventType,
       });
     } catch (err: any) {
-      this.logger.error(`[WHATSAPP] Failed to send lead stage change WhatsApp: ${err?.message}`);
+      this.logger.error(`[WHATSAPP] Failed to send lead ${eventType} WhatsApp: ${err?.message}`);
     }
   }
 }

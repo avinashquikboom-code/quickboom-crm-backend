@@ -220,6 +220,27 @@ Regards,
 QUIKBOOM Digital Marketing Agency`,
   },
   {
+    key: 'QUIKBOOM_QUALIFIED',
+    name: 'Lead Qualified – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Your Requirements Have Been Qualified – QUIKBOOM',
+    description: 'Sent automatically when a prospective lead is qualified by the CRM team',
+    supportedVariables: ['leadTitle', 'leadName', 'userName', 'email', 'companyName', 'assignedUser', 'assignedEmployeeName', 'assignedEmployeeEmail'],
+    body: `Dear {{leadTitle}},
+
+We are pleased to inform you that your requirements with QUIKBOOM Digital Marketing Agency have been qualified!
+
+Our team is now preparing tailored solutions to help your business achieve maximum growth. We will be in touch with a customized proposal shortly.
+
+Regards,
+
+{{userName}}
+
+QUIKBOOM Digital Marketing Agency
+
+{{email}}`,
+  },
+  {
     key: 'QUIKBOOM_DETAILS_SENT',
     name: 'Company Details Sent – QUIKBOOM',
     category: 'CRM',
@@ -429,6 +450,7 @@ QUIKBOOM Digital Marketing Agency`,
 export const TELECALLER_STATUS_TO_TEMPLATE_KEY: Record<string, string> = {
   NEW: 'QUIKBOOM_NEW_LEAD',
   CONTACTED: 'QUIKBOOM_CONTACTED',
+  QUALIFIED: 'QUIKBOOM_QUALIFIED',
   DETAILS_SENT: 'QUIKBOOM_DETAILS_SENT',
   FOLLOW_UP: 'QUIKBOOM_FOLLOW_UP',
   VISIT_SCHEDULED: 'QUIKBOOM_VISIT_SCHEDULED',

@@ -88,12 +88,14 @@ describe('Lead Stage Change Email Notification Tests', () => {
       { id: 2, customerId: null, name: 'Contacted', key: 'CONTACTED', isActive: true, deletedAt: null },
       { id: 5, customerId: null, name: 'Qualified', key: 'QUALIFIED', isActive: true, deletedAt: null },
       { id: 6, customerId: null, name: 'Proposal', key: 'PROPOSAL', isActive: true, deletedAt: null },
+      { id: 7, customerId: null, name: 'Custom Review', key: 'CUSTOM_REVIEW', isActive: true, deletedAt: null },
     ];
 
     emailLogsTable = [];
     timelineTable = [];
 
     mockPrisma = {
+      $transaction: jest.fn(async (cb) => cb(mockPrisma)),
       lead: {
         findFirst: jest.fn(async ({ where }) => {
           const lead = leadsTable.find((l) => {
@@ -111,6 +113,15 @@ describe('Lead Stage Change Email Notification Tests', () => {
             customer,
           };
         }),
+        create: jest.fn(async ({ data }) => {
+          const newLead = {
+            id: leadsTable.length + 500,
+            ...data,
+            deletedAt: null,
+          };
+          leadsTable.push(newLead);
+          return newLead;
+        }),
         updateMany: jest.fn(async ({ where, data }) => {
           let count = 0;
           for (const l of leadsTable) {
@@ -123,6 +134,9 @@ describe('Lead Stage Change Email Notification Tests', () => {
         }),
       },
       leadStage: {
+        findUnique: jest.fn(async ({ where }) => {
+          return stagesTable.find((s) => s.id === where.id) || null;
+        }),
         findFirst: jest.fn(async ({ where }) => {
           return stagesTable.find((s) => {
             if (where.deletedAt === null && s.deletedAt !== null) return false;
@@ -132,6 +146,9 @@ describe('Lead Stage Change Email Notification Tests', () => {
           }) || null;
         }),
         findMany: jest.fn(async () => stagesTable),
+      },
+      leadNote: {
+        create: jest.fn(async ({ data }) => data),
       },
       leadStatusHistory: {
         create: jest.fn(async ({ data }) => data),
@@ -192,6 +209,16 @@ describe('Lead Stage Change Email Notification Tests', () => {
         const clean = phone.replace(/\D/g, '');
         return clean.length >= 10 ? `91${clean.slice(-10)}` : null;
       }),
+      getStageTemplate: jest.fn((key) => {
+        const norm = (key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+        if (norm === 'CUSTOM_REVIEW' || norm === 'CUSTOM_NO_TEMPLATE') return null;
+        return {
+          key: norm,
+          templateName: `lead_stage_${norm.toLowerCase()}`,
+          name: `${norm} Stage`,
+          body: `Hi {{leadName}}, stage updated to ${norm}`,
+        };
+      }),
       sendLeadStageMessage: jest.fn().mockResolvedValue({
         success: true,
         messageId: 'wamid.test.stage.123',
@@ -206,8 +233,8 @@ describe('Lead Stage Change Email Notification Tests', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: EmailService, useValue: mockEmailService },
         { provide: WhatsappService, useValue: mockWhatsappService },
-        { provide: PlanAccessService, useValue: { checkFeatureAccess: jest.fn() } },
-        { provide: LeadLimitService, useValue: { checkLeadLimit: jest.fn() } },
+        { provide: PlanAccessService, useValue: { checkFeatureAccess: jest.fn(), checkLeadLimit: jest.fn() } },
+        { provide: LeadLimitService, useValue: { checkLeadLimit: jest.fn(), validateAndConsumeLeadLimit: jest.fn().mockResolvedValue({ employeeId: null }) } },
       ],
     }).compile();
 
@@ -255,7 +282,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
     });
   });
 
-  it('CASE 2: Lead stage changes CONTACTED → QUALIFIED -> Generic fallback email sent for non-telecaller stage', async () => {
+  it('CASE 2: Lead stage changes CONTACTED → QUALIFIED -> Sends QUIKBOOM_QUALIFIED template email', async () => {
     // Set to CONTACTED first
     leadsTable[0].status = LeadStatus.CONTACTED;
     leadsTable[0].stageId = 2;
@@ -272,8 +299,8 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: 'alice.contact@acme.com',
-        subject: 'Your Lead Status Has Been Updated',
-        text: expect.stringContaining('Previous Stage: Contacted'),
+        subject: 'Your Requirements Have Been Qualified – QUIKBOOM',
+        text: expect.stringContaining('Dear Alice Cooper'),
       }),
     );
   });
@@ -418,7 +445,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
     });
   });
 
-  it('CASE 9: Prompt Requirement: Rahul Sharma New → Qualified sends formatted email to rahul@example.com', async () => {
+  it('CASE 9: Prompt Requirement: Rahul Sharma New → Qualified sends formatted email to rahul@example.com using Qualified template', async () => {
     mockEmailService.sendEmail.mockClear();
 
     // Add Rahul Sharma lead
@@ -448,23 +475,18 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: 'rahul@example.com',
-        subject: 'Your Lead Status Has Been Updated',
-        text: expect.stringContaining('Hello Rahul Sharma'),
+        subject: 'Your Requirements Have Been Qualified – QUIKBOOM',
+        text: expect.stringContaining('Dear Rahul Sharma'),
       }),
     );
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Previous Stage: New'),
-      }),
-    );
-    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Current Stage: Qualified'),
+        text: expect.stringContaining('qualified'),
       }),
     );
   });
 
-  it('CASE 10: Updating lead stage via updateLead also triggers standard stage update email', async () => {
+  it('CASE 10: Updating lead stage via updateLead also triggers stage-based QUIKBOOM_QUALIFIED email', async () => {
     mockEmailService.sendEmail.mockClear();
 
     // Reset lead 101 status
@@ -479,8 +501,8 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: 'alice.contact@acme.com',
-        subject: 'Your Lead Status Has Been Updated',
-        text: expect.stringContaining('Current Stage: Qualified'),
+        subject: 'Your Requirements Have Been Qualified – QUIKBOOM',
+        text: expect.stringContaining('Dear Alice Cooper'),
       }),
     );
   });
@@ -563,6 +585,220 @@ describe('Lead Stage Change Email Notification Tests', () => {
     );
 
     // Should be debounced
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
+
+  it('CASE 15: Stage changed to a stage with NO configured email template -> Stage updates successfully, NO email sent, does not throw', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Reset lead 101 to stage 1 (New)
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].stageId = 1;
+
+    // Stage 7 is 'Custom Review' (key: CUSTOM_REVIEW) which does NOT have an email template configured
+    const updated = await service.updateStatus(1, 101, 999, {
+      status: 'CUSTOM_REVIEW' as any,
+      stageId: 7,
+    });
+
+    expect(updated.stageId).toBe(7);
+
+    // Email must NOT be sent, no generic fallback, no error thrown
+    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CASE 15b: Qualified → Proposal sends the Proposal template (QUIKBOOM_PROPOSAL_SENT), NOT Qualified or generic template', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Set lead 101 to Qualified
+    leadsTable[0].status = LeadStatus.QUALIFIED;
+    leadsTable[0].stageId = 5;
+
+    // Transition Qualified -> Proposal
+    const updated = await service.updateStatus(1, 101, 999, {
+      status: LeadStatus.PROPOSAL,
+      stageId: 6,
+    });
+
+    expect(updated.status).toBe(LeadStatus.PROPOSAL);
+    expect(updated.stageId).toBe(6);
+
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'alice.contact@acme.com',
+        subject: 'Your Digital Marketing Proposal from QUIKBOOM',
+        text: expect.stringContaining('shared the proposal'),
+      }),
+    );
+  });
+
+  it('CASE 16: Lead assigned to specific employee -> Signature uses assigned employee details', async () => {
+    mockEmailService.sendEmail.mockClear();
+
+    // Reset lead 101 to NEW and assign to specific employee
+    leadsTable[0].status = LeadStatus.NEW;
+    leadsTable[0].stageId = 1;
+    leadsTable[0].assignedTo = {
+      id: 42,
+      firstName: 'Rahul',
+      lastName: 'Sharma',
+      email: 'rahul@quikboom.com',
+    };
+
+    await service.updateStatus(1, 101, 999, {
+      status: LeadStatus.QUALIFIED,
+      stageId: 5,
+    });
+
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'alice.contact@acme.com',
+        text: expect.stringContaining('Rahul Sharma'),
+      }),
+    );
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('rahul@quikboom.com'),
+      }),
+    );
+  });
+
+  it('CASE 17: NEW LEAD CREATED -> Automatically triggers Email and WhatsApp using initial stage templates', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    const created = await service.createLead(1, 999, {
+      title: 'Digital Marketing Package',
+      firstName: 'Vikram',
+      lastName: 'Mehta',
+      email: 'vikram@example.com',
+      phone: '+919876543211',
+      stageId: 1, // Stage: New
+    });
+
+    expect(created).toBeDefined();
+    expect(created.id).toBeDefined();
+
+    // 1. Email sent using New stage template (QUIKBOOM_NEW_LEAD)
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'vikram@example.com',
+        subject: 'Thank You for Connecting with QUIKBOOM',
+        eventType: 'LEAD_CREATED',
+      }),
+    );
+
+    // 2. WhatsApp sent using New stage template (NEW)
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '919876543211',
+        stageKey: 'NEW',
+      }),
+    );
+  });
+
+  it('CASE 18: NEW LEAD CREATED without email -> Email skipped, WhatsApp still sent to phone', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    const created = await service.createLead(1, 999, {
+      title: 'Phone Only Lead',
+      firstName: 'Suresh',
+      lastName: 'Patel',
+      email: undefined,
+      phone: '+919876543212',
+      stageId: 1,
+    });
+
+    expect(created).toBeDefined();
+    // Email skipped gracefully
+    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    // WhatsApp sent to phone
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '919876543212',
+        stageKey: 'NEW',
+      }),
+    );
+  });
+
+  it('CASE 19: NEW LEAD CREATED without phone -> WhatsApp skipped, Email still sent to email', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    const created = await service.createLead(1, 999, {
+      title: 'Email Only Lead',
+      firstName: 'Deepak',
+      lastName: 'Joshi',
+      email: 'deepak@example.com',
+      phone: undefined,
+      stageId: 1,
+    });
+
+    expect(created).toBeDefined();
+    // WhatsApp skipped gracefully
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+    // Email sent
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'deepak@example.com',
+        subject: 'Thank You for Connecting with QUIKBOOM',
+      }),
+    );
+  });
+
+  it('CASE 20: Stage change Contacted -> Qualified automatically triggers BOTH Email and WhatsApp for new stage', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    // Set lead 101 to Contacted
+    leadsTable[0].status = LeadStatus.CONTACTED;
+    leadsTable[0].stageId = 2;
+    leadsTable[0].phone = '+919876543210';
+
+    await service.updateStatus(1, 101, 999, {
+      status: LeadStatus.QUALIFIED,
+      stageId: 5,
+    });
+
+    // Email sent with Qualified template
+    expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'alice.contact@acme.com',
+        subject: 'Your Requirements Have Been Qualified – QUIKBOOM',
+      }),
+    );
+
+    // WhatsApp sent with Qualified stage template
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '919876543210',
+        stageKey: 'QUALIFIED',
+      }),
+    );
+  });
+
+  it('CASE 21: Same stage transition (QUALIFIED -> QUALIFIED) does NOT trigger Email or WhatsApp', async () => {
+    mockEmailService.sendEmail.mockClear();
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+
+    leadsTable[0].status = LeadStatus.QUALIFIED;
+    leadsTable[0].stageId = 5;
+
+    await service.updateStatus(1, 101, 999, {
+      status: LeadStatus.QUALIFIED,
+      stageId: 5,
+    });
+
+    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 });
