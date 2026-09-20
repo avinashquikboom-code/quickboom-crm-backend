@@ -114,6 +114,47 @@ describe('WhatsappWebhook', () => {
       expect(res.status).toHaveBeenCalledWith(HttpStatus.FORBIDDEN);
       expect(res.send).toHaveBeenCalledWith('Verification token mismatch');
     });
+
+    it('handles tokens with quotes and leading/trailing spaces correctly', async () => {
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        type: jest.fn().mockReturnThis(),
+        send: jest.fn(),
+      };
+
+      await controller.verifyWebhook(
+        'subscribe',
+        `  "${mockVerifyToken}"  `,
+        'challenge_code_12345',
+        res,
+      );
+
+      expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+      expect(res.send).toHaveBeenCalledWith('challenge_code_12345');
+    });
+
+    it('handles nested req.query.hub object format correctly', async () => {
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        type: jest.fn().mockReturnThis(),
+        send: jest.fn(),
+      };
+
+      const req: any = {
+        query: {
+          hub: {
+            mode: 'subscribe',
+            verify_token: mockVerifyToken,
+            challenge: 'challenge_nested_999',
+          },
+        },
+      };
+
+      await controller.verifyWebhook('', '', '', res, req);
+
+      expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+      expect(res.send).toHaveBeenCalledWith('challenge_nested_999');
+    });
   });
 
   describe('POST Webhook Signature Verification', () => {

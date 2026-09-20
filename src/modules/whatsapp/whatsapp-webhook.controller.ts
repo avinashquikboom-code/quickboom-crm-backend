@@ -39,15 +39,44 @@ export class WhatsappWebhookController {
   @ApiResponse({ status: 200, description: 'Challenge echoed back as raw text' })
   @ApiResponse({ status: 403, description: 'Verification token mismatch' })
   async verifyWebhook(
-    @Query('hub.mode') mode: string,
-    @Query('hub.verify_token') verifyToken: string,
-    @Query('hub.challenge') challenge: string,
+    @Query('hub.mode') modeParam: string,
+    @Query('hub.verify_token') verifyTokenParam: string,
+    @Query('hub.challenge') challengeParam: string,
     @Res() res: Response,
+    @Req() req?: Request,
   ) {
+    const query = ((req as any)?.query || {}) as Record<string, any>;
+    const hub = typeof query.hub === 'object' && query.hub !== null ? query.hub : {};
+
+    const mode = (
+      query['hub.mode'] ||
+      hub.mode ||
+      query.mode ||
+      modeParam ||
+      ''
+    ).toString();
+
+    const verifyToken = (
+      query['hub.verify_token'] ||
+      hub.verify_token ||
+      query.verify_token ||
+      query.verifyToken ||
+      verifyTokenParam ||
+      ''
+    ).toString();
+
+    const challenge = (
+      query['hub.challenge'] ||
+      hub.challenge ||
+      query.challenge ||
+      challengeParam ||
+      ''
+    ).toString();
+
     const result = await this.whatsappService.verifyWebhookToken(mode, verifyToken, challenge);
     if (!result.valid) {
       this.logger.warn('[WHATSAPP_WEBHOOK] Verification failed: invalid verify_token or mode');
-      return res.status(HttpStatus.FORBIDDEN).send('Verification token mismatch');
+      return res.status(HttpStatus.FORBIDDEN).type('text/plain').send('Verification token mismatch');
     }
 
     // Return raw challenge text with 200 OK (bypasses JSON interceptor wrapper)

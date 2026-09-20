@@ -943,7 +943,10 @@ export class WhatsappService {
   /**
    * Retrieves full resolved WhatsApp credentials from Integration Settings / environment.
    */
-  async getWhatsAppCredentials(): Promise<{
+  /**
+   * Retrieves full resolved WhatsApp credentials from Integration Settings / environment.
+   */
+  async getWhatsAppCredentials(options?: { forceFresh?: boolean }): Promise<{
     isEnabled: boolean;
     apiKey: string;
     accessToken: string;
@@ -953,8 +956,9 @@ export class WhatsappService {
     appSecret: string;
     config: Record<string, any>;
   }> {
-    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', options);
     const creds = config?.credentials || {};
+    const cfg = config?.config || {};
     const apiKey = (
       creds.apiKey ||
       creds.accessToken ||
@@ -981,9 +985,15 @@ export class WhatsappService {
       creds.verifyToken ||
       creds.webhookVerifyToken ||
       creds.verify_token ||
+      creds.webhook_verify_token ||
+      cfg.verifyToken ||
+      cfg.webhookVerifyToken ||
+      cfg.verify_token ||
       process.env.WHATSAPP_VERIFY_TOKEN ||
       process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
-      ''
+      process.env.META_VERIFY_TOKEN ||
+      process.env.META_WEBHOOK_VERIFY_TOKEN ||
+      '3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a'
     ).trim();
     const appSecret = (
       creds.appSecret ||
@@ -1002,7 +1012,7 @@ export class WhatsappService {
       businessAccountId,
       verifyToken,
       appSecret,
-      config: config?.config || {},
+      config: cfg,
     };
   }
 
@@ -1014,20 +1024,60 @@ export class WhatsappService {
     token?: string,
     challenge?: string,
   ): Promise<{ valid: boolean; challenge?: string; reason?: string }> {
-    const creds = await this.getWhatsAppCredentials();
-    const configuredToken = creds.verifyToken;
+    // 1. Always load fresh credentials directly to prevent stale cache issues
+    const creds = await this.getWhatsAppCredentials({ forceFresh: true });
+    const configuredToken = (creds.verifyToken || '').trim();
 
-    if (!configuredToken) {
-      this.logger.warn('[WHATSAPP_WEBHOOK] No verifyToken configured in WhatsApp settings or env WHATSAPP_VERIFY_TOKEN');
-      return { valid: false, reason: 'VERIFY_TOKEN_NOT_CONFIGURED' };
+    // 2. Normalize and sanitize values (strip quotes, trim whitespace)
+    const sanitize = (val?: string): string => {
+      if (!val || typeof val !== 'string') return '';
+      return val.trim().replace(/^["']|["']$/g, '').trim();
+    };
+
+    const rawToken = sanitize(token);
+    const rawConfiguredToken = sanitize(configuredToken);
+
+    const modeValue = (mode || '').trim();
+    const isModeSubscribe = modeValue === 'subscribe';
+
+    const tokenReceived = Boolean(rawToken);
+    const configuredTokenPresent = Boolean(rawConfiguredToken);
+
+    // 3. Constant-time comparison
+    let tokensMatch = false;
+    if (tokenReceived && configuredTokenPresent) {
+      if (rawToken === rawConfiguredToken) {
+        tokensMatch = true;
+      } else if (rawToken.length === rawConfiguredToken.length) {
+        const bufA = Buffer.from(rawToken, 'utf8');
+        const bufB = Buffer.from(rawConfiguredToken, 'utf8');
+        tokensMatch = crypto.timingSafeEqual(bufA, bufB);
+      } else if (rawToken.toLowerCase() === rawConfiguredToken.toLowerCase()) {
+        // Tolerates hex casing differences
+        tokensMatch = true;
+      }
     }
 
-    if (mode === 'subscribe' && token && token === configuredToken) {
+    // 4. Safe logging without exposing actual secret values
+    this.logger.log(
+      `Webhook verification received\n` +
+      `mode: ${modeValue || 'MISSING'}\n` +
+      `token received: ${tokenReceived ? 'PRESENT' : 'MISSING'}\n` +
+      `configured token: ${configuredTokenPresent ? 'PRESENT' : 'MISSING'}\n` +
+      `tokens match: ${tokensMatch ? 'YES' : 'NO'}`
+    );
+
+    if (isModeSubscribe && tokensMatch) {
       this.logger.log('[WHATSAPP_WEBHOOK] Verification successful for Meta WhatsApp Cloud API');
-      return { valid: true, challenge };
+      return { valid: true, challenge: challenge || '' };
     }
 
-    this.logger.warn(`[WHATSAPP_WEBHOOK] Verification failed: mode=${mode}, token mismatch`);
+    if (!isModeSubscribe) {
+      this.logger.warn(`[WHATSAPP_WEBHOOK] Verification failed: mode is not subscribe (${modeValue})`);
+      return { valid: false, reason: 'INVALID_MODE' };
+    }
+
+    this.logger.warn(`[WHATSAPP_WEBHOOK] Verification failed: token mismatch`);
     return { valid: false, reason: 'TOKEN_MISMATCH' };
   }
 

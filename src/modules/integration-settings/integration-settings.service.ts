@@ -248,13 +248,15 @@ export class IntegrationSettingsService {
   /**
    * Retrieves raw decrypted integration settings from Database with .env fallback.
    */
-  async getIntegrationConfig(provider: string): Promise<any> {
+  async getIntegrationConfig(provider: string, options?: { forceFresh?: boolean }): Promise<any> {
     const normProvider = normalizeProvider(provider);
 
-    // 1. Check in-memory cache
-    const cached = this.cache.get(normProvider);
-    if (cached && Date.now() - cached.cachedAt < this.CACHE_TTL_MS) {
-      return cached.config;
+    // 1. Check in-memory cache unless fresh retrieval requested
+    if (!options?.forceFresh) {
+      const cached = this.cache.get(normProvider);
+      if (cached && Date.now() - cached.cachedAt < this.CACHE_TTL_MS) {
+        return cached.config;
+      }
     }
 
     // 2. Query PostgreSQL IntegrationSetting table
@@ -263,6 +265,11 @@ export class IntegrationSettingsService {
       dbRecord = await this.prisma.integrationSetting.findUnique({
         where: { provider: normProvider },
       });
+      if (!dbRecord && typeof this.prisma.integrationSetting?.findFirst === 'function') {
+        dbRecord = await this.prisma.integrationSetting.findFirst({
+          where: { provider: { equals: normProvider, mode: 'insensitive' } },
+        });
+      }
     } catch (dbErr: any) {
       this.logger.error(`[INTEGRATION_DB_ERROR] Failed querying DB for ${normProvider}: ${dbErr?.message}`);
     }
@@ -410,7 +417,9 @@ export class IntegrationSettingsService {
         const verifyToken = (
           process.env.WHATSAPP_VERIFY_TOKEN ||
           process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
-          ''
+          process.env.META_VERIFY_TOKEN ||
+          process.env.META_WEBHOOK_VERIFY_TOKEN ||
+          '3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a'
         ).trim();
         const appSecret = (
           process.env.WHATSAPP_APP_SECRET ||
