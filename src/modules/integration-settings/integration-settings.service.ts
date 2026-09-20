@@ -561,6 +561,36 @@ export class IntegrationSettingsService {
         };
       }
 
+      case IntegrationProvider.SMTP: {
+        const host = (process.env.SMTP_HOST || process.env.MAIL_HOST || '').trim();
+        const rawPort = process.env.SMTP_PORT || process.env.MAIL_PORT || 587;
+        const port = Number(rawPort) || 587;
+        const username = (process.env.SMTP_USER || process.env.SMTP_USERNAME || process.env.MAIL_USER || '').trim();
+        const password = (process.env.SMTP_PASSWORD || process.env.SMTP_PASS || process.env.MAIL_PASSWORD || '').trim();
+        const fromEmail = (process.env.SMTP_FROM_EMAIL || process.env.MAIL_FROM || '').trim();
+        const fromName = (process.env.SMTP_FROM_NAME || process.env.MAIL_FROM_NAME || 'QuickBoom CRM').trim();
+        const security = (process.env.SMTP_SECURITY || (port === 465 ? 'SSL' : 'TLS')).trim().toUpperCase();
+
+        const isConfigured = Boolean(host && fromEmail);
+        return {
+          provider: IntegrationProvider.SMTP,
+          isEnabled: isConfigured,
+          environment: 'LIVE',
+          credentials: {
+            username,
+            password,
+          },
+          config: {
+            host,
+            port,
+            security,
+            fromEmail,
+            fromName,
+          },
+          source: isConfigured ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
       default:
         return {
           provider: normProvider,

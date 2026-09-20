@@ -79,6 +79,8 @@ export class LeadRepository {
       phoneNumber,
       contactNumber,
       emailAddress,
+      stage: rawStageArg,
+      stage_name: rawStageNameArg,
       ...leadData
     } = dto as any;
     const resolvedCity = (leadData.city || location || '').trim() || null;

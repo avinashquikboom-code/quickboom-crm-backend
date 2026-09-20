@@ -289,7 +289,20 @@ export class LeadService {
       if (isInvalid(rawEmail)) {
         cleaned.email = null;
       } else {
-        cleaned.email = String(rawEmail).trim().toLowerCase();
+        const trimmedEmail = String(rawEmail).trim().toLowerCase();
+        const placeholderEmails = [
+          'contact@company.com',
+          'placeholder@company.com',
+          'example@company.com',
+          'test@company.com',
+          'user@company.com',
+          'admin@quikboom.com',
+        ];
+        if (placeholderEmails.includes(trimmedEmail) || !trimmedEmail.includes('@')) {
+          cleaned.email = null;
+        } else {
+          cleaned.email = trimmedEmail;
+        }
       }
     }
 
@@ -434,6 +447,12 @@ export class LeadService {
   }
 
   async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
+    this.logger.log('[NewLeadAutomation] 1. Create Lead request received');
+
+    const rawInputEmail = dto.email || (dto as any).emailAddress || (dto as any).user_email || (dto as any).email_address;
+    const hasRawEmail = Boolean(rawInputEmail && String(rawInputEmail).trim().length > 0 && !['contact@company.com', 'placeholder@company.com', 'example@company.com'].includes(String(rawInputEmail).trim().toLowerCase()));
+    this.logger.log(`[NewLeadAutomation] 2. Email received:\n${hasRawEmail}`);
+
     const isGoogleDiscovery =
       String(dto.source || '').toUpperCase().includes('GOOGLE') ||
       String(dto.source || '').toUpperCase().includes('DISCOVERY') ||
@@ -452,7 +471,7 @@ export class LeadService {
 
     const hasFirstName = Boolean(dto.firstName || (dto as any).first_name || (dto as any).name || (dto as any).full_name);
     const hasLastName = Boolean(dto.lastName || (dto as any).last_name || (dto as any).name || (dto as any).full_name);
-    const hasEmail = Boolean(dto.email || (dto as any).emailAddress || (dto as any).user_email);
+    const hasEmail = hasRawEmail;
     const hasMobile = Boolean(
       dto.phone ||
       (dto as any).mobile ||
@@ -594,6 +613,12 @@ export class LeadService {
     // Retrieve fresh lead with stage and customer relations populated
     const createdLead = await this.getLeadById(customerId, lead.id).catch(() => lead);
     const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
+    const savedEmailExists = Boolean(createdLead.email && createdLead.email.trim().length > 0);
+
+    this.logger.log(`[NewLeadAutomation] 3. Lead created:\nLead ID = ${createdLead.id}`);
+    this.logger.log(`[NewLeadAutomation] 4. Saved email exists:\n${savedEmailExists}`);
+    this.logger.log(`[NewLeadAutomation] 5. Initial stage:\n${initialStageName}`);
+    this.logger.log(`[NewLead]\nEmail received: ${hasRawEmail}\nEmail saved: ${savedEmailExists}\nStage: ${initialStageName}`);
 
     this.logger.log(`[LeadNotification] 1. New lead creation received`);
     this.logger.log(`[LeadNotification] 2. Database update successful`);
@@ -607,19 +632,26 @@ export class LeadService {
     this.logger.log(`[EMAIL_TIMING] Lead created time: ${leadCreatedIso}`);
 
     // 1. Email automation using initial stage template:
-    const emailPromise = this.handleLeadStageChangeNotification(
-      customerId,
-      createdLead,
-      '',
-      initialStageName,
-      userId,
-      undefined,
-      undefined,
-      undefined,
-      'LEAD_CREATED',
-    ).catch((err) => {
-      this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] ${err?.message}`);
-    });
+    let emailPromise: Promise<void> = Promise.resolve();
+    if (!savedEmailExists) {
+      this.logger.log('Automatic email skipped because Lead email is missing.');
+    } else {
+      this.logger.log('[NewLeadAutomation] 6. New-stage email automation started');
+      this.logger.log(`[NewLeadEmail]\nStage: ${initialStageName}`);
+      emailPromise = this.handleLeadStageChangeNotification(
+        customerId,
+        createdLead,
+        '',
+        initialStageName,
+        userId,
+        undefined,
+        undefined,
+        undefined,
+        'LEAD_CREATED',
+      ).catch((err) => {
+        this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] ${err?.message}`);
+      });
+    }
 
     // 2. WhatsApp automation using initial stage template:
     const whatsappPromise = this.handleLeadStageChangeWhatsappNotification(
@@ -1266,6 +1298,11 @@ export class LeadService {
       this.logger.log(
         `[LeadStageAutomation] Template found\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`,
       );
+      if (eventType === 'LEAD_CREATED') {
+        this.logger.log(`[NewLeadAutomation] 7. New-stage template found:\nTemplate ID = ${template?.id || template?.key || 'CUSTOM'}`);
+        this.logger.log(`[NewLeadEmail]\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`);
+        this.logger.log(`[NewLeadEmail]\nLead ID: ${lead.id}\nRecipient email exists: true\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`);
+      }
 
       // 4. Build context variables and resolve dynamic employee signature
       const leadTitle =
@@ -1494,6 +1531,9 @@ export class LeadService {
       let providerDurationMs = 0;
 
       this.logger.log(`[LeadStageAutomation] Calling existing email service`);
+      if (eventType === 'LEAD_CREATED') {
+        this.logger.log('[NewLeadAutomation] 8. Existing email service called');
+      }
       this.logger.log(`[LeadStageAutomation] Sending email\nTo: ${recipientEmail}`);
       this.logger.log(`[EMAIL_TIMING] Provider request started: ${new Date().toISOString()}`);
 
@@ -1525,6 +1565,9 @@ export class LeadService {
         this.logger.log(
           `[LeadStageAutomation] Email provider response\nStatus: SUCCESS\nMessage ID: ${messageId || 'N/A'}`,
         );
+        if (eventType === 'LEAD_CREATED') {
+          this.logger.log('[NewLeadAutomation] 9. Email provider response:\nSUCCESS');
+        }
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
@@ -1532,6 +1575,9 @@ export class LeadService {
           `[LeadStageAutomation] Email send failed\nLead ID: ${lead.id}\nStage: ${newStageName}\nProvider Error: ${sendError}`,
         );
         this.logger.log(`[LeadStageAutomation] Email provider response\nStatus: FAILED\nMessage ID: N/A`);
+        if (eventType === 'LEAD_CREATED') {
+          this.logger.log('[NewLeadAutomation] 9. Email provider response:\nFAILED');
+        }
       }
 
       // 6. Store authoritative email delivery log in EmailLog table
@@ -1559,6 +1605,9 @@ export class LeadService {
       });
 
       this.logger.log(`[LeadStageAutomation] Communication saved\nStatus: ${status}`);
+      if (eventType === 'LEAD_CREATED') {
+        this.logger.log('[NewLeadAutomation] 10. Communication history saved');
+      }
 
       // 7. Record timeline event in CRM Lead timeline
       await this.leadRepository.logTimeline(
