@@ -52,7 +52,7 @@ export class FcmService implements OnModuleInit {
       const projectId =
         this.configService.get<string>('FIREBASE_PROJECT_ID') ||
         process.env.FIREBASE_PROJECT_ID ||
-        'quikboom-crm-925d5';
+        '';
       const clientEmail =
         this.configService.get<string>('FIREBASE_CLIENT_EMAIL') || process.env.FIREBASE_CLIENT_EMAIL;
       const rawPrivateKey =
@@ -143,7 +143,7 @@ export class FcmService implements OnModuleInit {
       await this.invalidateFirebaseInstance();
 
       const parsed = typeof credentialData === 'string' ? JSON.parse(credentialData) : credentialData;
-      const projectId = parsed.projectId || parsed.project_id || 'quikboom-crm-925d5';
+      const projectId = parsed.projectId || parsed.project_id || process.env.FIREBASE_PROJECT_ID || '';
       const clientEmail = parsed.clientEmail || parsed.client_email;
       let privateKey = parsed.privateKey || parsed.private_key;
 
@@ -217,7 +217,7 @@ export class FcmService implements OnModuleInit {
     if (this.integrationSettingsService) {
       try {
         const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
-        const projectId = fbConfig.projectId || process.env.FIREBASE_PROJECT_ID || 'quikboom-crm-925d5';
+        const projectId = fbConfig.projectId || process.env.FIREBASE_PROJECT_ID || '';
         const clientEmail = fbConfig.clientEmail;
         const privateKey = fbConfig.privateKey;
 

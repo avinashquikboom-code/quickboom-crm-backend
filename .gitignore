@@ -9,7 +9,16 @@
 # Environment & credentials
 .env
 .env.local
+.env.*.local
 *.pem
+
+# Firebase Admin service-account credential files — MUST NEVER be committed
+firebase-service-account*.json
+*-firebase-adminsdk-*.json
+service-account*.json
+firebase-admin-*.json
+gcp-service-account*.json
+secrets/
 
 # Logs
 logs
