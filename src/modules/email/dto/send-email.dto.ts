@@ -62,4 +62,9 @@ export class SendEmailDto {
   @IsString()
   @IsOptional()
   eventType?: string;
+
+  @ApiPropertyOptional({ description: 'Optional email file attachments (Buffer or path)' })
+  @IsOptional()
+  attachments?: any[];
 }
+

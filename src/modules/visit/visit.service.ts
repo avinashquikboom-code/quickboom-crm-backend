@@ -1,12 +1,23 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { EmailService } from '../email/email.service';
+import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { generateCalendarAppointmentPdfBuffer } from '../../common/utils/calendar-pdf.util';
 
 @Injectable()
 export class VisitService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(VisitService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly emailService?: EmailService,
+    @Optional() private readonly emailTemplateService?: EmailTemplateService,
+    @Optional() private readonly whatsappService?: WhatsappService,
+  ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     if (typeof customerId === 'number' && !isNaN(customerId)) {
@@ -219,7 +230,7 @@ export class VisitService {
       employeeId = emp.id;
     }
 
-    return this.prisma.visit.create({
+    const visit = await this.prisma.visit.create({
       data: {
         customerId: numCustomerId,
         employeeId: employeeId,
@@ -247,6 +258,141 @@ export class VisitService {
         deal: true,
       },
     });
+
+    // Dispatch Calendar Appointment Email & WhatsApp with PDF (non-blocking)
+    try {
+      await this.sendAppointmentCommunications(visit);
+    } catch (commErr: any) {
+      this.logger.warn(`Non-fatal: Calendar appointment communications notice: ${commErr?.message}`);
+    }
+
+    return visit;
+  }
+
+  /**
+   * Helper to dispatch Calendar Appointment Email + WhatsApp and Calendar Appointment PDF
+   */
+  async sendAppointmentCommunications(visit: any) {
+    if (!visit) return;
+
+    try {
+      const customerId = visit.customerId;
+      let customer: any = null;
+      if (customerId) {
+        customer = await this.prisma.customer.findUnique({
+          where: { id: customerId },
+          include: {
+            users: { where: { deletedAt: null }, select: { email: true, phone: true }, take: 1 },
+          },
+        });
+      }
+
+      const clientName =
+        visit.customerName ||
+        (visit.contact?.firstName ? `${visit.contact.firstName || ''} ${visit.contact.lastName || ''}`.trim() : null) ||
+        customer?.name ||
+        customer?.companyName ||
+        'Valued Client';
+
+      const clientEmail = visit.contact?.email || customer?.email || customer?.users?.[0]?.email;
+      const clientPhone = visit.contact?.phone || customer?.phone || customer?.users?.[0]?.phone;
+      const companyName = customer?.companyName || customer?.name || 'QUIKBOOM Digital Marketing Agency';
+
+      const employeeName = visit.employee
+        ? `${visit.employee.firstName || ''} ${visit.employee.lastName || ''}`.trim()
+        : 'QuickBoom Representative';
+      const employeeEmail = visit.employee?.email;
+      const employeePhone = visit.employee?.phone;
+
+      const eventTitle = visit.purpose || visit.visitType || 'Client Consultation & Strategy Meeting';
+      const visitDate = visit.date instanceof Date ? visit.date.toLocaleDateString('en-IN') : String(visit.date);
+      const visitTime = visit.time || '10:00 AM';
+      const visitLocation = visit.location || 'Online Video Conference / QuikBoom HQ';
+      const appointmentNo = `APT-${visit.id}`;
+
+      // Generate Calendar Appointment PDF buffer
+      let pdfBuffer: Buffer | null = null;
+      try {
+        pdfBuffer = await generateCalendarAppointmentPdfBuffer({
+          appointmentNo,
+          customerName: clientName,
+          companyName,
+          eventTitle,
+          date: visitDate,
+          time: visitTime,
+          location: visitLocation,
+          assignedEmployeeName: employeeName,
+          assignedEmployeeEmail: employeeEmail,
+          assignedEmployeePhone: employeePhone,
+          customerEmail: clientEmail,
+          customerPhone: clientPhone,
+          notes: visit.notes,
+        });
+      } catch (pdfErr: any) {
+        this.logger.warn(`Non-fatal: Failed to generate calendar appointment PDF: ${pdfErr?.message}`);
+      }
+
+      // 1. Dispatch Email with PDF attachment
+      if (clientEmail && this.emailService && this.emailTemplateService) {
+        try {
+          const template = await this.emailTemplateService.findByKey('CALENDAR_SCHEDULED', customerId);
+          const rendered = renderEmailTemplate(
+            {
+              subject: template?.subject || 'Meeting Scheduled: {{eventTitle}} with {{companyName}}',
+              body: template?.body || '',
+            },
+            {
+              customerName: clientName,
+              eventTitle,
+              date: visitDate,
+              time: visitTime,
+              location: visitLocation,
+              assignedTo: employeeName,
+              companyName,
+            },
+          );
+
+          await this.emailService.sendEmail({
+            to: clientEmail,
+            subject: rendered.subject,
+            html: rendered.body,
+            text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+            recordType: 'visit',
+            recordId: visit.id,
+            eventType: 'CALENDAR_SCHEDULED',
+            templateId: template?.id,
+            attachments: pdfBuffer
+              ? [{ filename: `Appointment-${appointmentNo}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }]
+              : undefined,
+          });
+          this.logger.log(`[EMAIL] Calendar appointment confirmation sent to ${clientEmail}`);
+        } catch (emailErr: any) {
+          this.logger.warn(`[EMAIL] Calendar appointment email notice: ${emailErr?.message}`);
+        }
+      }
+
+      // 2. Dispatch WhatsApp message + PDF Document
+      if (this.whatsappService && clientPhone) {
+        try {
+          await this.whatsappService.sendCalendarScheduledMessage({
+            to: clientPhone,
+            customerId,
+            customerName: clientName,
+            eventTitle,
+            date: visitDate,
+            time: visitTime,
+            location: visitLocation,
+            assignedEmployee: employeeName,
+            pdfBuffer: pdfBuffer || undefined,
+          });
+          this.logger.log(`[WHATSAPP] Calendar appointment message sent to ${clientPhone}`);
+        } catch (waErr: any) {
+          this.logger.warn(`[WHATSAPP] Calendar appointment WhatsApp notice: ${waErr?.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`[APPOINTMENT_COMMUNICATION_ERROR] ${err?.message}`);
+    }
   }
 
   async update(customerId: number | string | undefined, id: number | string, dto: UpdateVisitDto) {

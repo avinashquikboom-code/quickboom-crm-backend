@@ -20,6 +20,10 @@ import {
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { NotificationService } from '../notification/notification.service';
+import { EmailService } from '../email/email.service';
+import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { InvoiceService } from '../invoice/invoice.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
@@ -39,6 +43,10 @@ export class SubscriptionService {
     private scheduleService?: ScheduleService,
     private workService?: WorkService,
     @Optional() private notificationService?: NotificationService,
+    @Optional() private emailService?: EmailService,
+    @Optional() private emailTemplateService?: EmailTemplateService,
+    @Optional() private whatsappService?: WhatsappService,
+    @Optional() private invoiceService?: InvoiceService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -2998,6 +3006,22 @@ export class SubscriptionService {
       );
     }
 
+    // Trigger Payment Success & Invoice PDF communications (Email + WhatsApp)
+    try {
+      await this.sendOfflinePaymentCommunications({
+        customerId: sub.customerId,
+        paymentId: payment.id,
+        amount: Number(payment.totalAmount || fullTotalAmount),
+        planName: plan.name,
+        transactionId: payment.transactionId || receiptNo,
+        orderId: payment.orderNumber || payment.orderId || String(payment.id),
+        paymentMethod: 'Offline / Manual Approval',
+        invoiceNo: finalInvoiceNo,
+      });
+    } catch (commErr: any) {
+      this.logger.warn(`Non-fatal: Offline payment communications warning: ${commErr?.message}`);
+    }
+
     return {
       success: true,
       message: isFullyPaid
@@ -3009,6 +3033,151 @@ export class SubscriptionService {
       paymentStatus: isFullyPaid ? 'FULLY_PAID' : 'PARTIALLY_PAID',
       subscriptionStatus: 'ACTIVE',
     };
+  }
+
+  /**
+   * Helper to dispatch Offline Payment Success Email + WhatsApp and Invoice PDF Email + WhatsApp
+   */
+  async sendOfflinePaymentCommunications(params: {
+    customerId: number;
+    paymentId: number | string;
+    amount: number | string;
+    planName: string;
+    transactionId?: string;
+    orderId?: string;
+    paymentMethod?: string;
+    invoiceNo?: string | null;
+  }) {
+    const { customerId, paymentId, amount, planName, transactionId, orderId, paymentMethod, invoiceNo } = params;
+
+    try {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: customerId },
+        include: {
+          users: { where: { deletedAt: null }, select: { email: true, phone: true }, take: 1 },
+        },
+      });
+      if (!customer) return;
+
+      const customerEmail = customer.email || customer.users[0]?.email;
+      const customerPhone = customer.phone || customer.users[0]?.phone;
+      const customerName = customer.name || customer.companyName || 'Valued Customer';
+      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+      const formattedDate = new Date().toLocaleDateString('en-IN');
+
+      // 1. Payment Success Email
+      if (customerEmail && this.emailService && this.emailTemplateService) {
+        try {
+          const template = await this.emailTemplateService.findByKey('PAYMENT_SUCCESS', customerId);
+          const rendered = renderEmailTemplate(
+            { subject: template?.subject || 'Payment Confirmation: ₹{{amount}} for {{planName}} – {{companyName}}', body: template?.body || '' },
+            {
+              customerName,
+              amount: String(amount),
+              planName,
+              paymentMethod: paymentMethod || 'Offline / Bank Transfer',
+              transactionId: transactionId || String(paymentId),
+              orderId: orderId || 'N/A',
+              paymentDate: formattedDate,
+              companyName,
+            },
+          );
+
+          await this.emailService.sendEmail({
+            to: customerEmail,
+            subject: rendered.subject,
+            html: rendered.body,
+            text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+            recordType: 'customer',
+            recordId: customerId,
+            eventType: 'PAYMENT_SUCCESS',
+            templateId: template?.id,
+          });
+          this.logger.log(`[EMAIL] Offline payment success confirmation email sent to ${customerEmail}`);
+        } catch (emailErr: any) {
+          this.logger.warn(`[EMAIL] Offline payment success email notice: ${emailErr?.message}`);
+        }
+      }
+
+      // 2. Payment Success WhatsApp
+      if (this.whatsappService && customerPhone) {
+        try {
+          await this.whatsappService.sendPaymentSuccessMessage({
+            to: customerPhone,
+            customerId,
+            customerName,
+            amount,
+            planName,
+            transactionId,
+            paymentMethod,
+          });
+        } catch (waErr: any) {
+          this.logger.warn(`[WHATSAPP] Offline payment success WhatsApp notice: ${waErr?.message}`);
+        }
+      }
+
+      // 3. Invoice Email & WhatsApp with PDF
+      if (invoiceNo && this.invoiceService) {
+        try {
+          const invoice = await this.prisma.invoice.findFirst({
+            where: { customerId, invoiceNo },
+            include: { contact: true },
+          });
+
+          if (invoice) {
+            let pdfBuffer: Buffer | null = null;
+            try {
+              pdfBuffer = await this.invoiceService.generateInvoicePdfBuffer(invoice, invoiceNo);
+            } catch (pdfErr: any) {
+              this.logger.warn(`[PDF_GEN_WARN] Invoice PDF generation notice: ${pdfErr?.message}`);
+            }
+
+            // Invoice Email with PDF attachment
+            if (customerEmail && this.emailService && this.emailTemplateService) {
+              const invTemplate = await this.emailTemplateService.findByKey('INVOICE_GENERATED', customerId);
+              const invRendered = renderEmailTemplate(
+                { subject: invTemplate?.subject || 'Tax Invoice #{{invoiceNo}} from {{companyName}}', body: invTemplate?.body || '' },
+                {
+                  customerName,
+                  invoiceNo,
+                  amount: String(amount),
+                  dueDate: formattedDate,
+                  issueDate: formattedDate,
+                  companyName,
+                },
+              );
+
+              await this.emailService.sendEmail({
+                to: customerEmail,
+                subject: invRendered.subject,
+                html: invRendered.body,
+                text: invRendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+                recordType: 'invoice',
+                recordId: invoice.id,
+                eventType: 'INVOICE_GENERATED',
+                templateId: invTemplate?.id,
+                attachments: pdfBuffer ? [{ filename: `Invoice-${invoiceNo}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] : undefined,
+              });
+              this.logger.log(`[EMAIL] Offline invoice PDF email sent to ${customerEmail}`);
+            }
+
+            // Invoice WhatsApp with Document
+            if (this.whatsappService && customerPhone) {
+              await this.whatsappService.sendDocumentMessage({
+                to: customerPhone,
+                pdfBuffer: pdfBuffer || undefined,
+                filename: `Invoice-${invoiceNo}.pdf`,
+                caption: `Invoice #${invoiceNo} for ₹${amount} from ${companyName}.`,
+              });
+            }
+          }
+        } catch (invErr: any) {
+          this.logger.warn(`[INVOICE_COMMUNICATION_WARN] ${invErr?.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`[OFFLINE_PAYMENT_COMMUNICATION_ERROR] ${err?.message}`);
+    }
   }
 
   /**

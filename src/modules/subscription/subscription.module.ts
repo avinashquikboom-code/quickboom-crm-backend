@@ -8,10 +8,12 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { ScheduleModule } from '../schedule/schedule.module';
 import { WorkModule } from '../work/work.module';
 import { NotificationModule } from '../notification/notification.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { InvoiceModule } from '../invoice/invoice.module';
 import { InstallmentService } from './installment.service';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule],
+  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule],
   controllers: [SubscriptionController, CustomPlanController],
   providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
   exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],

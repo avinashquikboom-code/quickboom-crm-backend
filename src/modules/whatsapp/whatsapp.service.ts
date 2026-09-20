@@ -514,6 +514,263 @@ export class WhatsappService {
   }
 
   /**
+   * Dispatches a document (e.g. Invoice PDF or Calendar Appointment PDF) via Meta WhatsApp Cloud API.
+   * If direct URL or media buffer is provided, sends document payload.
+   * Falls back gracefully to text message with details if document media is unconfigured.
+   */
+  async sendDocumentMessage(params: {
+    to: string;
+    pdfBuffer?: Buffer;
+    pdfUrl?: string;
+    filename: string;
+    caption?: string;
+    stageName?: string;
+  }): Promise<WhatsAppSendResult> {
+    const { to, pdfBuffer, pdfUrl, filename, caption, stageName } = params;
+    const normalizedTo = this.normalizePhoneNumber(to);
+    if (!normalizedTo) {
+      return { success: false, error: 'INVALID_PHONE', reason: 'NO_PHONE' };
+    }
+
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    if (!config?.isEnabled) {
+      return { success: false, skipped: true, reason: 'INTEGRATION_DISABLED' };
+    }
+
+    const creds = config.credentials || {};
+    const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
+    const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+
+    if (!apiKey || !phoneNumberId) {
+      return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
+    }
+
+    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+    const headers = {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    };
+
+    // 1. If public/signed URL provided, send directly via link
+    if (pdfUrl) {
+      try {
+        const payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: normalizedTo,
+          type: 'document',
+          document: {
+            link: pdfUrl,
+            caption: caption || filename,
+            filename,
+          },
+        };
+        const response = await axios.post(url, payload, { headers, timeout: 15000 });
+        const messageId = response.data?.messages?.[0]?.id;
+        this.logger.log(`[WHATSAPP_DOCUMENT_SUCCESS] Sent ${filename} to ${this.maskPhone(normalizedTo)}: id=${messageId}`);
+        return { success: true, messageId };
+      } catch (err: any) {
+        this.logger.warn(`[WHATSAPP_DOCUMENT_LINK_FAIL] ${err?.message}`);
+      }
+    }
+
+    // 2. If Buffer provided, upload media to Meta Graph API
+    if (pdfBuffer && pdfBuffer.length > 0) {
+      try {
+        const mediaUrl = `https://graph.facebook.com/v19.0/${phoneNumberId}/media`;
+        const formData = new FormData();
+        const blob = new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' });
+        formData.append('file', blob, filename);
+        formData.append('messaging_product', 'whatsapp');
+        formData.append('type', 'application/pdf');
+
+        const uploadRes = await axios.post(mediaUrl, formData, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          timeout: 20000,
+        });
+
+        const mediaId = uploadRes.data?.id;
+        if (mediaId) {
+          const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: normalizedTo,
+            type: 'document',
+            document: {
+              id: mediaId,
+              caption: caption || filename,
+              filename,
+            },
+          };
+          const sendRes = await axios.post(url, payload, { headers, timeout: 15000 });
+          const messageId = sendRes.data?.messages?.[0]?.id;
+          this.logger.log(`[WHATSAPP_DOCUMENT_MEDIA_SUCCESS] Uploaded & sent ${filename} to ${this.maskPhone(normalizedTo)}: id=${messageId}`);
+          return { success: true, messageId };
+        }
+      } catch (uploadErr: any) {
+        this.logger.warn(`[WHATSAPP_MEDIA_UPLOAD_FAIL] ${uploadErr?.message}`);
+      }
+    }
+
+    // 3. Fallback: deliver caption as text message so customer receives timely notification
+    if (caption) {
+      return this.sendMessage(normalizedTo, caption, stageName);
+    }
+
+    return { success: false, error: 'DOCUMENT_SEND_FAILED', reason: 'MEDIA_UNAVAILABLE' };
+  }
+
+  /**
+   * 3. PAYMENT SUCCESS -> WHATSAPP PAYMENT RECEIPT
+   */
+  async sendPaymentSuccessMessage(params: {
+    to?: string;
+    customerId: number;
+    customerName?: string;
+    amount: number | string;
+    planName?: string;
+    transactionId?: string;
+    paymentMethod?: string;
+  }): Promise<WhatsAppSendResult> {
+    const { customerId, amount, planName, transactionId, paymentMethod } = params;
+    let targetPhone = this.normalizePhoneNumber(params.to);
+    let customerName = params.customerName;
+
+    if (!targetPhone) {
+      const resolved = await this.resolveCustomerPhone(customerId);
+      targetPhone = resolved.phone;
+      if (!customerName) customerName = resolved.customerName;
+    }
+
+    if (!targetPhone) {
+      return { success: false, skipped: true, reason: 'NO_PHONE' };
+    }
+
+    const resolvedName = customerName || 'Valued Customer';
+    const plan = planName || 'Subscription Plan';
+    const txId = transactionId || 'Verified';
+    const method = paymentMethod || 'Online / UPI';
+
+    const templateName = 'payment_success';
+    const templateParameters: Array<{ type: 'text'; text: string }> = [
+      { type: 'text', text: resolvedName },
+      { type: 'text', text: String(amount) },
+      { type: 'text', text: plan },
+      { type: 'text', text: txId },
+    ];
+
+    const fallbackText = `Hi ${resolvedName} 👋\n\nYour payment of ₹${amount} for ${plan} was received successfully! ✅\n\nPayment Method: ${method}\nTransaction ID: ${txId}\nDate: ${new Date().toLocaleDateString('en-IN')}\n\nThank you for choosing QuikBoom! 🎉`;
+
+    return this.sendTemplate(targetPhone, templateName, templateParameters, 'en_US', fallbackText);
+  }
+
+  /**
+   * 4. CALENDAR / APPOINTMENT SCHEDULED -> WHATSAPP CONFIRMATION + PDF
+   */
+  async sendCalendarScheduledMessage(params: {
+    to?: string;
+    customerId?: number;
+    customerName?: string;
+    eventTitle: string;
+    date: string | Date;
+    time?: string;
+    location?: string;
+    assignedEmployee?: string;
+    pdfBuffer?: Buffer;
+    pdfUrl?: string;
+  }): Promise<WhatsAppSendResult> {
+    const { customerId, eventTitle, date, time, location, assignedEmployee, pdfBuffer, pdfUrl } = params;
+    let targetPhone = this.normalizePhoneNumber(params.to);
+    let customerName = params.customerName;
+
+    if (!targetPhone && customerId) {
+      const resolved = await this.resolveCustomerPhone(customerId);
+      targetPhone = resolved.phone;
+      if (!customerName) customerName = resolved.customerName;
+    }
+
+    if (!targetPhone) {
+      return { success: false, skipped: true, reason: 'NO_PHONE' };
+    }
+
+    const resolvedName = customerName || 'Valued Client';
+    const dateStr = date instanceof Date ? date.toLocaleDateString('en-IN') : String(date);
+    const timeStr = time || '10:00 AM';
+    const locStr = location || 'Online Video Conference';
+    const repStr = assignedEmployee || 'QuickBoom Representative';
+
+    const templateName = 'calendar_scheduled';
+    const templateParameters: Array<{ type: 'text'; text: string }> = [
+      { type: 'text', text: resolvedName },
+      { type: 'text', text: eventTitle },
+      { type: 'text', text: dateStr },
+      { type: 'text', text: timeStr },
+      { type: 'text', text: locStr },
+    ];
+
+    const fallbackText = `Hi ${resolvedName} 📅\n\nYour meeting "${eventTitle}" has been scheduled successfully!\n\nDate: ${dateStr}\nTime: ${timeStr} (IST)\nLocation: ${locStr}\nRepresentative: ${repStr}\n\nLooking forward to speaking with you!`;
+
+    const textResult = await this.sendTemplate(targetPhone, templateName, templateParameters, 'en_US', fallbackText);
+
+    // If PDF document provided, also dispatch document
+    if (pdfBuffer || pdfUrl) {
+      await this.sendDocumentMessage({
+        to: targetPhone,
+        pdfBuffer,
+        pdfUrl,
+        filename: `Meeting-${dateStr.replace(/[\/\s]/g, '-')}.pdf`,
+        caption: `Appointment Confirmation: ${eventTitle}`,
+      }).catch((err) => this.logger.warn(`Non-fatal: Failed to send appointment PDF on WhatsApp: ${err?.message}`));
+    }
+
+    return textResult;
+  }
+
+  /**
+   * 5. PLAN EXPIRY REMINDER (3 DAYS) -> WHATSAPP ALERT
+   */
+  async sendPlanExpiryReminderMessage(params: {
+    to?: string;
+    customerId: number;
+    customerName?: string;
+    planName: string;
+    expiryDate: string | Date;
+    daysRemaining?: number;
+  }): Promise<WhatsAppSendResult> {
+    const { customerId, planName, expiryDate, daysRemaining } = params;
+    let targetPhone = this.normalizePhoneNumber(params.to);
+    let customerName = params.customerName;
+
+    if (!targetPhone) {
+      const resolved = await this.resolveCustomerPhone(customerId);
+      targetPhone = resolved.phone;
+      if (!customerName) customerName = resolved.customerName;
+    }
+
+    if (!targetPhone) {
+      return { success: false, skipped: true, reason: 'NO_PHONE' };
+    }
+
+    const resolvedName = customerName || 'Valued Customer';
+    const expiryDateStr = expiryDate instanceof Date ? expiryDate.toLocaleDateString('en-IN') : String(expiryDate);
+    const days = daysRemaining !== undefined ? daysRemaining : 3;
+
+    const templateName = 'plan_expiry_reminder';
+    const templateParameters: Array<{ type: 'text'; text: string }> = [
+      { type: 'text', text: resolvedName },
+      { type: 'text', text: planName },
+      { type: 'text', text: String(days) },
+      { type: 'text', text: expiryDateStr },
+    ];
+
+    const fallbackText = `Hi ${resolvedName} ⚠️\n\nYour ${planName} plan will expire in ${days} days on ${expiryDateStr}.\n\nPlease renew your subscription to maintain uninterrupted CRM services.\n\nThank you for choosing QuikBoom!`;
+
+    return this.sendTemplate(targetPhone, templateName, templateParameters, 'en_US', fallbackText);
+  }
+
+  /**
    * Extracts placeholders from template body (e.g. {{1}}, {{2}} or {{leadName}}, {{companyName}})
    * and maps them to actual lead data in the exact order and count required by Meta WhatsApp Cloud API.
    */

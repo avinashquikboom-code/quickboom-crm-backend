@@ -154,13 +154,15 @@ export class EmailService {
         }
       }
 
+      const allAttachments = [...logoAttachment, ...(Array.isArray(dto.attachments) ? dto.attachments : [])];
+
       const mailPayload: any = {
         from: formattedFrom,
         to: recipient,
         subject,
         text: textContent,
         html: htmlContent,
-        attachments: logoAttachment.length ? logoAttachment : undefined,
+        attachments: allAttachments.length ? allAttachments : undefined,
       };
       if (cc) mailPayload.cc = cc;
       if (bcc) mailPayload.bcc = bcc;

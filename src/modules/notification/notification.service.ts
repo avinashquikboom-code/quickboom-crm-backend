@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Optional } 
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { EmailService } from '../email/email.service';
+import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
@@ -21,7 +23,35 @@ export class NotificationService {
     private readonly prisma: PrismaService,
     private readonly fcmService: FcmService,
     @Optional() private readonly whatsappService?: WhatsappService,
+    @Optional() private readonly emailService?: EmailService,
+    @Optional() private readonly emailTemplateService?: EmailTemplateService,
   ) {}
+
+  async resolveCustomerEmail(customerId: number): Promise<{ email: string | null; customerName: string; companyName: string }> {
+    try {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: customerId },
+        select: {
+          id: true,
+          name: true,
+          companyName: true,
+          email: true,
+          users: {
+            where: { deletedAt: null },
+            select: { email: true, firstName: true, lastName: true },
+            take: 1,
+          },
+        },
+      });
+      if (!customer) return { email: null, customerName: 'Customer', companyName: 'QUIKBOOM' };
+      const rawEmail = customer.email || customer.users[0]?.email || null;
+      const customerName = customer.name || (customer.users[0] ? `${customer.users[0].firstName || ''} ${customer.users[0].lastName || ''}`.trim() : 'Customer');
+      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+      return { email: rawEmail ? rawEmail.trim() : null, customerName, companyName };
+    } catch {
+      return { email: null, customerName: 'Customer', companyName: 'QUIKBOOM' };
+    }
+  }
 
   async findAll(
     customerId: number | string,
@@ -593,7 +623,7 @@ export class NotificationService {
       const title = '⚠️ Your Plan Expires Soon';
       const body = `Your ${planName} plan will expire in 3 days. Renew your plan to continue using QB Suite.`;
 
-      return await this.sendPushNotification({
+      const pushResult = await this.sendPushNotification({
         customerId,
         title,
         body,
@@ -606,6 +636,57 @@ export class NotificationService {
           expiryDate: endDate,
         },
       });
+
+      // 2. Email Plan Expiry Reminder
+      try {
+        if (this.emailService && this.emailTemplateService) {
+          const { email, customerName, companyName } = await this.resolveCustomerEmail(customerId);
+          if (email) {
+            const template = await this.emailTemplateService.findByKey('PLAN_EXPIRY_REMINDER', customerId);
+            const rendered = renderEmailTemplate(
+              { subject: template?.subject || 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}', body: template?.body || '' },
+              {
+                customerName,
+                planName,
+                expiryDate: endDate,
+                daysRemaining: String(daysRemaining),
+                companyName,
+              },
+            );
+
+            await this.emailService.sendEmail({
+              to: email,
+              subject: rendered.subject,
+              html: rendered.body,
+              text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+              recordType: 'customer',
+              recordId: customerId,
+              eventType: 'PLAN_EXPIRY_REMINDER',
+              templateId: template?.id,
+            });
+            this.logger.log(`[EMAIL] 3-day plan expiry reminder email sent to customer #${customerId} (${email})`);
+          }
+        }
+      } catch (emailErr: any) {
+        this.logger.warn(`[EMAIL] Plan expiry reminder email notice: ${emailErr?.message}`);
+      }
+
+      // 3. WhatsApp Plan Expiry Reminder
+      try {
+        if (this.whatsappService) {
+          await this.whatsappService.sendPlanExpiryReminderMessage({
+            customerId,
+            planName,
+            expiryDate: endDate,
+            daysRemaining,
+          });
+          this.logger.log(`[WHATSAPP] 3-day plan expiry reminder WhatsApp sent to customer #${customerId}`);
+        }
+      } catch (waErr: any) {
+        this.logger.warn(`[WHATSAPP] Plan expiry reminder WhatsApp notice: ${waErr?.message}`);
+      }
+
+      return pushResult;
     } catch (err: any) {
       this.logger.error(`Error sending subscription expiry notification: ${err?.message}`, err?.stack);
       return null;
@@ -1108,6 +1189,40 @@ export class NotificationService {
         this.logger.warn(`[WHATSAPP] Customer welcome message notice: ${waErr?.message}`);
       }
 
+      // 5b. Email Customer Welcome (independent of FCM & WhatsApp, non-blocking)
+      try {
+        if (this.emailService && this.emailTemplateService) {
+          const { email, customerName, companyName } = await this.resolveCustomerEmail(customerId);
+          if (email) {
+            const template = await this.emailTemplateService.findByKey('CUSTOMER_WELCOME', customerId);
+            const rendered = renderEmailTemplate(
+              { subject: template?.subject || 'Welcome to {{companyName}}!', body: template?.body || '' },
+              {
+                customerName: params.customerName || customerName,
+                companyName,
+                contactEmail: email,
+                supportPhone: 'Support Desk',
+                email,
+              },
+            );
+
+            await this.emailService.sendEmail({
+              to: email,
+              subject: rendered.subject,
+              html: rendered.body,
+              text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+              recordType: 'customer',
+              recordId: customerId,
+              eventType: 'CUSTOMER_WELCOME',
+              templateId: template?.id,
+            });
+            this.logger.log(`[EMAIL] Welcome email sent to customer #${customerId} (${email})`);
+          }
+        }
+      } catch (emailErr: any) {
+        this.logger.warn(`[EMAIL] Customer welcome email notice: ${emailErr?.message}`);
+      }
+
       // 6. Non-blocking Notification to Super Admins / Platform Admins
       this.notifyAdmins({
         title: 'New Customer Registered',
@@ -1327,6 +1442,52 @@ export class NotificationService {
         }
       } catch (waErr: any) {
         this.logger.warn(`[WHATSAPP] Plan activation message notice: ${waErr?.message}`);
+      }
+
+      // 6b. Email Plan Activation (independent of FCM & WhatsApp, non-blocking)
+      try {
+        if (this.emailService && this.emailTemplateService) {
+          const { email, customerName, companyName } = await this.resolveCustomerEmail(customerId);
+          if (email) {
+            const subDetails = await this.prisma.customerSubscription.findUnique({
+              where: { id: subscriptionId },
+              include: { plan: true },
+            });
+            const cycle = subDetails?.billingCycle || 'Monthly';
+            const startStr = subDetails?.startDate ? new Date(subDetails.startDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN');
+            const expiryStr = subDetails?.endDate ? new Date(subDetails.endDate).toLocaleDateString('en-IN') : 'Ongoing';
+            const plan = subDetails?.plan?.name || planName;
+
+            const template = await this.emailTemplateService.findByKey('PLAN_PURCHASE_SUCCESS', customerId);
+            const rendered = renderEmailTemplate(
+              { subject: template?.subject || 'Plan Activated: {{planName}} – {{companyName}}', body: template?.body || '' },
+              {
+                customerName: customerName || 'Valued Customer',
+                planName: plan,
+                billingCycle: cycle,
+                startDate: startStr,
+                expiryDate: expiryStr,
+                price: subDetails?.plan ? String(cycle === 'YEARLY' ? subDetails.plan.yearlyPrice : subDetails.plan.monthlyPrice) : '',
+                transactionId: paymentId ? String(paymentId) : 'Verified',
+                companyName,
+              },
+            );
+
+            await this.emailService.sendEmail({
+              to: email,
+              subject: rendered.subject,
+              html: rendered.body,
+              text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+              recordType: 'customer',
+              recordId: customerId,
+              eventType: 'PLAN_PURCHASE_SUCCESS',
+              templateId: template?.id,
+            });
+            this.logger.log(`[EMAIL] Plan activation email sent to customer #${customerId} (${email}) for plan "${plan}"`);
+          }
+        }
+      } catch (emailErr: any) {
+        this.logger.warn(`[EMAIL] Plan activation email notice: ${emailErr?.message}`);
       }
 
       // 7. Non-blocking Notification to Super Admins / Platform Admins

@@ -445,6 +445,131 @@ Regards,
 
 QUIKBOOM Digital Marketing Agency`,
   },
+  {
+    key: 'PLAN_PURCHASE_SUCCESS',
+    name: 'Plan Purchase & Activation',
+    category: 'SUBSCRIPTION',
+    subject: 'Plan Activated: {{planName}} – {{companyName}}',
+    description: 'Sent automatically when a customer purchases or activates a subscription plan',
+    supportedVariables: ['customerName', 'planName', 'billingCycle', 'startDate', 'expiryDate', 'price', 'transactionId', 'companyName'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <h2 style="color: #0f172a; margin: 0;">{{companyName}}</h2>
+    <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Subscription Confirmation</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Dear {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">Your subscription to the <strong>{{planName}}</strong> plan has been activated successfully! 🎉</p>
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Plan:</strong> {{planName}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Billing Cycle:</strong> {{billingCycle}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Start Date:</strong> {{startDate}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Valid Until:</strong> {{expiryDate}}</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">Thank you for choosing {{companyName}}. We look forward to supporting your business growth.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; CRM</p>
+</div>`,
+  },
+  {
+    key: 'PAYMENT_SUCCESS',
+    name: 'Payment Receipt Confirmation',
+    category: 'BILLING',
+    subject: 'Payment Confirmation: ₹{{amount}} for {{planName}} – {{companyName}}',
+    description: 'Sent automatically when payment is successfully verified (online or offline)',
+    supportedVariables: ['customerName', 'amount', 'planName', 'paymentMethod', 'transactionId', 'orderId', 'paymentDate', 'companyName'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <h2 style="color: #0f172a; margin: 0;">{{companyName}}</h2>
+    <p style="color: #16a34a; font-size: 14px; font-weight: bold; margin: 4px 0 0;">Payment Successful ✅</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Dear {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">We have received your payment. Below are your payment receipt details:</p>
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Amount Paid:</strong> ₹{{amount}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Plan / Service:</strong> {{planName}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Payment Method:</strong> {{paymentMethod}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Transaction ID:</strong> {{transactionId}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Date:</strong> {{paymentDate}}</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">Your official tax invoice is attached with this email for your accounting records.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; Billing</p>
+</div>`,
+  },
+  {
+    key: 'INVOICE_GENERATED',
+    name: 'Tax Invoice',
+    category: 'BILLING',
+    subject: 'Tax Invoice #{{invoiceNo}} from {{companyName}}',
+    description: 'Sent with invoice PDF attached after successful payment settlement',
+    supportedVariables: ['customerName', 'invoiceNo', 'amount', 'dueDate', 'issueDate', 'companyName'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <h2 style="color: #0f172a; margin: 0;">{{companyName}}</h2>
+    <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Official Tax Invoice</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Dear {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">Please find attached your official tax invoice <strong>#{{invoiceNo}}</strong> for the amount of <strong>₹{{amount}}</strong>.</p>
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Invoice Number:</strong> {{invoiceNo}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Invoice Date:</strong> {{issueDate}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Total Settled:</strong> ₹{{amount}}</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">The PDF version of your invoice is attached to this email.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; Accounts</p>
+</div>`,
+  },
+  {
+    key: 'CALENDAR_SCHEDULED',
+    name: 'Appointment / Meeting Scheduled',
+    category: 'CALENDAR',
+    subject: 'Meeting Scheduled: {{eventTitle}} with {{companyName}}',
+    description: 'Sent when an appointment or calendar event is successfully scheduled with PDF attachment',
+    supportedVariables: ['customerName', 'eventTitle', 'date', 'time', 'location', 'assignedEmployee', 'companyName', 'notes'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <h2 style="color: #0f172a; margin: 0;">{{companyName}}</h2>
+    <p style="color: #0284c7; font-size: 14px; font-weight: bold; margin: 4px 0 0;">Meeting Confirmation 📅</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Dear {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">Your meeting has been scheduled. Below are the appointment details:</p>
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Meeting / Purpose:</strong> {{eventTitle}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Date:</strong> {{date}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Time:</strong> {{time}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Location / Link:</strong> {{location}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #334155;"><strong>Assigned Representative:</strong> {{assignedEmployee}}</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">An official Appointment Confirmation PDF document is attached with this email.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; Calendar</p>
+</div>`,
+  },
+  {
+    key: 'PLAN_EXPIRY_REMINDER',
+    name: 'Plan Expiry Reminder (3 Days)',
+    category: 'SUBSCRIPTION',
+    subject: 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}',
+    description: 'Sent automatically exactly 3 days before a subscription plan expires',
+    supportedVariables: ['customerName', 'planName', 'expiryDate', 'daysRemaining', 'companyName'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    <h2 style="color: #0f172a; margin: 0;">{{companyName}}</h2>
+    <p style="color: #ea580c; font-size: 14px; font-weight: bold; margin: 4px 0 0;">Subscription Expiry Notice ⚠️</p>
+  </div>
+  <p style="color: #334155; font-size: 15px;">Dear {{customerName}},</p>
+  <p style="color: #334155; font-size: 15px;">This is a friendly reminder that your <strong>{{planName}}</strong> subscription will expire in <strong>3 days</strong> on <strong>{{expiryDate}}</strong>.</p>
+  <div style="background-color: #fff7ed; border: 1px solid #ffedd5; border-radius: 8px; padding: 16px; margin: 20px 0;">
+    <p style="margin: 6px 0; font-size: 14px; color: #9a3412;"><strong>Plan:</strong> {{planName}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #9a3412;"><strong>Expiry Date:</strong> {{expiryDate}}</p>
+    <p style="margin: 6px 0; font-size: 14px; color: #9a3412;"><strong>Days Remaining:</strong> 3 days</p>
+  </div>
+  <p style="color: #475569; font-size: 14px;">To avoid any disruption to your business operations and features, please renew your subscription before the expiration date.</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+  <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; Subscriptions</p>
+</div>`,
+  },
 ];
 
 export const TELECALLER_STATUS_TO_TEMPLATE_KEY: Record<string, string> = {
