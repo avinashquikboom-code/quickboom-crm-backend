@@ -595,6 +595,13 @@ export class LeadService {
     const createdLead = await this.getLeadById(customerId, lead.id).catch(() => lead);
     const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
 
+    this.logger.log(`[LeadNotification] 1. New lead creation received`);
+    this.logger.log(`[LeadNotification] 2. Database update successful`);
+    this.logger.log(`[LeadNotification] 3. New stage identified: ${initialStageName}`);
+    this.logger.log(
+      `[LeadNotification]\nTrigger started\nLead ID: ${createdLead.id}\nNew Stage: ${initialStageName}`,
+    );
+
     // Automated communication for NEW LEAD CREATED
     const leadCreatedIso = new Date().toISOString();
     this.logger.log(`[EMAIL_TIMING] Lead created time: ${leadCreatedIso}`);
@@ -628,7 +635,36 @@ export class LeadService {
       this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] ${err?.message}`);
     });
 
-    await Promise.allSettled([emailPromise, whatsappPromise]);
+    const notifService = this.getNotificationService();
+    let pushPromise = Promise.resolve();
+    if (notifService) {
+      pushPromise = (async () => {
+        try {
+          const customerUser = await this.prisma.user.findFirst({
+            where: { customerId: Number(customerId), deletedAt: null },
+            select: { id: true },
+          }).catch(() => null);
+          if (customerUser) {
+            await notifService.sendPushNotification({
+              customerId: Number(customerId),
+              userId: customerUser.id,
+              title: `New Lead Created: ${initialStageName}`,
+              body: `Lead "${createdLead.title || createdLead.companyName || (createdLead.firstName + ' ' + createdLead.lastName).trim()}" has been captured.`,
+              type: 'LEAD_CREATED',
+              data: {
+                leadId: String(createdLead.id),
+                stage: initialStageName,
+                channel: 'LEAD',
+              },
+            });
+          }
+        } catch (err: any) {
+          this.logger.warn(`[LeadNotification] Push notification error on create: ${err?.message}`);
+        }
+      })();
+    }
+
+    await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
 
     if (assignment?.assignedToId) {
       const notifService = this.getNotificationService();
@@ -833,10 +869,15 @@ export class LeadService {
 
     if (isStageChanged) {
       const newStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
+      this.logger.log(`[LeadNotification] 1. Stage change received`);
       this.logger.log(
-        `[LeadStageAutomation] Stage update received\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
+        `[LeadNotification]\nStage update detected\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
       );
-      this.logger.log(`[LeadStageAutomation] Stage changed successfully`);
+      this.logger.log(`[LeadNotification] 2. Database update successful`);
+      this.logger.log(`[LeadNotification] 3. New stage identified: ${newStageName}`);
+      this.logger.log(
+        `[LeadNotification]\nTrigger started\nLead ID: ${id}\nNew Stage: ${newStageName}`,
+      );
       this.logger.log(`[LeadStageAutomation] Starting automatic email`);
 
       const emailPromise = this.handleLeadStageChangeNotification(
@@ -860,7 +901,38 @@ export class LeadService {
         undefined,
         'LEAD_STAGE_CHANGED',
       );
-      await Promise.allSettled([emailPromise, whatsappPromise]);
+
+      const notifService = this.getNotificationService();
+      let pushPromise = Promise.resolve();
+      if (notifService) {
+        pushPromise = (async () => {
+          try {
+            const customerUser = await this.prisma.user.findFirst({
+              where: { customerId: Number(customerId), deletedAt: null },
+              select: { id: true },
+            }).catch(() => null);
+            if (customerUser) {
+              await notifService.sendPushNotification({
+                customerId: Number(customerId),
+                userId: customerUser.id,
+                title: `Lead Stage Updated: ${newStageName}`,
+                body: `Lead "${updatedLead.title || updatedLead.companyName || (updatedLead.firstName + ' ' + updatedLead.lastName).trim()}" is now in ${newStageName} stage.`,
+                type: 'LEAD_STAGE_CHANGED',
+                data: {
+                  leadId: String(updatedLead.id),
+                  oldStage: String(previousStageName),
+                  newStage: String(newStageName),
+                  channel: 'LEAD',
+                },
+              });
+            }
+          } catch (err: any) {
+            this.logger.warn(`[LeadNotification] Push notification error on update: ${err?.message}`);
+          }
+        })();
+      }
+
+      await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
     }
 
     return updatedLead;
@@ -934,8 +1006,9 @@ export class LeadService {
       (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
       resolvedStatus !== lead.status;
 
+    this.logger.log(`[LeadNotification] 1. Stage change received`);
     this.logger.log(
-      `[LeadStageAutomation] Stage update received\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
+      `[LeadNotification]\nStage update detected\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
     );
 
     await this.leadRepository.updateStatus(
@@ -950,12 +1023,16 @@ export class LeadService {
       stageName,
     );
 
-    this.logger.log(`[LeadStageAutomation] Stage changed successfully`);
+    this.logger.log(`[LeadNotification] 2. Database update successful`);
+    this.logger.log(`[LeadNotification] 3. New stage identified: ${newStageName}`);
 
     const updatedLead = await this.getLeadById(customerId, id);
 
-    // If stage actually changed, trigger automatic customer Email & WhatsApp notifications concurrently without cross-blocking
+    // If stage actually changed, trigger automatic customer Email, WhatsApp & Push notifications concurrently without cross-blocking
     if (isStageChanged) {
+      this.logger.log(
+        `[LeadNotification]\nTrigger started\nLead ID: ${id}\nNew Stage: ${newStageName}`,
+      );
       this.logger.log(`[LeadStageAutomation] Starting automatic email`);
       const emailPromise = dto.sendEmail !== false
         ? this.handleLeadStageChangeNotification(
@@ -984,7 +1061,37 @@ export class LeadService {
           )
         : Promise.resolve();
 
-      await Promise.allSettled([emailPromise, whatsappPromise]);
+      const notifService = this.getNotificationService();
+      let pushPromise = Promise.resolve();
+      if (notifService) {
+        pushPromise = (async () => {
+          try {
+            const customerUser = await this.prisma.user.findFirst({
+              where: { customerId: Number(customerId), deletedAt: null },
+              select: { id: true },
+            }).catch(() => null);
+            if (customerUser) {
+              await notifService.sendPushNotification({
+                customerId: Number(customerId),
+                userId: customerUser.id,
+                title: `Lead Stage Updated: ${newStageName}`,
+                body: `Lead "${updatedLead.title || updatedLead.companyName || (updatedLead.firstName + ' ' + updatedLead.lastName).trim()}" is now in ${newStageName} stage.`,
+                type: 'LEAD_STAGE_CHANGED',
+                data: {
+                  leadId: String(updatedLead.id),
+                  oldStage: String(previousStageName),
+                  newStage: String(newStageName),
+                  channel: 'LEAD',
+                },
+              });
+            }
+          } catch (err: any) {
+            this.logger.warn(`[LeadNotification] Push notification error on status update: ${err?.message}`);
+          }
+        })();
+      }
+
+      await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
     }
 
     return updatedLead;
@@ -2168,6 +2275,11 @@ Sent by ${senderOrgName} via CRM.
       };
     }
 
+    this.logger.log(
+      `[LeadNotification] 4. Notification template found: ${template && typeof template === 'object' ? template.templateName : stageKey}`,
+    );
+    this.logger.log(`[LeadNotification] 5. Recipient resolved: ${maskPhone(phone)}`);
+
     const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
     const companyName = lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency';
 
@@ -2223,6 +2335,7 @@ Sent by ${senderOrgName} via CRM.
 
     let result: any = { success: true, messageId: undefined, skipped: false };
     if (this.whatsappService) {
+      this.logger.log(`[LeadNotification] 6. Notification service called: WhatsAppService.sendLeadStageMessage`);
       result = await this.whatsappService.sendLeadStageMessage({
         to: normalizedPhone,
         stageKey: String(stageKey),
@@ -2261,6 +2374,10 @@ Sent by ${senderOrgName} via CRM.
         },
       })
       .catch(() => null);
+
+    this.logger.log(
+      `[LeadNotification] 9. Communication status saved: ${result.success ? 'SENT' : (result.skipped ? 'SKIPPED' : 'FAILED')}`,
+    );
 
     this.logger.log(
       `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${dto?.eventType === 'LEAD_CREATED' ? 'None' : (lead.stage?.name || 'N/A')}\nNew Stage: ${targetStageName}\nWhatsApp:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template && typeof template === 'object' ? template.templateName : stageKey}\nRecipient: ${maskPhone(phone)}\nProvider Status: ${result.success ? 'SUCCESS' : 'FAILED'}`

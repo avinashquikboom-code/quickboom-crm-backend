@@ -113,6 +113,8 @@ export class WhatsappService {
     const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
     if (!config?.isEnabled) {
       this.logger.log(`[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message for ${this.maskPhone(normalizedTo)}.`);
+      this.logger.log(`[LeadNotification] 7. Provider request started (Skipped: Integration disabled)`);
+      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: DISABLED\nError: WhatsApp integration is disabled in Admin Settings`);
       return { success: false, skipped: true, reason: 'INTEGRATION_DISABLED' };
     }
 
@@ -123,6 +125,8 @@ export class WhatsappService {
 
     if (!apiKey || !phoneNumberId) {
       this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
+      this.logger.log(`[LeadNotification] 7. Provider request started (Not configured)`);
+      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: 400 (CREDENTIALS_MISSING)\nError: WhatsApp API Access Token or Phone Number ID not configured in Admin Settings`);
       return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
     }
 
@@ -130,6 +134,7 @@ export class WhatsappService {
     this.logger.log(
       `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nTemplate:\n${templateName}\nStage:\n${stageName || 'N/A'}`
     );
+    this.logger.log(`[LeadNotification] 7. Provider request started\n[LeadNotification]\nWhatsApp request started`);
 
     const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
@@ -163,6 +168,9 @@ export class WhatsappService {
       this.logger.log(
         `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
       );
+      this.logger.log(
+        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${response.status}\nMessage ID: ${messageId || 'N/A'}`
+      );
       return { success: true, messageId };
     } catch (err: any) {
       const status = err?.response?.status;
@@ -175,6 +183,9 @@ export class WhatsappService {
 
       this.logger.warn(
         `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError type:\n${errorType || 'N/A'}\nError subcode:\n${errorSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nError message:\n${errorMessage}`
+      );
+      this.logger.warn(
+        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${status || 'FAILED'}\nError code: ${errorCode}\nError message: ${errorMessage}`
       );
 
       // Handle Meta Authentication failure (Error 190 / OAuthException)
@@ -218,6 +229,8 @@ export class WhatsappService {
     const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
     if (!config?.isEnabled) {
       this.logger.log('[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message.');
+      this.logger.log(`[LeadNotification] 7. Provider request started (Skipped: Integration disabled)`);
+      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: DISABLED\nError: WhatsApp integration is disabled in Admin Settings`);
       return { success: false, skipped: true, reason: 'INTEGRATION_DISABLED' };
     }
 
@@ -228,6 +241,8 @@ export class WhatsappService {
 
     if (!apiKey || !phoneNumberId) {
       this.logger.warn('[WHATSAPP] WhatsApp not configured: missing API Access Token or Phone Number ID in Admin Settings');
+      this.logger.log(`[LeadNotification] 7. Provider request started (Not configured)`);
+      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: 400 (CREDENTIALS_MISSING)\nError: WhatsApp API Access Token or Phone Number ID not configured in Admin Settings`);
       return { success: false, skipped: true, reason: 'CREDENTIALS_MISSING' };
     }
 
@@ -235,6 +250,7 @@ export class WhatsappService {
     this.logger.log(
       `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nType:\ntext\nStage:\n${stageName || 'N/A'}`
     );
+    this.logger.log(`[LeadNotification] 7. Provider request started\n[LeadNotification]\nWhatsApp request started`);
 
     const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
@@ -259,6 +275,9 @@ export class WhatsappService {
       this.logger.log(
         `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
       );
+      this.logger.log(
+        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${response.status}\nMessage ID: ${messageId || 'N/A'}`
+      );
       return { success: true, messageId };
     } catch (err: any) {
       const status = err?.response?.status;
@@ -271,6 +290,9 @@ export class WhatsappService {
 
       this.logger.error(
         `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${status || 'N/A'}\nError code:\n${errorCode}\nError type:\n${errorType || 'N/A'}\nError subcode:\n${errorSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nError message:\n${errorMessage}`
+      );
+      this.logger.warn(
+        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${status || 'FAILED'}\nError code: ${errorCode}\nError message: ${errorMessage}`
       );
 
       if (String(errorCode) === '190' || errorType === 'OAuthException') {
