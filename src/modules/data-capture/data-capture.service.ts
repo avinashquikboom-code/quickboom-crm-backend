@@ -613,14 +613,34 @@ export class DataCaptureService {
       numCustomerId = defaultCustomer?.id || 1;
     }
 
+    const resolvedPhone = dto.phone?.trim()
+      || dto.mobile?.trim()
+      || dto.mobileNumber?.trim()
+      || dto.phoneNumber?.trim()
+      || dto.contactNumber?.trim()
+      || undefined;
+
+    const resolvedEmail = dto.email?.trim() || dto.emailAddress?.trim() || undefined;
+
+    const mergedRawData = {
+      ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
+      ...(dto.firstName ? { firstName: dto.firstName.trim() } : {}),
+      ...(dto.first_name ? { first_name: dto.first_name.trim() } : {}),
+      ...(dto.lastName ? { lastName: dto.lastName.trim() } : {}),
+      ...(dto.last_name ? { last_name: dto.last_name.trim() } : {}),
+      ...(dto.name ? { name: dto.name.trim() } : {}),
+      ...(resolvedPhone ? { phone: resolvedPhone, mobile: resolvedPhone } : {}),
+      ...(resolvedEmail ? { email: resolvedEmail } : {}),
+    };
+
     const place = await this.prisma.dataCapturePlace.create({
       data: {
         customerId: numCustomerId,
         businessName: dto.businessName.trim(),
         category: dto.category?.trim(),
         address: dto.address?.trim(),
-        phone: dto.phone?.trim(),
-        email: dto.email?.trim(),
+        phone: resolvedPhone,
+        email: resolvedEmail,
         website: dto.website?.trim(),
         googlePlaceId: dto.googlePlaceId?.trim() || `MANUAL_${randomUUID().slice(0, 12)}`,
         rating: dto.rating,
@@ -632,7 +652,7 @@ export class DataCaptureService {
         source: dto.source || 'MANUAL',
         status: dto.status || 'CAPTURED',
         notes: dto.notes,
-        rawData: dto.rawData,
+        rawData: Object.keys(mergedRawData).length > 0 ? mergedRawData : dto.rawData,
       },
     });
 
@@ -845,6 +865,113 @@ export class DataCaptureService {
   /**
    * Convert a single Data Capture prospect into a CRM Lead
    */
+  private extractContactFromPlace(place: any): { firstName: string; lastName: string; phone?: string; email?: string } {
+    const rawData = (place.rawData && typeof place.rawData === 'object' ? place.rawData : {}) as any;
+    const nested = rawData.lead_data || rawData.google_lead || rawData.data || rawData.lead || {};
+
+    let firstName = '';
+    let lastName = '';
+    let phone: string | undefined;
+    let email: string | undefined;
+
+    // Check user_column_data if Google Lead Ads / form format
+    const colArray =
+      rawData.user_column_data ||
+      rawData.column_data ||
+      rawData.form_data ||
+      rawData.fields ||
+      nested.user_column_data ||
+      nested.column_data ||
+      nested.form_data ||
+      nested.fields;
+
+    if (Array.isArray(colArray)) {
+      for (const col of colArray) {
+        if (!col || typeof col !== 'object') continue;
+        const id = String(col.column_id || col.column_name || col.field_id || col.key || col.id || col.name || '').toUpperCase().trim();
+        const val = col.string_value ?? col.value ?? col.val ?? '';
+        const trimmedVal = typeof val === 'string' ? val.trim() : String(val || '').trim();
+        if (!trimmedVal) continue;
+
+        if (id === 'FIRST_NAME' || id === 'FIRSTNAME' || id === 'GIVEN_NAME') {
+          if (!firstName) firstName = trimmedVal;
+        } else if (id === 'LAST_NAME' || id === 'LASTNAME' || id === 'FAMILY_NAME') {
+          if (!lastName) lastName = trimmedVal;
+        } else if (id === 'FULL_NAME' || id === 'NAME' || id === 'CONTACT_NAME') {
+          if (!firstName && !lastName) {
+            const parts = trimmedVal.split(/\s+/);
+            firstName = parts[0];
+            lastName = parts.slice(1).join(' ') || parts[0];
+          }
+        } else if (id === 'EMAIL' || id === 'USER_EMAIL' || id === 'WORK_EMAIL' || id === 'EMAIL_ADDRESS') {
+          if (!email) email = trimmedVal.toLowerCase();
+        } else if (
+          id === 'PHONE_NUMBER' ||
+          id === 'PHONE' ||
+          id === 'MOBILE' ||
+          id === 'MOBILE_NUMBER' ||
+          id === 'USER_PHONE' ||
+          id === 'WORK_PHONE'
+        ) {
+          if (!phone) phone = trimmedVal;
+        }
+      }
+    }
+
+    if (!firstName) {
+      firstName = (place.firstName || rawData.firstName || rawData.first_name || nested.firstName || nested.first_name || '').trim();
+    }
+    if (!lastName) {
+      lastName = (place.lastName || rawData.lastName || rawData.last_name || nested.lastName || nested.last_name || '').trim();
+    }
+
+    if (!firstName && !lastName) {
+      const name = place.contactName || rawData.name || rawData.full_name || nested.name || nested.full_name;
+      if (name) {
+        const parts = String(name).trim().split(/\s+/);
+        firstName = parts[0];
+        lastName = parts.slice(1).join(' ') || parts[0];
+      }
+    }
+
+    if (!firstName && !lastName) {
+      const nameParts = (place.businessName || place.name || 'Business Prospect').trim().split(/\s+/);
+      firstName = nameParts[0] || 'Business';
+      lastName = nameParts.slice(1).join(' ') || 'Prospect';
+    } else {
+      firstName = firstName || 'Contact';
+      lastName = lastName || firstName;
+    }
+
+    if (!phone) {
+      phone = (place.internationalPhoneNumber && place.internationalPhoneNumber !== 'N/A' ? place.internationalPhoneNumber.trim() : undefined)
+        || (place.phone && place.phone !== 'N/A' ? place.phone.trim() : undefined)
+        || (rawData.phone && rawData.phone !== 'N/A' ? String(rawData.phone).trim() : undefined)
+        || (rawData.mobile ? String(rawData.mobile).trim() : undefined)
+        || (rawData.mobileNumber ? String(rawData.mobileNumber).trim() : undefined)
+        || (rawData.phoneNumber ? String(rawData.phoneNumber).trim() : undefined)
+        || (rawData.phone_number ? String(rawData.phone_number).trim() : undefined)
+        || (rawData.user_phone ? String(rawData.user_phone).trim() : undefined)
+        || (rawData.user_phone_number ? String(rawData.user_phone_number).trim() : undefined)
+        || (rawData.contactNumber ? String(rawData.contactNumber).trim() : undefined)
+        || (nested.phone ? String(nested.phone).trim() : undefined)
+        || (nested.mobile ? String(nested.mobile).trim() : undefined)
+        || undefined;
+    }
+
+    if (!email) {
+      email = (place.email && place.email !== 'N/A' ? place.email.trim().toLowerCase() : undefined)
+        || (rawData.email && rawData.email !== 'N/A' ? String(rawData.email).trim().toLowerCase() : undefined)
+        || (rawData.user_email ? String(rawData.user_email).trim().toLowerCase() : undefined)
+        || (rawData.emailAddress ? String(rawData.emailAddress).trim().toLowerCase() : undefined)
+        || (rawData.email_address ? String(rawData.email_address).trim().toLowerCase() : undefined)
+        || (nested.email ? String(nested.email).trim().toLowerCase() : undefined)
+        || undefined;
+    }
+
+    return { firstName, lastName, phone, email };
+  }
+
   async createLeadFromPlace(
     customerId: string | number,
     userId: string | number,
@@ -871,10 +998,8 @@ export class DataCaptureService {
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId, place);
     const hasLeadDuplicate = duplicateMatches.some((d) => d.type === 'LEAD');
 
-    // Create CRM Lead
-    const nameParts = place.businessName.trim().split(' ');
-    const firstName = nameParts[0] || 'Business';
-    const lastName = nameParts.slice(1).join(' ') || 'Prospect';
+    // Resolve Contact details from place / rawData
+    const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
 
     const createdLead = await this.prisma.lead.create({
       data: {
@@ -883,8 +1008,8 @@ export class DataCaptureService {
         firstName,
         lastName,
         companyName: place.businessName,
-        phone: place.phone && place.phone !== 'N/A' ? place.phone : undefined,
-        email: place.email || undefined,
+        phone,
+        email,
         website: place.website || undefined,
         address: place.address && place.address !== 'N/A' ? place.address : undefined,
         category: place.category || undefined,
@@ -1118,9 +1243,7 @@ export class DataCaptureService {
         continue;
       }
 
-      const nameParts = place.businessName.trim().split(' ');
-      const firstName = nameParts[0] || 'Business';
-      const lastName = nameParts.slice(1).join(' ') || 'Prospect';
+      const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
 
       // Create new Lead
       const createdLead = await this.prisma.lead.create({
@@ -1130,8 +1253,8 @@ export class DataCaptureService {
           firstName,
           lastName,
           companyName: place.businessName,
-          phone: place.phone !== 'N/A' ? place.phone : undefined,
-          email: place.email || undefined,
+          phone,
+          email,
           website: place.website || undefined,
           address: place.address && place.address !== 'N/A' ? place.address : undefined,
           category: place.category || undefined,

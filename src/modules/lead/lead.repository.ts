@@ -68,10 +68,24 @@ export class LeadRepository {
       if (matchStage) stageId = matchStage.id;
     }
 
-    const { notes, location, ...leadData } = dto as any;
+    const {
+      notes,
+      location,
+      first_name,
+      last_name,
+      name,
+      mobile,
+      mobileNumber,
+      phoneNumber,
+      contactNumber,
+      emailAddress,
+      ...leadData
+    } = dto as any;
     const resolvedCity = (leadData.city || location || '').trim() || null;
     const resolvedFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
     const resolvedLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
+    const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
+    const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
     const lead = await client.lead.create({
       data: {
@@ -79,6 +93,8 @@ export class LeadRepository {
         city: resolvedCity,
         firstName: resolvedFirstName,
         lastName: resolvedLastName,
+        ...(resolvedPhone ? { phone: resolvedPhone } : {}),
+        ...(resolvedEmail ? { email: resolvedEmail } : {}),
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         status,
         stageId,
@@ -553,7 +569,19 @@ export class LeadRepository {
   async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null }) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    const { notes, location, ...leadData } = dto as any;
+    const {
+      notes,
+      location,
+      first_name,
+      last_name,
+      name,
+      mobile,
+      mobileNumber,
+      phoneNumber,
+      contactNumber,
+      emailAddress,
+      ...leadData
+    } = dto as any;
     const updateData: any = {
       ...leadData,
       assignedToId: dto.assignedToId !== undefined
@@ -567,10 +595,36 @@ export class LeadRepository {
       updateData.city = c ? c : null;
     }
     if (leadData.firstName !== undefined) {
-      updateData.firstName = leadData.firstName ? String(leadData.firstName).trim() : '';
+      const fn = leadData.firstName ? String(leadData.firstName).trim() : '';
+      if (fn) {
+        updateData.firstName = fn;
+      } else {
+        delete updateData.firstName;
+      }
     }
     if (leadData.lastName !== undefined) {
-      updateData.lastName = leadData.lastName ? String(leadData.lastName).trim() : '';
+      const ln = leadData.lastName ? String(leadData.lastName).trim() : '';
+      if (ln) {
+        updateData.lastName = ln;
+      } else {
+        delete updateData.lastName;
+      }
+    }
+    if (leadData.phone !== undefined) {
+      const ph = leadData.phone ? String(leadData.phone).trim() : '';
+      if (ph && ph !== 'N/A' && ph !== 'null' && ph !== 'undefined') {
+        updateData.phone = ph;
+      } else {
+        delete updateData.phone;
+      }
+    }
+    if (leadData.email !== undefined) {
+      const em = leadData.email ? String(leadData.email).trim().toLowerCase() : '';
+      if (em && em !== 'null' && em !== 'undefined') {
+        updateData.email = em;
+      } else {
+        delete updateData.email;
+      }
     }
 
     return this.prisma.lead.updateMany({

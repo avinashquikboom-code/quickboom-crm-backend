@@ -59,34 +59,203 @@ export function cleanOptionalField({ value }: { value: any }): any {
 }
 
 export class CreateLeadDto {
-  @ApiProperty({ example: 'Enterprise Cloud Modernization' })
+  @ApiPropertyOptional({ example: 'Enterprise Cloud Modernization' })
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct) return direct;
+    const name = [
+      obj?.firstName || obj?.first_name,
+      obj?.lastName || obj?.last_name,
+    ].filter(Boolean).join(' ').trim();
+    if (name) return name;
+    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) return obj.name.trim();
+    if (obj?.companyName && typeof obj.companyName === 'string' && obj.companyName.trim()) return obj.companyName.trim();
+    if (obj?.businessName && typeof obj.businessName === 'string' && obj.businessName.trim()) return obj.businessName.trim();
+    if (obj?.email || obj?.emailAddress) return (obj.email || obj.emailAddress).trim();
+    if (obj?.phone || obj?.mobile) return (obj.phone || obj.mobile).trim();
+    return 'Direct Lead';
+  })
   @IsString()
-  @IsNotEmpty()
-  title: string;
+  @IsOptional()
+  title?: string;
 
   @ApiPropertyOptional({ example: 'Alice' })
-  @Transform(({ value }) => cleanOptionalField({ value }) ?? null)
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct) return direct;
+    const fn = cleanOptionalField({ value: obj?.first_name });
+    if (fn) return fn;
+    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) {
+      return obj.name.trim().split(/\s+/)[0];
+    }
+    return null;
+  })
   @IsString()
   @IsOptional()
   firstName?: string | null;
 
+  @ApiPropertyOptional({ example: 'Alice', description: 'Alias for firstName' })
+  @IsString()
+  @IsOptional()
+  first_name?: string | null;
+
   @ApiPropertyOptional({ example: 'Smith' })
-  @Transform(({ value }) => cleanOptionalField({ value }) ?? null)
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct) return direct;
+    const ln = cleanOptionalField({ value: obj?.last_name });
+    if (ln) return ln;
+    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) {
+      const parts = obj.name.trim().split(/\s+/);
+      return parts.slice(1).join(' ') || '';
+    }
+    return null;
+  })
   @IsString()
   @IsOptional()
   lastName?: string | null;
 
+  @ApiPropertyOptional({ example: 'Smith', description: 'Alias for lastName' })
+  @IsString()
+  @IsOptional()
+  last_name?: string | null;
+
+  @ApiPropertyOptional({ example: 'Alice Smith', description: 'Full name fallback' })
+  @IsString()
+  @IsOptional()
+  name?: string | null;
+
   @ApiPropertyOptional({ example: 'alice@techcorp.com' })
-  @Transform(cleanOptionalField)
-  @IsEmail()
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    const raw = direct || cleanOptionalField({ value: obj?.emailAddress || obj?.email_address });
+    if (raw && typeof raw === 'string') {
+      return raw.trim().toLowerCase();
+    }
+    return undefined;
+  })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsOptional()
   email?: string;
 
+  @ApiPropertyOptional({ example: 'alice@techcorp.com', description: 'Alias for email' })
+  @IsOptional()
+  emailAddress?: string;
+
+  @ApiPropertyOptional({ example: 'alice@techcorp.com', description: 'Alias for email' })
+  @IsOptional()
+  email_address?: string;
+
   @ApiPropertyOptional({ example: '+91 98200 12345' })
-  @Transform(cleanOptionalField)
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct) return direct;
+    const m = cleanOptionalField({
+      value: obj?.mobile || obj?.mobileNumber || obj?.phoneNumber || obj?.contactNumber || obj?.phone_number,
+    });
+    if (m) return m;
+    return undefined;
+  })
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Alias for phone' })
+  @IsString()
+  @IsOptional()
+  mobile?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Alias for phone' })
+  @IsString()
+  @IsOptional()
+  mobileNumber?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Alias for phone' })
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Alias for phone' })
+  @IsString()
+  @IsOptional()
+  phone_number?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Alias for phone' })
+  @IsString()
+  @IsOptional()
+  contactNumber?: string;
+
+  @ApiPropertyOptional({ example: 'Alice Smith', description: 'Alias for full name' })
+  @IsString()
+  @IsOptional()
+  full_name?: string;
+
+  @ApiPropertyOptional({ example: 'alice@techcorp.com', description: 'Google Discovery user email' })
+  @IsOptional()
+  user_email?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Google Discovery user phone' })
+  @IsString()
+  @IsOptional()
+  user_phone?: string;
+
+  @ApiPropertyOptional({ example: '+91 98200 12345', description: 'Google Discovery user phone' })
+  @IsString()
+  @IsOptional()
+  user_phone_number?: string;
+
+  @ApiPropertyOptional({ description: 'Google Lead Ads user_column_data array' })
+  @IsOptional()
+  user_column_data?: any[];
+
+  @ApiPropertyOptional({ description: 'Google / external column data array' })
+  @IsOptional()
+  column_data?: any[];
+
+  @ApiPropertyOptional({ description: 'Google / external form data array' })
+  @IsOptional()
+  form_data?: any[];
+
+  @ApiPropertyOptional({ description: 'External field key-value array' })
+  @IsOptional()
+  fields?: any[];
+
+  @ApiPropertyOptional({ example: 'google_lead_12345', description: 'Google Lead ID' })
+  @IsString()
+  @IsOptional()
+  lead_id?: string;
+
+  @ApiPropertyOptional({ example: 'form_98765' })
+  @IsString()
+  @IsOptional()
+  form_id?: string;
+
+  @ApiPropertyOptional({ example: 'campaign_456' })
+  @IsString()
+  @IsOptional()
+  campaign_id?: string;
+
+  @ApiPropertyOptional({ example: 'Google Discovery Campaign' })
+  @IsString()
+  @IsOptional()
+  campaign_name?: string;
+
+  @ApiPropertyOptional({ description: 'Google Webhook verification key' })
+  @IsString()
+  @IsOptional()
+  google_key?: string;
+
+  @ApiPropertyOptional({ description: 'Nested lead data container' })
+  @IsOptional()
+  lead_data?: any;
+
+  @ApiPropertyOptional({ description: 'Nested Google lead container' })
+  @IsOptional()
+  google_lead?: any;
+
+  @ApiPropertyOptional({ description: 'Generic nested data payload' })
+  @IsOptional()
+  data?: any;
 
   @ApiPropertyOptional({ example: 'TechCorp Solutions' })
   @Transform(cleanOptionalField)
