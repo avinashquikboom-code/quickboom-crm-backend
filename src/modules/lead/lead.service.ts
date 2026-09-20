@@ -556,17 +556,110 @@ export class LeadService {
         return;
       }
 
-      // 3. Build context variables with Lead full name
+      // 3. Resolve template mapping from lead status / stage automatically
+      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const templateKey =
+        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage] ||
+        TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStatus] ||
+        null;
+
+      let template: any = null;
+      if (templateKey && this.emailTemplateService) {
+        template = await this.emailTemplateService.findByKey(templateKey, lead.customerId).catch(() => null);
+        if (template && !template.isActive) {
+          this.logger.log(
+            `[EMAIL] Email template "${templateKey}" is inactive. Skipping automatic email for lead #${lead.id}.`,
+          );
+          return;
+        }
+      }
+
+      // Build context variables with Lead full name
       const leadTitle =
         `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
         lead.title ||
         lead.companyName ||
         'Valued Client';
 
-      const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom Team';
-      const emailSubject = 'Your Lead Status Has Been Updated';
+      let userName = 'QuickBoom Team';
+      if (lead.user?.name) {
+        userName = lead.user.name;
+      } else if (userId && this.prisma.user) {
+        const u = await this.prisma.user
+          .findUnique({
+            where: { id: Number(userId) },
+            select: { firstName: true, lastName: true },
+          })
+          .catch(() => null);
+        if (u) {
+          userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'QuickBoom Team';
+        }
+      }
 
-      const htmlContent = `
+      const senderEmail =
+        lead.user?.email ||
+        lead.customer?.email ||
+        'sales@quikboom.com';
+
+      let emailSubject = 'Your Lead Status Has Been Updated';
+      let htmlContent = '';
+      let textContent = '';
+
+      if (template) {
+        let startDate = '';
+        let startTime = '';
+
+        if (templateKey === 'QUIKBOOM_VISIT_SCHEDULED') {
+          const scheduledVisit = await this.prisma.visit
+            .findFirst({
+              where: {
+                leadId: Number(lead.id),
+                status: 'SCHEDULED',
+              },
+              orderBy: { date: 'desc' },
+            })
+            .catch(() => null);
+
+          if (scheduledVisit?.date) {
+            startDate = new Intl.DateTimeFormat('en-IN', {
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            }).format(new Date(scheduledVisit.date));
+            startTime = scheduledVisit.time || '';
+          } else if (lead.nextFollowUpDate) {
+            startDate = new Intl.DateTimeFormat('en-IN', {
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            }).format(new Date(lead.nextFollowUpDate));
+            startTime = lead.nextFollowUpTime || '';
+          }
+        }
+
+        const variables: Record<string, any> = {
+          leadTitle,
+          userName,
+          email: senderEmail,
+          startDate: startDate || 'To be communicated',
+          startTime: startTime || '',
+          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
+        };
+
+        const rendered = renderEmailTemplate(
+          { subject: template.subject, body: template.body },
+          variables,
+        );
+
+        emailSubject = rendered.subject;
+        textContent = rendered.body;
+        htmlContent = wrapInQuikboomEmailHtml(rendered.body);
+      } else {
+        // Standard clean stage update notification for stages without custom template (e.g. Qualified)
+        const senderOrgName = lead.customer?.companyName || lead.customer?.name || 'QuickBoom Team';
+
+        htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -630,7 +723,7 @@ export class LeadService {
 </body>
 </html>`.trim();
 
-      const textContent = `
+        textContent = `
 Hello ${leadTitle},
 
 Your lead stage has been updated in QuickBoom CRM.
@@ -640,6 +733,7 @@ Current Stage: ${newStageName}
 
 Thank you,
 QuickBoom Team`.trim();
+      }
 
       // 4. Send email via existing EmailService
       let messageId: string | null = null;
@@ -658,6 +752,7 @@ QuickBoom Team`.trim();
           text: textContent,
           recordType: 'lead',
           recordId: lead.id,
+          templateId: template?.id || undefined,
           eventType: 'LEAD_STAGE_CHANGED',
         });
 
@@ -675,8 +770,8 @@ QuickBoom Team`.trim();
           leadId: Number(lead.id),
           customerId: lead.customerId ? Number(lead.customerId) : null,
           userId: userId ? Number(userId) : null,
-          templateId: null,
-          identifierKey: 'LEAD_STAGE_UPDATED',
+          templateId: template?.id || null,
+          identifierKey: templateKey || 'LEAD_STAGE_UPDATED',
           recipientEmail,
           subject: emailSubject,
           renderedContent: htmlContent,
