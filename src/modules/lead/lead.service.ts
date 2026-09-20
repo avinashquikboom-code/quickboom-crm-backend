@@ -1116,16 +1116,26 @@ export class LeadService {
     }
 
     // Detect if stage or status actually changed
-    const previousStageName = lead.stage?.name || lead.status || 'NEW';
+    const previousStageName = lead.stage?.name || lead.status || 'New';
     const newStageName = stageName || resolvedStatus;
-    const isStageChanged =
-      (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
-      resolvedStatus !== lead.status;
 
-    this.logger.log(`[LeadNotification] 1. Stage change received`);
+    const normPrev = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const normNew = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const normPrevStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const normResolvedStatus = (resolvedStatus || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+
+    const isStageIdChanged = resolvedStageId !== undefined && resolvedStageId !== lead.stageId;
+    const isStageNameChanged = normPrev !== normNew;
+    const isStatusChanged = normPrevStatus !== normResolvedStatus;
+
+    // A stage change occurs if the stage ID changed, or both the name/status normalized keys changed
+    const isStageChanged = isStageIdChanged || isStageNameChanged || isStatusChanged;
+
     this.logger.log(
-      `[LeadNotification]\nStage update detected\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
+      `[LeadStageEmail]\nStage update received\n\nLead ID: ${id}\n\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
     );
+
+    this.logger.log(`[LeadStageEmail]\nStage changed: ${isStageChanged}`);
 
     await this.leadRepository.updateStatus(
       customerId,
@@ -1139,17 +1149,10 @@ export class LeadService {
       stageName,
     );
 
-    this.logger.log(`[LeadNotification] 2. Database update successful`);
-    this.logger.log(`[LeadNotification] 3. New stage identified: ${newStageName}`);
-
     const updatedLead = await this.getLeadById(customerId, id);
 
     // If stage actually changed, trigger automatic customer Email, WhatsApp & Push notifications concurrently without cross-blocking
     if (isStageChanged) {
-      this.logger.log(
-        `[LeadNotification]\nTrigger started\nLead ID: ${id}\nNew Stage: ${newStageName}`,
-      );
-      this.logger.log(`[LeadStageAutomation] Starting automatic email`);
       const emailPromise = dto.sendEmail !== false
         ? this.handleLeadStageChangeNotification(
             customerId,
@@ -1157,7 +1160,7 @@ export class LeadService {
             previousStageName,
             newStageName,
             userId,
-            dto.templateId,
+            undefined, // Automatic stage change always selects template based on the new stage
             dto.customSubject,
             dto.customBody,
             'LEAD_STAGE_CHANGED',
@@ -1228,69 +1231,21 @@ export class LeadService {
     customBody?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
   ) {
-    const eventTimestampIso = new Date().toISOString();
     try {
-      if (eventType === 'LEAD_CREATED') {
-        this.logger.log(`[EMAIL_TIMING] Lead created time: ${eventTimestampIso}`);
-        this.logger.log(`[EMAIL_TIMING] Email automation started: ${new Date().toISOString()}`);
-        this.logger.log(
-          `[LeadStageAutomation] New lead created detected\nLead ID: ${lead.id}\nInitial Stage: ${newStageName}`,
-        );
-      } else {
-        this.logger.log(`[EMAIL_TIMING] Stage change: ${eventTimestampIso}`);
-        this.logger.log(`[EMAIL_TIMING] Email automation started: ${new Date().toISOString()}`);
-        this.logger.log(
-          `[LeadStageAutomation] Stage change detected\nLead ID: ${lead.id}\nOld Stage: ${previousStageName || 'None'}\nNew Stage: ${newStageName}`,
-        );
-      }
-
       // 0. Do NOT send email if stage did not actually change (for stage change events)
+      const normPrevStage = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStageForCheck = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       if (
         eventType === 'LEAD_STAGE_CHANGED' &&
-        previousStageName &&
-        newStageName &&
-        previousStageName.trim().toUpperCase() === newStageName.trim().toUpperCase()
+        normPrevStage &&
+        normNewStageForCheck &&
+        normPrevStage === normNewStageForCheck
       ) {
-        this.logger.log(
-          `[LeadStageAutomation] Stage unchanged (${previousStageName} → ${newStageName}). Skipping automatic email.`,
-        );
         return;
       }
 
-      // 1. Resolve recipient email: strictly comes from the Lead record's email field
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const recipientEmail = (lead.email || '').trim();
-
-      // Handle missing or invalid email safely without failing the stage update or lead creation
-      if (!recipientEmail || !emailRegex.test(recipientEmail)) {
-        this.logger.log(
-          `[LeadStageAutomation] Recipient email not available or invalid on lead #${lead.id} ("${recipientEmail}"). ${eventType === 'LEAD_CREATED' ? 'Lead created successfully' : 'Stage updated successfully'}, skipping email.`,
-        );
-        return;
-      }
-
-      // 2. Prevent duplicate notifications (debounce only successfully sent transitions within 60s)
-      const recentLog = await this.prisma.emailLog.findFirst({
-        where: {
-          leadId: Number(lead.id),
-          status: 'SENT',
-          newStage: String(newStageName),
-          createdAt: {
-            gte: new Date(Date.now() - 60000),
-          },
-        },
-      });
-
-      if (recentLog) {
-        this.logger.log(
-          `[LeadStageAutomation] Duplicate ${eventType} email notification detected for lead #${lead.id} within 60s. Skipping redundant email.`,
-        );
-        return;
-      }
-
-      // 3. Resolve template mapping strictly for the NEW stage
-      this.logger.log(`[LeadStageAutomation] Looking for email template\nStage: ${newStageName}`);
-      const tFetchStart = Date.now();
+      // 1. Resolve template mapping strictly for the NEW stage
+      this.logger.log(`[LeadStageEmail]\nLooking for email template:\n${newStageName}`);
 
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
@@ -1315,7 +1270,7 @@ export class LeadService {
         template = await this.emailTemplateService.findOne(Number(overrideTemplateId), lead.customerId).catch(() => null);
       }
 
-      // 3a. Search customer/global DB templates by candidate keys
+      // 1a. Search customer/global DB templates by candidate keys
       if (!template && this.emailTemplateService) {
         for (const k of candidateKeys) {
           template = await this.emailTemplateService.findByKey(k, lead.customerId).catch(() => null);
@@ -1323,7 +1278,7 @@ export class LeadService {
         }
       }
 
-      // 3b. Search DB template by matching name
+      // 1b. Search DB template by matching name
       if (!template && this.prisma.emailTemplate && newStageName) {
         const dbTpl = await this.prisma.emailTemplate.findFirst({
           where: {
@@ -1350,42 +1305,63 @@ export class LeadService {
         }
       }
 
-      // 3c. Check predefined system fallback templates
+      // 1c. Check predefined system fallback templates
       if (!template) {
         template = PREDEFINED_SYSTEM_TEMPLATES.find((t) => candidateKeys.includes(t.key)) || null;
       }
 
-      const tFetchEnd = Date.now();
-      const templateFetchDuration = tFetchEnd - tFetchStart;
-      this.logger.log(`[EMAIL_TIMING] Template fetched: ${new Date().toISOString()}`);
-      this.logger.log(`[EMAIL_TIMING] Duration: ${templateFetchDuration}ms`);
-
       if (template && template.isActive === false) {
-        this.logger.log(
-          `[LeadStageAutomation] Email template "${template.key || template.name}" is inactive. Skipping automatic email for lead #${lead.id}.`,
-        );
-        return;
+        template = null;
       }
 
       // If no template is configured for this stage, do NOT send generic or random template
       if (!template && !customBody) {
-        if (eventType === 'LEAD_CREATED') {
-          this.logger.warn(`[LeadStageAutomation] Lead created with stage: ${newStageName}`);
-          this.logger.warn(`[LeadStageAutomation] No email template configured for stage: ${newStageName}`);
-        } else {
-          this.logger.warn(`[LeadStageAutomation] Stage changed: ${previousStageName || 'None'} -> ${newStageName}`);
-          this.logger.warn(`[LeadStageAutomation] No email template configured for stage: ${newStageName}`);
-        }
+        this.logger.warn(`No email template configured for stage: ${newStageName}`);
         return;
       }
 
-      this.logger.log(
-        `[LeadStageAutomation] Template found\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`,
-      );
-      if (eventType === 'LEAD_CREATED') {
-        this.logger.log(`[NewLeadAutomation] 7. New-stage template found:\nTemplate ID = ${template?.id || template?.key || 'CUSTOM'}`);
-        this.logger.log(`[NewLeadEmail]\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`);
-        this.logger.log(`[NewLeadEmail]\nLead ID: ${lead.id}\nRecipient email exists: true\nTemplate ID: ${template?.id || template?.key || 'CUSTOM'}`);
+      const templateIdentifier = template?.id || template?.key || 'CUSTOM';
+      this.logger.log(`[LeadStageEmail]\nTemplate found:\nTemplate ID: ${templateIdentifier}`);
+
+      // 2. Resolve recipient email: strictly comes from the Lead record's email field
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const recipientEmail = (lead.email || '').trim();
+
+      // Handle missing or invalid email safely without failing the stage update or lead creation
+      if (!recipientEmail || !emailRegex.test(recipientEmail)) {
+        this.logger.log(`[LeadStageEmail]\nRecipient exists:\nfalse`);
+        this.logger.log(`Lead email missing; automatic stage email skipped.`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
+          `Automatic stage email skipped: Lead email missing`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            status: 'SKIPPED',
+            reason: 'Lead email missing',
+          },
+        ).catch(() => null);
+        return;
+      }
+
+      this.logger.log(`[LeadStageEmail]\nRecipient exists:\ntrue`);
+
+      // 3. Prevent duplicate notifications (debounce only successfully sent transitions within 60s)
+      const recentLog = await this.prisma.emailLog.findFirst({
+        where: {
+          leadId: Number(lead.id),
+          status: 'SENT',
+          newStage: String(newStageName),
+          createdAt: {
+            gte: new Date(Date.now() - 60000),
+          },
+        },
+      });
+
+      if (recentLog) {
+        return;
       }
 
       // 4. Build context variables and resolve dynamic employee signature
@@ -1614,12 +1590,7 @@ export class LeadService {
       let status = 'SENT';
       let providerDurationMs = 0;
 
-      this.logger.log(`[LeadStageAutomation] Calling existing email service`);
-      if (eventType === 'LEAD_CREATED') {
-        this.logger.log('[NewLeadAutomation] 8. Existing email service called');
-      }
-      this.logger.log(`[LeadStageAutomation] Sending email\nTo: ${recipientEmail}`);
-      this.logger.log(`[EMAIL_TIMING] Provider request started: ${new Date().toISOString()}`);
+      this.logger.log(`[LeadStageEmail]\nCalling existing email service`);
 
       try {
         if (!this.emailService) {
@@ -1642,26 +1613,16 @@ export class LeadService {
         messageId = sendResult?.messageId || null;
         providerDurationMs = sendResult?.providerDurationMs ?? 0;
 
-        this.logger.log(`[EMAIL_TIMING] Email provider response received: ${new Date().toISOString()}`);
-        this.logger.log(`[EMAIL_TIMING] Provider request duration: ${providerDurationMs}ms`);
-        this.logger.log(`[EMAIL_TIMING] Provider Message ID: ${messageId || 'N/A'}`);
-
-        this.logger.log(
-          `[LeadStageAutomation] Email provider response\nStatus: SUCCESS\nMessage ID: ${messageId || 'N/A'}`,
-        );
-        if (eventType === 'LEAD_CREATED') {
-          this.logger.log('[NewLeadAutomation] 9. Email provider response:\nSUCCESS');
-        }
+        this.logger.log(`[LeadStageEmail]\nEmail provider response:\nSUCCESS`);
+        this.logger.log(`[LeadStageEmail]\nProvider Message ID:\n${messageId || 'N/A'}`);
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
         this.logger.error(
-          `[LeadStageAutomation] Email send failed\nLead ID: ${lead.id}\nStage: ${newStageName}\nProvider Error: ${sendError}`,
+          `[LeadStageEmail] FAILED\nLead ID: ${lead.id}\nStage: ${newStageName}\nError: ${sendError}`,
         );
-        this.logger.log(`[LeadStageAutomation] Email provider response\nStatus: FAILED\nMessage ID: N/A`);
-        if (eventType === 'LEAD_CREATED') {
-          this.logger.log('[NewLeadAutomation] 9. Email provider response:\nFAILED');
-        }
+        this.logger.log(`[LeadStageEmail]\nEmail provider response:\nFAILED`);
+        this.logger.log(`[LeadStageEmail]\nProvider Message ID:\nN/A`);
       }
 
       // 6. Store authoritative email delivery log in EmailLog table
@@ -1688,10 +1649,7 @@ export class LeadService {
         this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${logErr?.message}`);
       });
 
-      this.logger.log(`[LeadStageAutomation] Communication saved\nStatus: ${status}`);
-      if (eventType === 'LEAD_CREATED') {
-        this.logger.log('[NewLeadAutomation] 10. Communication history saved');
-      }
+      this.logger.log(`[LeadStageEmail]\nCommunication history saved`);
 
       // 7. Record timeline event in CRM Lead timeline
       await this.leadRepository.logTimeline(
