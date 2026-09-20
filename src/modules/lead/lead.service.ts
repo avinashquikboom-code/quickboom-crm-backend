@@ -258,8 +258,11 @@ export class LeadService {
     const initialStageName = createdLead.stage?.name || createdLead.status || 'New';
 
     // Automated communication for NEW LEAD CREATED
+    const leadCreatedIso = new Date().toISOString();
+    this.logger.log(`[EMAIL_TIMING] Lead created time: ${leadCreatedIso}`);
+
     // 1. Email automation using initial stage template:
-    await this.handleLeadStageChangeNotification(
+    const emailPromise = this.handleLeadStageChangeNotification(
       customerId,
       createdLead,
       '',
@@ -274,7 +277,7 @@ export class LeadService {
     });
 
     // 2. WhatsApp automation using initial stage template:
-    await this.handleLeadStageChangeWhatsappNotification(
+    const whatsappPromise = this.handleLeadStageChangeWhatsappNotification(
       customerId,
       createdLead,
       '',
@@ -286,6 +289,8 @@ export class LeadService {
     ).catch((err) => {
       this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] ${err?.message}`);
     });
+
+    await Promise.allSettled([emailPromise, whatsappPromise]);
 
     if (assignment?.assignedToId) {
       const notifService = this.getNotificationService();
@@ -490,6 +495,12 @@ export class LeadService {
 
     if (isStageChanged) {
       const newStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
+      this.logger.log(
+        `[LeadStageAutomation] Stage update received\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
+      );
+      this.logger.log(`[LeadStageAutomation] Stage changed successfully`);
+      this.logger.log(`[LeadStageAutomation] Starting automatic email`);
+
       const emailPromise = this.handleLeadStageChangeNotification(
         customerId,
         updatedLead,
@@ -585,6 +596,10 @@ export class LeadService {
       (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
       resolvedStatus !== lead.status;
 
+    this.logger.log(
+      `[LeadStageAutomation] Stage update received\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
+    );
+
     await this.leadRepository.updateStatus(
       customerId,
       id,
@@ -597,10 +612,13 @@ export class LeadService {
       stageName,
     );
 
+    this.logger.log(`[LeadStageAutomation] Stage changed successfully`);
+
     const updatedLead = await this.getLeadById(customerId, id);
 
     // If stage actually changed, trigger automatic customer Email & WhatsApp notifications concurrently without cross-blocking
     if (isStageChanged) {
+      this.logger.log(`[LeadStageAutomation] Starting automatic email`);
       const emailPromise = dto.sendEmail !== false
         ? this.handleLeadStageChangeNotification(
             customerId,
@@ -649,12 +667,21 @@ export class LeadService {
     customBody?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
   ) {
-    const stageChangeIso = new Date().toISOString();
+    const eventTimestampIso = new Date().toISOString();
     try {
-      this.logger.log(`[EMAIL_TIMING] Stage change: ${stageChangeIso}`);
-      this.logger.log(
-        `[LeadStageAutomation] Stage change detected\nLead ID: ${lead.id}\nOld Stage: ${previousStageName || 'None'}\nNew Stage: ${newStageName}`,
-      );
+      if (eventType === 'LEAD_CREATED') {
+        this.logger.log(`[EMAIL_TIMING] Lead created time: ${eventTimestampIso}`);
+        this.logger.log(`[EMAIL_TIMING] Email automation started: ${new Date().toISOString()}`);
+        this.logger.log(
+          `[LeadStageAutomation] New lead created detected\nLead ID: ${lead.id}\nInitial Stage: ${newStageName}`,
+        );
+      } else {
+        this.logger.log(`[EMAIL_TIMING] Stage change: ${eventTimestampIso}`);
+        this.logger.log(`[EMAIL_TIMING] Email automation started: ${new Date().toISOString()}`);
+        this.logger.log(
+          `[LeadStageAutomation] Stage change detected\nLead ID: ${lead.id}\nOld Stage: ${previousStageName || 'None'}\nNew Stage: ${newStageName}`,
+        );
+      }
 
       // 0. Do NOT send email if stage did not actually change (for stage change events)
       if (
@@ -673,10 +700,10 @@ export class LeadService {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       const recipientEmail = (lead.email || '').trim();
 
-      // Handle missing or invalid email safely without failing the stage update
+      // Handle missing or invalid email safely without failing the stage update or lead creation
       if (!recipientEmail || !emailRegex.test(recipientEmail)) {
         this.logger.log(
-          `[LeadStageAutomation] Recipient email not available or invalid on lead #${lead.id} ("${recipientEmail}"). Stage updated successfully, skipping email.`,
+          `[LeadStageAutomation] Recipient email not available or invalid on lead #${lead.id} ("${recipientEmail}"). ${eventType === 'LEAD_CREATED' ? 'Lead created successfully' : 'Stage updated successfully'}, skipping email.`,
         );
         return;
       }
@@ -685,14 +712,8 @@ export class LeadService {
       const recentLog = await this.prisma.emailLog.findFirst({
         where: {
           leadId: Number(lead.id),
-          eventType,
           status: 'SENT',
-          ...(eventType === 'LEAD_STAGE_CHANGED'
-            ? {
-                previousStage: String(previousStageName),
-                newStage: String(newStageName),
-              }
-            : {}),
+          newStage: String(newStageName),
           createdAt: {
             gte: new Date(Date.now() - 60000),
           },
@@ -787,8 +808,13 @@ export class LeadService {
 
       // If no template is configured for this stage, do NOT send generic or random template
       if (!template && !customBody) {
-        this.logger.warn(`[LeadStageAutomation] Stage changed: ${previousStageName || 'None'} -> ${newStageName}`);
-        this.logger.warn(`[LeadStageAutomation] No email template configured for stage: ${newStageName}`);
+        if (eventType === 'LEAD_CREATED') {
+          this.logger.warn(`[LeadStageAutomation] Lead created with stage: ${newStageName}`);
+          this.logger.warn(`[LeadStageAutomation] No email template configured for stage: ${newStageName}`);
+        } else {
+          this.logger.warn(`[LeadStageAutomation] Stage changed: ${previousStageName || 'None'} -> ${newStageName}`);
+          this.logger.warn(`[LeadStageAutomation] No email template configured for stage: ${newStageName}`);
+        }
         return;
       }
 
@@ -1022,8 +1048,9 @@ export class LeadService {
       let status = 'SENT';
       let providerDurationMs = 0;
 
+      this.logger.log(`[LeadStageAutomation] Calling existing email service`);
       this.logger.log(`[LeadStageAutomation] Sending email\nTo: ${recipientEmail}`);
-      this.logger.log(`[EMAIL_TIMING] Email provider request started: ${new Date().toISOString()}`);
+      this.logger.log(`[EMAIL_TIMING] Provider request started: ${new Date().toISOString()}`);
 
       try {
         if (!this.emailService) {
@@ -1035,6 +1062,7 @@ export class LeadService {
           subject: emailSubject,
           html: htmlContent,
           text: textContent,
+          body: htmlContent,
           recordType: 'lead',
           recordId: lead.id,
           templateId: template?.id || undefined,

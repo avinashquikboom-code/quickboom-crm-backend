@@ -980,5 +980,129 @@ describe('Lead Stage Change Email Notification Tests', () => {
     expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
     expect(emailSentTime).toBeGreaterThan(0);
   });
+
+  describe('User Requirement: Automatic Email on New Lead Creation (Cases 1-6)', () => {
+    it('CASE 1: Create Lead with stage = New -> New-stage Email Template automatically sent', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      const created = await service.createLead(1, 999, {
+        title: 'New Lead Auto Email',
+        firstName: 'Ananya',
+        lastName: 'Sharma',
+        email: 'ananya@example.com',
+        stageId: 1, // Stage 1 = New
+      });
+
+      expect(created).toBeDefined();
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+      expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'ananya@example.com',
+          subject: expect.stringContaining('Thank You for Connecting with QUIKBOOM'),
+          eventType: 'LEAD_CREATED',
+        }),
+      );
+    });
+
+    it('CASE 2: Create Lead with stage = New but no email template exists -> Lead created successfully, No email sent, Warning logged', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      // Create with a custom stage that has no template configured in system or DB
+      stagesTable.push({
+        id: 99,
+        customerId: 1,
+        name: 'Custom Unconfigured Initial Stage',
+        key: 'CUSTOM_INITIAL_STAGE_NO_TPL',
+        color: '#10B981',
+        isActive: true,
+      });
+
+      const created = await service.createLead(1, 999, {
+        title: 'No Template Lead',
+        firstName: 'Rajesh',
+        lastName: 'Verma',
+        email: 'rajesh@example.com',
+        stageId: 99,
+      });
+
+      expect(created).toBeDefined();
+      expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('CASE 3: Create Lead without email address -> Lead created successfully, Email skipped safely', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      const created = await service.createLead(1, 999, {
+        title: 'No Email Lead',
+        firstName: 'Pooja',
+        lastName: 'Kulkarni',
+        email: undefined,
+        stageId: 1, // New
+      });
+
+      expect(created).toBeDefined();
+      expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('CASE 4: Contacted -> Follow-up -> Follow-up email sent', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      leadsTable[0].stageId = 2; // Contacted
+      leadsTable[0].status = LeadStatus.CONTACTED;
+      leadsTable[0].email = 'followup.lead@example.com';
+
+      const updated = await service.updateStatus(1, 101, 999, {
+        stageId: 4, // Follow-up
+      });
+
+      expect(updated).toBeDefined();
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+      expect(mockEmailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'followup.lead@example.com',
+          subject: expect.stringContaining('Following Up on Our Discussion – QUIKBOOM'),
+          eventType: 'LEAD_STAGE_CHANGED',
+        }),
+      );
+    });
+
+    it('CASE 5: Follow-up -> Follow-up -> No automatic email', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      leadsTable[0].stageId = 4; // Follow-up
+      leadsTable[0].status = LeadStatus.FOLLOW_UP;
+      leadsTable[0].email = 'followup.lead@example.com';
+
+      const updated = await service.updateStatus(1, 101, 999, {
+        stageId: 4, // Follow-up (same stage)
+      });
+
+      expect(updated).toBeDefined();
+      expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('CASE 6: Create Lead -> New -> Exactly ONE New-stage email', async () => {
+      mockEmailService.sendEmail.mockClear();
+
+      const created = await service.createLead(1, 999, {
+        title: 'Deduplicated New Lead',
+        firstName: 'Sunil',
+        lastName: 'Mehta',
+        email: 'sunil@example.com',
+        stageId: 1, // New
+      });
+
+      expect(created).toBeDefined();
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+
+      // Attempt to immediately update same stage or trigger duplicate notification
+      await service.updateStatus(1, created.id, 999, {
+        stageId: 1, // New
+      });
+
+      // Email count must remain exactly 1
+      expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
