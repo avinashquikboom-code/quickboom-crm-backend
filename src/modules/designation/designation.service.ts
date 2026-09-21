@@ -228,7 +228,7 @@ export class DesignationService {
           data: {
             customerId: numCustomerId,
             name,
-            description: dto.description?.trim() || `Employee mobile application role for ${name}`,
+            description: dto.description?.trim() || `${name} role`,
             type: 'CUSTOM',
           },
         });

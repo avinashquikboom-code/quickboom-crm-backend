@@ -2640,7 +2640,7 @@ export class AuthService {
           await this.prisma.role.create({
             data: {
               name: d.name.trim(),
-              description: d.description || `Employee mobile application role for ${d.name.trim()}`,
+              description: d.description || `${d.name.trim()} role`,
               type: RoleType.CUSTOM,
               customerId: d.customerId || customerId || null,
             },
@@ -2651,17 +2651,76 @@ export class AuthService {
       this.logger.warn(`Failed auto-syncing designations to roles: ${syncErr}`);
     }
 
-    // 2. Fetch roles (including global system defaults and customer-specific roles)
+    // 2. Database Safety: Soft-delete legacy generic EMPLOYEE roles and preserve/migrate any assigned employees
+    try {
+      const legacyRoles = await this.prisma.role.findMany({
+        where: {
+          name: { in: ['EMPLOYEE', 'Employee', 'employee'] },
+          deletedAt: null,
+        },
+        include: {
+          userRoles: {
+            include: {
+              user: {
+                include: {
+                  employee: {
+                    include: { designation: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      for (const legRole of legacyRoles) {
+        for (const ur of legRole.userRoles) {
+          const desigName = ur.user?.employee?.designation?.name?.trim();
+          if (desigName) {
+            const targetRole = await this.prisma.role.findFirst({
+              where: {
+                OR: [
+                  { customerId: legRole.customerId, name: { equals: desigName, mode: 'insensitive' } },
+                  { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
+                  { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+                ],
+                deletedAt: null,
+                name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+              },
+            });
+            if (targetRole) {
+              const alreadyHas = await this.prisma.userRole.findFirst({
+                where: { userId: ur.userId, roleId: targetRole.id },
+              });
+              if (!alreadyHas) {
+                await this.prisma.userRole.create({
+                  data: { userId: ur.userId, roleId: targetRole.id },
+                }).catch(() => null);
+              }
+            }
+          }
+        }
+        // Safely soft-delete legacy role without destroying historical relationships
+        await this.prisma.role.update({
+          where: { id: legRole.id },
+          data: { deletedAt: new Date() },
+        }).catch(() => null);
+      }
+    } catch (cleanErr) {
+      this.logger.warn(`Failed safely cleaning legacy employee roles: ${cleanErr}`);
+    }
+
+    // 3. Fetch real functional roles (excluding CUSTOMER and legacy generic EMPLOYEE)
     const roles = await this.prisma.role.findMany({
       where: customerId
         ? {
             OR: [{ customerId }, { customerId: null }],
             deletedAt: null,
-            name: { notIn: ['CUSTOMER'] },
+            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
           }
         : {
             deletedAt: null,
-            name: { notIn: ['CUSTOMER'] },
+            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
           },
       include: {
         _count: {
@@ -2679,7 +2738,7 @@ export class AuthService {
       orderBy: { id: 'asc' },
     });
 
-    // 3. Fetch employee counts to accurately report staff assigned to each role
+    // 4. Fetch employee counts to accurately report staff assigned to each role
     const employees = await this.prisma.employee.findMany({
       where: customerId ? { customerId } : {},
       select: {
@@ -2693,27 +2752,30 @@ export class AuthService {
       },
     });
 
-    return roles.map((r) => {
+    const formattedRoles = roles.map((r) => {
+      const displayName = this.formatRoleDisplayName(r.name);
       const assignedCount = employees.filter((e) => {
         const hasUr = e.user?.userRoles?.some((ur) => ur.roleId === r.id);
         const hasDesig =
           e.designation?.name &&
           (e.designation.name.trim().toLowerCase() === r.name.trim().toLowerCase() ||
             r.name.trim().toLowerCase().replace(/_/g, ' ') === e.designation.name.trim().toLowerCase() ||
-            e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === r.name.trim().toLowerCase());
+            e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === r.name.trim().toLowerCase() ||
+            displayName.toLowerCase() === e.designation.name.trim().toLowerCase());
         return Boolean(hasUr || hasDesig);
       }).length;
 
       return {
         id: String(r.id),
-        name: this.formatRoleDisplayName(r.name),
+        name: displayName,
         rawName: r.name,
         type: r.type,
-        description: r.description || 'Employee mobile application role',
+        description: r.description || `${displayName} role`,
         permissionsCount: r.rolePermissions?.length || r._count.rolePermissions || 0,
         usersCount: Math.max(assignedCount, r._count.userRoles || 0),
         isSystem: r.type === RoleType.SUPER_ADMIN || !r.customerId,
         isActive: !r.deletedAt,
+        customerId: r.customerId,
         permissions: (r.rolePermissions || []).map((rp) => ({
           module: rp.permission.module,
           action: rp.permission.action,
@@ -2722,6 +2784,20 @@ export class AuthService {
         })),
       };
     });
+
+    // 5. Deduplicate: If multiple roles map to the same name (e.g. global + customer), prefer customer role
+    const dedupedMap = new Map<string, (typeof formattedRoles)[0]>();
+    for (const item of formattedRoles) {
+      const key = item.name.trim().toLowerCase();
+      const existing = dedupedMap.get(key);
+      if (!existing) {
+        dedupedMap.set(key, item);
+      } else if (item.customerId && !existing.customerId) {
+        dedupedMap.set(key, item);
+      }
+    }
+
+    return Array.from(dedupedMap.values());
   }
 
   async getRoleById(roleId: number) {
@@ -2733,7 +2809,7 @@ export class AuthService {
       },
     });
     if (!role) {
-      throw new NotFoundException(`Role with ID ${roleId} not found`);
+      throw new NotFoundException(`Role #${roleId} not found`);
     }
 
     const employees = await this.prisma.employee.findMany({
@@ -2741,26 +2817,32 @@ export class AuthService {
       select: {
         id: true,
         designation: { select: { id: true, name: true } },
-        user: { select: { userRoles: { select: { roleId: true } } } },
+        user: {
+          select: {
+            userRoles: { select: { roleId: true } },
+          },
+        },
       },
     });
 
+    const displayName = this.formatRoleDisplayName(role.name);
     const assignedCount = employees.filter((e) => {
       const hasUr = e.user?.userRoles?.some((ur) => ur.roleId === role.id);
       const hasDesig =
         e.designation?.name &&
         (e.designation.name.trim().toLowerCase() === role.name.trim().toLowerCase() ||
           role.name.trim().toLowerCase().replace(/_/g, ' ') === e.designation.name.trim().toLowerCase() ||
-          e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === role.name.trim().toLowerCase());
+          e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === role.name.trim().toLowerCase() ||
+          displayName.toLowerCase() === e.designation.name.trim().toLowerCase());
       return Boolean(hasUr || hasDesig);
     }).length;
 
     return {
       id: String(role.id),
-      name: this.formatRoleDisplayName(role.name),
+      name: displayName,
       rawName: role.name,
       type: role.type,
-      description: role.description || 'Employee mobile application role',
+      description: role.description || `${displayName} role`,
       permissionsCount: role.rolePermissions?.length || 0,
       usersCount: Math.max(assignedCount, role._count.userRoles || 0),
       isSystem: role.type === RoleType.SUPER_ADMIN || !role.customerId,

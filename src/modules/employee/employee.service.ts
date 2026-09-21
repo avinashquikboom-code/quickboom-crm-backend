@@ -1456,64 +1456,43 @@ export class EmployeeService {
         });
       }
 
-      // Assign Employee mobile role
-      let employeeRole = await tx.role.findFirst({
+      // Assign functional designation-specific role if one exists, otherwise default to TELECALLER
+      const targetRoleName =
+        designation?.name && designation.name.toUpperCase() !== 'STAFF'
+          ? designation.name.trim()
+          : 'TELECALLER';
+
+      let assignedRole = await tx.role.findFirst({
         where: {
           OR: [
-            { customerId: numCustomerId, name: { equals: 'Employee', mode: 'insensitive' } },
-            { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
-            { customerId: numCustomerId, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
-            { customerId: null, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
+            { customerId: numCustomerId, name: { equals: targetRoleName, mode: 'insensitive' } },
+            { customerId: null, name: { equals: targetRoleName, mode: 'insensitive' } },
           ],
+          deletedAt: null,
+          name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
         },
       });
 
-      if (!employeeRole) {
-        employeeRole = await tx.role.create({
-          data: {
-            customerId: numCustomerId,
-            name: 'Employee',
-            type: RoleType.CUSTOM,
-            description: 'Employee mobile application role',
-          },
-        });
-      }
-
-      const existingUserRole = await tx.userRole.findFirst({
-        where: {
-          userId: user.id,
-          roleId: employeeRole.id,
-        },
-      });
-
-      if (!existingUserRole) {
-        await tx.userRole.create({
-          data: {
-            userId: user.id,
-            roleId: employeeRole.id,
-          },
-        });
-      }
-
-      // Link designation-specific role if one exists (e.g. Video Editor, Graphic Designer, Photographer)
-      if (designation?.name && designation.name.toUpperCase() !== 'STAFF') {
-        const desigRole = await tx.role.findFirst({
+      if (!assignedRole) {
+        assignedRole = await tx.role.findFirst({
           where: {
             OR: [
-              { customerId: numCustomerId, name: { equals: designation.name, mode: 'insensitive' } },
-              { customerId: null, name: { equals: designation.name, mode: 'insensitive' } },
+              { customerId: numCustomerId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+              { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
             ],
+            deletedAt: null,
           },
         });
-        if (desigRole) {
-          const hasDesigUserRole = await tx.userRole.findFirst({
-            where: { userId: user.id, roleId: desigRole.id },
+      }
+
+      if (assignedRole) {
+        const existingUr = await tx.userRole.findFirst({
+          where: { userId: user.id, roleId: assignedRole.id },
+        });
+        if (!existingUr) {
+          await tx.userRole.create({
+            data: { userId: user.id, roleId: assignedRole.id },
           });
-          if (!hasDesigUserRole) {
-            await tx.userRole.create({
-              data: { userId: user.id, roleId: desigRole.id },
-            });
-          }
         }
       }
 
@@ -1892,34 +1871,26 @@ export class EmployeeService {
 
           updateData.userId = user.id;
 
-          // Assign Employee role
-          let employeeRole = await tx.role.findFirst({
+          // Assign functional role matching designation or default to TELECALLER
+          const targetRole = await tx.role.findFirst({
             where: {
               OR: [
-                { customerId: targetCustId, name: { equals: 'Employee', mode: 'insensitive' } },
-                { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
-                { customerId: targetCustId, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
-                { customerId: null, name: { equals: 'EMPLOYEE', mode: 'insensitive' } },
+                { customerId: targetCustId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+                { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
               ],
+              deletedAt: null,
+              name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
             },
           });
-          if (!employeeRole) {
-            employeeRole = await tx.role.create({
-              data: {
-                customerId: targetCustId,
-                name: 'Employee',
-                type: RoleType.CUSTOM,
-                description: 'Employee mobile application role',
-              },
+          if (targetRole) {
+            const hasUserRole = await tx.userRole.findFirst({
+              where: { userId: user.id, roleId: targetRole.id },
             });
-          }
-          const hasUserRole = await tx.userRole.findFirst({
-            where: { userId: user.id, roleId: employeeRole.id },
-          });
-          if (!hasUserRole) {
-            await tx.userRole.create({
-              data: { userId: user.id, roleId: employeeRole.id },
-            });
+            if (!hasUserRole) {
+              await tx.userRole.create({
+                data: { userId: user.id, roleId: targetRole.id },
+              });
+            }
           }
         }
       }
