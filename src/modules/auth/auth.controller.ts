@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -229,7 +229,11 @@ export class AuthController {
   @Get('roles/:id')
   @ApiOperation({ summary: 'Get single role details by ID' })
   async getRoleById(@Param('id') id: string) {
-    return this.authService.getRoleById(Number(id));
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.getRoleById(numId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -239,9 +243,13 @@ export class AuthController {
   async updateRole(
     @Param('id') id: string,
     @CurrentUser() user: any,
-    @Body() body: { name?: string; description?: string },
+    @Body() body: { name?: string; description?: string; isActive?: boolean },
   ) {
-    return this.authService.updateRole(Number(id), body, user);
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.updateRole(numId, body, user);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -249,7 +257,11 @@ export class AuthController {
   @Delete('roles/:id')
   @ApiOperation({ summary: 'Deactivate / delete a custom role' })
   async deleteRole(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.authService.deleteRole(Number(id), user);
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.deleteRole(numId, user);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -265,7 +277,11 @@ export class AuthController {
   @Get('roles/:id/permissions')
   @ApiOperation({ summary: 'Get permissions for a specific role' })
   async getRolePermissions(@Param('id') id: string) {
-    return this.authService.getRolePermissions(Number(id));
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.getRolePermissions(numId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -277,7 +293,11 @@ export class AuthController {
     @CurrentUser() user: any,
     @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[] },
   ) {
-    return this.authService.updateRolePermissions(Number(id), body.permissions || [], user);
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.updateRolePermissions(numId, body.permissions || [], user);
   }
 }
 

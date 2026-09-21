@@ -2949,13 +2949,94 @@ export class AuthService {
   }
 
   async getRoleById(roleId: number) {
-    const role = await this.prisma.role.findFirst({
-      where: { id: Number(roleId) },
+    this.logger.log(`[ROLE API DEBUG] requested role ID = ${roleId}, source = getRoleById`);
+    const numId = Number(roleId);
+    if (!numId || isNaN(numId)) {
+      throw new NotFoundException(`Invalid role ID: ${roleId}`);
+    }
+
+    // 1. Try finding by role.id
+    let role = await this.prisma.role.findFirst({
+      where: { id: numId, deletedAt: null },
       include: {
         _count: { select: { rolePermissions: true, userRoles: true } },
         rolePermissions: { include: { permission: true } },
       },
     });
+
+    // 2. If not found by role.id, try finding by designationId (in case designationId was passed)
+    if (!role) {
+      role = await this.prisma.role.findFirst({
+        where: { designationId: numId, deletedAt: null },
+        include: {
+          _count: { select: { rolePermissions: true, userRoles: true } },
+          rolePermissions: { include: { permission: true } },
+        },
+      });
+    }
+
+    // 3. If still not found, check if Designation exists and auto-provision linked role
+    if (!role) {
+      const designation = await this.prisma.designation.findUnique({
+        where: { id: numId },
+      });
+      if (designation) {
+        const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
+        const createdRole = await this.prisma.role.create({
+          data: {
+            name: designation.name,
+            description: designation.description || `${designation.name} role`,
+            type: RoleType.CUSTOM,
+            customerId: designation.customerId,
+            designationId: designation.id,
+          },
+        });
+
+        let defaultKeys: { module: string; action: string }[] = [];
+        if (ROLE_PERMISSION_DEFAULTS[upperName]) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
+        } else if (upperName.includes('DESIGNER')) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
+        } else if (upperName.includes('EDITOR')) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
+        } else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
+        } else if (upperName.includes('PHOTO')) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
+        } else {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
+        }
+
+        for (const p of defaultKeys) {
+          let permRecord = await this.prisma.permission.findUnique({
+            where: { module_action: { module: p.module, action: p.action } },
+          });
+          if (!permRecord) {
+            permRecord = await this.prisma.permission.create({
+              data: {
+                module: p.module,
+                action: p.action,
+                description: `${p.action} permission for ${p.module}`,
+              },
+            }).catch(() => null);
+          }
+          if (permRecord) {
+            await this.prisma.rolePermission.create({
+              data: { roleId: createdRole.id, permissionId: permRecord.id },
+            }).catch(() => null);
+          }
+        }
+
+        role = await this.prisma.role.findFirst({
+          where: { id: createdRole.id },
+          include: {
+            _count: { select: { rolePermissions: true, userRoles: true } },
+            rolePermissions: { include: { permission: true } },
+          },
+        });
+      }
+    }
+
     if (!role) {
       throw new NotFoundException(`Role #${roleId} not found`);
     }
@@ -3089,9 +3170,15 @@ export class AuthService {
     data: { name?: string; description?: string; isActive?: boolean },
     adminUser?: any,
   ) {
-    const role = await this.prisma.role.findFirst({
-      where: { id: Number(roleId) },
+    const numId = Number(roleId);
+    let role = await this.prisma.role.findFirst({
+      where: { id: numId },
     });
+    if (!role) {
+      role = await this.prisma.role.findFirst({
+        where: { designationId: numId },
+      });
+    }
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
@@ -3138,12 +3225,21 @@ export class AuthService {
   }
 
   async deleteRole(roleId: number, adminUser?: any) {
-    const role = await this.prisma.role.findFirst({
-      where: { id: Number(roleId), deletedAt: null },
+    const numId = Number(roleId);
+    let role = await this.prisma.role.findFirst({
+      where: { id: numId, deletedAt: null },
       include: {
         _count: { select: { userRoles: true } },
       },
     });
+    if (!role) {
+      role = await this.prisma.role.findFirst({
+        where: { designationId: numId, deletedAt: null },
+        include: {
+          _count: { select: { userRoles: true } },
+        },
+      });
+    }
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
@@ -3229,14 +3325,40 @@ export class AuthService {
   }
 
   async getRolePermissions(roleId: number) {
-    const role = await this.prisma.role.findUnique({
-      where: { id: Number(roleId) },
+    this.logger.log(`[ROLE API DEBUG] requested role ID = ${roleId}, source = getRolePermissions`);
+    const numId = Number(roleId);
+    let role = await this.prisma.role.findFirst({
+      where: { id: numId, deletedAt: null },
       include: {
         rolePermissions: {
           include: { permission: true },
         },
       },
     });
+    if (!role) {
+      role = await this.prisma.role.findFirst({
+        where: { designationId: numId, deletedAt: null },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+      });
+    }
+    if (!role) {
+      const desig = await this.prisma.designation.findUnique({ where: { id: numId } });
+      if (desig) {
+        const fullRole = await this.getRoleById(numId);
+        if (fullRole) {
+          return {
+            roleId: Number(fullRole.id),
+            roleName: fullRole.name,
+            permissions: fullRole.permissions,
+            permissionKeys: fullRole.permissions.map((p: any) => p.key),
+          };
+        }
+      }
+    }
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
@@ -3260,14 +3382,25 @@ export class AuthService {
     permissions: (string | { module?: string; action?: string; key?: string })[],
     adminUser?: any,
   ) {
-    const role = await this.prisma.role.findUnique({
-      where: { id: Number(roleId) },
+    const numId = Number(roleId);
+    let role = await this.prisma.role.findFirst({
+      where: { id: numId, deletedAt: null },
       include: {
         rolePermissions: {
           include: { permission: true },
         },
       },
     });
+    if (!role) {
+      role = await this.prisma.role.findFirst({
+        where: { designationId: numId, deletedAt: null },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+      });
+    }
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
