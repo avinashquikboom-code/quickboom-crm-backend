@@ -215,6 +215,26 @@ export class DesignationService {
       },
     });
 
+    // Auto-create matching Role so permissions can be configured immediately for this designation
+    try {
+      const existingRole = await this.prisma.role.findFirst({
+        where: {
+          name: { equals: name, mode: 'insensitive' },
+          customerId: numCustomerId,
+        },
+      });
+      if (!existingRole) {
+        await this.prisma.role.create({
+          data: {
+            customerId: numCustomerId,
+            name,
+            description: dto.description?.trim() || `Employee mobile application role for ${name}`,
+            type: 'CUSTOM',
+          },
+        });
+      }
+    } catch (_) {}
+
     return {
       id: created.id,
       name: created.name,

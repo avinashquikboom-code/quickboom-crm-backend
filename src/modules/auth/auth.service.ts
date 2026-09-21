@@ -2603,9 +2603,66 @@ export class AuthService {
     };
   }
 
+  private formatRoleDisplayName(name: string): string {
+    if (!name) return '';
+    const clean = name.trim();
+    if (clean.toUpperCase() === 'SUPER_ADMIN') return 'Super Admin';
+    if (clean.toUpperCase() === 'COMPANY_ADMIN') return 'Company Admin';
+    if (clean.toUpperCase() === 'HR') return 'HR';
+    if (clean.toUpperCase() === 'BPO_CALLER') return 'BPO Caller';
+    if (clean.toUpperCase() === 'SALES_EXECUTIVE') return 'Sales Executive';
+    if (clean.toUpperCase() === 'SOCIAL_MEDIA_MANAGER') return 'Social Media Manager';
+    return clean
+      .toLowerCase()
+      .split(/[_\s]+/)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
   async getRoles(customerId?: number) {
+    // 1. Auto-sync designations into roles so newly created employee designations appear in permission page
+    try {
+      const designations = await this.prisma.designation.findMany({
+        where: customerId ? { customerId } : {},
+        select: { id: true, name: true, description: true, customerId: true },
+      });
+
+      const existingRoles = await this.prisma.role.findMany({
+        where: customerId ? { OR: [{ customerId }, { customerId: null }] } : {},
+        select: { id: true, name: true },
+      });
+
+      for (const d of designations) {
+        const match = existingRoles.some(
+          (r) => r.name.trim().toLowerCase() === d.name.trim().toLowerCase()
+        );
+        if (!match) {
+          await this.prisma.role.create({
+            data: {
+              name: d.name.trim(),
+              description: d.description || `Employee mobile application role for ${d.name.trim()}`,
+              type: RoleType.CUSTOM,
+              customerId: d.customerId || customerId || null,
+            },
+          }).catch(() => {});
+        }
+      }
+    } catch (syncErr) {
+      this.logger.warn(`Failed auto-syncing designations to roles: ${syncErr}`);
+    }
+
+    // 2. Fetch roles (including global system defaults and customer-specific roles)
     const roles = await this.prisma.role.findMany({
-      where: customerId ? { customerId, deletedAt: null } : { deletedAt: null },
+      where: customerId
+        ? {
+            OR: [{ customerId }, { customerId: null }],
+            deletedAt: null,
+            name: { notIn: ['CUSTOMER'] },
+          }
+        : {
+            deletedAt: null,
+            name: { notIn: ['CUSTOMER'] },
+          },
       include: {
         _count: {
           select: {
@@ -2622,26 +2679,54 @@ export class AuthService {
       orderBy: { id: 'asc' },
     });
 
-    return roles.map((r) => ({
-      id: String(r.id),
-      name: r.name,
-      type: r.type,
-      description: r.description || 'System role for CRM/HRM access',
-      permissionsCount: r.rolePermissions?.length || r._count.rolePermissions || 0,
-      usersCount: r._count.userRoles || 0,
-      isSystem: r.type === RoleType.SUPER_ADMIN || !r.customerId,
-      permissions: (r.rolePermissions || []).map((rp) => ({
-        module: rp.permission.module,
-        action: rp.permission.action,
-        key: toPermissionKey(rp.permission.module, rp.permission.action),
-        description: rp.permission.description,
-      })),
-    }));
+    // 3. Fetch employee counts to accurately report staff assigned to each role
+    const employees = await this.prisma.employee.findMany({
+      where: customerId ? { customerId } : {},
+      select: {
+        id: true,
+        designation: { select: { id: true, name: true } },
+        user: {
+          select: {
+            userRoles: { select: { roleId: true } },
+          },
+        },
+      },
+    });
+
+    return roles.map((r) => {
+      const assignedCount = employees.filter((e) => {
+        const hasUr = e.user?.userRoles?.some((ur) => ur.roleId === r.id);
+        const hasDesig =
+          e.designation?.name &&
+          (e.designation.name.trim().toLowerCase() === r.name.trim().toLowerCase() ||
+            r.name.trim().toLowerCase().replace(/_/g, ' ') === e.designation.name.trim().toLowerCase() ||
+            e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === r.name.trim().toLowerCase());
+        return Boolean(hasUr || hasDesig);
+      }).length;
+
+      return {
+        id: String(r.id),
+        name: this.formatRoleDisplayName(r.name),
+        rawName: r.name,
+        type: r.type,
+        description: r.description || 'Employee mobile application role',
+        permissionsCount: r.rolePermissions?.length || r._count.rolePermissions || 0,
+        usersCount: Math.max(assignedCount, r._count.userRoles || 0),
+        isSystem: r.type === RoleType.SUPER_ADMIN || !r.customerId,
+        isActive: !r.deletedAt,
+        permissions: (r.rolePermissions || []).map((rp) => ({
+          module: rp.permission.module,
+          action: rp.permission.action,
+          key: toPermissionKey(rp.permission.module, rp.permission.action),
+          description: rp.permission.description,
+        })),
+      };
+    });
   }
 
   async getRoleById(roleId: number) {
     const role = await this.prisma.role.findFirst({
-      where: { id: Number(roleId), deletedAt: null },
+      where: { id: Number(roleId) },
       include: {
         _count: { select: { rolePermissions: true, userRoles: true } },
         rolePermissions: { include: { permission: true } },
@@ -2650,14 +2735,36 @@ export class AuthService {
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
+
+    const employees = await this.prisma.employee.findMany({
+      where: role.customerId ? { customerId: role.customerId } : {},
+      select: {
+        id: true,
+        designation: { select: { id: true, name: true } },
+        user: { select: { userRoles: { select: { roleId: true } } } },
+      },
+    });
+
+    const assignedCount = employees.filter((e) => {
+      const hasUr = e.user?.userRoles?.some((ur) => ur.roleId === role.id);
+      const hasDesig =
+        e.designation?.name &&
+        (e.designation.name.trim().toLowerCase() === role.name.trim().toLowerCase() ||
+          role.name.trim().toLowerCase().replace(/_/g, ' ') === e.designation.name.trim().toLowerCase() ||
+          e.designation.name.trim().toLowerCase().replace(/_/g, ' ') === role.name.trim().toLowerCase());
+      return Boolean(hasUr || hasDesig);
+    }).length;
+
     return {
       id: String(role.id),
-      name: role.name,
+      name: this.formatRoleDisplayName(role.name),
+      rawName: role.name,
       type: role.type,
-      description: role.description || '',
+      description: role.description || 'Employee mobile application role',
       permissionsCount: role.rolePermissions?.length || 0,
-      usersCount: role._count.userRoles || 0,
+      usersCount: Math.max(assignedCount, role._count.userRoles || 0),
       isSystem: role.type === RoleType.SUPER_ADMIN || !role.customerId,
+      isActive: !role.deletedAt,
       permissions: (role.rolePermissions || []).map((rp) => ({
         module: rp.permission.module,
         action: rp.permission.action,
@@ -2698,6 +2805,26 @@ export class AuthService {
       },
     });
 
+    // Also auto-create corresponding Designation if not exists
+    if (customerId) {
+      try {
+        const desigExists = await this.prisma.designation.findFirst({
+          where: { customerId, name: { equals: trimmedName, mode: 'insensitive' } },
+        });
+        if (!desigExists) {
+          const code = trimmedName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0, 6) || 'ROLE';
+          await this.prisma.designation.create({
+            data: {
+              customerId,
+              name: trimmedName,
+              code: `${code}${Math.floor(10 + Math.random() * 90)}`,
+              description: data.description?.trim() || null,
+            },
+          });
+        }
+      } catch (_) {}
+    }
+
     // Assign initial permissions if provided
     if (data.permissions && data.permissions.length > 0) {
       await this.updateRolePermissions(newRole.id, data.permissions, adminUser);
@@ -2729,11 +2856,11 @@ export class AuthService {
 
   async updateRole(
     roleId: number,
-    data: { name?: string; description?: string },
+    data: { name?: string; description?: string; isActive?: boolean },
     adminUser?: any,
   ) {
     const role = await this.prisma.role.findFirst({
-      where: { id: Number(roleId), deletedAt: null },
+      where: { id: Number(roleId) },
     });
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
@@ -2747,6 +2874,9 @@ export class AuthService {
     }
     if (data.description !== undefined) {
       updateData.description = data.description.trim();
+    }
+    if (data.isActive !== undefined) {
+      updateData.deletedAt = data.isActive ? null : new Date();
     }
 
     const updated = await this.prisma.role.update({
