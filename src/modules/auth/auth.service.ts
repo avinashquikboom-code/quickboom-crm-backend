@@ -2383,8 +2383,9 @@ export class AuthService {
     if (!user) {
       return {
         role: 'CUSTOMER',
-        permissions: [],
-        effectivePermissions: {},
+        roles: ['CUSTOMER'],
+        permissions: [] as { module: string; action: string }[],
+        effectivePermissions: {} as Record<string, Record<string, boolean>>,
       };
     }
 
@@ -2496,6 +2497,28 @@ export class AuthService {
       effectivePermissions[mod] = modPerms;
     });
 
+    // Also capture any custom or dynamic module permissions in permissionsMap
+    for (const [key] of permissionsMap.entries()) {
+      const parts = key.split(":");
+      const mod = parts[0];
+      const act = (parts[1] || "").toLowerCase();
+      const lowerMod = mod.toLowerCase();
+      if (!effectivePermissions[lowerMod]) {
+        effectivePermissions[lowerMod] = {
+          view: false,
+          create: false,
+          edit: false,
+          delete: false,
+        };
+        effectivePermissions[mod] = effectivePermissions[lowerMod];
+      }
+      effectivePermissions[lowerMod][act] = true;
+      if (act === "view") effectivePermissions[lowerMod].view = true;
+      if (act === "create") effectivePermissions[lowerMod].create = true;
+      if (act === "edit") effectivePermissions[lowerMod].edit = true;
+      if (act === "delete") effectivePermissions[lowerMod].delete = true;
+    }
+
     let specificRoleName = 'EMPLOYEE';
     if (isSuperAdmin) {
       specificRoleName = 'SUPER_ADMIN';
@@ -2515,6 +2538,7 @@ export class AuthService {
 
     return {
       role: specificRoleName,
+      roles: [specificRoleName],
       permissions,
       effectivePermissions,
     };
