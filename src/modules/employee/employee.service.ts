@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
@@ -57,6 +58,8 @@ import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
 export class EmployeeService {
+  private readonly logger = new Logger(EmployeeService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly planAccessService?: PlanAccessService,
@@ -2118,7 +2121,7 @@ export class EmployeeService {
         }
       }
 
-      return tx.employee.update({
+      const updatedEmployee = await tx.employee.update({
         where: { id: numId },
         data: updateData,
         include: {
@@ -2128,6 +2131,55 @@ export class EmployeeService {
           shift: true,
         },
       });
+
+      // Synchronize UserRole with updated Designation
+      if (updatedEmployee.userId && updatedEmployee.designation?.name) {
+        const desigName = updatedEmployee.designation.name.trim();
+        let targetRole = await tx.role.findFirst({
+          where: {
+            OR: [
+              { customerId: targetCustId, name: { equals: desigName, mode: 'insensitive' } },
+              { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+          },
+        });
+        if (!targetRole) {
+          targetRole = await tx.role.create({
+            data: {
+              name: desigName,
+              description: `${desigName} role`,
+              type: RoleType.CUSTOM,
+              customerId: targetCustId,
+            },
+          });
+        }
+        // Remove existing functional roles and assign targetRole
+        const existingRoles = await tx.userRole.findMany({
+          where: { userId: updatedEmployee.userId },
+          include: { role: true },
+        });
+        for (const ur of existingRoles) {
+          if (
+            ur.role.name !== 'SUPER_ADMIN' &&
+            ur.role.name !== 'COMPANY_ADMIN' &&
+            ur.roleId !== targetRole.id
+          ) {
+            await tx.userRole.delete({
+              where: { userId_roleId: { userId: updatedEmployee.userId, roleId: ur.roleId } },
+            });
+          }
+        }
+        const hasRole = existingRoles.some((ur) => ur.roleId === targetRole.id);
+        if (!hasRole) {
+          await tx.userRole.create({
+            data: { userId: updatedEmployee.userId, roleId: targetRole.id },
+          });
+        }
+      }
+
+      return updatedEmployee;
     });
   }
 
@@ -2796,15 +2848,51 @@ export class EmployeeService {
       throw new ForbiddenException('Access denied to employee in another organization');
     }
 
-    // Determine user roles
-    const userRoles = employee.user?.userRoles?.map((ur) => ur.role.name) || [];
-    const roleName = userRoles[0] || employee.designation?.name || 'EMPLOYEE';
+    // 1. Derive canonical role name strictly from Employee's configured Designation
+    const desigName = employee.designation?.name?.trim();
+    const userRoleNames = (employee.user?.userRoles?.map((ur) => ur.role.name) || []).filter(
+      (r) => !['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'].includes(r),
+    );
+    const roleName = desigName || userRoleNames[0] || 'TELECALLER';
 
-    // Compute role default permissions
+    // 2. Query matching Role from DB for this customer/global to load role defaults
     const rolePermissionsSet = new Set<string>();
-
     let hasDbPermissions = false;
-    if (employee.user?.userRoles) {
+
+    // Look for Role in DB matching roleName or designation
+    const matchingRoles = await this.prisma.role.findMany({
+      where: {
+        OR: [
+          { customerId: employee.customerId, name: { equals: roleName, mode: 'insensitive' } },
+          { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
+        ],
+        deletedAt: null,
+        name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+      },
+      include: {
+        rolePermissions: {
+          include: { permission: true },
+        },
+      },
+      orderBy: { customerId: 'desc' }, // prioritize tenant-specific role
+    });
+
+    if (matchingRoles.length > 0) {
+      for (const r of matchingRoles) {
+        if (r.rolePermissions && r.rolePermissions.length > 0) {
+          hasDbPermissions = true;
+          r.rolePermissions.forEach((rp) => {
+            if (rp.permission) {
+              rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+            }
+          });
+          break;
+        }
+      }
+    }
+
+    // Also check employee.user.userRoles if not matched
+    if (!hasDbPermissions && employee.user?.userRoles) {
       for (const ur of employee.user.userRoles) {
         if (ur.role?.rolePermissions && ur.role.rolePermissions.length > 0) {
           hasDbPermissions = true;
@@ -2817,37 +2905,36 @@ export class EmployeeService {
       }
     }
 
+    // Fallback to static defaults based on roleName / designation
     if (!hasDbPermissions) {
-      for (const rName of userRoles.length > 0 ? userRoles : [roleName]) {
-        const upper = rName.toUpperCase().replace(/\s+/g, '_');
-        let matchedKey: string | null = null;
-        if (ROLE_PERMISSION_DEFAULTS[upper]) {
-          matchedKey = upper;
-        } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
-          matchedKey = 'TELECALLER';
-        } else if (upper.includes('DESIGNER')) {
-          matchedKey = 'DESIGNER';
-        } else if (upper.includes('EDITOR')) {
-          matchedKey = 'EDITOR';
-        } else if (upper.includes('SOCIAL') || upper.includes('SSM')) {
-          matchedKey = 'SOCIAL_MEDIA_MANAGER';
-        } else if (upper.includes('PHOTO') || upper.includes('SHOOT')) {
-          matchedKey = 'PHOTOGRAPHER';
-        } else if (upper.includes('SALES')) {
-          matchedKey = 'SALES_EXECUTIVE';
-        } else if (upper.includes('HR')) {
-          matchedKey = 'HR';
-        } else if (upper.includes('MANAGER')) {
-          matchedKey = 'MANAGER';
-        } else if (upper.includes('EMPLOYEE')) {
-          matchedKey = 'EMPLOYEE';
-        }
+      const upper = roleName.toUpperCase().replace(/\s+/g, '_');
+      let matchedKey: string | null = null;
+      if (ROLE_PERMISSION_DEFAULTS[upper]) {
+        matchedKey = upper;
+      } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+        matchedKey = 'TELECALLER';
+      } else if (upper.includes('DESIGNER')) {
+        matchedKey = 'DESIGNER';
+      } else if (upper.includes('EDITOR')) {
+        matchedKey = 'EDITOR';
+      } else if (upper.includes('SOCIAL') || upper.includes('SSM')) {
+        matchedKey = 'SOCIAL_MEDIA_MANAGER';
+      } else if (upper.includes('PHOTO') || upper.includes('SHOOT')) {
+        matchedKey = 'PHOTOGRAPHER';
+      } else if (upper.includes('SALES')) {
+        matchedKey = 'SALES_EXECUTIVE';
+      } else if (upper.includes('HR')) {
+        matchedKey = 'HR';
+      } else if (upper.includes('MANAGER')) {
+        matchedKey = 'MANAGER';
+      } else {
+        matchedKey = 'TELECALLER';
+      }
 
-        if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
-          ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
-            rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
-          });
-        }
+      if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
+        ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
+          rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
+        });
       }
     }
 
@@ -2938,11 +3025,15 @@ export class EmployeeService {
       };
     });
 
+    const effectivePermissionsCount = modules.filter((m) => m.effective).length;
+
     return {
       employeeId: employee.id,
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+      designationName: employee.designation?.name || roleName,
       roleName,
-      roles: userRoles,
+      roles: [roleName],
+      effectivePermissionsCount,
       modules,
       granularPermissions,
     };
@@ -2952,12 +3043,15 @@ export class EmployeeService {
     employeeId: number | string;
     customerId?: number | string;
     isSuperAdmin?: boolean;
+    actorUser?: any;
     overrides: Array<{ moduleKey: string; override: 'INHERIT' | 'ALLOW' | 'DENY' | 'DEFAULT' }>;
   }) {
     const empId = Number(params.employeeId);
     const employee = await this.prisma.employee.findUnique({
       where: { id: empId },
-      select: { id: true, customerId: true },
+      include: {
+        designation: true,
+      },
     });
 
     if (!employee) {
@@ -3006,10 +3100,180 @@ export class EmployeeService {
       }
     }
 
-    return {
-      success: true,
-      message: 'Employee permissions updated successfully',
-    };
+    // Write Audit Log
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'UPDATE_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Updated module permissions for employee ${employee.firstName} ${employee.lastName}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            overridesCount: params.overrides.length,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for permission update: ${err}`));
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
+  }
+
+  async resetEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    actorUser?: any;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const deleted = await this.prisma.employeeModuleOverride.deleteMany({
+      where: {
+        customerId: employee.customerId,
+        employeeId: empId,
+      },
+    });
+
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'RESET_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Reset custom permission overrides for employee ${employee.firstName} ${employee.lastName} to ${employee.designation?.name || 'role defaults'}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            overridesRemoved: deleted.count,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for permission reset: ${err}`));
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
+  }
+
+  async restrictAllEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    actorUser?: any;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const standardModules = [
+      'DASHBOARD',
+      'CALENDAR',
+      'MY_WORK',
+      'LEADS',
+      'FOLLOW_UP',
+      'VISITS',
+      'PROPOSALS',
+      'PACKAGES',
+      'PAYMENTS',
+      'WORK_EXECUTION',
+      'CREATIVE_WORK',
+      'ATTENDANCE',
+      'LEAVE',
+      'REMOTE_WORK',
+      'TASKS',
+      'SALARY',
+      'NOTIFICATIONS',
+      'PROFILE',
+      'SETTINGS',
+    ];
+
+    for (const modKey of standardModules) {
+      await this.prisma.employeeModuleOverride.upsert({
+        where: {
+          customerId_employeeId_moduleKey: {
+            customerId: employee.customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+          },
+        },
+        create: {
+          customerId: employee.customerId,
+          employeeId: empId,
+          moduleKey: modKey,
+          override: AccessOverrideType.DENY,
+        },
+        update: {
+          override: AccessOverrideType.DENY,
+        },
+      });
+    }
+
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'RESTRICT_ALL_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Restricted all mobile module access to DENY for employee ${employee.firstName} ${employee.lastName}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            restrictedModulesCount: standardModules.length,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for restrict-all: ${err}`));
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
   }
 }
 

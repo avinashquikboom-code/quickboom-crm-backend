@@ -1390,7 +1390,7 @@ export class AuthService {
       }),
     };
 
-    if (userRole === 'EMPLOYEE' && employeeData) {
+    if (employeeData) {
       userData.employeeId = qbCode;
       userData.employeeCode = qbCode;
       userData.employee = employeeData;
@@ -1401,6 +1401,7 @@ export class AuthService {
     userData.effectiveRole = rbacData.role || userRole;
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
+    userData.permissionKeys = rbacData.permissionKeys;
 
     return {
       success: true,
@@ -1951,9 +1952,11 @@ export class AuthService {
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
-    userData.role = rbacData.role || userRole;
+    userData.role = userRole;
+    userData.effectiveRole = rbacData.role || userRole;
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
+    userData.permissionKeys = rbacData.permissionKeys;
 
     return {
       statusCode: 200,
@@ -2227,9 +2230,11 @@ export class AuthService {
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
-    userData.role = rbacData.role || userRole;
+    userData.role = userRole;
+    userData.effectiveRole = rbacData.role || userRole;
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
+    userData.permissionKeys = rbacData.permissionKeys;
 
     return {
       statusCode: 200,
@@ -2345,7 +2350,8 @@ export class AuthService {
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
-    profileData.role = rbacData.role || userRole;
+    profileData.role = userRole;
+    profileData.effectiveRole = rbacData.role || userRole;
     profileData.permissions = rbacData.permissions;
     profileData.effectivePermissions = rbacData.effectivePermissions;
     profileData.permissionKeys = rbacData.permissionKeys;
@@ -2354,35 +2360,52 @@ export class AuthService {
   }
 
   async resolveUserEffectivePermissions(userId: number, preloadedUser?: any) {
-    const user =
+    let user =
       preloadedUser?.userRoles?.[0]?.role?.rolePermissions !== undefined
         ? preloadedUser
-        : await this.prisma.user.findUnique({
-            where: { id: Number(userId) },
-            include: {
-              customer: true,
-              employee: {
-                include: {
-                  department: true,
-                  designation: true,
-                  employeeModuleOverrides: true,
-                },
+        : null;
+
+    if (!user && this.prisma?.user?.findUnique) {
+      try {
+        const queryPromise = this.prisma.user.findUnique({
+          where: { id: Number(userId) },
+          include: {
+            customer: true,
+            employee: {
+              include: {
+                department: true,
+                designation: true,
+                employeeModuleOverrides: true,
               },
-              userRoles: {
-                include: {
-                  role: {
-                    include: {
-                      rolePermissions: {
-                        include: {
-                          permission: true,
-                        },
+            },
+            userRoles: {
+              include: {
+                role: {
+                  include: {
+                    rolePermissions: {
+                      include: {
+                        permission: true,
                       },
                     },
                   },
                 },
               },
             },
-          });
+          },
+        });
+        if (queryPromise && typeof queryPromise.then === 'function') {
+          user = await queryPromise;
+        } else {
+          user = queryPromise;
+        }
+      } catch (_) {
+        user = null;
+      }
+    }
+
+    if (!user && preloadedUser) {
+      user = preloadedUser;
+    }
 
     if (!user) {
       return {
@@ -2441,6 +2464,48 @@ export class AuthService {
     if (desigName) {
       roleNames.push(desigName);
     }
+    if (roleNames.length === 0 && user.employee) {
+      roleNames.push('TELECALLER');
+    }
+
+    if (!hasDbPermissions && roleNames.length > 0 && this.prisma?.role?.findMany) {
+      try {
+        const queryRes = this.prisma.role.findMany({
+          where: {
+            OR: [
+              { name: { in: roleNames, mode: 'insensitive' }, customerId: user.customerId },
+              { name: { in: roleNames, mode: 'insensitive' }, customerId: null },
+            ],
+            deletedAt: null,
+          },
+          include: {
+            rolePermissions: {
+              include: { permission: true },
+            },
+          },
+        });
+        const matchingDbRoles = queryRes && typeof queryRes.then === 'function' ? await queryRes : (queryRes || []);
+
+        if (Array.isArray(matchingDbRoles)) {
+          for (const r of matchingDbRoles) {
+            if (r.rolePermissions && r.rolePermissions.length > 0) {
+              hasDbPermissions = true;
+              r.rolePermissions.forEach((rp: any) => {
+                if (rp.permission) {
+                  permissionsMap.set(
+                    `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`,
+                    {
+                      module: rp.permission.module.toUpperCase(),
+                      action: rp.permission.action.toUpperCase(),
+                    },
+                  );
+                }
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     if (!hasDbPermissions) {
       if (isSuperAdmin) {
@@ -2453,7 +2518,8 @@ export class AuthService {
         });
       } else {
         for (const rName of roleNames) {
-          const upper = rName.toUpperCase().replace(/\s+/g, "_");
+          if (!rName) continue;
+          const upper = String(rName).toUpperCase().replace(/\s+/g, "_");
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
@@ -2465,8 +2531,16 @@ export class AuthService {
             matchedKey = "HR";
           } else if (upper.includes("MANAGER")) {
             matchedKey = "MANAGER";
-          } else if (upper.includes("EMPLOYEE")) {
-            matchedKey = "EMPLOYEE";
+          } else if (upper.includes("DESIGNER")) {
+            matchedKey = "DESIGNER";
+          } else if (upper.includes("EDITOR")) {
+            matchedKey = "EDITOR";
+          } else if (upper.includes("PHOTOGRAPH")) {
+            matchedKey = "PHOTOGRAPHER";
+          } else if (upper.includes("SOCIAL")) {
+            matchedKey = "SOCIAL_MEDIA_MANAGER";
+          } else {
+            matchedKey = "TELECALLER";
           }
 
           if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
@@ -2483,9 +2557,11 @@ export class AuthService {
     if (employeeId && !isSuperAdmin && !isCustomerAdmin) {
       const overrides =
         user.employee?.employeeModuleOverrides ||
-        (await this.prisma.employeeModuleOverride.findMany({
-          where: { employeeId: Number(employeeId) },
-        }));
+        (this.prisma.employeeModuleOverride
+          ? await this.prisma.employeeModuleOverride.findMany({
+              where: { employeeId: Number(employeeId) },
+            })
+          : []);
 
       if (overrides && overrides.length > 0) {
         for (const ov of overrides) {
@@ -2575,7 +2651,7 @@ export class AuthService {
       if (act === "delete") effectivePermissions[lowerMod].delete = true;
     }
 
-    let specificRoleName = 'EMPLOYEE';
+    let specificRoleName = 'TELECALLER';
     if (isSuperAdmin) {
       specificRoleName = 'SUPER_ADMIN';
     } else if (isCustomerAdmin) {
@@ -2585,10 +2661,10 @@ export class AuthService {
         (user.userRoles || []).find(
           (ur: any) =>
             ur.role?.name &&
-            !['SUPER_ADMIN', 'COMPANY_ADMIN', 'CUSTOMER'].includes(ur.role.name.toUpperCase()),
+            !['SUPER_ADMIN', 'COMPANY_ADMIN', 'CUSTOMER', 'EMPLOYEE'].includes(ur.role.name.toUpperCase()),
         )?.role?.name ||
         user.employee?.designation?.name ||
-        'EMPLOYEE';
+        'TELECALLER';
       specificRoleName = candidate.toUpperCase().replace(/\s+/g, '_');
     }
 

@@ -388,7 +388,80 @@ export class EmployeeController {
       employeeId: id,
       customerId: targetCustomerId,
       isSuperAdmin,
+      actorUser: user,
       overrides: body.overrides,
+    });
+  }
+
+  @Delete(':id/permissions')
+  @ApiOperation({ summary: 'Reset employee module/permission overrides to role defaults' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async resetPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.resetEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
+    });
+  }
+
+  @Post(':id/permissions/reset')
+  @ApiOperation({ summary: 'Reset employee module/permission overrides to role defaults (POST alias)' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async resetPermissionsPost(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.resetEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
+    });
+  }
+
+  @Post(':id/permissions/restrict-all')
+  @ApiOperation({ summary: 'Restrict all modules for individual employee to DENY' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async restrictAllPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.restrictAllEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
     });
   }
 }

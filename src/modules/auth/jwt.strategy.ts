@@ -245,9 +245,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (user.employee?.id && !isSuperAdmin && !isCustomerAdmin && !isCompanyAdmin) {
       const overrides =
         user.employee.employeeModuleOverrides ||
-        (await this.prisma.employeeModuleOverride.findMany({
-          where: { employeeId: user.employee.id },
-        }));
+        (this.prisma.employeeModuleOverride
+          ? await this.prisma.employeeModuleOverride.findMany({
+              where: { employeeId: user.employee.id },
+            })
+          : []);
 
       if (overrides && overrides.length > 0) {
         for (const ov of overrides) {
