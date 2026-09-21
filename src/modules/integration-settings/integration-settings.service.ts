@@ -28,6 +28,7 @@ import {
   getApps as getFirebaseAdminApps,
 } from 'firebase-admin/app';
 import { getMessaging as getFirebaseAdminMessaging } from 'firebase-admin/messaging';
+import { maskAccessToken, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
 
 export enum IntegrationProvider {
   RAZORPAY = 'RAZORPAY',
@@ -1496,7 +1497,7 @@ export class IntegrationSettingsService {
   /**
    * Tests integration credentials live against the third-party API.
    */
-  async testIntegration(provider: string, dto?: TestIntegrationDto) {
+  async testIntegration(provider: string, dto?: TestIntegrationDto, adminUserId?: number) {
     const normProvider = normalizeProvider(provider);
 
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
@@ -1628,19 +1629,36 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.WHATSAPP: {
-        const apiKey = (resolvedCreds.apiKey || resolvedCreds.accessToken || resolvedCreds.access_token || '').trim();
+        const rawApiKey = resolvedCreds.apiKey || resolvedCreds.accessToken || resolvedCreds.access_token || '';
+        const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
         const phoneNumberId = (resolvedCreds.phoneNumberId || resolvedCreds.phone_number_id || '').trim();
         const apiVersion = (resolvedCreds.apiVersion || 'v25.0').trim();
         const testPhone = (testCreds.testPhone || testCreds.recipientPhone || testCreds.to || (dto?.credentials as any)?.testPhone || '').trim();
+
+        if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
+          this.logger.error(
+            `[WHATSAPP DEBUG]\n` +
+            `tenant/company ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
+            `employee/user ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
+            `integration ID: WHATSAPP\n` +
+            `Phone Number ID: ${phoneNumberId}\n` +
+            `token decryption failed: encrypted token could not be decrypted (ENCRYPTION_KEY / JWT_SECRET mismatch)\n` +
+            `token: MISSING`,
+          );
+          throw new BadRequestException(
+            'WhatsApp configuration error: token decryption failed. Please re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+          );
+        }
 
         if (!apiKey || !phoneNumberId) {
           throw new BadRequestException('WhatsApp Access Token and Phone Number ID are required to test connection');
         }
 
+        const graphUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`;
         try {
           // 1. Verify Phone Number ID & credentials against Meta Cloud API endpoint
           const response = await axios.get(
-            `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`,
+            graphUrl,
             {
               headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -1650,6 +1668,10 @@ export class IntegrationSettingsService {
               },
               timeout: 10000,
             },
+          );
+
+          this.logger.log(
+            `[WHATSAPP DEBUG] Test connection verified successfully with Meta API for Phone Number ID: ${phoneNumberId} (verified name: ${response.data?.verified_name}). Token: ${maskAccessToken(apiKey)}`,
           );
 
           let testMessageResult: any = null;
@@ -1711,14 +1733,40 @@ export class IntegrationSettingsService {
           const errorSubcode = fbError?.error_subcode;
           const fbtraceId = fbError?.fbtrace_id;
           const rawErrMsg = fbError?.message || err?.message || 'Verification failed';
+          const httpStatus = err?.response?.status as number | undefined;
 
-          this.logger.warn(
-            `[WHATSAPP_TEST_ERROR]\nPhone Number ID: ${phoneNumberId}\nAPI Version: ${apiVersion}\nHTTP status: ${err?.response?.status || 'N/A'}\nError code: ${errorCode}\nError type: ${errorType || 'N/A'}\nError subcode: ${errorSubcode || 'N/A'}\nTrace ID: ${fbtraceId || 'N/A'}\nError message: ${rawErrMsg}`,
+          this.logger.error(
+            `[WHATSAPP DEBUG]\n` +
+            `tenant/company ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
+            `employee/user ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
+            `integration ID: WHATSAPP\n` +
+            `Phone Number ID: ${phoneNumberId}\n` +
+            `Graph API URL: ${graphUrl}\n` +
+            `HTTP method: GET\n` +
+            `HTTP status: ${httpStatus || 'N/A'}\n` +
+            `Meta error code: ${errorCode}\n` +
+            `Meta error type: ${errorType || 'N/A'}\n` +
+            `Meta error message: ${rawErrMsg}\n` +
+            `Meta error subcode: ${errorSubcode || 'N/A'}\n` +
+            `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
+            `token: ${maskAccessToken(apiKey)}`,
           );
 
-          if (String(errorCode) === '190' || errorType === 'OAuthException') {
+          if (String(errorCode) === '190' || errorType === 'OAuthException' || httpStatus === 401) {
             throw new BadRequestException(
-              `WhatsApp Access Token is invalid or expired (Meta Error 190). Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
+              `WhatsApp Access Token is invalid or expired (Meta Error 190): ${rawErrMsg}. Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
+            );
+          }
+
+          if (httpStatus === 403) {
+            throw new BadRequestException(
+              `WhatsApp access is not permitted for this account (HTTP 403): ${rawErrMsg}. Check your Meta App permissions.`,
+            );
+          }
+
+          if (httpStatus === 404) {
+            throw new BadRequestException(
+              `WhatsApp phone number configuration is invalid (HTTP 404): Phone Number ID was not found on Meta. Verify the Phone Number ID in Settings → Integrations → WhatsApp.`,
             );
           }
 

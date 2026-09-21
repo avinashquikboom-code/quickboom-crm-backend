@@ -46,6 +46,12 @@ describe('WhatsappService', () => {
 
     service = module.get<WhatsappService>(WhatsappService);
     jest.clearAllMocks();
+    mockedAxios.get.mockResolvedValue({
+      data: {
+        verified_name: 'Verified Business Account',
+        code_verification_status: 'VERIFIED',
+      },
+    } as any);
   });
 
   describe('Phone Normalization & Masking', () => {

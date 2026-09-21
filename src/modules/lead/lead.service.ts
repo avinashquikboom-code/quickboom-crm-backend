@@ -2706,6 +2706,8 @@ Sent by ${senderOrgName} via CRM.
         variables,
         customMessage: dto?.message,
         stageName: targetStageName,
+        customerId: Number(customerId),
+        userId: userId ? Number(userId) : undefined,
       });
     }
 
@@ -2731,9 +2733,9 @@ Sent by ${senderOrgName} via CRM.
             status: result.success ? 'Sent' : (result.skipped ? 'Skipped' : 'Failed'),
             success: result.success,
             messageId: result.messageId || null,
-            errorCode: result.error || null,
+            errorCode: result.errorCode || result.error || null,
             errorReason: result.reason || null,
-            errorDetails: result.details || null,
+            errorDetails: result.providerMessage || result.details || null,
           } as any,
         },
       })
@@ -2747,16 +2749,19 @@ Sent by ${senderOrgName} via CRM.
       `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${dto?.eventType === 'LEAD_CREATED' ? 'None' : (lead.stage?.name || 'N/A')}\nNew Stage: ${targetStageName}\nWhatsApp:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template && typeof template === 'object' ? template.templateName : stageKey}\nRecipient: ${maskPhone(phone)}\nProvider Status: ${result.success ? 'SUCCESS' : 'FAILED'}`
     );
 
-    const errorCode = result.errorCode || result.reason || (result.success ? undefined : 'UNKNOWN_ERROR');
-    const safeDetails = result.details || (errorCode ? friendlyWhatsAppErrorMessage(errorCode) : undefined);
-    const failureMessage = safeDetails
+    const errorCode = result.errorCode || result.reason || (result.success ? undefined : 'WHATSAPP_UNKNOWN_ERROR');
+    const safeDetails = result.providerMessage || result.details || (errorCode ? friendlyWhatsAppErrorMessage(errorCode) : undefined);
+    const failureMessage = result.message || (safeDetails
       ? `WhatsApp message could not be sent: ${safeDetails}`
-      : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`;
+      : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`);
 
     return {
       success: result.success,
+      provider: 'WHATSAPP',
       messageId: result.messageId,
       errorCode: result.errorCode,
+      providerStatus: result.providerStatus,
+      providerMessage: result.providerMessage || result.details,
       message: result.success
         ? `WhatsApp message sent successfully to ${phone}`
         : failureMessage,

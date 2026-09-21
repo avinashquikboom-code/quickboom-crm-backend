@@ -136,7 +136,8 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
-    return this.integrationSettingsService.testIntegration(provider, dto);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.testIntegration(provider, dto, adminUserId);
   }
 
   @Post(':provider/test-notification')

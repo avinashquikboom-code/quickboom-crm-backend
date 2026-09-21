@@ -4,88 +4,17 @@ import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { decryptSecret } from '../../common/utils/crypto.util';
 
-export interface WhatsAppSendResult {
-  success: boolean;
-  messageId?: string;
-  /** Machine-readable error code (use this for programmatic checks, not reason) */
-  errorCode?: string;
-  /** Human-readable safe error details */
-  details?: string;
-  skipped?: boolean;
-  skippedDuplicate?: boolean;
-  /** Machine-readable reason code (same as errorCode, kept for backward compat) */
-  reason?: string;
-  /** Raw upstream HTTP status (for logging only) */
-  error?: string;
-}
-
-/**
- * Typed error codes for WhatsApp send failures.
- * Use these for programmatic differentiation — never put human messages here.
- */
-export const WHATSAPP_ERROR_CODES = {
-  AUTH_ERROR: 'WHATSAPP_AUTH_ERROR',             // 401 / OAuthException / code 190
-  PERMISSION_ERROR: 'WHATSAPP_PERMISSION_ERROR',  // 403
-  INVALID_REQUEST: 'WHATSAPP_INVALID_REQUEST',    // 400 (bad payload, template params)
-  TEMPLATE_ERROR: 'WHATSAPP_TEMPLATE_ERROR',      // 400 / code 132001 (template not found/inactive)
-  PHONE_NUMBER_ERROR: 'WHATSAPP_PHONE_NUMBER_ERROR', // 404 (wrong Phone Number ID)
-  RATE_LIMIT: 'WHATSAPP_RATE_LIMIT',              // 429
-  PROVIDER_ERROR: 'WHATSAPP_PROVIDER_ERROR',      // 5xx
-  NETWORK_ERROR: 'WHATSAPP_NETWORK_ERROR',        // timeout / ECONNREFUSED
-  CREDENTIALS_MISSING: 'CREDENTIALS_MISSING',
-  CREDENTIALS_DECRYPT_FAILURE: 'WHATSAPP_DECRYPT_FAILURE', // ENCRYPTION_KEY rotated
-  INTEGRATION_DISABLED: 'INTEGRATION_DISABLED',
-  NO_PHONE: 'NO_PHONE',
-  INVALID_PHONE: 'INVALID_PHONE',
-  NO_TEMPLATE_OR_MESSAGE: 'NO_TEMPLATE_OR_MESSAGE',
-} as const;
-
-/** Maps Meta API HTTP status + error code to a typed WhatsApp error code. */
-function classifyWhatsAppError(httpStatus?: number, metaCode?: string | number, metaType?: string): string {
-  if (metaType === 'OAuthException' || String(metaCode) === '190') {
-    return WHATSAPP_ERROR_CODES.AUTH_ERROR;
-  }
-  // Template not found / not approved
-  if (metaCode === 132001 || String(metaCode) === '132001') {
-    return WHATSAPP_ERROR_CODES.TEMPLATE_ERROR;
-  }
-  if (httpStatus === 401) return WHATSAPP_ERROR_CODES.AUTH_ERROR;
-  if (httpStatus === 403) return WHATSAPP_ERROR_CODES.PERMISSION_ERROR;
-  if (httpStatus === 404) return WHATSAPP_ERROR_CODES.PHONE_NUMBER_ERROR;
-  if (httpStatus === 429) return WHATSAPP_ERROR_CODES.RATE_LIMIT;
-  if (httpStatus && httpStatus >= 500) return WHATSAPP_ERROR_CODES.PROVIDER_ERROR;
-  if (httpStatus === 400) return WHATSAPP_ERROR_CODES.INVALID_REQUEST;
-  return WHATSAPP_ERROR_CODES.INVALID_REQUEST;
-}
-
-/** Returns a safe user-facing message for a given error code. */
-export function friendlyWhatsAppErrorMessage(errorCode: string, metaMessage?: string): string {
-  switch (errorCode) {
-    case WHATSAPP_ERROR_CODES.AUTH_ERROR:
-      return 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.';
-    case WHATSAPP_ERROR_CODES.PERMISSION_ERROR:
-      return 'WhatsApp access denied. The token lacks the required permissions (e.g. whatsapp_business_messaging). Check your Meta App permissions.';
-    case WHATSAPP_ERROR_CODES.TEMPLATE_ERROR:
-      return 'WhatsApp template not found or not approved on Meta. Check your template status in Meta Business Manager.';
-    case WHATSAPP_ERROR_CODES.PHONE_NUMBER_ERROR:
-      return 'WhatsApp Phone Number ID is invalid or not linked to your Business Account. Verify the Phone Number ID in Settings → Integrations → WhatsApp.';
-    case WHATSAPP_ERROR_CODES.RATE_LIMIT:
-      return 'WhatsApp rate limit reached. Please try again in a few minutes.';
-    case WHATSAPP_ERROR_CODES.PROVIDER_ERROR:
-      return 'Meta WhatsApp API is temporarily unavailable. Please try again.';
-    case WHATSAPP_ERROR_CODES.NETWORK_ERROR:
-      return 'Could not reach Meta WhatsApp API. Check your server network connectivity.';
-    case WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING:
-      return 'WhatsApp is not configured. Please add your Access Token and Phone Number ID in Settings → Integrations → WhatsApp.';
-    case WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE:
-      return 'WhatsApp credentials could not be loaded (encryption key mismatch). Please re-save your WhatsApp token in Settings → Integrations → WhatsApp.';
-    case WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED:
-      return 'WhatsApp integration is disabled in Admin Settings.';
-    default:
-      return metaMessage || 'WhatsApp message could not be delivered. Please try again.';
-  }
-}
+export * from './whatsapp.util';
+import {
+  WhatsAppSendResult,
+  WHATSAPP_ERROR_CODES,
+  maskAccessToken,
+  resolveCleanAccessToken,
+  classifyWhatsAppError,
+  friendlyWhatsAppErrorMessage,
+} from './whatsapp.util';
 
 @Injectable()
 export class WhatsappService {
@@ -174,52 +103,65 @@ export class WhatsappService {
     languageCode = 'en_US',
     fallbackText?: string,
     stageName?: string,
+    customerId?: number,
+    userId?: number,
   ): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
       this.logger.warn(`[WHATSAPP] No customer phone number found: invalid or empty (${this.maskPhone(to)})`);
       return {
         success: false,
+        provider: 'WHATSAPP',
         error: 'INVALID_PHONE',
         errorCode: WHATSAPP_ERROR_CODES.NO_PHONE,
         reason: WHATSAPP_ERROR_CODES.NO_PHONE,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.NO_PHONE),
         details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.NO_PHONE),
       };
     }
 
-    // 1. Retrieve existing WhatsApp credentials from Integration Settings
-    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    // 1. Retrieve existing WhatsApp credentials from Integration Settings (fresh, bypass cache)
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', { forceFresh: true });
     if (!config?.isEnabled) {
       this.logger.log(`[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message for ${this.maskPhone(normalizedTo)}.`);
-      this.logger.log(`[LeadNotification] 7. Provider request started (Skipped: Integration disabled)`);
-      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: DISABLED\nError: WhatsApp integration is disabled in Admin Settings`);
       return {
         success: false,
         skipped: true,
+        provider: 'WHATSAPP',
         errorCode: WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED,
         reason: WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED),
         details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED),
       };
     }
 
     const creds = config.credentials || {};
-    const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
-    // Detect silent decryption failure: DATABASE source but empty token means ENCRYPTION_KEY mismatch
-    if (!apiKey && config.source === 'DATABASE') {
+    // Detect silent decryption failure
+    if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
       this.logger.error(
-        '[WHATSAPP_CREDS_DECRYPT_FAILURE] WhatsApp Access Token is stored in database but decrypted to empty string. ' +
-        'ENCRYPTION_KEY or JWT_SECRET likely changed since the token was saved. ' +
-        'Action: Re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+        `[WHATSAPP DEBUG]\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `integration ID: WHATSAPP\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `token decryption failed: encrypted token could not be decrypted (ENCRYPTION_KEY / JWT_SECRET mismatch)\n` +
+        `token: MISSING`,
       );
       return {
         success: false,
         skipped: false,
-        errorCode: WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE,
-        reason: WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE,
-        details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE),
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        providerStatus: 500,
+        reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        message: 'WhatsApp configuration error: token decryption failed. Please re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+        providerMessage: 'Token decryption failed',
+        details: 'Token decryption failed',
       };
     }
 
@@ -227,30 +169,80 @@ export class WhatsappService {
       this.logger.warn(
         `[WHATSAPP] WhatsApp not configured: missing ${!apiKey ? 'Access Token' : 'Phone Number ID'} in Admin Settings`,
       );
-      this.logger.log(`[LeadNotification] 7. Provider request started (Not configured)`);
-      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: 400 (CREDENTIALS_MISSING)\nError: WhatsApp Access Token or Phone Number ID not configured in Admin Settings`);
       return {
         success: false,
         skipped: true,
-        errorCode: WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING,
-        reason: WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING,
-        details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING),
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        providerStatus: 400,
+        reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR),
+        providerMessage: 'Access token or Phone Number ID not configured in Admin Settings',
+        details: 'Access token or Phone Number ID not configured in Admin Settings',
       };
     }
 
-    const maskedPhone = this.maskPhone(normalizedTo);
-    this.logger.log(
-      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nTemplate:\n${templateName}\nStage:\n${stageName || 'N/A'}`
-    );
-    this.logger.log(`[LeadNotification] 7. Provider request started\n[LeadNotification]\nWhatsApp request started`);
-
-    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     };
 
-    // 2. Build Meta Cloud API template payload
+    // Step 1: Pre-flight check on Phone Number Resource (TEST A: Connection & Auth Test)
+    const resourceUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`;
+    try {
+      const resourceRes = await axios.get(resourceUrl, {
+        headers,
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status' },
+        timeout: 8000,
+      });
+      const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
+      this.logger.log(
+        `[WHATSAPP DEBUG] Pre-flight phone number check SUCCEEDED for Phone Number ID: ${phoneNumberId} (verified name: ${verifiedName}). Token: ${maskAccessToken(apiKey)}`
+      );
+    } catch (resourceErr: any) {
+      const httpStatus = resourceErr?.response?.status as number | undefined;
+      const fbError = resourceErr?.response?.data?.error;
+      const metaCode = fbError?.code || resourceErr?.code;
+      const metaMessage = fbError?.message || resourceErr?.message || 'Meta API error';
+      const metaType = fbError?.type;
+      const metaSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
+
+      this.logger.error(
+        `[WHATSAPP DEBUG]\n` +
+        `Stage: PRE_FLIGHT_CONNECTION_TEST\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `integration ID: WHATSAPP\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `Graph API URL: ${resourceUrl}\n` +
+        `HTTP method: GET\n` +
+        `HTTP status: ${httpStatus || 'N/A'}\n` +
+        `Meta error code: ${metaCode || 'N/A'}\n` +
+        `Meta error type: ${metaType || 'N/A'}\n` +
+        `Meta error message: ${metaMessage}\n` +
+        `Meta error subcode: ${metaSubcode || 'N/A'}\n` +
+        `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
+        `token: ${maskAccessToken(apiKey)}`
+      );
+
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
+      return {
+        success: false,
+        provider: 'WHATSAPP',
+        errorCode: typedErrorCode,
+        providerStatus: httpStatus || 500,
+        message: friendlyMsg,
+        providerMessage: metaMessage,
+        details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
+        reason: typedErrorCode,
+        error: metaCode ? String(metaCode) : typedErrorCode,
+      };
+    }
+
+    // Step 2: Build & Dispatch Meta Cloud API template payload (TEST B: Send Message)
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const templatePayload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -270,16 +262,35 @@ export class WhatsappService {
       },
     };
 
+    const safePayload = {
+      messaging_product: 'whatsapp',
+      to: this.maskPhone(normalizedTo),
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+      },
+    };
+
+    this.logger.log(
+      `[WHATSAPP DEBUG]\n` +
+      `Stage: SEND_MESSAGE\n` +
+      `tenant/company ID: ${customerId || 'N/A'}\n` +
+      `employee/user ID: ${userId || 'N/A'}\n` +
+      `Phone Number ID: ${phoneNumberId}\n` +
+      `Graph API URL: ${url}\n` +
+      `HTTP method: POST\n` +
+      `Request Body: ${JSON.stringify(safePayload)}\n` +
+      `token: ${maskAccessToken(apiKey)}`
+    );
+
     try {
       const response = await axios.post(url, templatePayload, { headers, timeout: 10000 });
       const messageId = response.data?.messages?.[0]?.id;
       this.logger.log(
-        `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
+        `[WHATSAPP DEBUG] Message sent successfully. HTTP status: ${response.status}. Message ID: ${messageId || 'N/A'}`
       );
-      this.logger.log(
-        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${response.status}\nMessage ID: ${messageId || 'N/A'}`
-      );
-      return { success: true, messageId };
+      return { success: true, provider: 'WHATSAPP', messageId, providerStatus: response.status };
     } catch (err: any) {
       const httpStatus = err?.response?.status as number | undefined;
       const fbError = err?.response?.data?.error;
@@ -288,43 +299,50 @@ export class WhatsappService {
       const metaType = fbError?.type;
       const metaSubcode = fbError?.error_subcode;
       const fbtraceId = fbError?.fbtrace_id;
-      const isNetworkError = !httpStatus && (err?.code === 'ECONNABORTED' || err?.code === 'ECONNREFUSED' || err?.code === 'ETIMEDOUT');
 
-      // Safe structured log — NO token content
-      this.logger.warn(
-        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${httpStatus || 'N/A'}\nMeta error code:\n${metaCode || 'N/A'}\nMeta error type:\n${metaType || 'N/A'}\nMeta error subcode:\n${metaSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nMeta error message:\n${metaMessage}`,
+      this.logger.error(
+        `[WHATSAPP DEBUG]\n` +
+        `Stage: SEND_MESSAGE_FAILED\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `Graph API URL: ${url}\n` +
+        `HTTP method: POST\n` +
+        `HTTP status: ${httpStatus || 'N/A'}\n` +
+        `Meta error code: ${metaCode || 'N/A'}\n` +
+        `Meta error type: ${metaType || 'N/A'}\n` +
+        `Meta error message: ${metaMessage}\n` +
+        `Meta error subcode: ${metaSubcode || 'N/A'}\n` +
+        `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
+        `token: ${maskAccessToken(apiKey)}`
       );
-      this.logger.warn(
-        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${httpStatus || 'FAILED'}\nMeta error code: ${metaCode || 'N/A'}\nMeta error message: ${metaMessage}`,
-      );
-
-      // Classify to typed error code
-      const typedErrorCode = isNetworkError
-        ? WHATSAPP_ERROR_CODES.NETWORK_ERROR
-        : classifyWhatsAppError(httpStatus, metaCode, metaType);
 
       // If template not found and fallback text provided, attempt plain text message
       if (
-        typedErrorCode === WHATSAPP_ERROR_CODES.TEMPLATE_ERROR &&
-        fallbackText &&
-        (metaCode === 132001 || String(metaCode) === '132001' || metaCode === 100 || String(metaMessage).toLowerCase().includes('template'))
+        (metaCode === 132001 || String(metaCode) === '132001' || metaCode === 100 || String(metaMessage).toLowerCase().includes('template')) &&
+        fallbackText
       ) {
         this.logger.log(`[WHATSAPP] Template "${templateName}" not active on Meta. Falling back to direct text message.`);
-        return this.sendMessage(normalizedTo, fallbackText, stageName);
+        return this.sendMessage(normalizedTo, fallbackText, stageName, customerId, userId);
       }
 
-      if (typedErrorCode === WHATSAPP_ERROR_CODES.AUTH_ERROR) {
-        this.logger.error(`[WHATSAPP_AUTH_FAILURE] Meta error code ${metaCode} / type ${metaType || 'N/A'}: ${metaMessage}`);
-      } else {
-        this.logger.error(`[WHATSAPP_SEND_FAILURE] ${typedErrorCode}: HTTP ${httpStatus || 'N/A'} Meta code ${metaCode || 'N/A'} — ${metaMessage}`);
-      }
+      // Because Pre-Flight TEST A already succeeded, this failure is NOT an authentication failure
+      const isTemplateError = metaCode === 132001 || String(metaCode) === '132001' || String(metaMessage).toLowerCase().includes('template');
+      const typedErrorCode = isTemplateError
+        ? WHATSAPP_ERROR_CODES.TEMPLATE_ERROR
+        : classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
 
       return {
         success: false,
-        error: String(httpStatus || metaCode || 'UNKNOWN'),
+        provider: 'WHATSAPP',
         errorCode: typedErrorCode,
+        providerStatus: httpStatus || 400,
+        message: friendlyMsg,
+        providerMessage: metaMessage,
+        details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
-        details: friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage),
+        error: metaCode ? String(metaCode) : typedErrorCode,
       };
     }
   }
@@ -332,51 +350,69 @@ export class WhatsappService {
   /**
    * Dispatches a direct text message via Meta Business Cloud API.
    */
-  async sendMessage(to: string, text: string, stageName?: string): Promise<WhatsAppSendResult> {
+  async sendMessage(
+    to: string,
+    text: string,
+    stageName?: string,
+    customerId?: number,
+    userId?: number,
+  ): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
       this.logger.warn(`[WHATSAPP] No customer phone number found: invalid or empty (${this.maskPhone(to)})`);
       return {
         success: false,
+        provider: 'WHATSAPP',
         error: 'INVALID_PHONE',
         errorCode: WHATSAPP_ERROR_CODES.NO_PHONE,
         reason: WHATSAPP_ERROR_CODES.NO_PHONE,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.NO_PHONE),
         details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.NO_PHONE),
       };
     }
 
-    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    // 1. Retrieve existing WhatsApp credentials from Integration Settings (fresh, bypass cache)
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', { forceFresh: true });
     if (!config?.isEnabled) {
       this.logger.log('[WHATSAPP] WhatsApp integration is disabled in Admin Panel. Skipping message.');
-      this.logger.log(`[LeadNotification] 7. Provider request started (Skipped: Integration disabled)`);
-      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: DISABLED\nError: WhatsApp integration is disabled in Admin Settings`);
       return {
         success: false,
         skipped: true,
+        provider: 'WHATSAPP',
         errorCode: WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED,
         reason: WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED),
         details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED),
       };
     }
 
     const creds = config.credentials || {};
-    const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
-    // Detect silent decryption failure: DATABASE source but empty token means ENCRYPTION_KEY mismatch
-    if (!apiKey && config.source === 'DATABASE') {
+    // Detect silent decryption failure
+    if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
       this.logger.error(
-        '[WHATSAPP_CREDS_DECRYPT_FAILURE] WhatsApp Access Token is stored in database but decrypted to empty string. ' +
-        'ENCRYPTION_KEY or JWT_SECRET likely changed since the token was saved. ' +
-        'Action: Re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+        `[WHATSAPP DEBUG]\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `integration ID: WHATSAPP\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `token decryption failed: encrypted token could not be decrypted (ENCRYPTION_KEY / JWT_SECRET mismatch)\n` +
+        `token: MISSING`,
       );
       return {
         success: false,
         skipped: false,
-        errorCode: WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE,
-        reason: WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE,
-        details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CREDENTIALS_DECRYPT_FAILURE),
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        providerStatus: 500,
+        reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        message: 'WhatsApp configuration error: token decryption failed. Please re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+        providerMessage: 'Token decryption failed',
+        details: 'Token decryption failed',
       };
     }
 
@@ -384,29 +420,80 @@ export class WhatsappService {
       this.logger.warn(
         `[WHATSAPP] WhatsApp not configured: missing ${!apiKey ? 'Access Token' : 'Phone Number ID'} in Admin Settings`,
       );
-      this.logger.log(`[LeadNotification] 7. Provider request started (Not configured)`);
-      this.logger.log(`[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: 400 (CREDENTIALS_MISSING)\nError: WhatsApp Access Token or Phone Number ID not configured in Admin Settings`);
       return {
         success: false,
         skipped: true,
-        errorCode: WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING,
-        reason: WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING,
-        details: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CREDENTIALS_MISSING),
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        providerStatus: 400,
+        reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR),
+        providerMessage: 'Access token or Phone Number ID not configured in Admin Settings',
+        details: 'Access token or Phone Number ID not configured in Admin Settings',
       };
     }
 
-    const maskedPhone = this.maskPhone(normalizedTo);
-    this.logger.log(
-      `[WHATSAPP_REQUEST]\nProvider:\nMeta WhatsApp Cloud API\nVersion:\n${apiVersion}\nRecipient:\n${maskedPhone}\nType:\ntext\nStage:\n${stageName || 'N/A'}`
-    );
-    this.logger.log(`[LeadNotification] 7. Provider request started\n[LeadNotification]\nWhatsApp request started`);
-
-    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     };
 
+    // Step 1: Pre-flight check on Phone Number Resource (TEST A: Connection & Auth Test)
+    const resourceUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`;
+    try {
+      const resourceRes = await axios.get(resourceUrl, {
+        headers,
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status' },
+        timeout: 8000,
+      });
+      const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
+      this.logger.log(
+        `[WHATSAPP DEBUG] Pre-flight phone number check SUCCEEDED for Phone Number ID: ${phoneNumberId} (verified name: ${verifiedName}). Token: ${maskAccessToken(apiKey)}`
+      );
+    } catch (resourceErr: any) {
+      const httpStatus = resourceErr?.response?.status as number | undefined;
+      const fbError = resourceErr?.response?.data?.error;
+      const metaCode = fbError?.code || resourceErr?.code;
+      const metaMessage = fbError?.message || resourceErr?.message || 'Meta API error';
+      const metaType = fbError?.type;
+      const metaSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
+
+      this.logger.error(
+        `[WHATSAPP DEBUG]\n` +
+        `Stage: PRE_FLIGHT_CONNECTION_TEST\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `integration ID: WHATSAPP\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `Graph API URL: ${resourceUrl}\n` +
+        `HTTP method: GET\n` +
+        `HTTP status: ${httpStatus || 'N/A'}\n` +
+        `Meta error code: ${metaCode || 'N/A'}\n` +
+        `Meta error type: ${metaType || 'N/A'}\n` +
+        `Meta error message: ${metaMessage}\n` +
+        `Meta error subcode: ${metaSubcode || 'N/A'}\n` +
+        `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
+        `token: ${maskAccessToken(apiKey)}`
+      );
+
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
+      return {
+        success: false,
+        provider: 'WHATSAPP',
+        errorCode: typedErrorCode,
+        providerStatus: httpStatus || 500,
+        message: friendlyMsg,
+        providerMessage: metaMessage,
+        details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
+        reason: typedErrorCode,
+        error: metaCode ? String(metaCode) : typedErrorCode,
+      };
+    }
+
+    // Step 2: Build & Dispatch Meta Cloud API text payload (TEST B: Send Message)
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -418,16 +505,34 @@ export class WhatsappService {
       },
     };
 
+    const safePayload = {
+      messaging_product: 'whatsapp',
+      to: this.maskPhone(normalizedTo),
+      type: 'text',
+      text: {
+        body: text.length > 50 ? `${text.substring(0, 50)}...` : text,
+      },
+    };
+
+    this.logger.log(
+      `[WHATSAPP DEBUG]\n` +
+      `Stage: SEND_MESSAGE\n` +
+      `tenant/company ID: ${customerId || 'N/A'}\n` +
+      `employee/user ID: ${userId || 'N/A'}\n` +
+      `Phone Number ID: ${phoneNumberId}\n` +
+      `Graph API URL: ${url}\n` +
+      `HTTP method: POST\n` +
+      `Request Body: ${JSON.stringify(safePayload)}\n` +
+      `token: ${maskAccessToken(apiKey)}`
+    );
+
     try {
       const response = await axios.post(url, payload, { headers, timeout: 10000 });
       const messageId = response.data?.messages?.[0]?.id;
       this.logger.log(
-        `[WHATSAPP_RESPONSE]\nHTTP status:\n${response.status}\nProvider message ID:\n${messageId || 'N/A'}`
+        `[WHATSAPP DEBUG] Message sent successfully. HTTP status: ${response.status}. Message ID: ${messageId || 'N/A'}`
       );
-      this.logger.log(
-        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${response.status}\nMessage ID: ${messageId || 'N/A'}`
-      );
-      return { success: true, messageId };
+      return { success: true, provider: 'WHATSAPP', messageId, providerStatus: response.status };
     } catch (err: any) {
       const httpStatus = err?.response?.status as number | undefined;
       const fbError = err?.response?.data?.error;
@@ -436,31 +541,38 @@ export class WhatsappService {
       const metaType = fbError?.type;
       const metaSubcode = fbError?.error_subcode;
       const fbtraceId = fbError?.fbtrace_id;
-      const isNetworkError = !httpStatus && (err?.code === 'ECONNABORTED' || err?.code === 'ECONNREFUSED' || err?.code === 'ETIMEDOUT');
 
       this.logger.error(
-        `[WHATSAPP_RESPONSE_ERROR]\nHTTP status:\n${httpStatus || 'N/A'}\nMeta error code:\n${metaCode || 'N/A'}\nMeta error type:\n${metaType || 'N/A'}\nMeta error subcode:\n${metaSubcode || 'N/A'}\nTrace ID:\n${fbtraceId || 'N/A'}\nMeta error message:\n${metaMessage}`,
-      );
-      this.logger.warn(
-        `[LeadNotification] 8. Provider response received\n[LeadNotification]\nWhatsApp provider response:\nHTTP: ${httpStatus || 'FAILED'}\nMeta error code: ${metaCode || 'N/A'}\nMeta error message: ${metaMessage}`,
+        `[WHATSAPP DEBUG]\n` +
+        `Stage: SEND_MESSAGE_FAILED\n` +
+        `tenant/company ID: ${customerId || 'N/A'}\n` +
+        `employee/user ID: ${userId || 'N/A'}\n` +
+        `Phone Number ID: ${phoneNumberId}\n` +
+        `Graph API URL: ${url}\n` +
+        `HTTP method: POST\n` +
+        `HTTP status: ${httpStatus || 'N/A'}\n` +
+        `Meta error code: ${metaCode || 'N/A'}\n` +
+        `Meta error type: ${metaType || 'N/A'}\n` +
+        `Meta error message: ${metaMessage}\n` +
+        `Meta error subcode: ${metaSubcode || 'N/A'}\n` +
+        `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
+        `token: ${maskAccessToken(apiKey)}`
       );
 
-      const typedErrorCode = isNetworkError
-        ? WHATSAPP_ERROR_CODES.NETWORK_ERROR
-        : classifyWhatsAppError(httpStatus, metaCode, metaType);
-
-      if (typedErrorCode === WHATSAPP_ERROR_CODES.AUTH_ERROR) {
-        this.logger.error(`[WHATSAPP_AUTH_FAILURE] Meta error code ${metaCode} / type ${metaType || 'N/A'}: ${metaMessage}`);
-      } else {
-        this.logger.error(`[WHATSAPP_SEND_FAILURE] ${typedErrorCode}: HTTP ${httpStatus || 'N/A'} Meta code ${metaCode || 'N/A'} — ${metaMessage}`);
-      }
+      // Classify error according to status and Meta error code
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
 
       return {
         success: false,
-        error: String(httpStatus || metaCode || 'UNKNOWN'),
+        provider: 'WHATSAPP',
         errorCode: typedErrorCode,
+        providerStatus: httpStatus || 400,
+        message: friendlyMsg,
+        providerMessage: metaMessage,
+        details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
-        details: friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage),
+        error: metaCode ? String(metaCode) : typedErrorCode,
       };
     }
   }
@@ -1046,8 +1158,10 @@ export class WhatsappService {
     customMessage?: string;
     fallbackText?: string;
     stageName?: string;
+    customerId?: number;
+    userId?: number;
   }): Promise<WhatsAppSendResult> {
-    const { to, stageKey, variables, customMessage, stageName } = params;
+    const { to, stageKey, variables, customMessage, stageName, customerId, userId } = params;
     const template = this.getStageTemplate(stageKey);
 
     let messageText = customMessage;
@@ -1085,6 +1199,8 @@ export class WhatsappService {
       'en_US',
       messageText,
       stageName || template?.name || stageKey,
+      customerId,
+      userId,
     );
   }
 
