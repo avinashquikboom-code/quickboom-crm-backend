@@ -2365,6 +2365,7 @@ export class AuthService {
                 include: {
                   department: true,
                   designation: true,
+                  employeeModuleOverrides: true,
                 },
               },
               userRoles: {
@@ -2472,6 +2473,58 @@ export class AuthService {
             ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
               permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
             });
+          }
+        }
+      }
+    }
+
+    // Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
+    const employeeId = user.employee?.id;
+    if (employeeId && !isSuperAdmin && !isCustomerAdmin) {
+      const overrides =
+        user.employee?.employeeModuleOverrides ||
+        (await this.prisma.employeeModuleOverride.findMany({
+          where: { employeeId: Number(employeeId) },
+        }));
+
+      if (overrides && overrides.length > 0) {
+        for (const ov of overrides) {
+          const modKey = (ov.moduleKey || '').trim();
+          const ovType = String(ov.override).toUpperCase();
+          if (ovType === 'DEFAULT') continue;
+
+          // Granular permission key check (e.g. employee.calendar.view)
+          if (modKey.startsWith('employee.') || modKey.includes(':')) {
+            const { module, action } = fromPermissionKey(modKey);
+            const permKey = `${module.toUpperCase()}:${action.toUpperCase()}`;
+            if (ovType === 'ALLOW') {
+              permissionsMap.set(permKey, { module: module.toUpperCase(), action: action.toUpperCase() });
+            } else if (ovType === 'DENY') {
+              permissionsMap.delete(permKey);
+            }
+          } else {
+            // Module-level override (e.g. CALENDAR, MY_WORK, LEADS, etc.)
+            const modUpper = modKey.toUpperCase().replace(/\s+/g, '_');
+            if (ovType === 'ALLOW') {
+              const stdModPerms = STANDARD_PERMISSIONS.filter(
+                (p) => p.module === modUpper || p.module === modUpper.replace(/_/g, ''),
+              );
+              if (stdModPerms.length > 0) {
+                stdModPerms.forEach((p) => {
+                  permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+                });
+              } else {
+                permissionsMap.set(`${modUpper}:VIEW`, { module: modUpper, action: 'VIEW' });
+              }
+            } else if (ovType === 'DENY') {
+              for (const [k] of permissionsMap.entries()) {
+                const parts = k.split(':');
+                const m = parts[0].toUpperCase();
+                if (m === modUpper || m === modUpper.replace(/_/g, '')) {
+                  permissionsMap.delete(k);
+                }
+              }
+            }
           }
         }
       }

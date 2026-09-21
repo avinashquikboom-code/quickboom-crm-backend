@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
   ForbiddenException,
@@ -338,4 +339,57 @@ export class EmployeeController {
       isSuperAdmin,
     });
   }
+
+  @Get(':id/permissions')
+  @ApiOperation({ summary: 'Get employee role permissions and individual overrides' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async getPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.getEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
+  @Put(':id/permissions')
+  @ApiOperation({ summary: 'Update individual employee module/permission overrides' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async updatePermissions(
+    @Param('id') id: string,
+    @Body() body: { overrides: Array<{ moduleKey: string; override: 'INHERIT' | 'ALLOW' | 'DENY' | 'DEFAULT' }> },
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    if (!body || !Array.isArray(body.overrides)) {
+      throw new BadRequestException('Request body must contain overrides array');
+    }
+
+    return this.employeeService.updateEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      overrides: body.overrides,
+    });
+  }
 }
+

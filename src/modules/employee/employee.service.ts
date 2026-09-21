@@ -7,8 +7,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
-import { RoleType, Prisma } from '@prisma/client';
+import { RoleType, Prisma, AccessOverrideType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 import {
   getBusinessDate,
   getBusinessDayRange,
@@ -2784,4 +2785,260 @@ export class EmployeeService {
       organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',
     };
   }
+
+  async getEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+        user: {
+          include: {
+            roles: {
+              include: {
+                role: {
+                  include: {
+                    permissions: {
+                      include: {
+                        permission: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        employeeModuleOverrides: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    // Determine user roles
+    const userRoles = employee.user?.roles?.map((ur) => ur.role.name) || [];
+    const roleName = userRoles[0] || employee.designation?.name || 'EMPLOYEE';
+
+    // Compute role default permissions
+    const rolePermissionsSet = new Set<string>();
+
+    let hasDbPermissions = false;
+    if (employee.user?.roles) {
+      for (const ur of employee.user.roles) {
+        if (ur.role?.permissions && ur.role.permissions.length > 0) {
+          hasDbPermissions = true;
+          ur.role.permissions.forEach((rp) => {
+            if (rp.permission) {
+              rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+            }
+          });
+        }
+      }
+    }
+
+    if (!hasDbPermissions) {
+      for (const rName of userRoles.length > 0 ? userRoles : [roleName]) {
+        const upper = rName.toUpperCase().replace(/\s+/g, '_');
+        let matchedKey: string | null = null;
+        if (ROLE_PERMISSION_DEFAULTS[upper]) {
+          matchedKey = upper;
+        } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+          matchedKey = 'TELECALLER';
+        } else if (upper.includes('DESIGNER')) {
+          matchedKey = 'DESIGNER';
+        } else if (upper.includes('EDITOR')) {
+          matchedKey = 'EDITOR';
+        } else if (upper.includes('SOCIAL') || upper.includes('SSM')) {
+          matchedKey = 'SOCIAL_MEDIA_MANAGER';
+        } else if (upper.includes('PHOTO') || upper.includes('SHOOT')) {
+          matchedKey = 'PHOTOGRAPHER';
+        } else if (upper.includes('SALES')) {
+          matchedKey = 'SALES_EXECUTIVE';
+        } else if (upper.includes('HR')) {
+          matchedKey = 'HR';
+        } else if (upper.includes('MANAGER')) {
+          matchedKey = 'MANAGER';
+        } else if (upper.includes('EMPLOYEE')) {
+          matchedKey = 'EMPLOYEE';
+        }
+
+        if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
+          ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
+            rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
+          });
+        }
+      }
+    }
+
+    // Build lookup for existing individual employee overrides
+    const overrideMap = new Map<string, string>();
+    (employee.employeeModuleOverrides || []).forEach((ov) => {
+      overrideMap.set(ov.moduleKey.toUpperCase(), String(ov.override).toUpperCase());
+      overrideMap.set(ov.moduleKey.toLowerCase(), String(ov.override).toUpperCase());
+    });
+
+    // 19 standard mobile modules definition
+    const MODULE_METADATA: Array<{ key: string; label: string; category: string; description: string }> = [
+      { key: 'DASHBOARD', label: 'Dashboard', category: 'SYSTEM', description: 'Main home view & overview metrics' },
+      { key: 'CALENDAR', label: 'Calendar', category: 'CALENDAR', description: 'Personal & team schedule, shoots, visits' },
+      { key: 'MY_WORK', label: 'My Work', category: 'WORKSPACE', description: 'SSM assigned tasks and creative deliverables' },
+      { key: 'LEADS', label: 'Leads', category: 'CRM', description: 'Inbound inquiries and lead management pipeline' },
+      { key: 'FOLLOW_UP', label: 'Follow Ups', category: 'CRM', description: 'Scheduled client and prospect calls' },
+      { key: 'VISITS', label: 'Field Visits', category: 'CRM', description: 'Client physical visits and check-ins' },
+      { key: 'PROPOSALS', label: 'Proposals', category: 'CRM', description: 'Commercial quotes and contract proposals' },
+      { key: 'PACKAGES', label: 'Packages', category: 'CRM', description: 'Service catalog packages and pricing' },
+      { key: 'PAYMENTS', label: 'Payments', category: 'CRM', description: 'Customer transaction records and receipts' },
+      { key: 'WORK_EXECUTION', label: 'Work Execution', category: 'WORKSPACE', description: 'Daily production tasks & shoot delivery' },
+      { key: 'CREATIVE_WORK', label: 'Creative Work', category: 'CREATIVE', description: 'Graphics, video edits, reels & campaigns' },
+      { key: 'ATTENDANCE', label: 'Attendance', category: 'HRM', description: 'Daily check-in / check-out and shifts' },
+      { key: 'LEAVE', label: 'Leave', category: 'HRM', description: 'Leave requests and balance tracking' },
+      { key: 'REMOTE_WORK', label: 'Remote Work', category: 'HRM', description: 'Work from home / remote status' },
+      { key: 'TASKS', label: 'Tasks', category: 'WORKSPACE', description: 'General company & project to-dos' },
+      { key: 'SALARY', label: 'Salary & Payslips', category: 'HRM', description: 'Monthly payroll records and compensation' },
+      { key: 'NOTIFICATIONS', label: 'Notifications', category: 'SYSTEM', description: 'Push notifications & activity inbox' },
+      { key: 'PROFILE', label: 'Profile', category: 'SYSTEM', description: 'Employee personal profile details' },
+      { key: 'SETTINGS', label: 'Settings', category: 'SYSTEM', description: 'App preferences and account settings' },
+    ];
+
+    const modules = MODULE_METADATA.map((meta) => {
+      // Role default status
+      const roleDefault =
+        rolePermissionsSet.has(`${meta.key}:VIEW`) ||
+        Array.from(rolePermissionsSet).some((k) => k.startsWith(`${meta.key}:`));
+
+      const rawOverride = overrideMap.get(meta.key) || overrideMap.get(meta.key.toLowerCase()) || 'DEFAULT';
+      let override: 'INHERIT' | 'ALLOW' | 'DENY' = 'INHERIT';
+      if (rawOverride === 'ALLOW') override = 'ALLOW';
+      else if (rawOverride === 'DENY') override = 'DENY';
+
+      let effective = roleDefault;
+      if (override === 'ALLOW') effective = true;
+      else if (override === 'DENY') effective = false;
+
+      return {
+        moduleKey: meta.key,
+        label: meta.label,
+        category: meta.category,
+        description: meta.description,
+        roleDefault,
+        override,
+        effective,
+      };
+    });
+
+    const granularPermissions = STANDARD_PERMISSIONS.map((perm) => {
+      const permKey = `${perm.module.toUpperCase()}:${perm.action.toUpperCase()}`;
+      const roleDefault = rolePermissionsSet.has(permKey);
+
+      const rawOverride =
+        overrideMap.get(perm.key.toLowerCase()) ||
+        overrideMap.get(permKey) ||
+        overrideMap.get(perm.module.toUpperCase()) ||
+        'DEFAULT';
+
+      let override: 'INHERIT' | 'ALLOW' | 'DENY' = 'INHERIT';
+      if (rawOverride === 'ALLOW') override = 'ALLOW';
+      else if (rawOverride === 'DENY') override = 'DENY';
+
+      let effective = roleDefault;
+      if (override === 'ALLOW') effective = true;
+      else if (override === 'DENY') effective = false;
+
+      return {
+        key: perm.key,
+        module: perm.module,
+        action: perm.action,
+        label: perm.label,
+        description: perm.description,
+        category: perm.category,
+        roleDefault,
+        override,
+        effective,
+      };
+    });
+
+    return {
+      employeeId: employee.id,
+      employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+      roleName,
+      roles: userRoles,
+      modules,
+      granularPermissions,
+    };
+  }
+
+  async updateEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    overrides: Array<{ moduleKey: string; override: 'INHERIT' | 'ALLOW' | 'DENY' | 'DEFAULT' }>;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      select: { id: true, customerId: true },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const customerId = employee.customerId;
+
+    for (const item of params.overrides) {
+      const modKey = (item.moduleKey || '').trim();
+      if (!modKey) continue;
+      const ovType = String(item.override).toUpperCase();
+
+      if (ovType === 'INHERIT' || ovType === 'DEFAULT') {
+        await this.prisma.employeeModuleOverride.deleteMany({
+          where: {
+            customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+          },
+        });
+      } else if (ovType === 'ALLOW' || ovType === 'DENY') {
+        const overrideVal: AccessOverrideType = ovType === 'ALLOW' ? AccessOverrideType.ALLOW : AccessOverrideType.DENY;
+        await this.prisma.employeeModuleOverride.upsert({
+          where: {
+            customerId_employeeId_moduleKey: {
+              customerId,
+              employeeId: empId,
+              moduleKey: modKey,
+            },
+          },
+          create: {
+            customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+            override: overrideVal,
+          },
+          update: {
+            override: overrideVal,
+          },
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Employee permissions updated successfully',
+    };
+  }
 }
+

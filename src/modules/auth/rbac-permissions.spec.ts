@@ -207,5 +207,43 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.CALENDAR.view).toBe(false);
       expect(result.effectivePermissions.MY_WORK.view).toBe(false);
     });
+
+    it('enforces individual employee overrides over role defaults: ALLOW grants access to disabled module', async () => {
+      const mockTelecallerWithCalendarOverride = {
+        id: 20,
+        email: 'telecaller_special@company.com',
+        employee: {
+          id: 101,
+          employeeModuleOverrides: [
+            { moduleKey: 'CALENDAR', override: 'ALLOW' },
+          ],
+        },
+        userRoles: [{ role: { name: 'TELECALLER', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(20, mockTelecallerWithCalendarOverride);
+      // Telecaller default CALENDAR is false, but override ALLOW forces it to true!
+      expect(result.effectivePermissions.CALENDAR.view).toBe(true);
+      expect(result.permissions.some((p: any) => p.module === 'CALENDAR' && p.action === 'VIEW')).toBe(true);
+    });
+
+    it('enforces individual employee overrides over role defaults: DENY revokes access to enabled module', async () => {
+      const mockDesignerWithCalendarDeny = {
+        id: 21,
+        email: 'designer_restricted@company.com',
+        employee: {
+          id: 102,
+          employeeModuleOverrides: [
+            { moduleKey: 'CALENDAR', override: 'DENY' },
+          ],
+        },
+        userRoles: [{ role: { name: 'DESIGNER', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(21, mockDesignerWithCalendarDeny);
+      // Designer default CALENDAR is true, but override DENY forces it to false!
+      expect(result.effectivePermissions.CALENDAR.view).toBe(false);
+      expect(result.permissions.some((p: any) => p.module === 'CALENDAR')).toBe(false);
+    });
   });
 });

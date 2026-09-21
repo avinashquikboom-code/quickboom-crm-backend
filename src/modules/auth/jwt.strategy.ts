@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
-import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
+import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -92,7 +92,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        employee: true,
+        employee: {
+          include: {
+            employeeModuleOverrides: true,
+            designation: true,
+          },
+        },
         customer: true,
         userRoles: {
           include: {
@@ -231,6 +236,55 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             ROLE_PERMISSION_DEFAULTS[matched].forEach((p) => {
               permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
             });
+          }
+        }
+      }
+    }
+
+    // Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
+    if (user.employee?.id && !isSuperAdmin && !isCustomerAdmin && !isCompanyAdmin) {
+      const overrides =
+        user.employee.employeeModuleOverrides ||
+        (await this.prisma.employeeModuleOverride.findMany({
+          where: { employeeId: user.employee.id },
+        }));
+
+      if (overrides && overrides.length > 0) {
+        for (const ov of overrides) {
+          const modKey = (ov.moduleKey || '').trim();
+          const ovType = String(ov.override).toUpperCase();
+          if (ovType === 'DEFAULT') continue;
+
+          if (modKey.startsWith('employee.') || modKey.includes(':')) {
+            const { module, action } = fromPermissionKey(modKey);
+            const permKey = `${module.toUpperCase()}:${action.toUpperCase()}`;
+            if (ovType === 'ALLOW') {
+              permissionsMap.set(permKey, { module: module.toUpperCase(), action: action.toUpperCase() });
+            } else if (ovType === 'DENY') {
+              permissionsMap.delete(permKey);
+            }
+          } else {
+            const modUpper = modKey.toUpperCase().replace(/\s+/g, '_');
+            if (ovType === 'ALLOW') {
+              const stdModPerms = STANDARD_PERMISSIONS.filter(
+                (p) => p.module === modUpper || p.module === modUpper.replace(/_/g, ''),
+              );
+              if (stdModPerms.length > 0) {
+                stdModPerms.forEach((p) => {
+                  permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+                });
+              } else {
+                permissionsMap.set(`${modUpper}:VIEW`, { module: modUpper, action: 'VIEW' });
+              }
+            } else if (ovType === 'DENY') {
+              for (const [k] of permissionsMap.entries()) {
+                const parts = k.split(':');
+                const m = parts[0].toUpperCase();
+                if (m === modUpper || m === modUpper.replace(/_/g, '')) {
+                  permissionsMap.delete(k);
+                }
+              }
+            }
           }
         }
       }
