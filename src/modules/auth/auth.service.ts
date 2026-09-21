@@ -2409,55 +2409,59 @@ export class AuthService {
 
     const permissionsMap = new Map<string, { module: string; action: string }>();
 
-    if (isSuperAdmin || isCustomerAdmin) {
-      STANDARD_PERMISSIONS.forEach((p) => {
-        permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
-      });
-    } else {
-      let hasDbPermissions = false;
-      const roleNames: string[] = [];
+    let hasDbPermissions = false;
+    const roleNames: string[] = [];
 
-      (user.userRoles || []).forEach((ur: any) => {
-        if (ur.role) {
-          roleNames.push(ur.role.name);
-          if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
-            hasDbPermissions = true;
-            ur.role.rolePermissions.forEach((rp: any) => {
-              if (rp.permission) {
-                permissionsMap.set(
-                  `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`,
-                  {
-                    module: rp.permission.module.toUpperCase(),
-                    action: rp.permission.action.toUpperCase(),
-                  },
-                );
-              }
-            });
-          }
+    (user.userRoles || []).forEach((ur: any) => {
+      if (ur.role) {
+        roleNames.push(ur.role.name);
+        if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
+          hasDbPermissions = true;
+          ur.role.rolePermissions.forEach((rp: any) => {
+            if (rp.permission) {
+              permissionsMap.set(
+                `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`,
+                {
+                  module: rp.permission.module.toUpperCase(),
+                  action: rp.permission.action.toUpperCase(),
+                },
+              );
+            }
+          });
         }
-      });
-
-      const desigName = user.employee?.designation?.name?.trim();
-      if (desigName) {
-        roleNames.push(desigName);
       }
+    });
 
-      if (!hasDbPermissions) {
+    const desigName = user.employee?.designation?.name?.trim();
+    if (desigName) {
+      roleNames.push(desigName);
+    }
+
+    if (!hasDbPermissions) {
+      if (isSuperAdmin) {
+        STANDARD_PERMISSIONS.forEach((p) => {
+          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+        });
+      } else if (isCustomerAdmin) {
+        (ROLE_PERMISSION_DEFAULTS.COMPANY_ADMIN || STANDARD_PERMISSIONS).forEach((p) => {
+          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+        });
+      } else {
         for (const rName of roleNames) {
-          const upper = rName.toUpperCase().replace(/\s+/g, '_');
+          const upper = rName.toUpperCase().replace(/\s+/g, "_");
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
-          } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
-            matchedKey = 'TELECALLER';
-          } else if (upper.includes('SALES')) {
-            matchedKey = 'SALES_EXECUTIVE';
-          } else if (upper.includes('HR')) {
-            matchedKey = 'HR';
-          } else if (upper.includes('MANAGER')) {
-            matchedKey = 'MANAGER';
-          } else if (upper.includes('EMPLOYEE')) {
-            matchedKey = 'EMPLOYEE';
+          } else if (upper.includes("TELECALL") || upper.includes("TELESALES")) {
+            matchedKey = "TELECALLER";
+          } else if (upper.includes("SALES")) {
+            matchedKey = "SALES_EXECUTIVE";
+          } else if (upper.includes("HR")) {
+            matchedKey = "HR";
+          } else if (upper.includes("MANAGER")) {
+            matchedKey = "MANAGER";
+          } else if (upper.includes("EMPLOYEE")) {
+            matchedKey = "EMPLOYEE";
           }
 
           if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
@@ -2471,17 +2475,25 @@ export class AuthService {
 
     const permissions = Array.from(permissionsMap.values());
 
-    const effectivePermissions: Record<
-      string,
-      { view: boolean; create: boolean; edit: boolean; delete: boolean }
-    > = {};
+    const effectivePermissions: Record<string, Record<string, boolean>> = {};
     ALL_STANDARD_MODULES.forEach((mod) => {
-      effectivePermissions[mod] = {
+      const lowerMod = mod.toLowerCase();
+      const modPerms: Record<string, boolean> = {
         view: permissionsMap.has(`${mod}:VIEW`),
         create: permissionsMap.has(`${mod}:CREATE`),
         edit: permissionsMap.has(`${mod}:EDIT`),
         delete: permissionsMap.has(`${mod}:DELETE`),
       };
+
+      for (const [key] of permissionsMap.entries()) {
+        if (key.startsWith(`${mod}:`)) {
+          const act = key.split(":")[1].toLowerCase();
+          modPerms[act] = true;
+        }
+      }
+
+      effectivePermissions[lowerMod] = modPerms;
+      effectivePermissions[mod] = modPerms;
     });
 
     let specificRoleName = 'EMPLOYEE';
@@ -2587,7 +2599,7 @@ export class AuthService {
     });
 
     for (const p of permissions) {
-      const permRecord = await this.prisma.permission.findUnique({
+      let permRecord = await this.prisma.permission.findUnique({
         where: {
           module_action: {
             module: p.module.toUpperCase(),
@@ -2595,6 +2607,15 @@ export class AuthService {
           },
         },
       });
+      if (!permRecord) {
+        permRecord = await this.prisma.permission.create({
+          data: {
+            module: p.module.toUpperCase(),
+            action: p.action.toUpperCase(),
+            description: `${p.action} permission for ${p.module}`,
+          },
+        });
+      }
       if (permRecord) {
         await this.prisma.rolePermission.create({
           data: {
