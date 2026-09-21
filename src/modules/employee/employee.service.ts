@@ -2798,11 +2798,11 @@ export class EmployeeService {
         designation: true,
         user: {
           include: {
-            roles: {
+            userRoles: {
               include: {
                 role: {
                   include: {
-                    permissions: {
+                    rolePermissions: {
                       include: {
                         permission: true,
                       },
@@ -2826,18 +2826,18 @@ export class EmployeeService {
     }
 
     // Determine user roles
-    const userRoles = employee.user?.roles?.map((ur) => ur.role.name) || [];
+    const userRoles = employee.user?.userRoles?.map((ur) => ur.role.name) || [];
     const roleName = userRoles[0] || employee.designation?.name || 'EMPLOYEE';
 
     // Compute role default permissions
     const rolePermissionsSet = new Set<string>();
 
     let hasDbPermissions = false;
-    if (employee.user?.roles) {
-      for (const ur of employee.user.roles) {
-        if (ur.role?.permissions && ur.role.permissions.length > 0) {
+    if (employee.user?.userRoles) {
+      for (const ur of employee.user.userRoles) {
+        if (ur.role?.rolePermissions && ur.role.rolePermissions.length > 0) {
           hasDbPermissions = true;
-          ur.role.permissions.forEach((rp) => {
+          ur.role.rolePermissions.forEach((rp) => {
             if (rp.permission) {
               rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
             }
