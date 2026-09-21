@@ -232,25 +232,20 @@ export class DesignationService {
       },
     });
 
-    // Auto-create matching Role so permissions can be configured immediately for this designation
+    // Auto-create / link the matching Role via ensureRoleForDesignation so that:
+    // 1. The Role.designationId FK is properly set (the critical fix)
+    // 2. Duplicate prevention is handled consistently
+    // 3. GET /designations/roles and GET /designations/:id/permissions work immediately
     try {
-      const existingRole = await this.prisma.role.findFirst({
-        where: {
-          name: { equals: name, mode: 'insensitive' },
-          customerId: numCustomerId,
-        },
+      await this.ensureRoleForDesignation({
+        id: created.id,
+        name: created.name,
+        customerId: numCustomerId,
+        description: created.description,
       });
-      if (!existingRole) {
-        await this.prisma.role.create({
-          data: {
-            customerId: numCustomerId,
-            name,
-            description: dto.description?.trim() || `${name} role`,
-            type: 'CUSTOM',
-          },
-        });
-      }
-    } catch (_) {}
+    } catch (roleErr) {
+      this.logger.warn(`[DESIGNATION_CREATE] Could not auto-link Role for Designation #${created.id}: ${roleErr}`);
+    }
 
     return {
       id: created.id,
