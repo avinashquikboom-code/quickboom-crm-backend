@@ -34,6 +34,10 @@ export async function seedRbac() {
     { name: 'SUPER_ADMIN', type: RoleType.SUPER_ADMIN, desc: 'Full administrative access' },
     { name: 'COMPANY_ADMIN', type: RoleType.CUSTOMER_ADMIN, desc: 'Company Administrator' },
     { name: 'TELECALLER', type: RoleType.CUSTOM, desc: 'Telecaller role for CRM calling and lead capture' },
+    { name: 'DESIGNER', type: RoleType.CUSTOM, desc: 'Graphic Designer for creative and marketing assets' },
+    { name: 'EDITOR', type: RoleType.CUSTOM, desc: 'Video Editor for post-production and reel deliverables' },
+    { name: 'SOCIAL_MEDIA_MANAGER', type: RoleType.CUSTOM, desc: 'Social Media Manager for creative management and publishing' },
+    { name: 'PHOTOGRAPHER', type: RoleType.CUSTOM, desc: 'Photographer and Reel Shooter for on-site shoots' },
     { name: 'SALES_EXECUTIVE', type: RoleType.CUSTOM, desc: 'Sales Executive for on-ground visits and leads' },
     { name: 'HR', type: RoleType.CUSTOM, desc: 'HR Manager/Executive' },
     { name: 'EMPLOYEE', type: RoleType.CUSTOM, desc: 'General Employee role' },
@@ -59,33 +63,29 @@ export async function seedRbac() {
       console.log(`Created role ${r.name} with ID ${roleRecord.id}`);
     }
 
-    // Assign default role permissions if none exist
-    const currentPermCount = await prisma.rolePermission.count({
-      where: { roleId: roleRecord.id },
-    });
-
-    if (currentPermCount === 0 && ROLE_PERMISSION_DEFAULTS[r.name]) {
-      const permsToAssign = ROLE_PERMISSION_DEFAULTS[r.name];
-      for (const p of permsToAssign) {
-        const pId = permMap.get(`${p.module}:${p.action}`);
-        if (pId) {
-          await prisma.rolePermission.upsert({
-            where: {
-              roleId_permissionId: {
-                roleId: roleRecord.id,
-                permissionId: pId,
-              },
-            },
-            update: {},
-            create: {
+    // Assign / sync default role permissions
+    const permsToAssign = ROLE_PERMISSION_DEFAULTS[r.name] || [];
+    let assignedCount = 0;
+    for (const p of permsToAssign) {
+      const pId = permMap.get(`${p.module}:${p.action}`);
+      if (pId) {
+        await prisma.rolePermission.upsert({
+          where: {
+            roleId_permissionId: {
               roleId: roleRecord.id,
               permissionId: pId,
             },
-          });
-        }
+          },
+          update: {},
+          create: {
+            roleId: roleRecord.id,
+            permissionId: pId,
+          },
+        });
+        assignedCount++;
       }
-      console.log(`Assigned ${permsToAssign.length} permissions to role ${r.name}`);
     }
+    console.log(`Synced ${assignedCount} default permissions for role ${r.name}`);
   }
 
   console.log('--- RBAC Seeding Completed ---');

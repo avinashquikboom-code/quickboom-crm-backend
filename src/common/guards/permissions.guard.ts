@@ -35,28 +35,29 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const userPermissions: { module?: string; action?: string }[] = user.permissions || [];
+    const checkMatch = (reqPerm: RequiredPermission, userPerm: { module?: string; action?: string }) => {
+      const uMod = (userPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
+      const uAct = (userPerm.action || '').toUpperCase();
+      const rMod = (reqPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
+      const rAct = (reqPerm.action || '').toUpperCase();
+
+      const modMatches = uMod === rMod || uMod === rMod.replace(/_/g, '');
+      const actMatches =
+        uAct === rAct ||
+        uAct === 'MANAGE' ||
+        uAct === 'ALL' ||
+        (rAct === 'VIEW' && uAct === 'READ') ||
+        (rAct === 'READ' && uAct === 'VIEW');
+      return modMatches && actMatches;
+    };
+
     const hasPermission = requiredPermissions.every((reqPerm) =>
-      userPermissions.some(
-        (userPerm) =>
-          userPerm.module?.toUpperCase() === reqPerm.module?.toUpperCase() &&
-          (userPerm.action?.toUpperCase() === reqPerm.action?.toUpperCase() ||
-            userPerm.action?.toUpperCase() === 'MANAGE' ||
-            userPerm.action?.toUpperCase() === 'ALL'),
-      ),
+      userPermissions.some((userPerm) => checkMatch(reqPerm, userPerm)),
     );
 
     if (!hasPermission) {
       const missing = requiredPermissions
-        .filter(
-          (reqPerm) =>
-            !userPermissions.some(
-              (userPerm) =>
-                userPerm.module?.toUpperCase() === reqPerm.module?.toUpperCase() &&
-                (userPerm.action?.toUpperCase() === reqPerm.action?.toUpperCase() ||
-                  userPerm.action?.toUpperCase() === 'MANAGE' ||
-                  userPerm.action?.toUpperCase() === 'ALL'),
-            ),
-        )
+        .filter((reqPerm) => !userPermissions.some((userPerm) => checkMatch(reqPerm, userPerm)))
         .map((p) => `${p.module}:${p.action}`)
         .join(', ');
       throw new ForbiddenException(`Access denied: Missing required permission [${missing}]`);

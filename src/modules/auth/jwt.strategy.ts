@@ -218,6 +218,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           let matched: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
           else if (upper.includes('TELECALL') || upper.includes('TELESALES')) matched = 'TELECALLER';
+          else if (upper.includes('DESIGN')) matched = 'DESIGNER';
+          else if (upper.includes('EDIT')) matched = 'EDITOR';
+          else if (upper.includes('SOCIAL') || upper.includes('SSM')) matched = 'SOCIAL_MEDIA_MANAGER';
+          else if (upper.includes('PHOTO') || upper.includes('SHOOT') || upper.includes('VIDEO_GRAPH')) matched = 'PHOTOGRAPHER';
           else if (upper.includes('SALES')) matched = 'SALES_EXECUTIVE';
           else if (upper.includes('HR')) matched = 'HR';
           else if (upper.includes('MANAGER')) matched = 'MANAGER';

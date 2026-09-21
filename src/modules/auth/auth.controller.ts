@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -207,6 +207,45 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Post('roles')
+  @ApiOperation({ summary: 'Create a new security role' })
+  async createRole(
+    @CurrentUser() user: any,
+    @Body() body: { name: string; description?: string; permissions?: (string | { module: string; action: string })[] },
+  ) {
+    return this.authService.createRole(user.customerId, body, user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles/:id')
+  @ApiOperation({ summary: 'Get single role details by ID' })
+  async getRoleById(@Param('id') id: string) {
+    return this.authService.getRoleById(Number(id));
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Put('roles/:id')
+  @ApiOperation({ summary: 'Update role details' })
+  async updateRole(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() body: { name?: string; description?: string },
+  ) {
+    return this.authService.updateRole(Number(id), body, user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Delete('roles/:id')
+  @ApiOperation({ summary: 'Deactivate / delete a custom role' })
+  async deleteRole(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.authService.deleteRole(Number(id), user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @Get('permissions')
   @ApiOperation({ summary: 'Get all available permissions' })
   async getAllPermissions() {
@@ -227,9 +266,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Update permissions for a specific role' })
   async updateRolePermissions(
     @Param('id') id: string,
-    @Body() body: { permissions: { module: string; action: string }[] },
+    @CurrentUser() user: any,
+    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[] },
   ) {
-    return this.authService.updateRolePermissions(Number(id), body.permissions || []);
+    return this.authService.updateRolePermissions(Number(id), body.permissions || [], user);
   }
 }
+
 

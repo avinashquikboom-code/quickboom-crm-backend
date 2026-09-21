@@ -204,7 +204,8 @@ describe('RBAC & Module Permission System', () => {
 
       const result = await authService.resolveUserEffectivePermissions(15, mockUserWithDefaultRole);
       expect(result.effectivePermissions.LEADS.view).toBe(true);
-      expect(result.effectivePermissions.ATTENDANCE.view).toBe(false);
+      expect(result.effectivePermissions.CALENDAR.view).toBe(false);
+      expect(result.effectivePermissions.MY_WORK.view).toBe(false);
     });
   });
 });

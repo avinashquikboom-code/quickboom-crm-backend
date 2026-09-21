@@ -34,6 +34,8 @@ import {
   ALL_STANDARD_MODULES,
   ROLE_PERMISSION_DEFAULTS,
   STANDARD_PERMISSIONS,
+  toPermissionKey,
+  fromPermissionKey,
 } from '../../common/constants/rbac.constants';
 
 @Injectable()
@@ -2346,6 +2348,7 @@ export class AuthService {
     profileData.role = rbacData.role || userRole;
     profileData.permissions = rbacData.permissions;
     profileData.effectivePermissions = rbacData.effectivePermissions;
+    profileData.permissionKeys = rbacData.permissionKeys;
 
     return profileData;
   }
@@ -2536,11 +2539,14 @@ export class AuthService {
       specificRoleName = candidate.toUpperCase().replace(/\s+/g, '_');
     }
 
+    const permissionKeys = permissions.map((p) => toPermissionKey(p.module, p.action));
+
     return {
       role: specificRoleName,
       roles: [specificRoleName],
       permissions,
       effectivePermissions,
+      permissionKeys,
     };
   }
 
@@ -2560,6 +2566,7 @@ export class AuthService {
           },
         },
       },
+      orderBy: { id: 'asc' },
     });
 
     return roles.map((r) => ({
@@ -2573,15 +2580,239 @@ export class AuthService {
       permissions: (r.rolePermissions || []).map((rp) => ({
         module: rp.permission.module,
         action: rp.permission.action,
+        key: toPermissionKey(rp.permission.module, rp.permission.action),
         description: rp.permission.description,
       })),
     }));
   }
 
+  async getRoleById(roleId: number) {
+    const role = await this.prisma.role.findFirst({
+      where: { id: Number(roleId), deletedAt: null },
+      include: {
+        _count: { select: { rolePermissions: true, userRoles: true } },
+        rolePermissions: { include: { permission: true } },
+      },
+    });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
+    }
+    return {
+      id: String(role.id),
+      name: role.name,
+      type: role.type,
+      description: role.description || '',
+      permissionsCount: role.rolePermissions?.length || 0,
+      usersCount: role._count.userRoles || 0,
+      isSystem: role.type === RoleType.SUPER_ADMIN || !role.customerId,
+      permissions: (role.rolePermissions || []).map((rp) => ({
+        module: rp.permission.module,
+        action: rp.permission.action,
+        key: toPermissionKey(rp.permission.module, rp.permission.action),
+        description: rp.permission.description,
+      })),
+    };
+  }
+
+  async createRole(
+    customerId: number | null,
+    data: { name: string; description?: string; permissions?: (string | { module: string; action: string })[] },
+    adminUser?: any,
+  ) {
+    const trimmedName = data.name.trim();
+    if (!trimmedName) {
+      throw new BadRequestException('Role name is required');
+    }
+
+    // Check for existing active role
+    const existing = await this.prisma.role.findFirst({
+      where: {
+        name: { equals: trimmedName, mode: 'insensitive' },
+        customerId: customerId ?? undefined,
+        deletedAt: null,
+      },
+    });
+    if (existing) {
+      throw new BadRequestException(`Role "${trimmedName}" already exists`);
+    }
+
+    const newRole = await this.prisma.role.create({
+      data: {
+        customerId: customerId || null,
+        name: trimmedName,
+        description: data.description?.trim() || null,
+        type: RoleType.CUSTOM,
+      },
+    });
+
+    // Assign initial permissions if provided
+    if (data.permissions && data.permissions.length > 0) {
+      await this.updateRolePermissions(newRole.id, data.permissions, adminUser);
+    }
+
+    // Log to AuditLog
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: customerId || adminUser?.customerId || null,
+          userId: adminUser?.id || adminUser?.userId || null,
+          userName: adminUser?.firstName ? `${adminUser.firstName} ${adminUser.lastName || ''}`.trim() : adminUser?.email,
+          userRole: adminUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'CREATE',
+          module: 'Settings',
+          description: `Created new role "${newRole.name}"`,
+          entityType: 'Role',
+          entityId: String(newRole.id),
+          details: { roleName: newRole.name, description: newRole.description },
+        },
+      });
+    } catch (auditErr) {
+      this.logger.warn(`Failed to create audit log for createRole: ${auditErr}`);
+    }
+
+    return this.getRoleById(newRole.id);
+  }
+
+  async updateRole(
+    roleId: number,
+    data: { name?: string; description?: string },
+    adminUser?: any,
+  ) {
+    const role = await this.prisma.role.findFirst({
+      where: { id: Number(roleId), deletedAt: null },
+    });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
+    }
+
+    const updateData: any = {};
+    if (data.name !== undefined) {
+      const trimmed = data.name.trim();
+      if (!trimmed) throw new BadRequestException('Role name cannot be empty');
+      updateData.name = trimmed;
+    }
+    if (data.description !== undefined) {
+      updateData.description = data.description.trim();
+    }
+
+    const updated = await this.prisma.role.update({
+      where: { id: role.id },
+      data: updateData,
+    });
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: role.customerId || adminUser?.customerId || null,
+          userId: adminUser?.id || adminUser?.userId || null,
+          userName: adminUser?.firstName ? `${adminUser.firstName} ${adminUser.lastName || ''}`.trim() : adminUser?.email,
+          userRole: adminUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'UPDATE',
+          module: 'Settings',
+          description: `Updated role "${updated.name}" details`,
+          entityType: 'Role',
+          entityId: String(updated.id),
+          details: { old: { name: role.name, description: role.description }, updated: updateData },
+        },
+      });
+    } catch (auditErr) {
+      this.logger.warn(`Failed to create audit log for updateRole: ${auditErr}`);
+    }
+
+    return this.getRoleById(updated.id);
+  }
+
+  async deleteRole(roleId: number, adminUser?: any) {
+    const role = await this.prisma.role.findFirst({
+      where: { id: Number(roleId), deletedAt: null },
+      include: {
+        _count: { select: { userRoles: true } },
+      },
+    });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
+    }
+
+    if (role.type === RoleType.SUPER_ADMIN || role.name.toUpperCase() === 'SUPER_ADMIN') {
+      throw new BadRequestException('Cannot delete system SUPER_ADMIN role');
+    }
+
+    if (role._count.userRoles > 0) {
+      throw new BadRequestException(
+        `Cannot delete role "${role.name}" because it is currently assigned to ${role._count.userRoles} user(s). Reassign them first.`,
+      );
+    }
+
+    await this.prisma.role.update({
+      where: { id: role.id },
+      data: { deletedAt: new Date() },
+    });
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: role.customerId || adminUser?.customerId || null,
+          userId: adminUser?.id || adminUser?.userId || null,
+          userName: adminUser?.firstName ? `${adminUser.firstName} ${adminUser.lastName || ''}`.trim() : adminUser?.email,
+          userRole: adminUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'DELETE',
+          module: 'Settings',
+          description: `Deactivated role "${role.name}"`,
+          entityType: 'Role',
+          entityId: String(role.id),
+          details: { roleName: role.name },
+        },
+      });
+    } catch (auditErr) {
+      this.logger.warn(`Failed to create audit log for deleteRole: ${auditErr}`);
+    }
+
+    return { success: true, message: `Role "${role.name}" deactivated successfully` };
+  }
+
   async getAllPermissions() {
-    return this.prisma.permission.findMany({
+    // Return standard catalog combined with any custom database permissions
+    const dbPerms = await this.prisma.permission.findMany({
       orderBy: [{ module: 'asc' }, { action: 'asc' }],
     });
+
+    const catalogMap = new Map<string, any>();
+    // Seed with official standard permission catalog definitions
+    for (const p of STANDARD_PERMISSIONS) {
+      catalogMap.set(`${p.module}:${p.action}`, {
+        id: undefined,
+        module: p.module,
+        action: p.action,
+        key: p.key,
+        label: p.label,
+        category: p.category,
+        description: p.description,
+      });
+    }
+
+    // Merge database IDs and descriptions
+    for (const dbP of dbPerms) {
+      const k = `${dbP.module.toUpperCase()}:${dbP.action.toUpperCase()}`;
+      const existing = catalogMap.get(k);
+      if (existing) {
+        existing.id = dbP.id;
+      } else {
+        catalogMap.set(k, {
+          id: dbP.id,
+          module: dbP.module,
+          action: dbP.action,
+          key: toPermissionKey(dbP.module, dbP.action),
+          label: `${dbP.action} ${dbP.module}`,
+          category: 'CRM',
+          description: dbP.description || '',
+        });
+      }
+    }
+
+    return Array.from(catalogMap.values());
   }
 
   async getRolePermissions(roleId: number) {
@@ -2602,41 +2833,95 @@ export class AuthService {
       permissions: role.rolePermissions.map((rp) => ({
         module: rp.permission.module,
         action: rp.permission.action,
+        key: toPermissionKey(rp.permission.module, rp.permission.action),
         description: rp.permission.description,
       })),
+      permissionKeys: role.rolePermissions.map((rp) =>
+        toPermissionKey(rp.permission.module, rp.permission.action),
+      ),
     };
   }
 
   async updateRolePermissions(
     roleId: number,
-    permissions: { module: string; action: string }[],
+    permissions: (string | { module?: string; action?: string; key?: string })[],
+    adminUser?: any,
   ) {
     const role = await this.prisma.role.findUnique({
       where: { id: Number(roleId) },
+      include: {
+        rolePermissions: {
+          include: { permission: true },
+        },
+      },
     });
     if (!role) {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
 
+    // Normalize incoming permissions (supports dot keys, uppercase colon strings, and objects)
+    const normalizedList: { module: string; action: string }[] = [];
+    const seen = new Set<string>();
+
+    for (const item of permissions) {
+      let m = '';
+      let a = '';
+      if (typeof item === 'string') {
+        const parsed = fromPermissionKey(item);
+        m = parsed.module;
+        a = parsed.action;
+      } else if (item && typeof item === 'object') {
+        if (item.key) {
+          const parsed = fromPermissionKey(item.key);
+          m = parsed.module;
+          a = parsed.action;
+        } else if (item.module && item.action) {
+          m = item.module.trim().toUpperCase();
+          a = item.action.trim().toUpperCase();
+        }
+      }
+
+      if (m && a) {
+        const uniqueKey = `${m}:${a}`;
+        if (!seen.has(uniqueKey)) {
+          seen.add(uniqueKey);
+          normalizedList.push({ module: m, action: a });
+        }
+      }
+    }
+
+    const previousKeys = role.rolePermissions.map((rp) =>
+      toPermissionKey(rp.permission.module, rp.permission.action),
+    );
+    const newKeys = normalizedList.map((p) => toPermissionKey(p.module, p.action));
+
+    const added = newKeys.filter((k) => !previousKeys.includes(k));
+    const removed = previousKeys.filter((k) => !newKeys.includes(k));
+
+    // Clear existing permissions for this role
     await this.prisma.rolePermission.deleteMany({
       where: { roleId: role.id },
     });
 
-    for (const p of permissions) {
+    // Ensure permission records exist and link them
+    for (const p of normalizedList) {
       let permRecord = await this.prisma.permission.findUnique({
         where: {
           module_action: {
-            module: p.module.toUpperCase(),
-            action: p.action.toUpperCase(),
+            module: p.module,
+            action: p.action,
           },
         },
       });
       if (!permRecord) {
+        const standardMatch = STANDARD_PERMISSIONS.find(
+          (sp) => sp.module === p.module && sp.action === p.action,
+        );
         permRecord = await this.prisma.permission.create({
           data: {
-            module: p.module.toUpperCase(),
-            action: p.action.toUpperCase(),
-            description: `${p.action} permission for ${p.module}`,
+            module: p.module,
+            action: p.action,
+            description: standardMatch?.description || `${p.action} permission for ${p.module}`,
           },
         });
       }
@@ -2648,6 +2933,33 @@ export class AuthService {
           },
         });
       }
+    }
+
+    // Audit Log recording
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: role.customerId || adminUser?.customerId || null,
+          userId: adminUser?.id || adminUser?.userId || null,
+          userName: adminUser?.firstName ? `${adminUser.firstName} ${adminUser.lastName || ''}`.trim() : adminUser?.email,
+          userRole: adminUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'UPDATE',
+          module: 'Settings',
+          description: `Updated permissions for role "${role.name}" (added: ${added.length}, removed: ${removed.length})`,
+          entityType: 'RolePermission',
+          entityId: String(role.id),
+          details: {
+            roleId: role.id,
+            roleName: role.name,
+            added,
+            removed,
+            totalAssigned: newKeys.length,
+          },
+        },
+      });
+    } catch (auditErr) {
+      this.logger.warn(`Failed to log audit for updateRolePermissions: ${auditErr}`);
     }
 
     return this.getRolePermissions(role.id);
