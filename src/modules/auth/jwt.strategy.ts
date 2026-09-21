@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
+import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -200,6 +201,36 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         });
       }
     });
+
+    if (permissionsMap.size === 0) {
+      if (isSuperAdmin || isCustomerAdmin || isCompanyAdmin) {
+        STANDARD_PERMISSIONS.forEach((p) => {
+          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+        });
+      } else {
+        const roleCandidates = [
+          ...(user.userRoles || []).map((ur: any) => ur.role?.name),
+          (user.employee as any)?.designation?.name,
+        ].filter(Boolean);
+
+        for (const candidate of roleCandidates) {
+          const upper = String(candidate).toUpperCase().replace(/\s+/g, '_');
+          let matched: string | null = null;
+          if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
+          else if (upper.includes('TELECALL') || upper.includes('TELESALES')) matched = 'TELECALLER';
+          else if (upper.includes('SALES')) matched = 'SALES_EXECUTIVE';
+          else if (upper.includes('HR')) matched = 'HR';
+          else if (upper.includes('MANAGER')) matched = 'MANAGER';
+          else if (upper.includes('EMPLOYEE')) matched = 'EMPLOYEE';
+
+          if (matched && ROLE_PERMISSION_DEFAULTS[matched]) {
+            ROLE_PERMISSION_DEFAULTS[matched].forEach((p) => {
+              permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+            });
+          }
+        }
+      }
+    }
 
     const isEmployee =
       !isSuperAdmin &&

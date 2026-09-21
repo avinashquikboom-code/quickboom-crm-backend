@@ -26,21 +26,40 @@ export class PermissionsGuard implements CanActivate {
       ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
       : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);
 
-    if (userRoles.includes('SUPER_ADMIN') || userRoles.includes('CUSTOMER_ADMIN')) {
+    if (
+      userRoles.some((r: string) =>
+        ['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(r),
+      )
+    ) {
       return true;
     }
 
-    const userPermissions = user.permissions || [];
+    const userPermissions: { module?: string; action?: string }[] = user.permissions || [];
     const hasPermission = requiredPermissions.every((reqPerm) =>
       userPermissions.some(
         (userPerm) =>
-          userPerm.module === reqPerm.module &&
-          (userPerm.action === reqPerm.action || userPerm.action === 'MANAGE'),
+          userPerm.module?.toUpperCase() === reqPerm.module?.toUpperCase() &&
+          (userPerm.action?.toUpperCase() === reqPerm.action?.toUpperCase() ||
+            userPerm.action?.toUpperCase() === 'MANAGE' ||
+            userPerm.action?.toUpperCase() === 'ALL'),
       ),
     );
 
     if (!hasPermission) {
-      throw new ForbiddenException('Insufficient fine-grained permissions');
+      const missing = requiredPermissions
+        .filter(
+          (reqPerm) =>
+            !userPermissions.some(
+              (userPerm) =>
+                userPerm.module?.toUpperCase() === reqPerm.module?.toUpperCase() &&
+                (userPerm.action?.toUpperCase() === reqPerm.action?.toUpperCase() ||
+                  userPerm.action?.toUpperCase() === 'MANAGE' ||
+                  userPerm.action?.toUpperCase() === 'ALL'),
+            ),
+        )
+        .map((p) => `${p.module}:${p.action}`)
+        .join(', ');
+      throw new ForbiddenException(`Access denied: Missing required permission [${missing}]`);
     }
 
     return true;

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -204,4 +204,32 @@ export class AuthController {
   async getRoles(@CurrentUser() user: any) {
     return this.authService.getRoles(user.customerId);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('permissions')
+  @ApiOperation({ summary: 'Get all available permissions' })
+  async getAllPermissions() {
+    return this.authService.getAllPermissions();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles/:id/permissions')
+  @ApiOperation({ summary: 'Get permissions for a specific role' })
+  async getRolePermissions(@Param('id') id: string) {
+    return this.authService.getRolePermissions(Number(id));
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Put('roles/:id/permissions')
+  @ApiOperation({ summary: 'Update permissions for a specific role' })
+  async updateRolePermissions(
+    @Param('id') id: string,
+    @Body() body: { permissions: { module: string; action: string }[] },
+  ) {
+    return this.authService.updateRolePermissions(Number(id), body.permissions || []);
+  }
 }
+

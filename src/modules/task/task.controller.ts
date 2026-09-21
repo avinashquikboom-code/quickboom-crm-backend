@@ -20,23 +20,27 @@ import {
 } from './dto/task.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Employee Tasks')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('tasks')
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
 
   @Get('metrics')
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get summary metrics for HR tasks' })
   async getMetrics(@CurrentCustomer() customerId: string) {
     return this.taskService.getMetrics(customerId);
   }
 
   @Post()
+  @RequirePermissions({ module: 'TASKS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create and allocate a new task to employee' })
   async create(
     @CurrentCustomer() customerId: string,
@@ -47,6 +51,7 @@ export class TaskController {
   }
 
   @Get()
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get paginated/filtered list of tasks' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -83,12 +88,14 @@ export class TaskController {
   }
 
   @Get(':id')
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get task details with proof, review, and history' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.findOne(customerId, id);
   }
 
   @Patch(':id')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update task parameters' })
   async update(
     @CurrentCustomer() customerId: string,
@@ -99,6 +106,7 @@ export class TaskController {
   }
 
   @Post(':id/reallocate')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Reallocate task to another employee' })
   async reallocate(
     @CurrentCustomer() customerId: string,
@@ -110,6 +118,7 @@ export class TaskController {
   }
 
   @Post(':id/start')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Employee starts working on task' })
   async startTask(
     @CurrentCustomer() customerId: string,
@@ -120,6 +129,7 @@ export class TaskController {
   }
 
   @Post(':id/proof')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Submit mandatory photo proof for task completion' })
   async submitProof(
     @CurrentCustomer() customerId: string,
@@ -131,6 +141,7 @@ export class TaskController {
   }
 
   @Post(':id/approve')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'HR approves task completion proof' })
   async approveTask(
     @CurrentCustomer() customerId: string,
@@ -142,6 +153,7 @@ export class TaskController {
   }
 
   @Post(':id/reject')
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'HR rejects task completion proof with reason' })
   async rejectTask(
     @CurrentCustomer() customerId: string,
@@ -153,12 +165,14 @@ export class TaskController {
   }
 
   @Get(':id/history')
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get audit history for a task' })
   async getHistory(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.getHistory(customerId, id);
   }
 
   @Delete(':id')
+  @RequirePermissions({ module: 'TASKS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete task' })
   async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.delete(customerId, id);

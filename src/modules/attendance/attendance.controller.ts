@@ -11,17 +11,20 @@ import { AttendanceService } from './attendance.service';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Attendance')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('attendance')
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   @Get('me')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get current employee attendance status and assigned office geofence' })
   async getMyStatus(
     @CurrentUser() user: any,
@@ -31,6 +34,7 @@ export class AttendanceController {
   }
 
   @Get('today')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get today attendance summary for authenticated employee' })
   async getToday(
     @CurrentUser() user: any,
@@ -40,6 +44,7 @@ export class AttendanceController {
   }
 
   @Get('history')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get paginated attendance history for authenticated employee' })
   async getHistory(
     @CurrentUser() user: any,
@@ -50,6 +55,7 @@ export class AttendanceController {
   }
 
   @Post('check-in')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'Employee Check-In with mandatory GPS Geo-fence verification' })
   async checkIn(
     @CurrentUser() user: any,
@@ -60,6 +66,7 @@ export class AttendanceController {
   }
 
   @Post('punch-in')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'Alias for Check-In' })
   async punchIn(
     @CurrentUser() user: any,
@@ -70,6 +77,7 @@ export class AttendanceController {
   }
 
   @Post('check-out')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'Employee Check-Out with GPS verification' })
   async checkOut(
     @CurrentUser() user: any,
@@ -80,6 +88,7 @@ export class AttendanceController {
   }
 
   @Post('punch-out')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'Alias for Check-Out' })
   async punchOut(
     @CurrentUser() user: any,
@@ -90,6 +99,7 @@ export class AttendanceController {
   }
 
   @Post('break/start')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'Start Employee Break' })
   async startBreak(
     @CurrentUser() user: any,
@@ -100,6 +110,7 @@ export class AttendanceController {
   }
 
   @Post('break/end')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
   @ApiOperation({ summary: 'End Employee Break' })
   async endBreak(
     @CurrentUser() user: any,
@@ -109,3 +120,4 @@ export class AttendanceController {
     return this.attendanceService.endBreak(user, customerId, dto);
   }
 }
+

@@ -27,13 +27,15 @@ import {
 } from './dto/policy.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Leaves & Workforce Availability')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('leaves')
 export class LeaveController {
   constructor(private readonly leaveService: LeaveService) {}
@@ -145,6 +147,7 @@ export class LeaveController {
   // 2. LEAVE REQUESTS
   // =========================================================
   @Get('requests')
+  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get filtered leave applications' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'status', required: false })
@@ -176,6 +179,7 @@ export class LeaveController {
   }
 
   @Get()
+  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for getLeaveRequests' })
   async getLeavesAlias(
     @CurrentUser() user: any,
@@ -190,6 +194,7 @@ export class LeaveController {
   }
 
   @Get('requests/:id')
+  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single leave request details' })
   async getLeaveRequestById(
     @CurrentUser() user: any,
@@ -203,6 +208,7 @@ export class LeaveController {
   }
 
   @Post('requests')
+  @RequirePermissions({ module: 'LEAVE', action: 'CREATE' })
   @ApiOperation({ summary: 'Submit new leave application' })
   async createLeave(
     @CurrentUser() user: any,
@@ -216,6 +222,7 @@ export class LeaveController {
   }
 
   @Post()
+  @RequirePermissions({ module: 'LEAVE', action: 'CREATE' })
   @ApiOperation({ summary: 'Alias for createLeave' })
   async createLeaveAlias(
     @CurrentUser() user: any,
@@ -227,6 +234,7 @@ export class LeaveController {
   }
 
   @Patch('requests/:id/approve')
+  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Approve a pending leave application' })
   async approveLeave(
     @CurrentUser() user: any,
@@ -240,6 +248,7 @@ export class LeaveController {
   }
 
   @Patch(':id/approve')
+  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Alias for approveLeave' })
   async approveLeaveAlias(
     @CurrentUser() user: any,
@@ -251,6 +260,7 @@ export class LeaveController {
   }
 
   @Patch('requests/:id/reject')
+  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Reject a leave application with reason' })
   async rejectLeave(
     @CurrentUser() user: any,
@@ -265,6 +275,7 @@ export class LeaveController {
   }
 
   @Patch(':id/reject')
+  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Alias for rejectLeave' })
   async rejectLeaveAlias(
     @CurrentUser() user: any,

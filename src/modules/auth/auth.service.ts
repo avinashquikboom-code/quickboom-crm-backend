@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  NotFoundException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -29,6 +30,11 @@ import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
+import {
+  ALL_STANDARD_MODULES,
+  ROLE_PERMISSION_DEFAULTS,
+  STANDARD_PERMISSIONS,
+} from '../../common/constants/rbac.constants';
 
 @Injectable()
 export class AuthService {
@@ -1388,6 +1394,12 @@ export class AuthService {
       userData.employee = employeeData;
     }
 
+    const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
+    userData.role = userRole;
+    userData.effectiveRole = rbacData.role || userRole;
+    userData.permissions = rbacData.permissions;
+    userData.effectivePermissions = rbacData.effectivePermissions;
+
     return {
       success: true,
       data: {
@@ -1936,6 +1948,11 @@ export class AuthService {
       userData.employee = employeeData;
     }
 
+    const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
+    userData.role = rbacData.role || userRole;
+    userData.permissions = rbacData.permissions;
+    userData.effectivePermissions = rbacData.effectivePermissions;
+
     return {
       statusCode: 200,
       success: true,
@@ -2207,6 +2224,11 @@ export class AuthService {
       userData.employee = employeeData;
     }
 
+    const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
+    userData.role = rbacData.role || userRole;
+    userData.permissions = rbacData.permissions;
+    userData.effectivePermissions = rbacData.effectivePermissions;
+
     return {
       statusCode: 200,
       success: true,
@@ -2320,7 +2342,170 @@ export class AuthService {
       profileData.employeeCode = qbCode;
     }
 
+    const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
+    profileData.role = rbacData.role || userRole;
+    profileData.permissions = rbacData.permissions;
+    profileData.effectivePermissions = rbacData.effectivePermissions;
+
     return profileData;
+  }
+
+  async resolveUserEffectivePermissions(userId: number, preloadedUser?: any) {
+    const user =
+      preloadedUser?.userRoles?.[0]?.role?.rolePermissions !== undefined
+        ? preloadedUser
+        : await this.prisma.user.findUnique({
+            where: { id: Number(userId) },
+            include: {
+              customer: true,
+              employee: {
+                include: {
+                  department: true,
+                  designation: true,
+                },
+              },
+              userRoles: {
+                include: {
+                  role: {
+                    include: {
+                      rolePermissions: {
+                        include: {
+                          permission: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+    if (!user) {
+      return {
+        role: 'CUSTOMER',
+        permissions: [],
+        effectivePermissions: {},
+      };
+    }
+
+    const isSuperAdmin = user.userRoles?.some((ur: any) => {
+      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
+    });
+
+    const isCustomerAdmin =
+      !isSuperAdmin &&
+      user.userRoles?.some((ur: any) => {
+        const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
+        const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
+        return (
+          type === RoleType.CUSTOMER_ADMIN ||
+          type === RoleType.TENANT_ADMIN ||
+          name.includes('CUSTOMERADMIN') ||
+          name.includes('COMPANYADMIN')
+        );
+      });
+
+    const permissionsMap = new Map<string, { module: string; action: string }>();
+
+    if (isSuperAdmin || isCustomerAdmin) {
+      STANDARD_PERMISSIONS.forEach((p) => {
+        permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+      });
+    } else {
+      let hasDbPermissions = false;
+      const roleNames: string[] = [];
+
+      (user.userRoles || []).forEach((ur: any) => {
+        if (ur.role) {
+          roleNames.push(ur.role.name);
+          if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
+            hasDbPermissions = true;
+            ur.role.rolePermissions.forEach((rp: any) => {
+              if (rp.permission) {
+                permissionsMap.set(
+                  `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`,
+                  {
+                    module: rp.permission.module.toUpperCase(),
+                    action: rp.permission.action.toUpperCase(),
+                  },
+                );
+              }
+            });
+          }
+        }
+      });
+
+      const desigName = user.employee?.designation?.name?.trim();
+      if (desigName) {
+        roleNames.push(desigName);
+      }
+
+      if (!hasDbPermissions) {
+        for (const rName of roleNames) {
+          const upper = rName.toUpperCase().replace(/\s+/g, '_');
+          let matchedKey: string | null = null;
+          if (ROLE_PERMISSION_DEFAULTS[upper]) {
+            matchedKey = upper;
+          } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+            matchedKey = 'TELECALLER';
+          } else if (upper.includes('SALES')) {
+            matchedKey = 'SALES_EXECUTIVE';
+          } else if (upper.includes('HR')) {
+            matchedKey = 'HR';
+          } else if (upper.includes('MANAGER')) {
+            matchedKey = 'MANAGER';
+          } else if (upper.includes('EMPLOYEE')) {
+            matchedKey = 'EMPLOYEE';
+          }
+
+          if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
+            ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
+              permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+            });
+          }
+        }
+      }
+    }
+
+    const permissions = Array.from(permissionsMap.values());
+
+    const effectivePermissions: Record<
+      string,
+      { view: boolean; create: boolean; edit: boolean; delete: boolean }
+    > = {};
+    ALL_STANDARD_MODULES.forEach((mod) => {
+      effectivePermissions[mod] = {
+        view: permissionsMap.has(`${mod}:VIEW`),
+        create: permissionsMap.has(`${mod}:CREATE`),
+        edit: permissionsMap.has(`${mod}:EDIT`),
+        delete: permissionsMap.has(`${mod}:DELETE`),
+      };
+    });
+
+    let specificRoleName = 'EMPLOYEE';
+    if (isSuperAdmin) {
+      specificRoleName = 'SUPER_ADMIN';
+    } else if (isCustomerAdmin) {
+      specificRoleName = 'COMPANY_ADMIN';
+    } else {
+      const candidate =
+        (user.userRoles || []).find(
+          (ur: any) =>
+            ur.role?.name &&
+            !['SUPER_ADMIN', 'COMPANY_ADMIN', 'CUSTOMER'].includes(ur.role.name.toUpperCase()),
+        )?.role?.name ||
+        user.employee?.designation?.name ||
+        'EMPLOYEE';
+      specificRoleName = candidate.toUpperCase().replace(/\s+/g, '_');
+    }
+
+    return {
+      role: specificRoleName,
+      permissions,
+      effectivePermissions,
+    };
   }
 
   async getRoles(customerId?: number) {
@@ -2333,6 +2518,11 @@ export class AuthService {
             userRoles: true,
           },
         },
+        rolePermissions: {
+          include: {
+            permission: true,
+          },
+        },
       },
     });
 
@@ -2341,10 +2531,81 @@ export class AuthService {
       name: r.name,
       type: r.type,
       description: r.description || 'System role for CRM/HRM access',
-      permissionsCount: r._count.rolePermissions || 24,
+      permissionsCount: r.rolePermissions?.length || r._count.rolePermissions || 0,
       usersCount: r._count.userRoles || 0,
       isSystem: r.type === RoleType.SUPER_ADMIN || !r.customerId,
+      permissions: (r.rolePermissions || []).map((rp) => ({
+        module: rp.permission.module,
+        action: rp.permission.action,
+        description: rp.permission.description,
+      })),
     }));
+  }
+
+  async getAllPermissions() {
+    return this.prisma.permission.findMany({
+      orderBy: [{ module: 'asc' }, { action: 'asc' }],
+    });
+  }
+
+  async getRolePermissions(roleId: number) {
+    const role = await this.prisma.role.findUnique({
+      where: { id: Number(roleId) },
+      include: {
+        rolePermissions: {
+          include: { permission: true },
+        },
+      },
+    });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
+    }
+    return {
+      roleId: role.id,
+      roleName: role.name,
+      permissions: role.rolePermissions.map((rp) => ({
+        module: rp.permission.module,
+        action: rp.permission.action,
+        description: rp.permission.description,
+      })),
+    };
+  }
+
+  async updateRolePermissions(
+    roleId: number,
+    permissions: { module: string; action: string }[],
+  ) {
+    const role = await this.prisma.role.findUnique({
+      where: { id: Number(roleId) },
+    });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
+    }
+
+    await this.prisma.rolePermission.deleteMany({
+      where: { roleId: role.id },
+    });
+
+    for (const p of permissions) {
+      const permRecord = await this.prisma.permission.findUnique({
+        where: {
+          module_action: {
+            module: p.module.toUpperCase(),
+            action: p.action.toUpperCase(),
+          },
+        },
+      });
+      if (permRecord) {
+        await this.prisma.rolePermission.create({
+          data: {
+            roleId: role.id,
+            permissionId: permRecord.id,
+          },
+        });
+      }
+    }
+
+    return this.getRolePermissions(role.id);
   }
 
   private async generateTokens(

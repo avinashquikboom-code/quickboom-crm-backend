@@ -32,17 +32,20 @@ import {
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('leads')
 export class LeadController {
   constructor(private readonly leadService: LeadService) {}
 
   @Post()
+  @RequirePermissions({ module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create a new CRM lead' })
   async create(
     @CurrentCustomer() customerId: string,
@@ -120,6 +123,7 @@ export class LeadController {
   }
 
   @Get()
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get paginated list of leads' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -152,6 +156,7 @@ export class LeadController {
   }
 
   @Post(':id/convert')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Convert lead to customer account' })
   async convert(
     @CurrentCustomer() customerId: string,
@@ -163,31 +168,35 @@ export class LeadController {
   }
 
   @Get(['whatsapp-templates', 'whatsapp/templates'])
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all available WhatsApp templates for leads' })
   async getWhatsAppTemplates() {
     return this.leadService.getWhatsAppTemplates();
   }
 
   @Get(':id/status')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead status and stage details by ID' })
   async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.getLeadStatus(customerId, id);
   }
 
   @Get(':id/communications')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get unified Email and WhatsApp communication history and delivery tracking' })
   async getCommunications(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.getLeadCommunications(customerId, id);
   }
 
   @Get(':id')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.getLeadById(customerId, id);
   }
 
-
   @Patch(':id')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update lead details' })
   async update(
     @CurrentCustomer() customerId: string,
@@ -199,6 +208,7 @@ export class LeadController {
   }
 
   @Patch(':id/status')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update lead stage status with history audit' })
   async updateStatus(
     @CurrentCustomer() customerId: string,
@@ -210,12 +220,14 @@ export class LeadController {
   }
 
   @Delete(':id')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete lead' })
   async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.deleteLead(customerId, id);
   }
 
   @Post(':id/notes')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Add note to lead' })
   async addNote(
     @CurrentCustomer() customerId: string,
@@ -227,6 +239,7 @@ export class LeadController {
   }
 
   @Post(':id/follow-ups')
+  @RequirePermissions({ module: 'FOLLOW_UP', action: 'CREATE' })
   @ApiOperation({ summary: 'Log follow-up call outcome, next follow up, and update status to FOLLOW_UP' })
   async logFollowUp(
     @CurrentCustomer() customerId: string,
@@ -238,6 +251,7 @@ export class LeadController {
   }
 
   @Post(':id/visits')
+  @RequirePermissions({ module: 'VISITS', action: 'CREATE' })
   @ApiOperation({ summary: 'Manage field visit: schedule, start (GPS), or complete' })
   async manageVisit(
     @CurrentCustomer() customerId: string,

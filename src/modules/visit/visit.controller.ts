@@ -15,17 +15,20 @@ import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Client Visits')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('visits')
 export class VisitController {
   constructor(private readonly visitService: VisitService) {}
 
   @Get('metrics')
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get summary metrics for client visits' })
   async getMetrics(
     @CurrentCustomer() customerId: number | string | undefined,
@@ -35,6 +38,7 @@ export class VisitController {
   }
 
   @Get()
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all client visits' })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'page', required: false })
@@ -65,6 +69,7 @@ export class VisitController {
   }
 
   @Get(':id')
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single client visit with CRM relations' })
   async findOne(
     @Param('id') id: string,
@@ -74,6 +79,7 @@ export class VisitController {
   }
 
   @Post()
+  @RequirePermissions({ module: 'VISITS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create / schedule client visit' })
   async create(
     @Body() dto: CreateVisitDto,
@@ -83,6 +89,7 @@ export class VisitController {
   }
 
   @Patch(':id')
+  @RequirePermissions({ module: 'VISITS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update visit details or completion status' })
   async update(
     @Param('id') id: string,
@@ -93,6 +100,7 @@ export class VisitController {
   }
 
   @Delete(':id')
+  @RequirePermissions({ module: 'VISITS', action: 'DELETE' })
   @ApiOperation({ summary: 'Cancel client visit' })
   async remove(
     @Param('id') id: string,

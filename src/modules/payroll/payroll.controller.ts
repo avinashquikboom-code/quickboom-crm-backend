@@ -5,11 +5,13 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('HRM - Payroll')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('admin/payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
@@ -100,6 +102,7 @@ export class PayrollController {
   }
 
   @Get('slips')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slips list' })
   async findSlips(
     @CurrentUser() user: any,
@@ -124,6 +127,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slip by ID' })
   async findSlipById(
     @CurrentUser() user: any,
