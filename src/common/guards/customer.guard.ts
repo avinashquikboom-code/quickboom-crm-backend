@@ -151,7 +151,15 @@ authorization: ALLOWED (ADMIN)`);
         resolvedHeaderPk = authCustomerPk;
       }
       if (resolvedHeaderPk === undefined || resolvedHeaderPk !== authCustomerPk) {
-        throw new ForbiddenException('Cross-customer access forbidden');
+        const path = (request.originalUrl || request.url || '').toLowerCase();
+        if (path.includes('/employees/me') || path.includes('/employees/permissions/me')) {
+          this.logger.warn(
+            `[CustomerGuard] Ignoring mismatched header customerId (${headerStr}) for self employee route: ${path}`,
+          );
+          resolvedHeaderPk = authCustomerPk;
+        } else {
+          throw new ForbiddenException('Cross-customer access forbidden');
+        }
       }
     }
 
@@ -164,7 +172,15 @@ authorization: ALLOWED (ADMIN)`);
         resolvedQueryPk = authCustomerPk;
       }
       if (resolvedQueryPk === undefined || resolvedQueryPk !== authCustomerPk) {
-        throw new ForbiddenException('Cross-customer access forbidden');
+        const path = (request.originalUrl || request.url || '').toLowerCase();
+        if (path.includes('/employees/me') || path.includes('/employees/permissions/me')) {
+          this.logger.warn(
+            `[CustomerGuard] Ignoring mismatched query customerId (${queryStr}) for self employee route: ${path}`,
+          );
+          resolvedQueryPk = authCustomerPk;
+        } else {
+          throw new ForbiddenException('Cross-customer access forbidden');
+        }
       }
     }
 

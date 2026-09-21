@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EmployeeService } from './employee.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
+import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('EmployeeService — Customer Data Isolation', () => {
@@ -71,6 +72,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
           provide: PlanAccessService,
           useValue: {
             checkUserLimit: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: PlanScheduleGateway,
+          useValue: {
+            emitPlanUpdate: jest.fn(),
           },
         },
       ],
