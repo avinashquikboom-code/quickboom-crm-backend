@@ -166,6 +166,14 @@ export class AuthController {
   }
 
   @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout and terminate session' })
+  async logout() {
+    return { success: true, message: 'Logged out successfully' };
+  }
+
+  @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset OTP via email' })

@@ -75,4 +75,14 @@ export class MobileAuthController {
   ) {
     return this.authService.login(loginDto.email, loginDto.password, 'COMPANY_ADMIN');
   }
+
+  // ✅ LOGOUT
+  @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mobile user logout' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully' })
+  async logout() {
+    return { success: true, message: 'Logged out successfully' };
+  }
 }
