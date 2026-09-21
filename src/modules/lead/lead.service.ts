@@ -34,7 +34,12 @@ import {
   renderEmailTemplate,
   wrapInQuikboomEmailHtml,
 } from '../email/email-template.service';
-import { WhatsappService, STAGE_KEY_TO_WHATSAPP_KEY } from '../whatsapp/whatsapp.service';
+import {
+  WhatsappService,
+  STAGE_KEY_TO_WHATSAPP_KEY,
+  friendlyWhatsAppErrorMessage,
+  WHATSAPP_ERROR_CODES,
+} from '../whatsapp/whatsapp.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 function maskEmail(email: string): string {
@@ -2742,12 +2747,20 @@ Sent by ${senderOrgName} via CRM.
       `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${dto?.eventType === 'LEAD_CREATED' ? 'None' : (lead.stage?.name || 'N/A')}\nNew Stage: ${targetStageName}\nWhatsApp:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template && typeof template === 'object' ? template.templateName : stageKey}\nRecipient: ${maskPhone(phone)}\nProvider Status: ${result.success ? 'SUCCESS' : 'FAILED'}`
     );
 
+    const errorCode = result.errorCode || result.reason || (result.success ? undefined : 'UNKNOWN_ERROR');
+    const safeDetails = result.details || (errorCode ? friendlyWhatsAppErrorMessage(errorCode) : undefined);
+    const failureMessage = safeDetails
+      ? `WhatsApp message could not be sent: ${safeDetails}`
+      : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`;
+
     return {
       success: result.success,
       messageId: result.messageId,
+      errorCode: result.errorCode,
       message: result.success
         ? `WhatsApp message sent successfully to ${phone}`
-        : `WhatsApp message could not be sent: ${result.details || (String(result.reason || result.error) === '190' ? 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.' : (result.reason || result.error || 'Provider error'))}`,
+        : failureMessage,
+      details: safeDetails,
       skipped: result.skipped,
       reason: result.reason || result.error,
     };

@@ -282,7 +282,14 @@ export class IntegrationSettingsService {
 
       for (const [k, v] of Object.entries(rawCreds)) {
         if (typeof v === 'string' && v.startsWith('enc:v1:')) {
-          decryptedCreds[k] = decryptSecret(v);
+          const decrypted = decryptSecret(v);
+          if (!decrypted && v) {
+            this.logger.warn(
+              `[INTEGRATION_DECRYPT_WARN] Failed to decrypt credential field "${k}" for provider "${normProvider}". ` +
+              `This usually indicates ENCRYPTION_KEY or JWT_SECRET changed after the credential was stored.`,
+            );
+          }
+          decryptedCreds[k] = decrypted;
         } else {
           decryptedCreds[k] = v;
         }

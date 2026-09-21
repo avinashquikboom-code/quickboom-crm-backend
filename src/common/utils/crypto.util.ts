@@ -49,6 +49,9 @@ export function encryptSecret(plainText: string): string {
 /**
  * Decrypts AES-256-GCM encrypted string.
  * If input is not encrypted or format is unrecognized, returns input as fallback.
+ *
+ * IMPORTANT: If decryption fails (e.g. ENCRYPTION_KEY rotated since token was saved),
+ * returns "" and logs a safe warning — never exposes the ciphertext.
  */
 export function decryptSecret(cipherText: string): string {
   if (!cipherText || !cipherText.startsWith('enc:v1:')) {
@@ -81,8 +84,17 @@ export function decryptSecret(cipherText: string): string {
     ]);
 
     return decrypted.toString('utf8');
-  } catch (err) {
-    // If decryption fails, return empty or safe fallback
+  } catch (_err) {
+    // SAFE WARNING: Do NOT log the cipherText or any secret value.
+    // This fires when ENCRYPTION_KEY / JWT_SECRET changed after the credential was saved.
+    // Action: Verify ENCRYPTION_KEY in .env is unchanged, then re-save the affected integration.
+    const ivFingerprint = cipherText.length > 20 ? cipherText.substring(7, 13) : 'unknown';
+    console.warn(
+      `[CRYPTO_DECRYPT_FAILURE] AES-256-GCM decryption failed. ` +
+      `This usually means ENCRYPTION_KEY or JWT_SECRET changed after the credential was encrypted. ` +
+      `IV-prefix: ${ivFingerprint}... ` +
+      `Action: Re-save the affected integration in Admin → Settings → Integrations.`,
+    );
     return '';
   }
 }
