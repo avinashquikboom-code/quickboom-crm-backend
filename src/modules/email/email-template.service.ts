@@ -718,6 +718,8 @@ export const TELECALLER_STATUS_TO_TEMPLATE_KEY: Record<string, string> = {
   DEAL_LOST: 'QUIKBOOM_LOST',
 };
 
+export const LEAD_STATUS_EMAIL_TEMPLATES = TELECALLER_STATUS_TO_TEMPLATE_KEY;
+
 export interface RenderTemplateOptions {
   requiredVariables?: string[];
   safeFallbacks?: Record<string, string>;

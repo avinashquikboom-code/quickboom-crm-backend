@@ -1325,6 +1325,14 @@ export class LeadService {
           TELECALLER_STATUS_TO_TEMPLATE_KEY[targetStageKey],
           TELECALLER_STATUS_TO_TEMPLATE_KEY[normLeadStageKey],
           TELECALLER_STATUS_TO_TEMPLATE_KEY[normNewStage],
+          targetStageKey === 'WON' ? 'QUIKBOOM_DEAL_WON' : null,
+          targetStageKey === 'LOST' ? 'QUIKBOOM_DEAL_LOST' : null,
+          normNewStage === 'WON' ? 'QUIKBOOM_DEAL_WON' : null,
+          normNewStage === 'LOST' ? 'QUIKBOOM_DEAL_LOST' : null,
+          targetStageKey === 'WON' ? 'QUIKBOOM_WON' : null,
+          targetStageKey === 'LOST' ? 'QUIKBOOM_LOST' : null,
+          normNewStage === 'WON' ? 'QUIKBOOM_WON' : null,
+          normNewStage === 'LOST' ? 'QUIKBOOM_LOST' : null,
           `QUIKBOOM_${targetStageKey}`,
           `QUIKBOOM_${normLeadStageKey}`,
           `QUIKBOOM_${normNewStage}`,
@@ -1386,11 +1394,20 @@ export class LeadService {
       }
 
       if (template && template.isActive === false) {
-        template = null;
+        this.logger.warn(`[LeadEmailAutomation] Email template is inactive.`);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: 'Email template is inactive.',
+          message: 'Email template is inactive.',
+        };
       }
 
       // If no template is configured for this stage and no custom body provided, skip gracefully
       if (!template && !customBody) {
+        this.logger.warn(`[LeadEmailAutomation] Template not found for status: ${newStageName}`);
         this.logger.warn(`[LEAD_STAGE_EMAIL] No email template configured for stage: ${newStageName}`);
         return {
           sent: false,
@@ -1779,7 +1796,43 @@ export class LeadService {
       this.logger.log(`[EMAIL_TIMING] Template rendered: ${new Date().toISOString()}`);
       this.logger.log(`[EMAIL_TIMING] Duration: ${templateRenderDuration}ms`);
 
+      // Raw variable protection: never send broken emails with raw unresolved {{variables}}
+      const unresolvedVars = (emailSubject + ' ' + textContent).match(/\{\{[a-zA-Z0-9_.]+\}\}/g);
+      if (unresolvedVars && unresolvedVars.length > 0) {
+        const errorMsg = 'Email template contains unresolved variables.';
+        this.logger.warn(`[LeadEmailAutomation] ${errorMsg}: ${unresolvedVars.join(', ')}`);
+        await this.prisma.emailLog.create({
+          data: {
+            leadId: Number(lead.id),
+            customerId: lead.customerId ? Number(lead.customerId) : null,
+            userId: userId ? Number(userId) : null,
+            templateId: template?.id || null,
+            channel: 'EMAIL',
+            identifierKey: template?.key || candidateKeys[0] || 'LEAD_STAGE_CHANGED',
+            recipientEmail,
+            subject: emailSubject,
+            renderedContent: textContent,
+            eventType,
+            previousStage: previousStageName ? String(previousStageName) : null,
+            newStage: String(newStageName),
+            status: 'FAILED',
+            errorMessage: `${errorMsg} (${unresolvedVars.join(', ')})`,
+            sentAt: new Date(),
+          },
+        }).catch(() => null);
+
+        return {
+          sent: false,
+          status: 'FAILED',
+          recipient: recipientEmail,
+          messageId: null,
+          error: errorMsg,
+          message: errorMsg,
+        };
+      }
+
       // 6. Send email via existing EmailService
+      this.logger.log(`[LeadEmailAutomation]\nLead ID: ${lead.id}\nOld Status: ${previousStageName}\nNew Status: ${newStageName}\nTemplate: ${templateIdentifier}\nRecipient: ${recipientEmail}\nTemplate Found: true\nTemplate Active: true\nEmail Send: STARTED`);
       this.logger.log(`[LEAD_STAGE_EMAIL] Recipient: ${recipientEmail}`);
       this.logger.log(`[LEAD_STAGE_EMAIL] Template: ${templateIdentifier}`);
       this.logger.log(`[LEAD_STAGE_EMAIL] Sending email`);
@@ -1811,10 +1864,12 @@ export class LeadService {
         providerDurationMs = sendResult?.providerDurationMs ?? 0;
 
         this.logger.log(`[LEAD_STAGE_EMAIL] Email sent successfully`);
+        this.logger.log(`[LeadEmailAutomation] Email Send: SUCCESS`);
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
         this.logger.error(`[LEAD_STAGE_EMAIL] Email failed: ${sendError}`);
+        this.logger.error(`[LeadEmailAutomation] Email Send: FAILED - ${sendError}`);
       }
 
       // 7. Store authoritative email delivery log in EmailLog table
