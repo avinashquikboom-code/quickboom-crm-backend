@@ -272,6 +272,40 @@ QUIKBOOM Digital Marketing Agency
 {{email}}`,
   },
   {
+    key: 'LEAD_STAGE_CHANGED',
+    name: 'Lead Stage Updated – QUIKBOOM',
+    category: 'CRM',
+    subject: 'Your Lead Status Has Been Updated',
+    description: 'Sent automatically when a lead status or stage is updated',
+    supportedVariables: [
+      'customerName',
+      'leadName',
+      'companyName',
+      'customerEmail',
+      'oldStage',
+      'newStage',
+      'leadSource',
+      'leadPhone',
+      'salesOwner',
+      'currentDate',
+      'currentTime',
+    ],
+    body: `Hello {{customerName}},
+
+We wanted to let you know that the status of your request has been updated.
+
+Previous Stage:
+{{oldStage}}
+
+Current Stage:
+{{newStage}}
+
+Our team will keep you updated regarding the next steps.
+
+Regards,
+QuikBoom Team`,
+  },
+  {
     key: 'QUIKBOOM_DETAILS_SENT',
     name: 'Company Details Sent – QUIKBOOM',
     category: 'CRM',
@@ -794,9 +828,16 @@ export function renderEmailTemplate(
   const defaultFallbacks: Record<string, string> = {
     leadTitle: 'Valued Client',
     customerName: 'Valued Client',
+    leadName: 'Valued Client',
     userName: 'QUIKBOOM Team',
+    salesOwner: 'QUIKBOOM Team',
     email: 'support@quikboom.com',
+    customerEmail: '',
     companyName: 'QUIKBOOM Digital Marketing Agency',
+    oldStage: 'New',
+    newStage: 'Contacted',
+    leadSource: 'WEBSITE',
+    leadPhone: '',
     primaryColor,
     logoUrl,
     companyLogoUrl: logoUrl,
@@ -825,24 +866,44 @@ export function renderEmailTemplate(
         throw new BadRequestException(`Required template variable "${varName}" is missing`);
       }
 
-      if (varName in defaultFallbacks) {
+      if (varName in defaultFallbacks && defaultFallbacks[varName]) {
         return defaultFallbacks[varName];
       }
 
-      if (varName === 'lead.name' && (variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle)) {
-        return String(variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle);
+      // Dynamic cross-variable fallbacks
+      if ((varName === 'lead.name' || varName === 'leadName' || varName === 'customerName') && (variables.customerName || variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle)) {
+        return String(variables.customerName || variables.leadTitle || variables.leadName || defaultFallbacks.leadTitle);
       }
-      if (varName === 'lead.email' && (variables.leadEmail || variables.email || defaultFallbacks.email)) {
-        return String(variables.leadEmail || variables.email || defaultFallbacks.email);
+      if ((varName === 'lead.email' || varName === 'customerEmail' || varName === 'leadEmail') && (variables.customerEmail || variables.leadEmail || variables.email || defaultFallbacks.email)) {
+        return String(variables.customerEmail || variables.leadEmail || variables.email || defaultFallbacks.email);
       }
-      if (varName === 'lead.phone' && (variables.leadPhone || variables.phone)) {
+      if ((varName === 'lead.phone' || varName === 'leadPhone') && (variables.leadPhone || variables.phone)) {
         return String(variables.leadPhone || variables.phone);
       }
-      if (varName === 'lead.company' && (variables.companyName || defaultFallbacks.companyName)) {
+      if ((varName === 'lead.company' || varName === 'companyName') && (variables.companyName || defaultFallbacks.companyName)) {
         return String(variables.companyName || defaultFallbacks.companyName);
       }
-      if (varName === 'lead.stage' && (variables.stage || variables.newStage || variables.stageName)) {
-        return String(variables.stage || variables.newStage || variables.stageName);
+      if ((varName === 'lead.stage' || varName === 'newStage' || varName === 'stage') && (variables.newStage || variables.stage || variables.stageName)) {
+        return String(variables.newStage || variables.stage || variables.stageName);
+      }
+      if ((varName === 'oldStage' || varName === 'previousStage') && (variables.oldStage || variables.previousStage)) {
+        return String(variables.oldStage || variables.previousStage);
+      }
+      if ((varName === 'salesOwner' || varName === 'assignedEmployee') && (variables.salesOwner || variables.assignedEmployeeName || variables.userName || defaultFallbacks.salesOwner)) {
+        return String(variables.salesOwner || variables.assignedEmployeeName || variables.userName || defaultFallbacks.salesOwner);
+      }
+      if (varName === 'leadSource' && (variables.leadSource || variables.source || defaultFallbacks.leadSource)) {
+        return String(variables.leadSource || variables.source || defaultFallbacks.leadSource);
+      }
+      if (varName === 'currentDate') {
+        return variables.currentDate || new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(new Date());
+      }
+      if (varName === 'currentTime') {
+        return variables.currentTime || new Intl.DateTimeFormat('en-IN', { timeStyle: 'short' }).format(new Date());
+      }
+
+      if (varName in defaultFallbacks) {
+        return defaultFallbacks[varName];
       }
 
       // Never leave raw placeholder

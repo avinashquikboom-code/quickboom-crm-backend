@@ -716,7 +716,7 @@ export class LeadService {
     this.logger.log(`[EMAIL_TIMING] Lead created time: ${leadCreatedIso}`);
 
     // 1. Email automation using initial stage template:
-    let emailPromise: Promise<void> = Promise.resolve();
+    let emailPromise: Promise<any> = Promise.resolve();
     if (!savedEmailExists) {
       this.logger.log('Automatic email skipped because Lead email is missing.');
     } else {
@@ -983,18 +983,28 @@ export class LeadService {
 
     const updatedLead = await this.getLeadById(customerId, id);
 
+    let emailNotification: {
+      sent: boolean;
+      status: 'SENT' | 'FAILED' | 'SKIPPED';
+      recipient: string | null;
+      messageId: string | null;
+      error: string | null;
+      message: string;
+    } = {
+      sent: false,
+      status: 'SKIPPED',
+      recipient: null,
+      messageId: null,
+      error: null,
+      message: isStageChanged ? 'Email skipped' : 'Stage not changed',
+    };
+
     if (isStageChanged) {
       const newStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
-      this.logger.log(`[LeadNotification] 1. Stage change received`);
-      this.logger.log(
-        `[LeadNotification]\nStage update detected\nLead ID: ${id}\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
-      );
-      this.logger.log(`[LeadNotification] 2. Database update successful`);
-      this.logger.log(`[LeadNotification] 3. New stage identified: ${newStageName}`);
-      this.logger.log(
-        `[LeadNotification]\nTrigger started\nLead ID: ${id}\nNew Stage: ${newStageName}`,
-      );
-      this.logger.log(`[LeadStageAutomation] Starting automatic email`);
+      this.logger.log(`[LEAD_STAGE] Stage change detected`);
+      this.logger.log(`[LEAD_STAGE] Lead: ${id}`);
+      this.logger.log(`[LEAD_STAGE] Old stage: ${previousStageName}`);
+      this.logger.log(`[LEAD_STAGE] New stage: ${newStageName}`);
 
       const emailPromise = this.handleLeadStageChangeNotification(
         customerId,
@@ -1048,10 +1058,25 @@ export class LeadService {
         })();
       }
 
-      await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      const [emailSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      if (emailSettled.status === 'fulfilled' && emailSettled.value) {
+        emailNotification = emailSettled.value as any;
+      } else if (emailSettled.status === 'rejected') {
+        emailNotification = {
+          sent: false,
+          status: 'FAILED',
+          recipient: null,
+          messageId: null,
+          error: emailSettled.reason?.message || 'Email delivery failed',
+          message: 'Email delivery failed',
+        };
+      }
     }
 
-    return updatedLead;
+    return {
+      ...updatedLead,
+      emailNotification,
+    };
   }
 
   async updateStatus(customerId: number | string, id: number | string, userId: number | string, dto: UpdateLeadStatusDto) {
@@ -1131,11 +1156,28 @@ export class LeadService {
     // A stage change occurs if the stage ID changed, or both the name/status normalized keys changed
     const isStageChanged = isStageIdChanged || isStageNameChanged || isStatusChanged;
 
-    this.logger.log(
-      `[LeadStageEmail]\nStage update received\n\nLead ID: ${id}\n\nOld Stage: ${previousStageName}\nNew Stage: ${newStageName}`,
-    );
+    let emailNotification: {
+      sent: boolean;
+      status: 'SENT' | 'FAILED' | 'SKIPPED';
+      recipient: string | null;
+      messageId: string | null;
+      error: string | null;
+      message: string;
+    } = {
+      sent: false,
+      status: 'SKIPPED',
+      recipient: null,
+      messageId: null,
+      error: null,
+      message: isStageChanged ? 'Email skipped' : 'Stage not changed',
+    };
 
-    this.logger.log(`[LeadStageEmail]\nStage changed: ${isStageChanged}`);
+    if (isStageChanged) {
+      this.logger.log(`[LEAD_STAGE] Stage change detected`);
+      this.logger.log(`[LEAD_STAGE] Lead: ${id}`);
+      this.logger.log(`[LEAD_STAGE] Old stage: ${previousStageName}`);
+      this.logger.log(`[LEAD_STAGE] New stage: ${newStageName}`);
+    }
 
     await this.leadRepository.updateStatus(
       customerId,
@@ -1160,12 +1202,12 @@ export class LeadService {
             previousStageName,
             newStageName,
             userId,
-            undefined, // Automatic stage change always selects template based on the new stage
+            dto.templateId,
             dto.customSubject,
             dto.customBody,
             'LEAD_STAGE_CHANGED',
           )
-        : Promise.resolve();
+        : Promise.resolve(emailNotification);
 
       const whatsappPromise = dto.sendWhatsapp !== false
         ? this.handleLeadStageChangeWhatsappNotification(
@@ -1210,10 +1252,25 @@ export class LeadService {
         })();
       }
 
-      await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      const [emailSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      if (emailSettled.status === 'fulfilled' && emailSettled.value) {
+        emailNotification = emailSettled.value as any;
+      } else if (emailSettled.status === 'rejected') {
+        emailNotification = {
+          sent: false,
+          status: 'FAILED',
+          recipient: null,
+          messageId: null,
+          error: emailSettled.reason?.message || 'Email delivery failed',
+          message: 'Email delivery failed',
+        };
+      }
     }
 
-    return updatedLead;
+    return {
+      ...updatedLead,
+      emailNotification,
+    };
   }
 
   /**
@@ -1230,7 +1287,14 @@ export class LeadService {
     customSubject?: string,
     customBody?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
-  ) {
+  ): Promise<{
+    sent: boolean;
+    status: 'SENT' | 'FAILED' | 'SKIPPED';
+    recipient: string | null;
+    messageId: string | null;
+    error: string | null;
+    message: string;
+  }> {
     try {
       // 0. Do NOT send email if stage did not actually change (for stage change events)
       const normPrevStage = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
@@ -1241,12 +1305,17 @@ export class LeadService {
         normNewStageForCheck &&
         normPrevStage === normNewStageForCheck
       ) {
-        return;
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: null,
+          message: 'Stage did not change',
+        };
       }
 
       // 1. Resolve template mapping strictly for the NEW stage
-      this.logger.log(`[LeadStageEmail]\nLooking for email template:\n${newStageName}`);
-
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const targetStageKey = normNewStage || normLeadStageKey;
@@ -1259,6 +1328,8 @@ export class LeadService {
           `QUIKBOOM_${targetStageKey}`,
           `QUIKBOOM_${normLeadStageKey}`,
           `QUIKBOOM_${normNewStage}`,
+          `LEAD_STAGE_${targetStageKey}`,
+          `LEAD_STAGE_${normLeadStageKey}`,
           targetStageKey,
           normLeadStageKey,
           normNewStage,
@@ -1278,25 +1349,29 @@ export class LeadService {
         }
       }
 
-      // 1b. Search DB template by matching name
+      // 1b. Search DB template by matching name or key (safe AND combination to prevent Prisma OR overwrite)
       if (!template && this.prisma.emailTemplate && newStageName) {
         const dbTpl = await this.prisma.emailTemplate.findFirst({
           where: {
             deletedAt: null,
             isActive: true,
-            OR: [
-              { name: { equals: newStageName, mode: 'insensitive' } },
-              { name: { contains: newStageName, mode: 'insensitive' } },
-              { key: { in: candidateKeys } },
+            AND: [
+              {
+                OR: [
+                  { name: { equals: newStageName, mode: 'insensitive' } },
+                  { name: { contains: newStageName, mode: 'insensitive' } },
+                  { key: { in: candidateKeys } },
+                ],
+              },
+              lead.customerId
+                ? {
+                    OR: [
+                      { customerId: Number(lead.customerId) },
+                      { customerId: null },
+                    ],
+                  }
+                : { customerId: null },
             ],
-            ...(lead.customerId
-              ? {
-                  OR: [
-                    { customerId: Number(lead.customerId) },
-                    { customerId: null },
-                  ],
-                }
-              : {}),
           },
           orderBy: { customerId: 'desc' },
         }).catch(() => null);
@@ -1305,7 +1380,7 @@ export class LeadService {
         }
       }
 
-      // 1c. Check predefined system fallback templates
+      // 1c. Check predefined system fallback templates matching stage keys
       if (!template) {
         template = PREDEFINED_SYSTEM_TEMPLATES.find((t) => candidateKeys.includes(t.key)) || null;
       }
@@ -1314,39 +1389,78 @@ export class LeadService {
         template = null;
       }
 
-      // If no template is configured for this stage, do NOT send generic or random template
+      // If no template is configured for this stage and no custom body provided, skip gracefully
       if (!template && !customBody) {
-        this.logger.warn(`No email template configured for stage: ${newStageName}`);
-        return;
+        this.logger.warn(`[LEAD_STAGE_EMAIL] No email template configured for stage: ${newStageName}`);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: `No email template configured for stage: ${newStageName}`,
+          message: `No email template configured for stage: ${newStageName}`,
+        };
       }
 
-      const templateIdentifier = template?.id || template?.key || 'CUSTOM';
-      this.logger.log(`[LeadStageEmail]\nTemplate found:\nTemplate ID: ${templateIdentifier}`);
+      const templateIdentifier = template?.key || template?.name || template?.id || 'CUSTOM';
 
-      // 2. Resolve recipient email: strictly comes from the Lead record's email field
+      // 2. Resolve recipient email: strictly comes from the lead or contact associated with the lead
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const recipientEmail = (lead.email || '').trim();
+      let recipientEmail = (lead.email || lead.customerEmail || (lead as any).emailAddress || '').trim();
 
-      // Handle missing or invalid email safely without failing the stage update or lead creation
+      // If missing on lead, check associated contact if converted or linked
+      if (!recipientEmail && lead.convertedToContactId && this.prisma.contact) {
+        const contact = await this.prisma.contact.findUnique({
+          where: { id: Number(lead.convertedToContactId) },
+          select: { email: true },
+        }).catch(() => null);
+        if (contact?.email) {
+          recipientEmail = contact.email.trim();
+        }
+      }
+
+      // If missing on lead, check lead.contact?.email if populated
+      if (!recipientEmail && (lead as any).contact?.email) {
+        recipientEmail = String((lead as any).contact.email).trim();
+      }
+
+      // Filter out placeholder / invalid dummy emails
+      const placeholderEmails = [
+        'contact@company.com',
+        'placeholder@company.com',
+        'example@company.com',
+        'test@company.com',
+        'user@company.com',
+        'admin@quikboom.com',
+      ];
+      if (placeholderEmails.includes(recipientEmail.toLowerCase())) {
+        recipientEmail = '';
+      }
+
+      // Handle missing or invalid customer email safely without failing the stage update
       if (!recipientEmail || !emailRegex.test(recipientEmail)) {
-        this.logger.log(`[LeadStageEmail]\nRecipient exists:\nfalse`);
-        this.logger.log(`Lead email missing; automatic stage email skipped.`);
+        this.logger.warn(`[LEAD_STAGE_EMAIL] Lead has no customer email`);
         await this.leadRepository.logTimeline(
           lead.id,
           eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
-          `Automatic stage email skipped: Lead email missing`,
+          `Automatic stage email skipped: Lead has no customer email`,
           {
             eventType,
             previousStage: previousStageName,
             newStage: newStageName,
             status: 'SKIPPED',
-            reason: 'Lead email missing',
+            reason: 'Lead has no customer email',
           },
         ).catch(() => null);
-        return;
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: 'Lead has no customer email',
+          message: 'Automatic stage email skipped: Lead has no customer email',
+        };
       }
-
-      this.logger.log(`[LeadStageEmail]\nRecipient exists:\ntrue`);
 
       // 3. Prevent duplicate notifications (debounce only successfully sent transitions within 60s)
       const recentLog = await this.prisma.emailLog.findFirst({
@@ -1361,10 +1475,72 @@ export class LeadService {
       });
 
       if (recentLog) {
-        return;
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: recipientEmail,
+          messageId: recentLog.providerMessageId,
+          error: null,
+          message: 'Debounced duplicate stage transition email',
+        };
       }
 
-      // 4. Build context variables and resolve dynamic employee signature
+      // 4. Verify Email Integration is configured and active
+      let isIntegrationConfigured = true;
+      let isIntegrationEnabled = true;
+      let configWarning: string | null = null;
+
+      if (this.emailService && typeof (this.emailService as any).getSmtpStatus === 'function') {
+        try {
+          const smtpStatus = await (this.emailService as any).getSmtpStatus();
+          if (smtpStatus) {
+            if (!smtpStatus.isConfigured || !smtpStatus.host) {
+              isIntegrationConfigured = false;
+              configWarning = 'SMTP Email Integration is not configured in Settings → Integrations';
+            } else if (smtpStatus.isEnabled === false) {
+              isIntegrationEnabled = false;
+              configWarning = 'SMTP Email Integration is disabled in Settings → Integrations';
+            }
+          }
+        } catch {
+          // If status check throws, proceed to sendEmail which has its own verification
+        }
+      }
+
+      // If email integration is not configured/disabled: log warning, save EmailLog as FAILED, do not crash stage update
+      if (!isIntegrationConfigured || !isIntegrationEnabled) {
+        this.logger.warn(`[LEAD_STAGE_EMAIL] Email integration warning: ${configWarning}`);
+        await this.prisma.emailLog.create({
+          data: {
+            leadId: Number(lead.id),
+            customerId: lead.customerId ? Number(lead.customerId) : null,
+            userId: userId ? Number(userId) : null,
+            templateId: template?.id || null,
+            channel: 'EMAIL',
+            identifierKey: template?.key || candidateKeys[0] || 'LEAD_STAGE_CHANGED',
+            recipientEmail,
+            subject: customSubject || template?.subject || 'Your Lead Status Has Been Updated',
+            renderedContent: customBody || template?.body || 'Lead status updated',
+            eventType,
+            previousStage: previousStageName ? String(previousStageName) : null,
+            newStage: String(newStageName),
+            status: 'FAILED',
+            errorMessage: configWarning || 'Email integration not configured or disabled',
+            sentAt: new Date(),
+          },
+        }).catch(() => null);
+
+        return {
+          sent: false,
+          status: 'FAILED',
+          recipient: recipientEmail,
+          messageId: null,
+          error: configWarning || 'Email integration not configured or disabled',
+          message: configWarning || 'Email integration not configured or disabled',
+        };
+      }
+
+      // 5. Build context variables and resolve dynamic employee signature
       const leadTitle =
         `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
         lead.title ||
@@ -1508,6 +1684,18 @@ export class LeadService {
           }
         }
 
+        const now = new Date();
+        const currentDate = new Intl.DateTimeFormat('en-IN', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        }).format(now);
+        const currentTime = new Intl.DateTimeFormat('en-IN', {
+          hour: 'numeric',
+          minute: 'numeric',
+          hour12: true,
+        }).format(now);
+
         const variables: Record<string, any> = {
           // Dot-notation dynamic variables
           'lead.name': leadTitle,
@@ -1533,31 +1721,38 @@ export class LeadService {
             lastName: (lead.lastName || '').trim(),
           },
 
-          // Flat dynamic variables
-          leadTitle,
+          // Flat dynamic variables according to prompt requirements:
+          // {{customerName}}, {{leadName}}, {{companyName}}, {{customerEmail}}, {{oldStage}}, {{newStage}},
+          // {{leadSource}}, {{leadPhone}}, {{salesOwner}}, {{currentDate}}, {{currentTime}}
+          customerName: leadTitle,
           leadName: leadTitle,
+          leadTitle,
           leadFirstName: (lead.firstName || '').trim() || leadTitle,
           leadLastName: (lead.lastName || '').trim(),
-          leadPhone,
-          leadCompany: leadCompany || 'your company',
-          name: leadTitle,
-          customerName: leadTitle,
-          recipientName: leadTitle,
+          companyName: leadCompany || lead.companyName || lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
+          company: leadCompany || lead.companyName || 'your company',
+          customerEmail: recipientEmail,
           leadEmail: recipientEmail,
-          email: senderEmail,
-          senderEmail,
-          userName,
-          senderName: userName,
+          oldStage: previousStageName,
+          previousStage: previousStageName,
+          newStage: newStageName,
+          stage: newStageName,
+          stageName: newStageName,
+          leadSource: lead.source || 'WEBSITE',
+          source: lead.source || 'WEBSITE',
+          leadPhone,
+          phone: leadPhone,
+          salesOwner: assignedEmployeeName || userName,
           assignedUser: userName,
           assignedEmployee: userName,
           assignedEmployeeName,
           assignedEmployeeEmail,
-          companyName: lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency',
-          company: leadCompany || lead.companyName || 'your company',
-          stage: newStageName,
-          stageName: newStageName,
-          newStage: newStageName,
-          previousStage: previousStageName,
+          userName,
+          senderName: userName,
+          senderEmail,
+          email: senderEmail,
+          currentDate,
+          currentTime,
           startDate: startDate || 'To be communicated',
           startTime: startTime || '',
           loginUrl: 'https://quikboom.com/login',
@@ -1584,13 +1779,15 @@ export class LeadService {
       this.logger.log(`[EMAIL_TIMING] Template rendered: ${new Date().toISOString()}`);
       this.logger.log(`[EMAIL_TIMING] Duration: ${templateRenderDuration}ms`);
 
-      // 5. Send email via existing EmailService
+      // 6. Send email via existing EmailService
+      this.logger.log(`[LEAD_STAGE_EMAIL] Recipient: ${recipientEmail}`);
+      this.logger.log(`[LEAD_STAGE_EMAIL] Template: ${templateIdentifier}`);
+      this.logger.log(`[LEAD_STAGE_EMAIL] Sending email`);
+
       let messageId: string | null = null;
       let sendError: string | null = null;
       let status = 'SENT';
       let providerDurationMs = 0;
-
-      this.logger.log(`[LeadStageEmail]\nCalling existing email service`);
 
       try {
         if (!this.emailService) {
@@ -1613,19 +1810,14 @@ export class LeadService {
         messageId = sendResult?.messageId || null;
         providerDurationMs = sendResult?.providerDurationMs ?? 0;
 
-        this.logger.log(`[LeadStageEmail]\nEmail provider response:\nSUCCESS`);
-        this.logger.log(`[LeadStageEmail]\nProvider Message ID:\n${messageId || 'N/A'}`);
+        this.logger.log(`[LEAD_STAGE_EMAIL] Email sent successfully`);
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
-        this.logger.error(
-          `[LeadStageEmail] FAILED\nLead ID: ${lead.id}\nStage: ${newStageName}\nError: ${sendError}`,
-        );
-        this.logger.log(`[LeadStageEmail]\nEmail provider response:\nFAILED`);
-        this.logger.log(`[LeadStageEmail]\nProvider Message ID:\nN/A`);
+        this.logger.error(`[LEAD_STAGE_EMAIL] Email failed: ${sendError}`);
       }
 
-      // 6. Store authoritative email delivery log in EmailLog table
+      // 7. Store authoritative email delivery log in EmailLog table
       await this.prisma.emailLog.create({
         data: {
           leadId: Number(lead.id),
@@ -1633,7 +1825,7 @@ export class LeadService {
           userId: userId ? Number(userId) : null,
           templateId: template?.id || null,
           channel: 'EMAIL',
-          identifierKey: template?.key || candidateKeys[0] || (eventType === 'LEAD_CREATED' ? 'QUIKBOOM_NEW_LEAD' : 'LEAD_STAGE_UPDATED'),
+          identifierKey: template?.key || candidateKeys[0] || (eventType === 'LEAD_CREATED' ? 'QUIKBOOM_NEW_LEAD' : 'LEAD_STAGE_CHANGED'),
           recipientEmail,
           subject: emailSubject,
           renderedContent: htmlContent,
@@ -1649,9 +1841,7 @@ export class LeadService {
         this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${logErr?.message}`);
       });
 
-      this.logger.log(`[LeadStageEmail]\nCommunication history saved`);
-
-      // 7. Record timeline event in CRM Lead timeline
+      // 8. Record timeline event in CRM Lead timeline
       await this.leadRepository.logTimeline(
         lead.id,
         eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
@@ -1672,9 +1862,26 @@ export class LeadService {
           errorMessage: sendError,
         },
       ).catch(() => null);
+
+      return {
+        sent: status === 'SENT',
+        status: status as 'SENT' | 'FAILED',
+        recipient: recipientEmail,
+        messageId,
+        error: sendError,
+        message: status === 'SENT' ? 'Customer email sent successfully' : (sendError || 'Email delivery failed'),
+      };
     } catch (unexpectedError: any) {
       // Must NEVER fail the lead stage update even on unexpected notification errors
       this.logger.error(`[EMAIL_NOTIFICATION_UNEXPECTED_ERROR] ${unexpectedError?.message}`);
+      return {
+        sent: false,
+        status: 'FAILED',
+        recipient: null,
+        messageId: null,
+        error: unexpectedError?.message || 'Unexpected notification error',
+        message: 'Unexpected notification error',
+      };
     }
   }
 
