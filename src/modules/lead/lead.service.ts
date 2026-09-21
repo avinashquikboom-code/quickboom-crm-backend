@@ -1489,6 +1489,12 @@ export class LeadService {
             gte: new Date(Date.now() - 60000),
           },
         },
+        select: {
+          id: true,
+          status: true,
+          providerMessageId: true,
+          createdAt: true,
+        },
       });
 
       if (recentLog) {
