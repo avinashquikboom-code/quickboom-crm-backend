@@ -2443,14 +2443,14 @@ export class AuthService {
 
     const permissionsMap = new Map<string, { module: string; action: string }>();
 
-    let hasDbPermissions = false;
     const roleNames: string[] = [];
+    let designationPermissionCount = 0;
 
+    // 1. First, load user's system roles permissions
     (user.userRoles || []).forEach((ur: any) => {
       if (ur.role) {
         roleNames.push(ur.role.name);
         if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
-          hasDbPermissions = true;
           ur.role.rolePermissions.forEach((rp: any) => {
             if (rp.permission) {
               permissionsMap.set(
@@ -2471,15 +2471,54 @@ export class AuthService {
       roleNames.push(desigName);
     }
     if (roleNames.length === 0 && user.employee) {
+      roleNames.push('EMPLOYEE');
       roleNames.push('TELECALLER');
     }
 
-    if (!hasDbPermissions && roleNames.length > 0 && this.prisma?.role?.findMany) {
+    // 2. If user is an employee with a designation, load Designation Role permissions (Single Source of Truth)
+    if (user.employee?.designationId && this.prisma?.role?.findFirst) {
+      try {
+        const desigRole = await this.prisma.role.findFirst({
+          where: {
+            designationId: user.employee.designationId,
+            OR: [
+              { customerId: user.employee.customerId },
+              { customerId: null },
+            ],
+            deletedAt: null,
+          },
+          include: {
+            rolePermissions: {
+              include: { permission: true },
+            },
+          },
+          orderBy: { customerId: 'desc' },
+        });
+
+        if (desigRole?.rolePermissions && desigRole.rolePermissions.length > 0) {
+          designationPermissionCount = desigRole.rolePermissions.length;
+          desigRole.rolePermissions.forEach((rp: any) => {
+            if (rp.permission) {
+              permissionsMap.set(
+                `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`,
+                {
+                  module: rp.permission.module.toUpperCase(),
+                  action: rp.permission.action.toUpperCase(),
+                },
+              );
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
+    // 3. If designation permissions still 0, check role matching designation name in DB
+    if (designationPermissionCount === 0 && roleNames.length > 0 && this.prisma?.role?.findMany) {
       try {
         const queryRes = this.prisma.role.findMany({
           where: {
             OR: [
-              { name: { in: roleNames, mode: 'insensitive' }, customerId: user.customerId },
+              { name: { in: roleNames, mode: 'insensitive' }, customerId: user.employee?.customerId || user.customerId },
               { name: { in: roleNames, mode: 'insensitive' }, customerId: null },
             ],
             deletedAt: null,
@@ -2489,13 +2528,14 @@ export class AuthService {
               include: { permission: true },
             },
           },
+          orderBy: { customerId: 'desc' },
         });
         const matchingDbRoles = queryRes && typeof queryRes.then === 'function' ? await queryRes : (queryRes || []);
 
         if (Array.isArray(matchingDbRoles)) {
           for (const r of matchingDbRoles) {
             if (r.rolePermissions && r.rolePermissions.length > 0) {
-              hasDbPermissions = true;
+              designationPermissionCount += r.rolePermissions.length;
               r.rolePermissions.forEach((rp: any) => {
                 if (rp.permission) {
                   permissionsMap.set(
@@ -2513,46 +2553,72 @@ export class AuthService {
       } catch (_) {}
     }
 
-    if (!hasDbPermissions) {
+    // 4. If permissionsMap still has no business modules (or 0 permissions), fallback to role defaults
+    const hasAnyModulePerm = Array.from(permissionsMap.keys()).some((k: string) =>
+      ['DASHBOARD', 'ATTENDANCE', 'CALENDAR', 'MY_WORK', 'LEADS', 'TASKS', 'LEAVE', 'SALARY'].some((m) =>
+        k.startsWith(`${m}:`),
+      ),
+    );
+
+    if (permissionsMap.size === 0 || (!hasAnyModulePerm && user.employee)) {
       if (isSuperAdmin) {
         STANDARD_PERMISSIONS.forEach((p) => {
-          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+          permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+            module: p.module.toUpperCase(),
+            action: p.action.toUpperCase(),
+          });
         });
       } else if (isCustomerAdmin) {
         (ROLE_PERMISSION_DEFAULTS.COMPANY_ADMIN || STANDARD_PERMISSIONS).forEach((p) => {
-          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+          permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+            module: p.module.toUpperCase(),
+            action: p.action.toUpperCase(),
+          });
         });
       } else {
-        for (const rName of roleNames) {
+        const candidates = [
+          user.employee?.designation?.name,
+          ...roleNames,
+          'EMPLOYEE',
+          'TELECALLER',
+        ].filter(Boolean);
+
+        for (const rName of candidates) {
           if (!rName) continue;
-          const upper = String(rName).toUpperCase().replace(/\s+/g, "_");
+          const upper = String(rName).toUpperCase().replace(/\s+/g, '_');
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
-          } else if (upper.includes("TELECALL") || upper.includes("TELESALES")) {
-            matchedKey = "TELECALLER";
-          } else if (upper.includes("SALES")) {
-            matchedKey = "SALES_EXECUTIVE";
-          } else if (upper.includes("HR")) {
-            matchedKey = "HR";
-          } else if (upper.includes("MANAGER")) {
-            matchedKey = "MANAGER";
-          } else if (upper.includes("DESIGNER")) {
-            matchedKey = "DESIGNER";
-          } else if (upper.includes("EDITOR")) {
-            matchedKey = "EDITOR";
-          } else if (upper.includes("PHOTOGRAPH")) {
-            matchedKey = "PHOTOGRAPHER";
-          } else if (upper.includes("SOCIAL")) {
-            matchedKey = "SOCIAL_MEDIA_MANAGER";
+          } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+            matchedKey = 'TELECALLER';
+          } else if (upper.includes('SALES')) {
+            matchedKey = 'SALES_EXECUTIVE';
+          } else if (upper.includes('HR')) {
+            matchedKey = 'HR';
+          } else if (upper.includes('MANAGER')) {
+            matchedKey = 'MANAGER';
+          } else if (upper.includes('DESIGNER')) {
+            matchedKey = 'DESIGNER';
+          } else if (upper.includes('EDITOR')) {
+            matchedKey = 'EDITOR';
+          } else if (upper.includes('PHOTOGRAPH')) {
+            matchedKey = 'PHOTOGRAPHER';
+          } else if (upper.includes('SOCIAL')) {
+            matchedKey = 'SOCIAL_MEDIA_MANAGER';
+          } else if (upper.includes('EMPLOYEE')) {
+            matchedKey = 'EMPLOYEE';
           } else {
-            matchedKey = "TELECALLER";
+            matchedKey = 'TELECALLER';
           }
 
           if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
             ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
-              permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+              permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+                module: p.module.toUpperCase(),
+                action: p.action.toUpperCase(),
+              });
             });
+            break;
           }
         }
       }

@@ -193,29 +193,110 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const permissionsMap = new Map();
 
+    // 1. First, load user's system roles permissions
     (user.userRoles || []).forEach((ur) => {
       if (ur.role?.rolePermissions) {
         ur.role.rolePermissions.forEach((rp) => {
           if (rp.permission) {
-            const key = `${rp.permission.module}:${rp.permission.action}`;
+            const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
             permissionsMap.set(key, {
-              module: rp.permission.module,
-              action: rp.permission.action,
+              module: rp.permission.module.toUpperCase(),
+              action: rp.permission.action.toUpperCase(),
             });
           }
         });
       }
     });
 
-    if (permissionsMap.size === 0) {
+    let designationPermissionCount = 0;
+
+    // 2. If user is an employee with a designation, load Designation Role permissions (Single Source of Truth)
+    if (user.employee?.designationId) {
+      const desigRole = await this.prisma.role.findFirst({
+        where: {
+          designationId: user.employee.designationId,
+          OR: [
+            { customerId: user.employee.customerId },
+            { customerId: null },
+          ],
+          deletedAt: null,
+        },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+        orderBy: { customerId: 'desc' },
+      });
+
+      if (desigRole?.rolePermissions && desigRole.rolePermissions.length > 0) {
+        designationPermissionCount = desigRole.rolePermissions.length;
+        desigRole.rolePermissions.forEach((rp) => {
+          if (rp.permission) {
+            const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
+            permissionsMap.set(key, {
+              module: rp.permission.module.toUpperCase(),
+              action: rp.permission.action.toUpperCase(),
+            });
+          }
+        });
+      }
+    }
+
+    // Also check role matching designation name if still zero designation permissions
+    if (designationPermissionCount === 0 && user.employee?.designation?.name) {
+      const namedRole = await this.prisma.role.findFirst({
+        where: {
+          name: { equals: user.employee.designation.name, mode: 'insensitive' },
+          OR: [
+            { customerId: user.employee.customerId },
+            { customerId: null },
+          ],
+          deletedAt: null,
+        },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+        orderBy: { customerId: 'desc' },
+      });
+
+      if (namedRole?.rolePermissions && namedRole.rolePermissions.length > 0) {
+        designationPermissionCount = namedRole.rolePermissions.length;
+        namedRole.rolePermissions.forEach((rp) => {
+          if (rp.permission) {
+            const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
+            permissionsMap.set(key, {
+              module: rp.permission.module.toUpperCase(),
+              action: rp.permission.action.toUpperCase(),
+            });
+          }
+        });
+      }
+    }
+
+    // 3. If permissionsMap still has no business modules (or 0 permissions), fallback to role defaults
+    const hasAnyModulePerm = Array.from(permissionsMap.keys()).some((k: string) =>
+      ['DASHBOARD', 'ATTENDANCE', 'CALENDAR', 'MY_WORK', 'LEADS', 'TASKS', 'LEAVE', 'SALARY'].some((m) =>
+        k.startsWith(`${m}:`),
+      ),
+    );
+
+    if (permissionsMap.size === 0 || (!hasAnyModulePerm && user.employee)) {
       if (isSuperAdmin || isCustomerAdmin || isCompanyAdmin) {
         STANDARD_PERMISSIONS.forEach((p) => {
-          permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+          permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+            module: p.module.toUpperCase(),
+            action: p.action.toUpperCase(),
+          });
         });
       } else {
         const roleCandidates = [
-          ...(user.userRoles || []).map((ur: any) => ur.role?.name),
           (user.employee as any)?.designation?.name,
+          ...(user.userRoles || []).map((ur: any) => ur.role?.name),
+          'EMPLOYEE',
+          'TELECALLER',
         ].filter(Boolean);
 
         for (const candidate of roleCandidates) {
@@ -226,7 +307,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           else if (upper.includes('DESIGN')) matched = 'DESIGNER';
           else if (upper.includes('EDIT')) matched = 'EDITOR';
           else if (upper.includes('SOCIAL') || upper.includes('SSM')) matched = 'SOCIAL_MEDIA_MANAGER';
-          else if (upper.includes('PHOTO') || upper.includes('SHOOT') || upper.includes('VIDEO_GRAPH')) matched = 'PHOTOGRAPHER';
+          else if (upper.includes('PHOTO') || upper.includes('SHOOT') || upper.includes('VIDEO_GRAPH'))
+            matched = 'PHOTOGRAPHER';
           else if (upper.includes('SALES')) matched = 'SALES_EXECUTIVE';
           else if (upper.includes('HR')) matched = 'HR';
           else if (upper.includes('MANAGER')) matched = 'MANAGER';
@@ -234,14 +316,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
           if (matched && ROLE_PERMISSION_DEFAULTS[matched]) {
             ROLE_PERMISSION_DEFAULTS[matched].forEach((p) => {
-              permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+              permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+                module: p.module.toUpperCase(),
+                action: p.action.toUpperCase(),
+              });
             });
+            break;
           }
         }
       }
     }
 
-    // Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
+    // 4. Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
+    let overrideCount = 0;
     if (user.employee?.id && !isSuperAdmin && !isCustomerAdmin && !isCompanyAdmin) {
       const overrides =
         user.employee.employeeModuleOverrides ||
@@ -252,16 +339,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           : []);
 
       if (overrides && overrides.length > 0) {
+        overrideCount = overrides.length;
         for (const ov of overrides) {
           const modKey = (ov.moduleKey || '').trim();
           const ovType = String(ov.override).toUpperCase();
-          if (ovType === 'DEFAULT') continue;
+          if (ovType === 'DEFAULT' || ovType === 'INHERIT') continue;
 
           if (modKey.startsWith('employee.') || modKey.includes(':')) {
             const { module, action } = fromPermissionKey(modKey);
             const permKey = `${module.toUpperCase()}:${action.toUpperCase()}`;
             if (ovType === 'ALLOW') {
-              permissionsMap.set(permKey, { module: module.toUpperCase(), action: action.toUpperCase() });
+              permissionsMap.set(permKey, {
+                module: module.toUpperCase(),
+                action: action.toUpperCase(),
+              });
             } else if (ovType === 'DENY') {
               permissionsMap.delete(permKey);
             }
@@ -273,7 +364,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               );
               if (stdModPerms.length > 0) {
                 stdModPerms.forEach((p) => {
-                  permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+                  permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+                    module: p.module.toUpperCase(),
+                    action: p.action.toUpperCase(),
+                  });
                 });
               } else {
                 permissionsMap.set(`${modUpper}:VIEW`, { module: modUpper, action: 'VIEW' });
@@ -290,6 +384,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           }
         }
       }
+    }
+
+    // 5. Add Safe [RBAC BACKEND DEBUG] log
+    if (user.employee) {
+      this.logger.log(
+        `[RBAC BACKEND DEBUG] employeeId=${user.employee.id} employeeCode=${user.employee.employeeCode} userId=${user.id} companyId=${user.employee.customerId} tenantId=${user.employee.customerId} designationId=${user.employee.designationId} designationName="${user.employee.designation?.name || ''}" designationPermissionCount=${designationPermissionCount} employeeOverrideCount=${overrideCount} effectivePermissionCount=${permissionsMap.size} effectivePermissionKeys=${Array.from(permissionsMap.keys()).join(',')}`,
+      );
     }
 
     const isEmployee =

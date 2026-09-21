@@ -2895,7 +2895,7 @@ export class EmployeeService {
             { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
           ],
           deletedAt: null,
-          name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+          name: { notIn: ['CUSTOMER'] },
         },
         include: {
           rolePermissions: {
@@ -2934,8 +2934,8 @@ export class EmployeeService {
       }
     }
 
-    // Fallback to static defaults based on roleName / designation
-    if (!hasDbPermissions) {
+    // Fallback to static defaults if rolePermissionsSet is still empty
+    if (rolePermissionsSet.size === 0) {
       const upper = roleName.toUpperCase().replace(/\s+/g, '_');
       let matchedKey: string | null = null;
       if (ROLE_PERMISSION_DEFAULTS[upper]) {
@@ -2956,6 +2956,8 @@ export class EmployeeService {
         matchedKey = 'HR';
       } else if (upper.includes('MANAGER')) {
         matchedKey = 'MANAGER';
+      } else if (upper.includes('EMPLOYEE')) {
+        matchedKey = 'EMPLOYEE';
       } else {
         matchedKey = 'TELECALLER';
       }
@@ -3055,6 +3057,11 @@ export class EmployeeService {
     });
 
     const effectivePermissionsCount = modules.filter((m) => m.effective).length;
+    const effectiveKeys = granularPermissions.filter((p) => p.effective).map((p) => p.key);
+
+    this.logger.log(
+      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${employee.customerId} tenantId=${employee.customerId} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
+    );
 
     return {
       employeeId: employee.id,
@@ -3380,6 +3387,7 @@ export class EmployeeService {
       modulesMap[m.moduleKey.toLowerCase()] = m.effective;
       if (m.effective) {
         effectivePermissions.push(`employee.${m.moduleKey.toLowerCase()}.view`);
+        effectivePermissions.push(`${m.moduleKey.toUpperCase()}:VIEW`);
       }
     }
 
@@ -3387,6 +3395,10 @@ export class EmployeeService {
       if (p.effective) {
         if (!effectivePermissions.includes(p.key)) {
           effectivePermissions.push(p.key);
+        }
+        const stdKey = `${p.module.toUpperCase()}:${p.action.toUpperCase()}`;
+        if (!effectivePermissions.includes(stdKey)) {
+          effectivePermissions.push(stdKey);
         }
       }
     }
