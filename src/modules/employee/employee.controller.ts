@@ -118,6 +118,26 @@ export class EmployeeController {
     return this.employeeService.getMyProfile(user, customerId);
   }
 
+  @Get('me/permissions')
+  @ApiOperation({ summary: 'Get current authenticated employee canonical effective permissions' })
+  async getMyPermissions(@CurrentUser() user: any) {
+    const userId = user?.id || user?.userId;
+    if (!userId) {
+      throw new ForbiddenException('User session invalid');
+    }
+    return this.employeeService.getMyEffectivePermissions(userId);
+  }
+
+  @Get('permissions/me')
+  @ApiOperation({ summary: 'Alias to get current authenticated employee canonical effective permissions' })
+  async getMyPermissionsAlias(@CurrentUser() user: any) {
+    const userId = user?.id || user?.userId;
+    if (!userId) {
+      throw new ForbiddenException('User session invalid');
+    }
+    return this.employeeService.getMyEffectivePermissions(userId);
+  }
+
   @Get('me/calendar')
   @ApiOperation({ summary: 'Get calendar scheduled activities for current authenticated employee' })
   @ApiQuery({ name: 'date', required: false })

@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
@@ -17,6 +19,7 @@ import {
   formatTimeInTimezone,
   formatDurationHoursMinutes,
 } from '../../common/utils/timezone.util';
+import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 
 export interface FindAllEmployeesParams {
   customerId?: number | string;
@@ -44,6 +47,7 @@ export interface EmployeeFindOneParams {
 export interface CreateEmployeeParams {
   customerId: number | string;
   dto: CreateEmployeeDto;
+  isSuperAdmin?: boolean;
   bypassUserLimit?: boolean;
 }
 
@@ -63,6 +67,8 @@ export class EmployeeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly planAccessService?: PlanAccessService,
+    @Inject(forwardRef(() => PlanScheduleGateway))
+    private readonly planScheduleGateway?: PlanScheduleGateway,
   ) {}
 
   async findAll(params: FindAllEmployeesParams) {
@@ -2859,34 +2865,57 @@ export class EmployeeService {
     const rolePermissionsSet = new Set<string>();
     let hasDbPermissions = false;
 
-    // Look for Role in DB matching roleName or designation
-    const matchingRoles = await this.prisma.role.findMany({
-      where: {
-        OR: [
-          { customerId: employee.customerId, name: { equals: roleName, mode: 'insensitive' } },
-          { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
-        ],
-        deletedAt: null,
-        name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-      },
-      include: {
-        rolePermissions: {
-          include: { permission: true },
+    // First check if a Role is directly linked to this employee's Designation
+    if (employee.designationId) {
+      const linkedRole = await this.prisma.role.findFirst({
+        where: { designationId: employee.designationId },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
         },
-      },
-      orderBy: { customerId: 'desc' }, // prioritize tenant-specific role
-    });
+      });
 
-    if (matchingRoles.length > 0) {
-      for (const r of matchingRoles) {
-        if (r.rolePermissions && r.rolePermissions.length > 0) {
-          hasDbPermissions = true;
-          r.rolePermissions.forEach((rp) => {
-            if (rp.permission) {
-              rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
-            }
-          });
-          break;
+      if (linkedRole && linkedRole.rolePermissions && linkedRole.rolePermissions.length > 0) {
+        hasDbPermissions = true;
+        linkedRole.rolePermissions.forEach((rp) => {
+          if (rp.permission) {
+            rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+          }
+        });
+      }
+    }
+
+    // Look for Role in DB matching roleName or designation if not yet resolved
+    if (!hasDbPermissions) {
+      const matchingRoles = await this.prisma.role.findMany({
+        where: {
+          OR: [
+            { customerId: employee.customerId, name: { equals: roleName, mode: 'insensitive' } },
+            { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
+          ],
+          deletedAt: null,
+          name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+        },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+        orderBy: { customerId: 'desc' }, // prioritize tenant-specific role
+      });
+
+      if (matchingRoles.length > 0) {
+        for (const r of matchingRoles) {
+          if (r.rolePermissions && r.rolePermissions.length > 0) {
+            hasDbPermissions = true;
+            r.rolePermissions.forEach((rp) => {
+              if (rp.permission) {
+                rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+              }
+            });
+            break;
+          }
         }
       }
     }
@@ -3121,6 +3150,16 @@ export class EmployeeService {
       }).catch((err) => this.logger.warn(`Failed writing audit log for permission update: ${err}`));
     }
 
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
+    }
+
     return this.getEmployeePermissions({
       employeeId: empId,
       customerId: params.customerId,
@@ -3175,6 +3214,16 @@ export class EmployeeService {
           },
         },
       }).catch((err) => this.logger.warn(`Failed writing audit log for permission reset: ${err}`));
+    }
+
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
     }
 
     return this.getEmployeePermissions({
@@ -3269,11 +3318,88 @@ export class EmployeeService {
       }).catch((err) => this.logger.warn(`Failed writing audit log for restrict-all: ${err}`));
     }
 
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
+    }
+
     return this.getEmployeePermissions({
       employeeId: empId,
       customerId: params.customerId,
       isSuperAdmin: params.isSuperAdmin,
     });
+  }
+
+  /**
+   * Get current authenticated employee effective permissions.
+   * Calculates Role Defaults + Employee Overrides = Final Effective Permissions.
+   */
+  async getMyEffectivePermissions(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: Number(userId) },
+      include: {
+        employee: {
+          include: {
+            designation: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.employee) {
+      return {
+        success: true,
+        employeeId: null,
+        designationId: null,
+        role: 'CUSTOMER',
+        permissionsUpdatedAt: new Date().toISOString(),
+        effectivePermissions: [],
+        modules: {},
+      };
+    }
+
+    const empPerms = await this.getEmployeePermissions({
+      employeeId: user.employee.id,
+      customerId: user.employee.customerId,
+      isSuperAdmin: false,
+    });
+
+    const effectivePermissions: string[] = [];
+    const modulesMap: Record<string, boolean> = {};
+
+    for (const m of empPerms.modules) {
+      modulesMap[m.moduleKey.toLowerCase()] = m.effective;
+      if (m.effective) {
+        effectivePermissions.push(`employee.${m.moduleKey.toLowerCase()}.view`);
+      }
+    }
+
+    for (const p of empPerms.granularPermissions) {
+      if (p.effective) {
+        if (!effectivePermissions.includes(p.key)) {
+          effectivePermissions.push(p.key);
+        }
+      }
+    }
+
+    return {
+      success: true,
+      employeeId: user.employee.id,
+      designationId: user.employee.designationId,
+      role: user.employee.designation?.name || empPerms.roleName,
+      permissionsUpdatedAt: user.employee.permissionsUpdatedAt,
+      effectivePermissions,
+      modules: modulesMap,
+    };
   }
 }
 

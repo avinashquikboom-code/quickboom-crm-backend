@@ -7,6 +7,8 @@ import {
   NotFoundException,
   Logger,
   Optional,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -30,6 +32,7 @@ import { QBIdGenerator } from './qb-id.generator';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
+import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 import {
   ALL_STANDARD_MODULES,
   ROLE_PERMISSION_DEFAULTS,
@@ -50,6 +53,9 @@ export class AuthService {
     private msg91Service: Msg91Service,
     @Optional() private emailService?: EmailService,
     @Optional() private notificationService?: NotificationService,
+    @Optional()
+    @Inject(forwardRef(() => PlanScheduleGateway))
+    private planScheduleGateway?: PlanScheduleGateway,
   ) {}
 
   async registerCustomer(dto: RegisterCustomerDto) {
@@ -3273,6 +3279,45 @@ export class AuthService {
             permissionId: permRecord.id,
           },
         });
+      }
+    }
+
+    // Update permissionsUpdatedAt timestamp on role
+    const now = new Date();
+    await this.prisma.role.update({
+      where: { id: role.id },
+      data: { permissionsUpdatedAt: now },
+    }).catch(() => null);
+
+    // If role is linked to a designation, update affected employees and trigger real-time refresh
+    let desigId = role.designationId;
+    if (!desigId) {
+      const matchingDesig = await this.prisma.designation.findFirst({
+        where: {
+          OR: [
+            { name: { equals: role.name, mode: 'insensitive' } },
+            { name: { equals: role.name.replace(/_/g, ' '), mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (matchingDesig) desigId = matchingDesig.id;
+    }
+
+    if (desigId) {
+      const activeEmps = await this.prisma.employee.findMany({
+        where: { designationId: desigId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      const empIds = activeEmps.map((e) => e.id);
+      if (empIds.length > 0) {
+        await this.prisma.employee.updateMany({
+          where: { id: { in: empIds } },
+          data: { permissionsUpdatedAt: now },
+        }).catch(() => null);
+      }
+      if (this.planScheduleGateway) {
+        this.planScheduleGateway.notifyDesignationPermissionsUpdated(desigId, empIds);
       }
     }
 

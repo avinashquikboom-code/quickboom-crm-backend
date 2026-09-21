@@ -81,6 +81,7 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
             userRoles: {
               include: { role: true },
             },
+            employee: true,
           },
         });
 
@@ -133,21 +134,27 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
           }
         }
 
-        const targetCustId = authCustomerPk || (rawCustomerId ? this.extractNumericPk(rawCustomerId) : null);
-        if (targetCustId) {
-          const normalized = this.normalizeCustomerId(String(targetCustId));
-          client.join(`customer-${normalized}`);
-          client.join(`customer-${targetCustId}`);
-          if (rawCustomerId) {
-            client.join(`customer-${rawCustomerId.trim()}`);
+          client.join(`user-${userId}`);
+          if (user.employee) {
+            client.join(`employee-${user.employee.id}`);
+            if (user.employee.designationId) {
+              client.join(`designation-${user.employee.designationId}`);
+            }
           }
-          this.logger.log(
-            `[REALTIME] Connected (Authenticated) | Customer: ${normalized} (PK: ${targetCustId}) | User: ${userId} | Socket: ${client.id}`,
-          );
-        } else {
-          this.logger.log(`[REALTIME] Connected (Admin) | User: ${userId} | Socket: ${client.id}`);
-        }
-        return;
+          if (authCustomerPk) {
+            const normalized = this.normalizeCustomerId(String(authCustomerPk));
+            client.join(`customer-${normalized}`);
+            client.join(`customer-${authCustomerPk}`);
+            if (rawCustomerId) {
+              client.join(`customer-${rawCustomerId.trim()}`);
+            }
+            this.logger.log(
+              `[REALTIME] Connected (Authenticated) | Customer: ${normalized} (PK: ${authCustomerPk}) | User: ${userId} | Employee: ${user.employee?.id ?? 'N/A'} | Socket: ${client.id}`,
+            );
+          } else {
+            this.logger.log(`[REALTIME] Connected (Admin) | User: ${userId} | Socket: ${client.id}`);
+          }
+          return;
       } catch (err: any) {
         this.logger.warn(`[REALTIME_AUTH_REJECTED] Invalid token: ${err?.message}`);
         client.emit('error', { statusCode: 401, message: 'Invalid or expired authentication token' });
@@ -254,5 +261,44 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
       if (!isNaN(num)) return num;
     }
     return undefined;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RBAC Real-time Permission Refresh Notifications
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  notifyEmployeePermissionsUpdated(employeeId: number, designationId?: number | null) {
+    const payload = {
+      event: 'employee_permissions_updated',
+      employeeId,
+      designationId: designationId || undefined,
+      timestamp: new Date().toISOString(),
+    };
+    if (this.server) {
+      this.server.to(`employee-${employeeId}`).emit('employee_permissions_updated', payload);
+      this.server.emit('employee_permissions_updated', payload);
+      if (designationId) {
+        this.server.to(`designation-${designationId}`).emit('employee_permissions_updated', payload);
+      }
+    }
+    this.logger.log(`[RBAC_REALTIME] Emitted employee_permissions_updated to employee-${employeeId}`);
+  }
+
+  notifyDesignationPermissionsUpdated(designationId: number, affectedEmployeeIds: number[] = []) {
+    const payload = {
+      event: 'employee_permissions_updated',
+      designationId,
+      timestamp: new Date().toISOString(),
+    };
+    if (this.server) {
+      this.server.to(`designation-${designationId}`).emit('employee_permissions_updated', payload);
+      this.server.emit('employee_permissions_updated', payload);
+      for (const empId of affectedEmployeeIds) {
+        this.server.to(`employee-${empId}`).emit('employee_permissions_updated', { ...payload, employeeId: empId });
+      }
+    }
+    this.logger.log(
+      `[RBAC_REALTIME] Emitted employee_permissions_updated for designation-${designationId} (${affectedEmployeeIds.length} employees)`,
+    );
   }
 }

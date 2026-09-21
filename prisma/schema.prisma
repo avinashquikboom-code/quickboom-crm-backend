@@ -269,13 +269,16 @@ model User {
 model Role {
   id              Int              @id @default(autoincrement())
   customerId      Int?
+  designationId   Int?             @unique
   name            String
   type            RoleType         @default(CUSTOM)
   description     String?
+  permissionsUpdatedAt DateTime         @default(now())
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   deletedAt       DateTime?
   customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  designation     Designation?     @relation(fields: [designationId], references: [id], onDelete: Cascade)
   rolePermissions RolePermission[]
   userRoles       UserRole[]
 
@@ -291,6 +294,7 @@ model Permission {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   rolePermissions RolePermission[]
+  employeeOverrides EmployeeModuleOverride[]
 
   @@unique([module, action])
 }
@@ -1061,6 +1065,7 @@ model Designation {
   department   Department? @relation(fields: [departmentId], references: [id])
   employees    Employee[]
   tasks        Task[]
+  role         Role?
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -1093,6 +1098,7 @@ model Employee {
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
   mobileLoginEnabled       Boolean                  @default(true)
+  permissionsUpdatedAt     DateTime                 @default(now())
   officeId                 Int?
   shiftId                  Int?
   attendances              Attendance[]
@@ -2560,15 +2566,18 @@ model EmployeeModuleOverride {
   customerId  Int
   employeeId  Int
   moduleKey   String
-  override    AccessOverrideType  @default(DEFAULT)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  customer    Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  override     AccessOverrideType  @default(DEFAULT)
+  permissionId Int?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee     Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  permission   Permission?         @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([customerId, employeeId, moduleKey])
   @@index([customerId])
   @@index([employeeId])
+  @@index([permissionId])
   @@map("employee_module_overrides")
 }
 
