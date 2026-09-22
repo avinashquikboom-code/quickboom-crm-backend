@@ -2976,12 +2976,14 @@ export class EmployeeService {
       overrideMap.set(ov.moduleKey.toLowerCase(), String(ov.override).toUpperCase());
     });
 
-    // 19 standard mobile modules definition
+    // Standard mobile modules definition
     const MODULE_METADATA: Array<{ key: string; label: string; category: string; description: string }> = [
       { key: 'DASHBOARD', label: 'Dashboard', category: 'SYSTEM', description: 'Main home view & overview metrics' },
       { key: 'CALENDAR', label: 'Calendar', category: 'CALENDAR', description: 'Personal & team schedule, shoots, visits' },
       { key: 'MY_WORK', label: 'My Work', category: 'WORKSPACE', description: 'SSM assigned tasks and creative deliverables' },
       { key: 'LEADS', label: 'Leads', category: 'CRM', description: 'Inbound inquiries and lead management pipeline' },
+      { key: 'CUSTOMERS', label: 'Customers', category: 'CRM', description: 'Customer directory and client accounts' },
+      { key: 'DATA_CAPTURE', label: 'Data Capture', category: 'CRM', description: 'Google Places extraction and prospect capture' },
       { key: 'FOLLOW_UP', label: 'Follow Ups', category: 'CRM', description: 'Scheduled client and prospect calls' },
       { key: 'VISITS', label: 'Field Visits', category: 'CRM', description: 'Client physical visits and check-ins' },
       { key: 'PROPOSALS', label: 'Proposals', category: 'CRM', description: 'Commercial quotes and contract proposals' },
@@ -3267,6 +3269,8 @@ export class EmployeeService {
       'CALENDAR',
       'MY_WORK',
       'LEADS',
+      'CUSTOMERS',
+      'DATA_CAPTURE',
       'FOLLOW_UP',
       'VISITS',
       'PROPOSALS',
