@@ -752,15 +752,34 @@ export class LeadService {
       ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
     };
 
+    // Pre-transaction resolution: Fetch employee permissions and limit configuration outside transaction
+    const hasEligibilityMethod = typeof this.leadLimitService?.resolveAndValidateEmployeeEligibility === 'function';
+    const eligibility = hasEligibilityMethod
+      ? await this.leadLimitService.resolveAndValidateEmployeeEligibility(customerId, user)
+      : { employeeId: null, isExempt: true };
+
+    const txStartTime = Date.now();
     // Concurrency-safe atomic check and lead creation within a transaction
-    const lead = await this.prisma.$transaction(async (tx) => {
-      let employeeId: number | null = null;
-      if (this.leadLimitService) {
-        const limitRes = await this.leadLimitService.validateAndConsumeLeadLimit(tx, customerId, user);
-        employeeId = limitRes.employeeId;
-      }
-      return this.leadRepository.create(customerId, userId, sanitizedDto as any, employeeId, tx);
-    });
+    const lead = await this.prisma.$transaction(
+      async (tx) => {
+        let employeeId: number | null = eligibility.employeeId;
+        if (this.leadLimitService) {
+          if (hasEligibilityMethod && typeof this.leadLimitService.enforceLeadLimitInTransaction === 'function') {
+            const limitRes = await this.leadLimitService.enforceLeadLimitInTransaction(tx, customerId, user, eligibility);
+            employeeId = limitRes.employeeId;
+          } else {
+            const limitRes = await this.leadLimitService.validateAndConsumeLeadLimit(tx, customerId, user);
+            employeeId = limitRes.employeeId;
+          }
+        }
+        return this.leadRepository.create(customerId, userId, sanitizedDto as any, employeeId, tx);
+      },
+      {
+        maxWait: 10000,
+        timeout: 15000,
+      },
+    );
+    this.logger.log(`[LeadCapture] Transaction committed in ${Date.now() - txStartTime}ms for lead #${lead.id}`);
 
     if (isGoogleDiscovery) {
       this.logger.log(`[GoogleDiscovery]\nCreating/updating Lead\n\nLead ID: ${lead.id}`);

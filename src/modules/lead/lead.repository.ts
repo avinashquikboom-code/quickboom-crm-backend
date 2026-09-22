@@ -13,7 +13,7 @@ import {
   UpdateLeadDto,
   normalizeLeadStatus,
 } from './dto/lead.dto';
-import { LeadStatus } from '@prisma/client';
+import { LeadStatus, Prisma } from '@prisma/client';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
@@ -207,8 +207,39 @@ export class LeadRepository {
       }
     }
 
+    const orClauses: Prisma.LeadWhereInput[] = [];
+
+    if (placeId) {
+      orClauses.push({ googlePlaceId: placeId });
+    }
+    if (normPhone.length >= 7) {
+      orClauses.push({ phone: { contains: normPhone.slice(-7) } });
+      if (dto.phone && dto.phone.trim()) {
+        orClauses.push({ phone: dto.phone.trim() });
+      }
+    }
+    if (cleanEmail.length >= 5 && cleanEmail.includes('@')) {
+      orClauses.push({ email: { equals: cleanEmail, mode: 'insensitive' } });
+    }
+    if (cleanCompany.length >= 3) {
+      orClauses.push({ companyName: { equals: cleanCompany, mode: 'insensitive' } });
+      orClauses.push({ title: { equals: cleanCompany, mode: 'insensitive' } });
+    }
+    if (cleanWebsite.length >= 4) {
+      orClauses.push({ website: { contains: cleanWebsite, mode: 'insensitive' } });
+    }
+
+    if (orClauses.length === 0) {
+      return { isDuplicate: false, matchReason: null, existingLead: null };
+    }
+
     const candidates = await this.prisma.lead.findMany({
-      where: { customerId: numCustomerId, deletedAt: null },
+      where: {
+        customerId: numCustomerId,
+        deletedAt: null,
+        OR: orClauses,
+      },
+      take: 20,
       select: {
         id: true,
         title: true,

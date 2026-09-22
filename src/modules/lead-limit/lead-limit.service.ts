@@ -32,6 +32,19 @@ export interface EmployeeLeadLimitResponse {
   source?: 'EMPLOYEE_OVERRIDE' | 'ROLE_DEFAULT';
 }
 
+export interface EffectiveLeadLimitResult {
+  employee: any;
+  normalizedRole: string;
+  effectiveDailyLimit: number;
+  effectiveMonthlyLimit: number;
+  customDailyLimit: number | null;
+  customMonthlyLimit: number | null;
+  roleDailyLimit: number;
+  roleMonthlyLimit: number;
+  roleIsActive: boolean;
+  isCustom: boolean;
+}
+
 const DEFAULT_ROLE_LIMITS: Record<string, { daily: number; monthly: number }> = {
   'Sales Executive': { daily: 10, monthly: 200 },
   'SALES_EXECUTIVE': { daily: 10, monthly: 200 },
@@ -542,11 +555,19 @@ export class LeadLimitService {
   // 5. ATOMIC VALIDATION & CONSUMPTION DURING LEAD CREATION
   // ===========================================================================
 
-  async validateAndConsumeLeadLimit(
-    tx: Prisma.TransactionClient,
+  /**
+   * Phase 1: Pre-Transaction Eligibility & Permission Resolution (Read-Only)
+   * Executes outside of the interactive transaction so heavy read queries and
+   * external permission calculations do not hold the database transaction open.
+   */
+  async resolveAndValidateEmployeeEligibility(
     customerId: number | string,
     user: any,
-  ): Promise<{ employeeId: number | null }> {
+  ): Promise<{
+    employeeId: number | null;
+    isExempt: boolean;
+    limitInfo?: EffectiveLeadLimitResult;
+  }> {
     const custId = Number(customerId);
     const userId = Number(user.id);
 
@@ -555,7 +576,7 @@ export class LeadLimitService {
     let employee = user.employee;
 
     if (!employeeId) {
-      employee = await tx.employee.findFirst({
+      employee = await this.prisma.employee.findFirst({
         where: { customerId: custId, userId },
       });
       if (employee) employeeId = employee.id;
@@ -563,15 +584,15 @@ export class LeadLimitService {
 
     // Super Admin and Customer Admin have full lead generation access and are exempt from employee mobile limits
     if (isUserSuperAdmin(user) || isUserAdmin(user)) {
-      return { employeeId: employeeId || null };
+      return { employeeId: employeeId || null, isExempt: true };
     }
 
     // If no employee record found for a non-admin user
     if (!employeeId) {
-      return { employeeId: null };
+      return { employeeId: null, isExempt: true };
     }
 
-    // 1. Check Lead permission
+    // Check Lead permission
     const permResult = await this.workPermissionService.getEmployeeEffectivePermissions(
       custId,
       { employeeId },
@@ -580,7 +601,39 @@ export class LeadLimitService {
       throw new ForbiddenException('You do not have permission to access or generate leads.');
     }
 
-    // 2. Concurrency Control: Acquire PostgreSQL row-level lock on Employee record
+    // Resolve effective limit configuration
+    const limitInfo = await this.getEffectiveLimitForEmployee(custId, employeeId);
+
+    return {
+      employeeId,
+      isExempt: false,
+      limitInfo,
+    };
+  }
+
+  /**
+   * Phase 2: In-Transaction Concurrency Control & Usage Enforcement
+   * Only performs the atomic row lock and count checks inside the transaction.
+   */
+  async enforceLeadLimitInTransaction(
+    tx: Prisma.TransactionClient,
+    customerId: number | string,
+    user: any,
+    eligibility: {
+      employeeId: number | null;
+      isExempt: boolean;
+      limitInfo?: EffectiveLeadLimitResult;
+    },
+  ): Promise<{ employeeId: number | null }> {
+    const { employeeId, isExempt, limitInfo } = eligibility;
+    if (isExempt || !employeeId || !limitInfo) {
+      return { employeeId: employeeId || null };
+    }
+
+    const custId = Number(customerId);
+    const userId = Number(user.id);
+
+    // Concurrency Control: Acquire PostgreSQL row-level lock on Employee record
     // This serializes concurrent lead generation requests for this employee
     await tx.$queryRawUnsafe(
       'SELECT id FROM "Employee" WHERE id = $1 AND "customerId" = $2 FOR UPDATE',
@@ -588,10 +641,7 @@ export class LeadLimitService {
       custId,
     );
 
-    // 3. Resolve effective limit
-    const limitInfo = await this.getEffectiveLimitForEmployee(custId, employeeId);
-
-    // 4. Calculate usage within the transaction
+    // Calculate usage within the transaction
     const dayRange = getBusinessDayRange();
     const monthRange = getBusinessMonthRange();
 
@@ -622,7 +672,7 @@ export class LeadLimitService {
       }),
     ]);
 
-    // 5. Enforce Limits
+    // Enforce Limits
     if (usedToday >= limitInfo.effectiveDailyLimit) {
       this.logger.warn(
         `[LIMIT_REACHED] Employee #${employeeId} daily lead limit reached: used ${usedToday}/${limitInfo.effectiveDailyLimit}`,
@@ -638,5 +688,17 @@ export class LeadLimitService {
     }
 
     return { employeeId };
+  }
+
+  /**
+   * Backwards-compatible single-call validation and consumption.
+   */
+  async validateAndConsumeLeadLimit(
+    tx: Prisma.TransactionClient,
+    customerId: number | string,
+    user: any,
+  ): Promise<{ employeeId: number | null }> {
+    const eligibility = await this.resolveAndValidateEmployeeEligibility(customerId, user);
+    return this.enforceLeadLimitInTransaction(tx, customerId, user, eligibility);
   }
 }

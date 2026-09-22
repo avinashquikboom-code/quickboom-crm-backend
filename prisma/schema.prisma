@@ -413,6 +413,8 @@ model Lead {
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
   @@index([customerId, status, deletedAt])
+  @@index([customerId, phone])
+  @@index([customerId, email])
 }
 
 model LeadStatusHistory {
