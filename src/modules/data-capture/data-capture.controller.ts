@@ -28,6 +28,7 @@ import {
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
+  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 
 @ApiTags('Data Capture (Google Places & Leads Extraction)')
@@ -192,8 +193,9 @@ export class DataCaptureController {
     @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
+    @Body() dto?: CreateLeadFromPlaceDto,
   ) {
-    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id);
+    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId);
   }
 
   /**

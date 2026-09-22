@@ -41,6 +41,7 @@ import {
   WHATSAPP_ERROR_CODES,
 } from '../whatsapp/whatsapp.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 
 function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return '***';
@@ -160,7 +161,7 @@ export class LeadService {
             result.lastName = parts.slice(1).join(' ') || parts[0];
           }
         } else if (id === 'EMAIL' || id === 'USER_EMAIL' || id === 'WORK_EMAIL' || id === 'EMAIL_ADDRESS') {
-          if (!result.email) result.email = trimmedVal.toLowerCase();
+          if (!result.email) result.email = ContactExtractor.normalizeEmail(trimmedVal) || undefined;
         } else if (
           id === 'PHONE_NUMBER' ||
           id === 'PHONE' ||
@@ -169,7 +170,7 @@ export class LeadService {
           id === 'USER_PHONE' ||
           id === 'WORK_PHONE'
         ) {
-          if (!result.phone) result.phone = trimmedVal;
+          if (!result.phone) result.phone = ContactExtractor.normalizePhoneNumber(trimmedVal) || undefined;
         } else if (id === 'COMPANY_NAME' || id === 'COMPANY' || id === 'BUSINESS_NAME') {
           if (!result.companyName) result.companyName = trimmedVal;
         } else if (id === 'CITY' || id === 'LOCATION') {
@@ -225,8 +226,8 @@ export class LeadService {
       result.firstName = parts[0];
       result.lastName = parts.slice(1).join(' ') || parts[0];
     }
-    if (!result.email && directEmail) result.email = String(directEmail).trim().toLowerCase();
-    if (!result.phone && directPhone) result.phone = String(directPhone).trim();
+    if (!result.email && directEmail) result.email = ContactExtractor.normalizeEmail(directEmail) || undefined;
+    if (!result.phone && directPhone) result.phone = ContactExtractor.normalizePhoneNumber(directPhone) || undefined;
     if (!result.companyName && directCompany) result.companyName = String(directCompany).trim();
     if (!result.googlePlaceId && directPlaceId) result.googlePlaceId = String(directPlaceId).trim();
 
@@ -248,15 +249,27 @@ export class LeadService {
     const cleaned = { ...dto } as any;
 
     // 0. Extract from Google Discovery / Google Lead payload if present
-    const googleData = this.parseGoogleLeadPayload(cleaned);
-    if (googleData.firstName && !cleaned.firstName && !cleaned.first_name) cleaned.firstName = googleData.firstName;
-    if (googleData.lastName && !cleaned.lastName && !cleaned.last_name) cleaned.lastName = googleData.lastName;
-    if (googleData.email && !cleaned.email && !cleaned.emailAddress) cleaned.email = googleData.email;
-    if (googleData.phone && !cleaned.phone && !cleaned.mobile) cleaned.phone = googleData.phone;
-    if (googleData.companyName && !cleaned.companyName) cleaned.companyName = googleData.companyName;
-    if (googleData.city && !cleaned.city) cleaned.city = googleData.city;
-    if (googleData.state && !cleaned.state) cleaned.state = googleData.state;
-    if (googleData.googlePlaceId && !cleaned.googlePlaceId) cleaned.googlePlaceId = googleData.googlePlaceId;
+    const isGooglePayload =
+      (cleaned.source && String(cleaned.source).toUpperCase().includes('DISCOVERY')) ||
+      (cleaned.source && String(cleaned.source).toUpperCase().includes('GOOGLE')) ||
+      cleaned.user_column_data ||
+      cleaned.column_data ||
+      cleaned.form_data ||
+      cleaned.fields ||
+      cleaned.google_key ||
+      cleaned.lead_id;
+
+    if (isGooglePayload) {
+      const googleData = this.parseGoogleLeadPayload(cleaned);
+      if (googleData.firstName && !cleaned.firstName && !cleaned.first_name) cleaned.firstName = googleData.firstName;
+      if (googleData.lastName && !cleaned.lastName && !cleaned.last_name) cleaned.lastName = googleData.lastName;
+      if (googleData.email && !cleaned.email && !cleaned.emailAddress) cleaned.email = googleData.email;
+      if (googleData.phone && !cleaned.phone && !cleaned.mobile) cleaned.phone = googleData.phone;
+      if (googleData.companyName && !cleaned.companyName) cleaned.companyName = googleData.companyName;
+      if (googleData.city && !cleaned.city) cleaned.city = googleData.city;
+      if (googleData.state && !cleaned.state) cleaned.state = googleData.state;
+      if (googleData.googlePlaceId && !cleaned.googlePlaceId) cleaned.googlePlaceId = googleData.googlePlaceId;
+    }
 
     // Normalize source for Google Discovery
     if (
@@ -284,7 +297,17 @@ export class LeadService {
       if (isInvalid(rawPhone)) {
         cleaned.phone = null;
       } else {
-        cleaned.phone = String(rawPhone).trim();
+        const isGoogle =
+          (cleaned.source && String(cleaned.source).toUpperCase().includes('DISCOVERY')) ||
+          (cleaned.source && String(cleaned.source).toUpperCase().includes('GOOGLE')) ||
+          cleaned.user_column_data ||
+          cleaned.google_key ||
+          cleaned.lead_id;
+        if (isGoogle) {
+          cleaned.phone = ContactExtractor.normalizePhoneNumber(rawPhone) || String(rawPhone).trim();
+        } else {
+          cleaned.phone = String(rawPhone).trim();
+        }
       }
     }
 
@@ -294,21 +317,16 @@ export class LeadService {
       if (isInvalid(rawEmail)) {
         cleaned.email = null;
       } else {
-        const trimmedEmail = String(rawEmail).trim().toLowerCase();
-        const placeholderEmails = [
-          'contact@company.com',
-          'placeholder@company.com',
-          'example@company.com',
-          'test@company.com',
-          'user@company.com',
-          'admin@quikboom.com',
-        ];
-        if (placeholderEmails.includes(trimmedEmail) || !trimmedEmail.includes('@')) {
-          cleaned.email = null;
-        } else {
-          cleaned.email = trimmedEmail;
-        }
+        cleaned.email = ContactExtractor.normalizeEmail(rawEmail);
       }
+    }
+
+    // Preserve captureRequestId and sourceRecordId if provided
+    if (cleaned.captureRequestId) {
+      cleaned.captureRequestId = String(cleaned.captureRequestId).trim();
+    }
+    if (cleaned.sourceRecordId) {
+      cleaned.sourceRecordId = String(cleaned.sourceRecordId).trim();
     }
 
     // 3. Resolve Contact Name Aliases (firstName, first_name, lastName, last_name, name, full_name)
@@ -542,16 +560,32 @@ export class LeadService {
       this.logger.log('[LeadCapture]\nMapped Lead fields successfully');
     }
 
-    // Check if an existing Lead exists for this customer (Create vs Update)
+    // 1. Check idempotency if captureRequestId is present (rapid double-click protection)
+    if (cleaned.captureRequestId) {
+      const existingLeadByReq = await this.prisma.lead.findFirst({
+        where: {
+          customerId: numCustomerId,
+          captureRequestId: cleaned.captureRequestId,
+          deletedAt: null,
+        },
+        include: { stage: true },
+      });
+      if (existingLeadByReq) {
+        this.logger.log(`[DATA CAPTURE DEBUG] Idempotency match found for captureRequestId: ${cleaned.captureRequestId}`);
+        return this.getLeadById(customerId, existingLeadByReq.id);
+      }
+    }
+
+    // 2. Check if an existing Lead exists for this customer (Create vs Update)
     let existingLead: any = null;
     const lookupConditions: any[] = [];
     if (cleaned.googlePlaceId) {
       lookupConditions.push({ googlePlaceId: cleaned.googlePlaceId });
     }
-    if (cleaned.phone && cleaned.phone !== 'N/A') {
+    if (cleaned.phone && cleaned.phone !== 'N/A' && cleaned.phone.length >= 10) {
       lookupConditions.push({ phone: cleaned.phone });
     }
-    if (cleaned.email) {
+    if (cleaned.email && cleaned.email.includes('@')) {
       lookupConditions.push({ email: cleaned.email });
     }
 
@@ -567,6 +601,17 @@ export class LeadService {
         },
       });
     }
+
+    this.logger.log(
+      `[DATA CAPTURE DEBUG]\n` +
+      `captureRequestId: ${cleaned.captureRequestId || 'none'}\n` +
+      `source: ${dto.source || 'GOOGLE_PLACES'}\n` +
+      `sourceRecordId: ${cleaned.sourceRecordId || cleaned.googlePlaceId || 'none'}\n` +
+      `companyName: ${cleaned.companyName || cleaned.title}\n` +
+      `normalizedPhone: ${cleaned.phone || 'none'}\n` +
+      `normalizedEmail: ${cleaned.email || 'none'}\n` +
+      `existingLeadId: ${existingLead?.id || 'none'}`
+    );
 
     if (existingLead && isGoogleLead) {
       this.logger.log('[GoogleLead]\nExisting lead found: true');

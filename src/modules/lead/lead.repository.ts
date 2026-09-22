@@ -106,21 +106,31 @@ export class LeadRepository {
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
+    const createData: any = {
+      ...leadData,
+      city: resolvedCity,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
+      status,
+      stageId,
+      customerId: numCustomerId,
+      createdById: numCreatedById,
+      employeeId: employeeId ? Number(employeeId) : undefined,
+    };
+    if (resolvedPhone) {
+      createData.phone = resolvedPhone;
+    } else {
+      delete createData.phone;
+    }
+    if (resolvedEmail) {
+      createData.email = resolvedEmail;
+    } else {
+      delete createData.email;
+    }
+
     const lead = await client.lead.create({
-      data: {
-        ...leadData,
-        city: resolvedCity,
-        firstName: resolvedFirstName,
-        lastName: resolvedLastName,
-        ...(resolvedPhone ? { phone: resolvedPhone } : {}),
-        ...(resolvedEmail ? { email: resolvedEmail } : {}),
-        assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
-        status,
-        stageId,
-        customerId: numCustomerId,
-        createdById: numCreatedById,
-        employeeId: employeeId ? Number(employeeId) : undefined,
-      },
+      data: createData,
       include: {
         stage: true,
         assignedTo: {

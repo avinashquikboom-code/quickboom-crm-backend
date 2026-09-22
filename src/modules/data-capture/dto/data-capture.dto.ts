@@ -389,3 +389,10 @@ export class BulkActionDto {
   @IsString()
   reason?: string;
 }
+
+export class CreateLeadFromPlaceDto {
+  @IsOptional()
+  @IsString()
+  captureRequestId?: string;
+}
+

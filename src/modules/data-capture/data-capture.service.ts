@@ -15,6 +15,7 @@ import {
   BulkActionDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import {
   CapturedPlace,
   ExtractionJob,
@@ -205,14 +206,30 @@ export class DataCaptureService {
           for (const p of rawPlaces) {
             if (!p.id || !p.displayName?.text) continue;
 
+            const normalizedPhone = ContactExtractor.normalizePhoneNumber(
+              p.internationalPhoneNumber || p.nationalPhoneNumber,
+            );
+            const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(p.websiteUri);
+            const normalizedName = ContactExtractor.normalizeCompanyName(p.displayName.text);
+
+            let extractedEmail: string | undefined = undefined;
+            let finalPhone = normalizedPhone || undefined;
+
+            if (normalizedWebsite) {
+              const webContact = await ContactExtractor.extractContactFromWebsite(normalizedWebsite);
+              if (webContact.email) extractedEmail = webContact.email;
+              if (!finalPhone && webContact.phone) finalPhone = webContact.phone;
+            }
+
             const placeRecord: CapturedPlace = {
               provider: 'GOOGLE_PLACES',
               googlePlaceId: p.id,
-              businessName: p.displayName.text,
+              businessName: normalizedName,
               category: p.primaryTypeDisplayName?.text || p.primaryType || keyword,
               address: p.formattedAddress || 'N/A',
-              phone: p.internationalPhoneNumber || p.nationalPhoneNumber || 'N/A',
-              website: p.websiteUri || undefined,
+              phone: finalPhone || undefined,
+              email: extractedEmail || undefined,
+              website: normalizedWebsite || undefined,
               rating: p.rating || undefined,
               reviewCount: p.userRatingCount || undefined,
               latitude: p.location?.latitude,
@@ -305,12 +322,13 @@ export class DataCaptureService {
       return {
         customerId: effectiveCustomerId,
         googlePlaceId: p.googlePlaceId,
+        sourceRecordId: p.googlePlaceId || undefined,
         businessName: p.businessName,
         category: p.category,
-        address: p.address,
-        phone: p.phone,
-        email: p.email,
-        website: p.website,
+        address: p.address && p.address !== 'N/A' ? p.address : undefined,
+        phone: p.phone || null,
+        email: p.email || null,
+        website: p.website || null,
         rating: p.rating,
         reviewCount: p.reviewCount,
         latitude: p.latitude,
@@ -908,7 +926,7 @@ export class DataCaptureService {
             lastName = parts.slice(1).join(' ') || parts[0];
           }
         } else if (id === 'EMAIL' || id === 'USER_EMAIL' || id === 'WORK_EMAIL' || id === 'EMAIL_ADDRESS') {
-          if (!email) email = trimmedVal.toLowerCase();
+          if (!email) email = ContactExtractor.normalizeEmail(trimmedVal) || undefined;
         } else if (
           id === 'PHONE_NUMBER' ||
           id === 'PHONE' ||
@@ -917,7 +935,7 @@ export class DataCaptureService {
           id === 'USER_PHONE' ||
           id === 'WORK_PHONE'
         ) {
-          if (!phone) phone = trimmedVal;
+          if (!phone) phone = ContactExtractor.normalizePhoneNumber(trimmedVal) || undefined;
         }
       }
     }
@@ -948,29 +966,34 @@ export class DataCaptureService {
     }
 
     if (!phone) {
-      phone = (place.internationalPhoneNumber && place.internationalPhoneNumber !== 'N/A' ? place.internationalPhoneNumber.trim() : undefined)
-        || (place.phone && place.phone !== 'N/A' ? place.phone.trim() : undefined)
-        || (rawData.phone && rawData.phone !== 'N/A' ? String(rawData.phone).trim() : undefined)
-        || (rawData.mobile ? String(rawData.mobile).trim() : undefined)
-        || (rawData.mobileNumber ? String(rawData.mobileNumber).trim() : undefined)
-        || (rawData.phoneNumber ? String(rawData.phoneNumber).trim() : undefined)
-        || (rawData.phone_number ? String(rawData.phone_number).trim() : undefined)
-        || (rawData.user_phone ? String(rawData.user_phone).trim() : undefined)
-        || (rawData.user_phone_number ? String(rawData.user_phone_number).trim() : undefined)
-        || (rawData.contactNumber ? String(rawData.contactNumber).trim() : undefined)
-        || (nested.phone ? String(nested.phone).trim() : undefined)
-        || (nested.mobile ? String(nested.mobile).trim() : undefined)
-        || undefined;
+      const rawCandidatePhone =
+        place.phone ||
+        place.internationalPhoneNumber ||
+        place.nationalPhoneNumber ||
+        rawData.phone ||
+        rawData.mobile ||
+        rawData.mobileNumber ||
+        rawData.phoneNumber ||
+        rawData.phone_number ||
+        rawData.user_phone ||
+        rawData.user_phone_number ||
+        rawData.contactNumber ||
+        nested.phone ||
+        nested.mobile ||
+        undefined;
+      phone = ContactExtractor.normalizePhoneNumber(rawCandidatePhone) || undefined;
     }
 
     if (!email) {
-      email = (place.email && place.email !== 'N/A' ? place.email.trim().toLowerCase() : undefined)
-        || (rawData.email && rawData.email !== 'N/A' ? String(rawData.email).trim().toLowerCase() : undefined)
-        || (rawData.user_email ? String(rawData.user_email).trim().toLowerCase() : undefined)
-        || (rawData.emailAddress ? String(rawData.emailAddress).trim().toLowerCase() : undefined)
-        || (rawData.email_address ? String(rawData.email_address).trim().toLowerCase() : undefined)
-        || (nested.email ? String(nested.email).trim().toLowerCase() : undefined)
-        || undefined;
+      const rawCandidateEmail =
+        place.email ||
+        rawData.email ||
+        rawData.user_email ||
+        rawData.emailAddress ||
+        rawData.email_address ||
+        nested.email ||
+        undefined;
+      email = ContactExtractor.normalizeEmail(rawCandidateEmail) || undefined;
     }
 
     return { firstName, lastName, phone, email };
@@ -980,6 +1003,7 @@ export class DataCaptureService {
     customerId: string | number,
     userId: string | number,
     id: number | string,
+    captureRequestId?: string,
   ): Promise<{
     lead: any;
     place: CapturedPlace;
@@ -998,12 +1022,99 @@ export class DataCaptureService {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
+    const activeCaptureRequestId = captureRequestId?.trim() || randomUUID();
+
+    // 1. Idempotency Check: Already converted place
+    if (place.isImported && place.importedLeadId) {
+      const existingLead = await this.prisma.lead.findFirst({
+        where: { id: place.importedLeadId, customerId: numCustomerId, deletedAt: null },
+      });
+      if (existingLead) {
+        return {
+          lead: existingLead,
+          place: {
+            id: place.id,
+            provider: place.source || 'GOOGLE_PLACES',
+            googlePlaceId: place.googlePlaceId || undefined,
+            businessName: place.businessName,
+            category: place.category || undefined,
+            address: place.address || undefined,
+            phone: place.phone || undefined,
+            email: place.email || undefined,
+            website: place.website || undefined,
+            rating: place.rating || undefined,
+            reviewCount: place.reviewCount || undefined,
+            source: place.source || 'GOOGLE_PLACES',
+            status: 'LEAD_CREATED',
+            isImported: true,
+            importedLeadId: existingLead.id,
+            capturedAt: place.createdAt,
+            updatedAt: place.updatedAt,
+            customerId: String(place.customerId),
+          },
+          message: `Lead "${existingLead.title}" is already converted.`,
+          isDuplicate: true,
+        };
+      }
+    }
+
+    // 2. Idempotency Check: Request ID already processed
+    if (activeCaptureRequestId) {
+      const existingByRequestId = await this.prisma.lead.findFirst({
+        where: {
+          customerId: numCustomerId,
+          captureRequestId: activeCaptureRequestId,
+          deletedAt: null,
+        },
+      });
+      if (existingByRequestId) {
+        return {
+          lead: existingByRequestId,
+          place: {
+            id: place.id,
+            provider: place.source || 'GOOGLE_PLACES',
+            googlePlaceId: place.googlePlaceId || undefined,
+            businessName: place.businessName,
+            category: place.category || undefined,
+            address: place.address || undefined,
+            phone: place.phone || undefined,
+            email: place.email || undefined,
+            website: place.website || undefined,
+            rating: place.rating || undefined,
+            reviewCount: place.reviewCount || undefined,
+            source: place.source || 'GOOGLE_PLACES',
+            status: 'LEAD_CREATED',
+            isImported: true,
+            importedLeadId: existingByRequestId.id,
+            capturedAt: place.createdAt,
+            updatedAt: place.updatedAt,
+            customerId: String(place.customerId),
+          },
+          message: `Lead "${existingByRequestId.title}" was already captured for this request.`,
+          isDuplicate: true,
+        };
+      }
+    }
+
     // Duplicate check
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId, place);
     const hasLeadDuplicate = duplicateMatches.some((d) => d.type === 'LEAD');
 
-    // Resolve Contact details from place / rawData
+    // Resolve Contact details from place / rawData independently
     const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
+
+    this.logger.log(
+      `[DATA CAPTURE DEBUG]\n` +
+      `captureRequestId: ${activeCaptureRequestId}\n` +
+      `source: ${place.source || 'GOOGLE_PLACES'}\n` +
+      `sourceRecordId: ${place.id}\n` +
+      `sourceUrl: ${place.website || place.googleMapsUrl || 'N/A'}\n` +
+      `companyName: ${place.businessName}\n` +
+      `rawPhoneFound: ${place.phone || 'none'}\n` +
+      `rawEmailFound: ${place.email || 'none'}\n` +
+      `normalizedPhone: ${phone || 'none'}\n` +
+      `normalizedEmail: ${email || 'none'}`
+    );
 
     let createdLead: any;
     if (this.leadService) {
@@ -1029,6 +1140,8 @@ export class DataCaptureService {
           status: 'NEW',
           priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
           value: 0,
+          captureRequestId: activeCaptureRequestId,
+          sourceRecordId: place.sourceRecordId || place.googlePlaceId || String(place.id),
         } as any,
       );
     } else {
@@ -1072,6 +1185,8 @@ export class DataCaptureService {
           priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
           value: 0,
           createdById: numUserId,
+          captureRequestId: activeCaptureRequestId,
+          sourceRecordId: String(place.id),
         },
       });
     }
@@ -1081,7 +1196,7 @@ export class DataCaptureService {
       data: {
         leadId: createdLead.id,
         userId: numUserId,
-        content: `[DATA_CAPTURE_METADATA]\nRecord ID: #${place.id}\nGoogle Place ID: ${place.googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}\nSource: ${place.source || 'GOOGLE_PLACES'}`,
+        content: `[DATA_CAPTURE_METADATA]\nRecord ID: #${place.id}\nCapture Request ID: ${activeCaptureRequestId}\nGoogle Place ID: ${place.googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}\nSource: ${place.source || 'GOOGLE_PLACES'}`,
       },
     });
 
@@ -1096,6 +1211,7 @@ export class DataCaptureService {
           googlePlaceId: place.googlePlaceId,
           jobId: place.jobId,
           source: place.source,
+          captureRequestId: activeCaptureRequestId,
         },
       },
     });
@@ -1107,6 +1223,8 @@ export class DataCaptureService {
         isImported: true,
         importedLeadId: createdLead.id,
         status: 'LEAD_CREATED',
+        captureRequestId: activeCaptureRequestId,
+        sourceRecordId: String(place.id),
       },
     });
 
@@ -1691,15 +1809,19 @@ export class DataCaptureService {
       const reviewCount = 45 + ((i * 19) % 350);
       const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+      const randDigits = String(10000000 + ((i * 1234567 + 345678) % 89999999)).slice(0, 8);
+      const normalizedPhone = `+9198${randDigits}`;
+      const normalizedEmail = `info@${cleanName}.in`;
+
       places.push({
         provider: 'GOOGLE_PLACES',
         googlePlaceId: placeId,
         businessName: name,
         category: keyword,
         address: `${100 + i * 12}, Near High Street, ${location}`,
-        phone: `+91 ${98200 + ((i * 111) % 10000)} ${10000 + ((i * 333) % 90000)}`,
-        email: `contact@${cleanName}.com`,
-        website: `https://www.${cleanName}.com`,
+        phone: normalizedPhone,
+        email: normalizedEmail,
+        website: `https://www.${cleanName}.in`,
         rating,
         reviewCount,
         latitude: 22.3072 + i * 0.005,

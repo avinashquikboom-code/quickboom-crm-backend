@@ -263,6 +263,16 @@ export class CreateLeadDto {
   @IsOptional()
   companyName?: string;
 
+  @ApiPropertyOptional({ example: 'uuid-1234-5678', description: 'Unique capture event / request identifier' })
+  @IsString()
+  @IsOptional()
+  captureRequestId?: string;
+
+  @ApiPropertyOptional({ example: 'ChIJ1234567890', description: 'Source record ID' })
+  @IsString()
+  @IsOptional()
+  sourceRecordId?: string;
+
   @ApiPropertyOptional({ example: 'https://techcorp.com' })
   @Transform(cleanOptionalField)
   @IsString()

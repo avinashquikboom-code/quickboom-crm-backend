@@ -387,6 +387,8 @@ model Lead {
   longitude            Float?
   rating               Float?
   reviewCount          Int?
+  captureRequestId     String?
+  sourceRecordId       String?
   assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -406,6 +408,7 @@ model Lead {
   @@index([assignedToId])
   @@index([employeeId])
   @@index([googlePlaceId])
+  @@index([captureRequestId])
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
   @@index([customerId, status, deletedAt])
@@ -1854,18 +1857,21 @@ model DataCapturePlace {
   status         String?         @default("CAPTURED")
   rawData        Json?
   notes          String?
-  isImported     Boolean         @default(false)
-  importedLeadId Int?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @default(now()) @updatedAt
-  deletedAt      DateTime?
-  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  job            DataCaptureJob? @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  isImported       Boolean         @default(false)
+  importedLeadId   Int?
+  captureRequestId String?
+  sourceRecordId   String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
+  deletedAt        DateTime?
+  customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job              DataCaptureJob? @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
 
   @@index([jobId])
   @@index([customerId])
   @@index([googlePlaceId])
   @@index([status])
+  @@index([captureRequestId])
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
 }
