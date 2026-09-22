@@ -111,6 +111,8 @@ export const DEFAULT_ROLE_WORK_MAPPINGS: Record<string, string[]> = {
   'TELESALES_EXECUTIVE': ['leads', 'data_capture'],
   'Telesales': ['leads', 'data_capture'],
   'TELESALES': ['leads', 'data_capture'],
+  'Teleseller': ['leads', 'data_capture'],
+  'TELESELLER': ['leads', 'data_capture'],
   'Sales Executive': ['leads', 'data_capture'],
   'SALES_EXECUTIVE': ['leads', 'data_capture'],
   'Sales Head': ['leads', 'data_capture'],

@@ -2940,7 +2940,7 @@ export class EmployeeService {
       let matchedKey: string | null = null;
       if (ROLE_PERMISSION_DEFAULTS[upper]) {
         matchedKey = upper;
-      } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+      } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
         matchedKey = 'TELECALLER';
       } else if (upper.includes('DESIGNER')) {
         matchedKey = 'DESIGNER';

@@ -303,7 +303,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           const upper = String(candidate).toUpperCase().replace(/\s+/g, '_');
           let matched: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
-          else if (upper.includes('TELECALL') || upper.includes('TELESALES')) matched = 'TELECALLER';
+          else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) matched = 'TELECALLER';
           else if (upper.includes('DESIGN')) matched = 'DESIGNER';
           else if (upper.includes('EDIT')) matched = 'EDITOR';
           else if (upper.includes('SOCIAL') || upper.includes('SSM')) matched = 'SOCIAL_MEDIA_MANAGER';

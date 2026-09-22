@@ -65,10 +65,12 @@ export async function seedRbac() {
 
     // Assign / sync default role permissions
     const permsToAssign = ROLE_PERMISSION_DEFAULTS[r.name] || [];
+    const desiredPermIds = new Set<number>();
     let assignedCount = 0;
     for (const p of permsToAssign) {
       const pId = permMap.get(`${p.module}:${p.action}`);
       if (pId) {
+        desiredPermIds.add(pId);
         await prisma.rolePermission.upsert({
           where: {
             roleId_permissionId: {
@@ -85,6 +87,16 @@ export async function seedRbac() {
         assignedCount++;
       }
     }
+
+    if (desiredPermIds.size > 0) {
+      await prisma.rolePermission.deleteMany({
+        where: {
+          roleId: roleRecord.id,
+          permissionId: { notIn: Array.from(desiredPermIds) },
+        },
+      });
+    }
+
     console.log(`Synced ${assignedCount} default permissions for role ${r.name}`);
   }
 

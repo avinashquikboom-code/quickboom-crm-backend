@@ -2451,6 +2451,11 @@ export class AuthService {
       if (ur.role) {
         roleNames.push(ur.role.name);
         if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
+          const rNameUpper = String(ur.role.name).toUpperCase();
+          const rTypeUpper = ur.role.type ? String(ur.role.type).toUpperCase() : '';
+          if (user.employee?.designationId && (rNameUpper === 'EMPLOYEE' || rTypeUpper === 'EMPLOYEE')) {
+            return;
+          }
           ur.role.rolePermissions.forEach((rp: any) => {
             if (rp.permission) {
               permissionsMap.set(
@@ -2589,7 +2594,7 @@ export class AuthService {
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
-          } else if (upper.includes('TELECALL') || upper.includes('TELESALES')) {
+          } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
             matchedKey = 'TELECALLER';
           } else if (upper.includes('SALES')) {
             matchedKey = 'SALES_EXECUTIVE';
