@@ -137,6 +137,81 @@ describe('LeadService - Lead Communications & Push Dispatch', () => {
       expect(result.communications[2].direction).toBe('OUTBOUND');
       expect(result.communications[2].status).toBe('SENT');
     });
+
+    it('correctly includes stage change communications and excludes failed ones from counts', async () => {
+      mockPrisma.lead.findFirst.mockResolvedValue({
+        id: 20,
+        customerId: 1,
+        assignedToId: 5,
+        firstName: 'Raj',
+        lastName: 'Patel',
+        email: 'raj@example.com',
+        phone: '+919876543211',
+      });
+
+      mockPrisma.emailLog.findMany.mockResolvedValue([
+        {
+          id: 301,
+          customerId: 1,
+          leadId: 20,
+          recipientEmail: 'raj@example.com',
+          subject: 'Lead Stage Updated: Contacted',
+          renderedContent: '<p>Stage updated</p>',
+          status: 'SENT',
+          providerMessageId: 'msg-stage-1',
+          createdAt: new Date('2026-09-21T10:00:00Z'),
+          user: null,
+        },
+        {
+          id: 302,
+          customerId: 1,
+          leadId: 20,
+          recipientEmail: 'raj@example.com',
+          subject: 'Failed email attempt',
+          renderedContent: '<p>Failed</p>',
+          status: 'FAILED',
+          errorMessage: 'SMTP connection refused',
+          providerMessageId: null,
+          createdAt: new Date('2026-09-21T09:00:00Z'),
+          user: null,
+        },
+      ]);
+
+      mockPrisma.leadActivityTimeline.findMany.mockResolvedValue([
+        {
+          id: 401,
+          leadId: 20,
+          action: 'STAGE_CHANGE_WHATSAPP',
+          description: 'Automatic stage WhatsApp skipped: Lead has no phone number',
+          metadata: {
+            eventType: 'LEAD_STAGE_CHANGED',
+            status: 'FAILED',
+            reason: 'NO_PHONE',
+          },
+          createdAt: new Date('2026-09-21T11:00:00Z'),
+        },
+        {
+          id: 402,
+          leadId: 20,
+          action: 'WHATSAPP_SENT',
+          description: 'WhatsApp notification sent to +919876543211 for stage Contacted',
+          metadata: {
+            phone: '+919876543211',
+            status: 'Sent',
+            stageName: 'Contacted',
+          },
+          createdAt: new Date('2026-09-21T10:01:00Z'),
+        },
+      ]);
+
+      const result = await service.getLeadCommunications(1, 20);
+
+      expect(result.leadId).toBe(20);
+      expect(result.summary.totalCommunications).toBe(4);
+      expect(result.summary.totalEmails).toBe(1);
+      expect(result.summary.totalWhatsApp).toBe(1);
+      expect(result.summary.lastContactAt).toBe(new Date('2026-09-21T10:01:00Z').toISOString());
+    });
   });
 
   describe('sendLeadEmail', () => {

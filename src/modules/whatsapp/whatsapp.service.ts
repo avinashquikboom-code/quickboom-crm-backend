@@ -1142,6 +1142,46 @@ export class WhatsappService {
   }
 
   /**
+   * Resolves a WhatsApp template for a stage, prioritizing custom DB MetaTemplates.
+   */
+  async getStageTemplateAsync(stageKey?: string | null, customerId?: number | null): Promise<LeadStageWhatsAppTemplate | null> {
+    if (!stageKey) return null;
+    const normalized = stageKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const resolvedKey = STAGE_KEY_TO_WHATSAPP_KEY[normalized] || normalized;
+
+    try {
+      if (this.prisma && (this.prisma as any).metaTemplate) {
+        const candidateKeys = [resolvedKey, normalized, stageKey];
+        const dbTpl = await (this.prisma as any).metaTemplate.findFirst({
+          where: {
+            deletedAt: null,
+            isLocalActive: true,
+            OR: [
+              { key: { in: candidateKeys } },
+              { templateName: { in: [resolvedKey.toLowerCase(), normalized.toLowerCase(), `lead_stage_${resolvedKey.toLowerCase()}`] } },
+            ],
+            ...(customerId ? { OR: [{ customerId: null }, { customerId: Number(customerId) }] } : {}),
+          },
+          orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
+        });
+
+        if (dbTpl) {
+          return {
+            key: dbTpl.key || resolvedKey,
+            templateName: dbTpl.templateName,
+            name: dbTpl.name,
+            body: dbTpl.body,
+          };
+        }
+      }
+    } catch {
+      // Fallback to static templates
+    }
+
+    return this.getStageTemplate(stageKey);
+  }
+
+  /**
    * Returns all available lead stage WhatsApp templates.
    */
   getAllStageTemplates(): LeadStageWhatsAppTemplate[] {
@@ -1162,7 +1202,7 @@ export class WhatsappService {
     userId?: number;
   }): Promise<WhatsAppSendResult> {
     const { to, stageKey, variables, customMessage, stageName, customerId, userId } = params;
-    const template = this.getStageTemplate(stageKey);
+    const template = (await this.getStageTemplateAsync(stageKey, customerId)) || this.getStageTemplate(stageKey);
 
     let messageText = customMessage;
     if (!messageText) {

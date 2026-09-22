@@ -105,6 +105,7 @@ model Customer {
   masterItems              MasterItem[]
   emailTemplates           EmailTemplate[]
   emailLogs                EmailLog[]
+  metaTemplates            MetaTemplate[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -3129,4 +3130,39 @@ model EmailLog {
   @@index([status])
   @@index([createdAt])
   @@map("email_logs")
+}
+
+model MetaTemplate {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int?
+  name               String
+  templateName       String
+  key                String?
+  language           String    @default("en_US")
+  category           String    @default("UTILITY") // MARKETING, UTILITY, AUTHENTICATION
+  status             String    @default("APPROVED") // APPROVED, PENDING, REJECTED, PAUSED, DISABLED
+  metaTemplateId     String?
+  headerType         String?   @default("NONE") // NONE, TEXT, IMAGE, DOCUMENT, VIDEO
+  headerContent      String?   @db.Text
+  body               String    @db.Text
+  footer             String?
+  buttons            Json?
+  variables          String[]  @default([])
+  rejectionReason    String?
+  isLocalActive      Boolean   @default(true)
+  isSystem           Boolean   @default(false)
+  lastSyncedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([templateName])
+  @@index([key])
+  @@index([customerId])
+  @@index([status])
+  @@index([isLocalActive])
+  @@index([deletedAt])
+  @@map("meta_templates")
 }

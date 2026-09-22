@@ -47,7 +47,8 @@ export class PermissionsGuard implements CanActivate {
         uAct === 'MANAGE' ||
         uAct === 'ALL' ||
         (rAct === 'VIEW' && uAct === 'READ') ||
-        (rAct === 'READ' && uAct === 'VIEW');
+        (rAct === 'READ' && uAct === 'VIEW') ||
+        (rAct === 'CHANGE_STAGE' && (uAct === 'CHANGE_STAGE' || uAct === 'EDIT'));
       return modMatches && actMatches;
     };
 

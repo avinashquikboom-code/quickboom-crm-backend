@@ -208,7 +208,7 @@ export class LeadController {
   }
 
   @Patch(':id/status')
-  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @RequirePermissions({ module: 'LEADS', action: 'CHANGE_STAGE' })
   @ApiOperation({ summary: 'Update lead stage status with history audit' })
   async updateStatus(
     @CurrentCustomer() customerId: string,

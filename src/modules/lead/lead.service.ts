@@ -889,7 +889,7 @@ export class LeadService {
       }
     }
 
-    return lead;
+    return createdLead ?? lead;
   }
 
   async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto) {
@@ -2548,7 +2548,6 @@ Sent by ${senderOrgName} via CRM.
     const emailLogs = await this.prisma.emailLog.findMany({
       where: {
         leadId: id,
-        ...(parsedCustomerId ? { customerId: parsedCustomerId } : {}),
       },
       include: {
         user: {
@@ -2560,14 +2559,15 @@ Sent by ${senderOrgName} via CRM.
     });
 
     // 2. Fetch timeline records with communication actions
-    const commActions = [
+    const emailActions = ['EMAIL_SENT', 'EMAIL_FAILED', 'STAGE_CHANGE_EMAIL', 'LEAD_CREATED_EMAIL'];
+    const whatsappActions = [
       'WHATSAPP_SENT',
       'WHATSAPP_INCOMING',
       'WHATSAPP_FAILED',
       'LEAD_CREATED_WHATSAPP',
-      'EMAIL_SENT',
-      'EMAIL_FAILED',
+      'STAGE_CHANGE_WHATSAPP',
     ];
+    const commActions = [...emailActions, ...whatsappActions];
     const timelineLogs = await this.prisma.leadActivityTimeline.findMany({
       where: {
         leadId: id,
@@ -2630,25 +2630,26 @@ Sent by ${senderOrgName} via CRM.
       const meta = (tl.metadata as any) || {};
       const action = tl.action;
 
-      if (action === 'EMAIL_SENT' || action === 'EMAIL_FAILED') {
+      if (emailActions.includes(action)) {
         const isDuplicate = emailLogs.some((el) => {
           const diff = Math.abs(new Date(el.createdAt).getTime() - new Date(tl.createdAt).getTime());
           return diff < 60000;
         });
         if (isDuplicate) continue;
 
+        const isFailed = action === 'EMAIL_FAILED' || meta.status === 'FAILED';
         items.push({
           id: `timeline-${tl.id}`,
           channel: 'EMAIL',
           direction: 'OUTBOUND',
           action,
-          status: action === 'EMAIL_FAILED' ? 'FAILED' : 'SENT',
-          title: 'Email Communication',
+          status: isFailed ? 'FAILED' : 'SENT',
+          title: meta.eventType === 'LEAD_STAGE_CHANGED' ? `Stage Email: ${meta.newStage || 'Updated'}` : 'Email Communication',
           content: tl.description || '',
-          recipient: lead.email || '',
+          recipient: meta.recipientEmail || lead.email || '',
           sender: 'CRM',
-          errorMessage: action === 'EMAIL_FAILED' ? tl.description : null,
-          providerMessageId: meta.messageId || null,
+          errorMessage: isFailed ? (meta.errorMessage || tl.description) : null,
+          providerMessageId: meta.providerMessageId || meta.messageId || null,
           createdAt: tl.createdAt.toISOString(),
           metadata: meta,
         });
@@ -2701,9 +2702,10 @@ Sent by ${senderOrgName} via CRM.
 
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    const totalEmails = items.filter((i) => i.channel === 'EMAIL').length;
-    const totalWhatsApp = items.filter((i) => i.channel === 'WHATSAPP').length;
-    const lastItem = items[0];
+    const successfulItems = items.filter((i) => i.status !== 'FAILED');
+    const totalEmails = successfulItems.filter((i) => i.channel === 'EMAIL').length;
+    const totalWhatsApp = successfulItems.filter((i) => i.channel === 'WHATSAPP').length;
+    const lastItem = successfulItems[0] || items[0];
 
     return {
       leadId: id,

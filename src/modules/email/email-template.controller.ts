@@ -25,7 +25,7 @@ import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { PreviewEmailTemplateDto, TestSendTemplateDto } from './dto/preview-email-template.dto';
 
 @ApiTags('Email Templates')
-@Controller(['email/templates', 'admin/email-templates'])
+@Controller(['email/templates', 'admin/email-templates', 'templates/email'])
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class EmailTemplateController {

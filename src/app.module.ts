@@ -48,6 +48,7 @@ import { InfluencerModule } from './modules/influencer/influencer.module';
 import { AiStudioModule } from './modules/ai-studio/ai-studio.module';
 import { SocialPublishingModule } from './modules/social-publishing/social-publishing.module';
 import { MasterModule } from './modules/master/master.module';
+import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -104,6 +105,7 @@ import { AppController } from './app.controller';
     AiStudioModule,
     SocialPublishingModule,
     MasterModule,
+    MetaTemplateModule,
   ],
   controllers: [AppController],
 })
