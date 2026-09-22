@@ -170,20 +170,31 @@ QUIKBOOM Digital Marketing Agency`,
     });
   });
 
-  describe('wrapInQuikboomEmailHtml (Dynamic Primary Color & Public HTTPS Logo)', () => {
-    it('should dynamically render the configured primary color into inline header and button styles', () => {
-      const customPrimaryColor = '#16A34A';
+  describe('wrapInQuikboomEmailHtml (Dynamic Primary Color, Public HTTPS Logo & Responsive Design)', () => {
+    it('should dynamically render the configured primary color into inline header and button styles with responsive layout', () => {
+      const customPrimaryColor = '#7C3AED';
       const html = service.wrapInQuikboomEmailHtml('Welcome to our service.\n\nVisit QUIKBOOM Website', {
         primaryColor: customPrimaryColor,
         logoSrc: 'https://admin.qbapp.online/logo.png',
+        companyName: 'Madhuban Hotel',
       });
 
       // Header background must use email-safe inline style with primary color
-      expect(html).toContain(`style="background-color: ${customPrimaryColor}; background: ${customPrimaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`);
+      expect(html).toContain(`style="background-color: ${customPrimaryColor}; background: ${customPrimaryColor}; padding: 32px 24px; text-align: center; color: #ffffff;"`);
       // Button must use email-safe inline style with primary color
       expect(html).toContain(`background-color: ${customPrimaryColor}`);
-      // Logo must be absolute public HTTPS URL
+      // Logo must be absolute public HTTPS URL with 200px width and email-logo class
       expect(html).toContain('src="https://admin.qbapp.online/logo.png"');
+      expect(html).toContain('width="200"');
+      expect(html).toContain('class="email-logo"');
+      // Must NOT contain the old squishing max-height
+      expect(html).not.toContain('max-height: 48px');
+      expect(html).not.toContain('max-height: 52px');
+      // Must contain responsive meta and media queries
+      expect(html).toContain('@media only screen and (max-width: 600px)');
+      expect(html).toContain('.email-logo { width: 160px !important;');
+      // Must contain client company name
+      expect(html).toContain('Madhuban Hotel');
       // No CSS variables or broken CIDs
       expect(html).not.toContain('var(--');
       expect(html).not.toContain('hsl(');
@@ -196,6 +207,7 @@ QUIKBOOM Digital Marketing Agency`,
 
       expect(html).toContain('style="background-color: #16A34A; background: #16A34A;');
       expect(html).toContain('src="https://admin.qbapp.online/logo.png"');
+      expect(html).toContain('width="200"');
       expect(html).not.toContain('cid:quikboom-logo');
       expect(html).not.toContain('#0f172a');
     });

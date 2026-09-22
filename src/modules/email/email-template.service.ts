@@ -763,49 +763,96 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
       if (!trimmed) return '';
       if (trimmed.includes('<p') || trimmed.includes('<div') || trimmed.includes('<table')) return trimmed;
       if (trimmed === 'Visit QUIKBOOM Website' || trimmed.includes('Visit QUIKBOOM Website')) {
-        return `<p style="margin: 20px 0; text-align: center;"><a href="https://quikboom.com" style="display: inline-block; padding: 12px 28px; background-color: ${primaryColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">Visit QUIKBOOM Website &rarr;</a></p>`;
+        return `<p style="margin: 24px 0; text-align: center;"><a href="https://quikboom.com" class="email-btn" style="display: inline-block; padding: 12px 28px; background-color: ${primaryColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); max-width: 100%; word-break: break-word; box-sizing: border-box;">Visit QUIKBOOM Website &rarr;</a></p>`;
       }
-      return `<p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #334155;">${trimmed.replace(/\n/g, '<br/>')}</p>`;
+      return `<p style="margin: 0 0 16px; font-size: 15px; line-height: 1.65; color: #334155; word-wrap: break-word; overflow-wrap: break-word;">${trimmed.replace(/\n/g, '<br/>')}</p>`;
     })
     .filter(Boolean)
     .join('\n');
 
-  return `<!DOCTYPE html>
-<html>
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; -webkit-font-smoothing: antialiased; }
-    .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .email-header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff; }
-    .email-header img { max-height: 48px; width: auto; display: block; margin: 0 auto 12px; border: 0; }
-    .email-header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; }
-    .email-header p { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); }
-    .email-body { padding: 32px; font-size: 15px; line-height: 1.6; color: #334155; }
-    .email-footer { padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>${companyName}</title>
+  <style type="text/css">
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+    body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b; }
+    .email-wrapper { width: 100% !important; background-color: #f8fafc; margin: 0; padding: 24px 12px; }
+    .email-container { width: 100% !important; max-width: 600px !important; margin: 0 auto; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .email-header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 32px 24px; text-align: center; color: #ffffff; }
+    .email-logo-container { margin: 0 auto 16px; text-align: center; }
+    .email-logo { width: 200px !important; max-width: 200px !important; height: auto !important; display: block; margin: 0 auto; border: 0; outline: none; text-decoration: none; }
+    .header-title { margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #ffffff; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
+    .header-subtitle { margin: 0; font-size: 14px; line-height: 18px; color: rgba(255, 255, 255, 0.95); font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
+    .email-body { padding: 36px 32px; font-size: 15px; line-height: 1.65; color: #334155; word-wrap: break-word; overflow-wrap: break-word; }
+    .email-btn { display: inline-block; padding: 12px 28px; background-color: ${primaryColor}; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); max-width: 100%; box-sizing: border-box; }
+    .email-footer { padding: 20px 24px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; line-height: 1.6; color: #94a3b8; text-align: center; word-wrap: break-word; overflow-wrap: break-word; }
+    @media only screen and (max-width: 600px) {
+      .email-wrapper { padding: 12px 8px !important; }
+      .email-container { width: 100% !important; border-radius: 12px !important; }
+      .email-header { padding: 24px 16px !important; }
+      .email-logo-container { margin: 0 auto 12px !important; }
+      .email-logo { width: 160px !important; max-width: 160px !important; }
+      .header-title { font-size: 19px !important; line-height: 25px !important; }
+      .header-subtitle { font-size: 13px !important; line-height: 17px !important; }
+      .email-body { padding: 20px 16px !important; font-size: 14.5px !important; line-height: 1.6 !important; }
+      .email-btn { display: block !important; width: 100% !important; padding: 12px 16px !important; text-align: center !important; }
+      .email-footer { padding: 16px 16px !important; }
+    }
   </style>
 </head>
-<body>
-  <div class="email-container" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
-    <div class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+<body style="height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper" style="width: 100%; background-color: #f8fafc; margin: 0; padding: 24px 12px;">
+    <tr>
+      <td align="center">
+        <!--[if (gte mso 9)|(IE)]>
+        <table role="presentation" align="center" border="0" cellspacing="0" cellpadding="0" width="600" style="width: 600px;">
         <tr>
-          <td align="center">
-            <img src="${logoSrc}" alt="${companyName}" width="160" style="display: block; width: 160px; max-width: 100%; height: auto; max-height: 52px; border: 0; margin: 0 auto 12px;" />
-          </td>
+        <td align="center" valign="top">
+        <![endif]-->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-container" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <tr>
+            <td class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 32px 24px; text-align: center; color: #ffffff;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td align="center" class="email-logo-container" style="padding: 0 0 16px; text-align: center;">
+                    <img src="${logoSrc}" alt="${companyName}" width="200" class="email-logo" style="display: block; width: 200px; max-width: 200px; height: auto; border: 0; margin: 0 auto; outline: none; text-decoration: none;" />
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="text-align: center;">
+                    <h1 class="header-title" style="margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #ffffff; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${companyName}</h1>
+                    <p class="header-subtitle" style="margin: 0; font-size: 14px; line-height: 18px; color: rgba(255, 255, 255, 0.95); font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${options?.previewText || 'Digital Marketing Agency'}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="email-body" style="padding: 36px 32px; font-size: 15px; line-height: 1.65; color: #334155; word-wrap: break-word; overflow-wrap: break-word;">
+              ${paragraphs}
+            </td>
+          </tr>
+          <tr>
+            <td class="email-footer" style="padding: 20px 24px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; line-height: 1.6; color: #94a3b8; text-align: center; word-wrap: break-word; overflow-wrap: break-word;">
+              Sent via <strong>${companyName}</strong> &bull; CRM
+            </td>
+          </tr>
+        </table>
+        <!--[if (gte mso 9)|(IE)]>
+        </td>
         </tr>
-      </table>
-      <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff;">${companyName}</h1>
-      <p style="margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9);">${options?.previewText || 'Digital Marketing Agency'}</p>
-    </div>
-    <div class="email-body" style="padding: 32px; font-size: 15px; line-height: 1.6; color: #334155;">
-      ${paragraphs}
-    </div>
-    <div class="email-footer" style="padding: 20px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center;">
-      Sent via <strong>${companyName}</strong> &bull; CRM
-    </div>
-  </div>
+        </table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`.trim();
 }

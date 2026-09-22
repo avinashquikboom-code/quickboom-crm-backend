@@ -57,11 +57,19 @@ export class LeadRepository {
     }
 
     if (!stageId && client.leadStage) {
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        try {
+          await this.ensureDefaultStagesForCustomer(numCustomerId);
+        } catch (_) {}
+      }
       const matchStage = await client.leadStage.findFirst({
         where: {
           key: status,
           deletedAt: null,
-          OR: [{ customerId: numCustomerId }, { customerId: null }],
+          OR: [
+            ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+            { customerId: null },
+          ],
         },
         orderBy: { customerId: 'desc' },
       });

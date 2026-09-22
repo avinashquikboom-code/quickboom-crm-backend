@@ -653,6 +653,12 @@ export class LeadService {
       this.logger.log('[GoogleDiscovery]\nExisting lead found: false');
       this.logger.log('[GoogleDiscovery]\nAssigning initial CRM stage: New');
 
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        try {
+          await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
+        } catch (_) {}
+      }
+
       // For a BRAND-NEW Google Discovery / Google Places lead, stage MUST always be New
       resolvedStatus = LeadStatus.NEW;
       let newStage = await this.prisma.leadStage.findFirst({
@@ -700,6 +706,38 @@ export class LeadService {
         const normStatus = normalizeLeadStatus(dto.status);
         if (ALL_LEAD_STATUSES.includes(normStatus)) {
           resolvedStatus = normStatus as LeadStatus;
+        }
+      }
+
+      // Guarantee newly created leads have a valid persisted stageId
+      if (!resolvedStageId && this.prisma.leadStage) {
+        if (!isNaN(numCustomerId) && numCustomerId > 0) {
+          try {
+            await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
+          } catch (_) {}
+        }
+        let defaultStage = await this.prisma.leadStage.findFirst({
+          where: {
+            customerId: numCustomerId,
+            key: resolvedStatus || 'NEW',
+            deletedAt: null,
+            isActive: true,
+          },
+          orderBy: { sortOrder: 'asc' },
+        });
+        if (!defaultStage) {
+          defaultStage = await this.prisma.leadStage.findFirst({
+            where: {
+              customerId: null,
+              key: resolvedStatus || 'NEW',
+              deletedAt: null,
+              isActive: true,
+            },
+            orderBy: { sortOrder: 'asc' },
+          });
+        }
+        if (defaultStage) {
+          resolvedStageId = defaultStage.id;
         }
       }
     }
