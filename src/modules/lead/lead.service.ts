@@ -1004,6 +1004,23 @@ export class LeadService {
       message: isStageChanged ? 'Email skipped' : 'Stage not changed',
     };
 
+    let whatsappNotification: {
+      sent: boolean;
+      status: 'SENT' | 'FAILED' | 'SKIPPED';
+      recipient: string | null;
+      messageId: string | null;
+      error: string | null;
+      message: string;
+      details?: string | null;
+    } = {
+      sent: false,
+      status: 'SKIPPED',
+      recipient: null,
+      messageId: null,
+      error: null,
+      message: isStageChanged ? 'WhatsApp skipped' : 'Stage not changed',
+    };
+
     if (isStageChanged) {
       const newStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
       this.logger.log(`[LEAD_STAGE] Stage change detected`);
@@ -1011,27 +1028,31 @@ export class LeadService {
       this.logger.log(`[LEAD_STAGE] Old stage: ${previousStageName}`);
       this.logger.log(`[LEAD_STAGE] New stage: ${newStageName}`);
 
-      const emailPromise = this.handleLeadStageChangeNotification(
-        customerId,
-        updatedLead,
-        previousStageName,
-        newStageName,
-        userId,
-        undefined,
-        undefined,
-        undefined,
-        'LEAD_STAGE_CHANGED',
-      );
-      const whatsappPromise = this.handleLeadStageChangeWhatsappNotification(
-        customerId,
-        updatedLead,
-        previousStageName,
-        newStageName,
-        userId,
-        undefined,
-        undefined,
-        'LEAD_STAGE_CHANGED',
-      );
+      const emailPromise = dto.sendEmail !== false
+        ? this.handleLeadStageChangeNotification(
+            customerId,
+            updatedLead,
+            previousStageName,
+            newStageName,
+            userId,
+            dto.templateId,
+            dto.customSubject,
+            dto.customBody,
+            'LEAD_STAGE_CHANGED',
+          )
+        : Promise.resolve(emailNotification);
+      const whatsappPromise = dto.sendWhatsapp !== false
+        ? this.handleLeadStageChangeWhatsappNotification(
+            customerId,
+            updatedLead,
+            previousStageName,
+            newStageName,
+            userId,
+            dto.whatsappMessage,
+            dto.whatsappTemplateName,
+            'LEAD_STAGE_CHANGED',
+          )
+        : Promise.resolve(whatsappNotification);
 
       const notifService = this.getNotificationService();
       let pushPromise = Promise.resolve();
@@ -1063,7 +1084,7 @@ export class LeadService {
         })();
       }
 
-      const [emailSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      const [emailSettled, whatsappSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
       if (emailSettled.status === 'fulfilled' && emailSettled.value) {
         emailNotification = emailSettled.value as any;
       } else if (emailSettled.status === 'rejected') {
@@ -1076,11 +1097,25 @@ export class LeadService {
           message: 'Email delivery failed',
         };
       }
+
+      if (whatsappSettled.status === 'fulfilled' && whatsappSettled.value) {
+        whatsappNotification = whatsappSettled.value as any;
+      } else if (whatsappSettled.status === 'rejected') {
+        whatsappNotification = {
+          sent: false,
+          status: 'FAILED',
+          recipient: null,
+          messageId: null,
+          error: whatsappSettled.reason?.message || 'WhatsApp delivery failed',
+          message: 'WhatsApp delivery failed',
+        };
+      }
     }
 
     return {
       ...updatedLead,
       emailNotification,
+      whatsappNotification,
     };
   }
 
@@ -1177,6 +1212,23 @@ export class LeadService {
       message: isStageChanged ? 'Email skipped' : 'Stage not changed',
     };
 
+    let whatsappNotification: {
+      sent: boolean;
+      status: 'SENT' | 'FAILED' | 'SKIPPED';
+      recipient: string | null;
+      messageId: string | null;
+      error: string | null;
+      message: string;
+      details?: string | null;
+    } = {
+      sent: false,
+      status: 'SKIPPED',
+      recipient: null,
+      messageId: null,
+      error: null,
+      message: isStageChanged ? 'WhatsApp skipped' : 'Stage not changed',
+    };
+
     if (isStageChanged) {
       this.logger.log(`[LEAD_STAGE] Stage change detected`);
       this.logger.log(`[LEAD_STAGE] Lead: ${id}`);
@@ -1225,7 +1277,7 @@ export class LeadService {
             dto.whatsappTemplateName,
             'LEAD_STAGE_CHANGED',
           )
-        : Promise.resolve();
+        : Promise.resolve(whatsappNotification);
 
       const notifService = this.getNotificationService();
       let pushPromise = Promise.resolve();
@@ -1257,7 +1309,7 @@ export class LeadService {
         })();
       }
 
-      const [emailSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+      const [emailSettled, whatsappSettled] = await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
       if (emailSettled.status === 'fulfilled' && emailSettled.value) {
         emailNotification = emailSettled.value as any;
       } else if (emailSettled.status === 'rejected') {
@@ -1270,11 +1322,25 @@ export class LeadService {
           message: 'Email delivery failed',
         };
       }
+
+      if (whatsappSettled.status === 'fulfilled' && whatsappSettled.value) {
+        whatsappNotification = whatsappSettled.value as any;
+      } else if (whatsappSettled.status === 'rejected') {
+        whatsappNotification = {
+          sent: false,
+          status: 'FAILED',
+          recipient: null,
+          messageId: null,
+          error: whatsappSettled.reason?.message || 'WhatsApp delivery failed',
+          message: 'WhatsApp delivery failed',
+        };
+      }
     }
 
     return {
       ...updatedLead,
       emailNotification,
+      whatsappNotification,
     };
   }
 
@@ -2697,18 +2763,36 @@ Sent by ${senderOrgName} via CRM.
       startTime: lead.nextFollowUpTime || '',
     };
 
-    let result: any = { success: true, messageId: undefined, skipped: false };
+    let result: any = { success: false, messageId: undefined, skipped: true };
     if (this.whatsappService) {
       this.logger.log(`[LeadNotification] 6. Notification service called: WhatsAppService.sendLeadStageMessage`);
-      result = await this.whatsappService.sendLeadStageMessage({
-        to: normalizedPhone,
-        stageKey: String(stageKey),
-        variables,
-        customMessage: dto?.message,
-        stageName: targetStageName,
-        customerId: Number(customerId),
-        userId: userId ? Number(userId) : undefined,
-      });
+      try {
+        result = await this.whatsappService.sendLeadStageMessage({
+          to: normalizedPhone,
+          stageKey: String(stageKey),
+          variables,
+          customMessage: dto?.message,
+          stageName: targetStageName,
+          customerId: Number(customerId),
+          userId: userId ? Number(userId) : undefined,
+        });
+      } catch (sendErr: any) {
+        result = {
+          success: false,
+          skipped: false,
+          errorCode: 'PROVIDER_ERROR',
+          reason: 'PROVIDER_ERROR',
+          message: sendErr?.message || 'WhatsApp message failed to send',
+          details: sendErr?.message || 'WhatsApp message failed to send',
+        };
+      }
+    } else {
+      result = {
+        success: false,
+        skipped: true,
+        reason: 'WHATSAPP_SERVICE_UNAVAILABLE',
+        message: 'WhatsApp service is not available',
+      };
     }
 
     // Write to LeadActivityTimeline
@@ -2773,6 +2857,7 @@ Sent by ${senderOrgName} via CRM.
 
   /**
    * Dispatches automatic WhatsApp notification upon lead creation or stage change with debouncing.
+   * Mirrors Email automation checking stage changes, phone, templates, and integration settings.
    */
   async handleLeadStageChangeWhatsappNotification(
     customerId: number | string,
@@ -2783,39 +2868,137 @@ Sent by ${senderOrgName} via CRM.
     customMessage?: string,
     templateName?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
-  ) {
+  ): Promise<{
+    sent: boolean;
+    status: 'SENT' | 'FAILED' | 'SKIPPED';
+    recipient: string | null;
+    messageId: string | null;
+    error: string | null;
+    message: string;
+    details?: string | null;
+  }> {
     try {
       this.logger.log(`[WHATSAPP] Handling ${eventType} WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
 
       // 0. Do NOT send if stage did not actually change for stage change events
+      const normPrevStage = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStageForCheck = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       if (
         eventType === 'LEAD_STAGE_CHANGED' &&
-        previousStageName &&
-        newStageName &&
-        previousStageName.trim().toUpperCase() === newStageName.trim().toUpperCase()
+        normPrevStage &&
+        normNewStageForCheck &&
+        normPrevStage === normNewStageForCheck
       ) {
         this.logger.log(`[WHATSAPP] Stage unchanged (${previousStageName} → ${newStageName}). Skipping automatic WhatsApp.`);
-        return;
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: null,
+          message: 'Stage did not change',
+        };
       }
 
-      if (!this.whatsappService) {
-        this.logger.warn(`[WHATSAPP] WhatsappService not available. Skipping.`);
-        return;
-      }
-
-      const phone = lead.phone ? String(lead.phone).trim() : '';
+      // 1. Resolve and validate recipient phone number
+      const phone = (lead.phone || lead.mobile || '').trim();
       if (!phone) {
         this.logger.warn(`[WHATSAPP] Lead #${lead.id} has no phone registered. Skipping.`);
-        return;
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
+          `Automatic stage WhatsApp skipped: Lead has no phone number`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            status: 'SKIPPED',
+            reason: 'NO_PHONE',
+          },
+        ).catch(() => null);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: 'Lead has no phone number registered',
+          message: 'Automatic stage WhatsApp skipped: Lead has no phone number registered',
+        };
       }
 
-      // Check recent timeline debounce to avoid duplicate WhatsApp sends within 15s for the same stage
+      const normalizedPhone = this.whatsappService?.normalizePhoneNumber
+        ? this.whatsappService.normalizePhoneNumber(phone)
+        : phone.replace(/[^\d+]/g, '');
+      const digitsOnly = (normalizedPhone || phone).replace(/\D/g, '');
+      if (!normalizedPhone || digitsOnly.length < 10) {
+        const errorMsg = `Phone number "${phone}" is not a valid mobile number for WhatsApp`;
+        this.logger.warn(`[WHATSAPP] Lead #${lead.id} ${errorMsg}.`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
+          `Automatic stage WhatsApp failed: ${errorMsg}`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            status: 'FAILED',
+            reason: 'INVALID_PHONE',
+            errorMessage: errorMsg,
+          },
+        ).catch(() => null);
+        return {
+          sent: false,
+          status: 'FAILED',
+          recipient: phone,
+          messageId: null,
+          error: errorMsg,
+          message: errorMsg,
+        };
+      }
+
+      // 2. Resolve stage WhatsApp Template
+      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const targetStageKey = normNewStage || normLeadStageKey;
+      const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normLeadStageKey] || targetStageKey || 'NEW';
+
+      const template = this.whatsappService && typeof this.whatsappService.getStageTemplate === 'function'
+        ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage))
+        : null;
+
+      if (!template && !customMessage) {
+        const skipMsg = `No WhatsApp template configured for stage: ${newStageName}`;
+        this.logger.warn(`[WHATSAPP] ${skipMsg}`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
+          `Automatic stage WhatsApp skipped: ${skipMsg}`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            status: 'SKIPPED',
+            reason: 'NO_TEMPLATE_CONFIGURED',
+            errorMessage: skipMsg,
+          },
+        ).catch(() => null);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: maskPhone(phone),
+          messageId: null,
+          error: skipMsg,
+          message: skipMsg,
+        };
+      }
+
+      // 3. Debounce check: avoid duplicate sends within 15s for the same stage
       let recentTimeline: any = null;
       if (this.prisma.leadActivityTimeline?.findFirst) {
         recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
           where: {
             leadId: Number(lead.id),
-            action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP'] },
+            action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP', 'STAGE_CHANGE_WHATSAPP'] },
             createdAt: {
               gte: new Date(Date.now() - 15000),
             },
@@ -2830,18 +3013,99 @@ Sent by ${senderOrgName} via CRM.
         const currentNewStage = (newStageName || '').trim().toUpperCase();
         if (!recentStage || recentStage === currentNewStage || (eventType === 'LEAD_CREATED' && recentTimeline.action === 'LEAD_CREATED_WHATSAPP')) {
           this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 15s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
-          return;
+          return {
+            sent: false,
+            status: 'SKIPPED',
+            recipient: maskPhone(phone),
+            messageId: meta.messageId || null,
+            error: null,
+            message: 'Debounced duplicate stage transition WhatsApp message',
+          };
         }
       }
 
-      return await this.sendLeadWhatsApp(customerId, lead.id, userId, {
+      // 4. Verify WhatsApp Integration is configured and enabled in Settings
+      let isIntegrationConfigured = true;
+      let isIntegrationEnabled = true;
+      let configWarning: string | null = null;
+
+      if (this.whatsappService && typeof (this.whatsappService as any).getWhatsAppStatus === 'function') {
+        try {
+          const waStatus = await (this.whatsappService as any).getWhatsAppStatus();
+          if (waStatus) {
+            if (!waStatus.isConfigured) {
+              isIntegrationConfigured = false;
+              configWarning = 'WhatsApp Integration is not configured in Settings → Integrations';
+            } else if (waStatus.isEnabled === false) {
+              isIntegrationEnabled = false;
+              configWarning = 'WhatsApp Integration is disabled in Settings → Integrations';
+            }
+          }
+        } catch {
+          // Proceed to send which handles individual errors
+        }
+      }
+
+      if (!isIntegrationConfigured || !isIntegrationEnabled) {
+        this.logger.warn(`[LEAD_STAGE_WHATSAPP] WhatsApp integration warning: ${configWarning}`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
+          `Automatic stage WhatsApp failed: ${configWarning}`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            recipientPhone: maskPhone(phone),
+            status: 'FAILED',
+            errorMessage: configWarning,
+          },
+        ).catch(() => null);
+
+        return {
+          sent: false,
+          status: 'FAILED',
+          recipient: maskPhone(phone),
+          messageId: null,
+          error: configWarning,
+          message: configWarning || 'WhatsApp integration not configured or disabled',
+        };
+      }
+
+      // 5. Dispatch message via sendLeadWhatsApp
+      const sendRes = await this.sendLeadWhatsApp(customerId, lead.id, userId, {
         message: customMessage,
         templateName,
         stageName: newStageName,
         eventType,
       });
+
+      const isSent = Boolean(sendRes && sendRes.success && !sendRes.skipped);
+      const notifStatus: 'SENT' | 'FAILED' | 'SKIPPED' = isSent
+        ? 'SENT'
+        : sendRes?.skipped
+        ? 'SKIPPED'
+        : 'FAILED';
+
+      return {
+        sent: isSent,
+        status: notifStatus,
+        recipient: maskPhone(phone),
+        messageId: sendRes?.messageId || null,
+        error: isSent ? null : (sendRes?.reason || (sendRes as any)?.error || (sendRes as any)?.details || null),
+        message: sendRes?.message || (isSent ? 'Customer WhatsApp message sent successfully' : 'WhatsApp delivery failed'),
+        details: (sendRes as any)?.details || null,
+      };
     } catch (err: any) {
       this.logger.error(`[WHATSAPP] Failed to send lead ${eventType} WhatsApp: ${err?.message}`);
+      return {
+        sent: false,
+        status: 'FAILED',
+        recipient: lead?.phone ? maskPhone(String(lead.phone)) : null,
+        messageId: null,
+        error: err?.message || 'WhatsApp delivery failed',
+        message: err?.message || 'WhatsApp delivery failed',
+      };
     }
   }
 }

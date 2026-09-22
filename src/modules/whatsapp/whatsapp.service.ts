@@ -1205,6 +1205,27 @@ export class WhatsappService {
   }
 
   /**
+   * Retrieves the current WhatsApp integration status without exposing credentials.
+   * Mirrors EmailService.getSmtpStatus() for unified automation checks.
+   */
+  async getWhatsAppStatus() {
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const creds = config?.credentials || {};
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
+    const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+    const isConfigured = Boolean(apiKey && phoneNumberId);
+    const isEnabled = Boolean(config?.isEnabled);
+
+    return {
+      isConfigured,
+      isEnabled,
+      source: config?.source || 'NONE',
+      phoneNumberId: phoneNumberId || null,
+    };
+  }
+
+  /**
    * Generates safe diagnostic output for Section 17 without revealing secrets.
    */
   async getDiagnostics(stageKey?: string, phone?: string) {

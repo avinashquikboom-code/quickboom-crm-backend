@@ -423,7 +423,43 @@ export class CreateLeadDto {
   notes?: string;
 }
 
-export class UpdateLeadDto extends PartialType(CreateLeadDto) {}
+export class UpdateLeadDto extends PartialType(CreateLeadDto) {
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  sendEmail?: boolean;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  templateId?: number;
+
+  @ApiPropertyOptional({ example: 'Your Lead Status Has Been Updated' })
+  @IsString()
+  @IsOptional()
+  customSubject?: string;
+
+  @ApiPropertyOptional({ example: 'Dear Customer...' })
+  @IsString()
+  @IsOptional()
+  customBody?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  sendWhatsapp?: boolean;
+
+  @ApiPropertyOptional({ example: 'Hi Rahul...' })
+  @IsString()
+  @IsOptional()
+  whatsappMessage?: string;
+
+  @ApiPropertyOptional({ example: 'lead_stage_proposal' })
+  @IsString()
+  @IsOptional()
+  whatsappTemplateName?: string;
+}
 
 export class CheckDuplicateDto {
   @ApiPropertyOptional({ example: '+91 98200 12345' })
