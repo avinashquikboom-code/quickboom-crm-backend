@@ -42,6 +42,12 @@ export class MetaTemplateController {
     return this.metaTemplateService.findAll(user?.customerId, query);
   }
 
+  @Get('stats')
+  @ApiOperation({ summary: 'Get aggregated statistics of Meta message templates' })
+  async getStats(@CurrentUser() user: any) {
+    return this.metaTemplateService.getStats(user?.customerId);
+  }
+
   @Get('variables')
   @ApiOperation({ summary: 'Get supported CRM template variables for Meta templates' })
   async getVariables() {
@@ -82,7 +88,7 @@ export class MetaTemplateController {
     return this.metaTemplateService.remove(id, user?.customerId);
   }
 
-  @Post('sync')
+  @Post(['sync', 'sync-meta'])
   @ApiOperation({ summary: 'Synchronize templates from Meta Business Cloud API' })
   async syncFromMeta(@CurrentUser() user: any) {
     return this.metaTemplateService.syncFromMeta(user?.customerId);

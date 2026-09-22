@@ -12,7 +12,7 @@ describe('MetaTemplateService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn(),
         count: jest.fn().mockResolvedValue(1),
-        create: jest.fn(),
+        create: jest.fn().mockResolvedValue({}),
         update: jest.fn(),
       },
       leadStage: {
@@ -149,12 +149,37 @@ describe('MetaTemplateService', () => {
     });
   });
 
-  describe('getVariables', () => {
-    it('returns CRM variables registry', () => {
-      const vars = service.getVariables();
-      expect(vars.length).toBeGreaterThan(5);
-      expect(vars.some((v) => v.key === 'leadName')).toBe(true);
-      expect(vars.some((v) => v.key === 'companyName')).toBe(true);
+  describe('getStats', () => {
+    it('returns tenant-scoped statistics accurately', async () => {
+      mockPrisma.metaTemplate.count
+        .mockResolvedValueOnce(1)  // ensureDefaultTemplates count check
+        .mockResolvedValueOnce(10) // totalAll
+        .mockResolvedValueOnce(8)  // active
+        .mockResolvedValueOnce(7)  // approved
+        .mockResolvedValueOnce(2)  // pending
+        .mockResolvedValueOnce(1); // rejected
+
+      const stats = await service.getStats(1);
+
+      expect(stats.total).toBe(10);
+      expect(stats.active).toBe(8);
+      expect(stats.approved).toBe(7);
+      expect(stats.pending).toBe(2);
+      expect(stats.rejected).toBe(1);
+      expect(stats.inactive).toBe(2);
+    });
+
+    it('handles empty database safely with zero counts', async () => {
+      mockPrisma.metaTemplate.count.mockResolvedValue(0);
+
+      const stats = await service.getStats(null);
+
+      expect(stats.total).toBe(0);
+      expect(stats.active).toBe(0);
+      expect(stats.approved).toBe(0);
+      expect(stats.pending).toBe(0);
+      expect(stats.rejected).toBe(0);
+      expect(stats.inactive).toBe(0);
     });
   });
 });

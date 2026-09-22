@@ -184,6 +184,46 @@ export class MetaTemplateService {
   }
 
   /**
+   * Retrieves aggregated statistics for Meta templates for the tenant/company.
+   */
+  async getStats(customerId?: number | string | null) {
+    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    await this.ensureDefaultTemplates(parsedCustId);
+
+    const baseStatsWhere: any = {
+      deletedAt: null,
+      OR: [
+        { customerId: null },
+        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+      ],
+    };
+
+    const [totalAll, totalActive, totalApproved, totalPending, totalRejected] = await Promise.all([
+      this.prisma.metaTemplate.count({ where: baseStatsWhere }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, isLocalActive: true } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'APPROVED' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'PENDING' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'REJECTED' } }),
+    ]);
+
+    const stats = {
+      total: totalAll,
+      active: totalActive,
+      approved: totalApproved,
+      pending: totalPending,
+      rejected: totalRejected,
+      inactive: Math.max(0, totalAll - totalActive),
+    };
+
+    return {
+      success: true,
+      data: stats,
+      ...stats,
+    };
+  }
+
+
+  /**
    * Retrieves single Meta template by ID.
    */
   async findOne(id: number, customerId?: number | string | null) {
