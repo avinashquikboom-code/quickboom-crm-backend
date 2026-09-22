@@ -111,6 +111,40 @@ describe('RBAC & Module Permission System', () => {
       const context = createMockContext(user, [{ module: 'LEADS', action: 'VIEW' }]);
       expect(permissionsGuard.canActivate(context)).toBe(true);
     });
+
+    it('allows access for user with DATA_CAPTURE:VIEW and DATA_CAPTURE:CREATE', () => {
+      const user = {
+        role: 'DATA_EXECUTIVE',
+        roles: ['DATA_EXECUTIVE'],
+        permissions: [
+          { module: 'DATA_CAPTURE', action: 'VIEW' },
+          { module: 'DATA_CAPTURE', action: 'CREATE' },
+        ],
+      };
+      const viewContext = createMockContext(user, [{ module: 'DATA_CAPTURE', action: 'VIEW' }]);
+      const createContext = createMockContext(user, [{ module: 'DATA_CAPTURE', action: 'CREATE' }]);
+      expect(permissionsGuard.canActivate(viewContext)).toBe(true);
+      expect(permissionsGuard.canActivate(createContext)).toBe(true);
+    });
+
+    it('rejects access with 403 Forbidden when user lacks DATA_CAPTURE:DELETE', () => {
+      const user = {
+        role: 'DATA_EXECUTIVE',
+        roles: ['DATA_EXECUTIVE'],
+        permissions: [
+          { module: 'DATA_CAPTURE', action: 'VIEW' },
+          { module: 'DATA_CAPTURE', action: 'CREATE' },
+          { module: 'DATA_CAPTURE', action: 'EDIT' },
+        ],
+      };
+      const deleteContext = createMockContext(user, [{ module: 'DATA_CAPTURE', action: 'DELETE' }]);
+      expect(() => permissionsGuard.canActivate(deleteContext)).toThrow(ForbiddenException);
+      try {
+        permissionsGuard.canActivate(deleteContext);
+      } catch (err: any) {
+        expect(err.message).toContain('DATA_CAPTURE:DELETE');
+      }
+    });
   });
 
   describe('2. AuthService resolveUserEffectivePermissions', () => {

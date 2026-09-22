@@ -27,6 +27,7 @@ export const ALL_STANDARD_MODULES = [
   "REPORTS",
   "PROFILE",
   "SETTINGS",
+  "DATA_CAPTURE",
 ] as const;
 
 export type StandardModule = typeof ALL_STANDARD_MODULES[number];
@@ -98,6 +99,12 @@ export const STANDARD_PERMISSIONS: StandardPermissionDef[] = [
   { module: "CUSTOMERS", action: "TAB_OVERVIEW", key: "employee.customers.tab_overview", label: "Customer Overview Tab", category: "CRM", description: "View customer primary profile" },
   { module: "CUSTOMERS", action: "TAB_PLANS", key: "employee.customers.tab_plans", label: "Customer Plans Tab", category: "CRM", description: "View active subscription packages" },
   { module: "CUSTOMERS", action: "TAB_SCHEDULE", key: "employee.customers.tab_schedule", label: "Customer Schedule Tab", category: "CRM", description: "View recurring deliverables schedule" },
+
+  // DATA CAPTURE (CRM)
+  { module: "DATA_CAPTURE", action: "VIEW", key: "employee.data_capture.view", label: "View Data Capture", category: "CRM", description: "Display Data Capture screen, search places, and view extraction history" },
+  { module: "DATA_CAPTURE", action: "CREATE", key: "employee.data_capture.create", label: "Extract / Create Records", category: "CRM", description: "Trigger new Google Places extraction or manually add prospect record" },
+  { module: "DATA_CAPTURE", action: "EDIT", key: "employee.data_capture.edit", label: "Edit / Validate / Import", category: "CRM", description: "Edit captured prospect, validate status, or import to CRM Leads" },
+  { module: "DATA_CAPTURE", action: "DELETE", key: "employee.data_capture.delete", label: "Delete Records", category: "CRM", description: "Delete captured prospect records or extraction jobs" },
 
   // FOLLOW-UPS (CRM)
   { module: "FOLLOW_UP", action: "VIEW", key: "employee.followups.view", label: "View Follow-ups", category: "CRM", description: "View upcoming and overdue follow-up calls" },
@@ -297,6 +304,9 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "VISITS", action: "CREATE" },
     { module: "CUSTOMERS", action: "VIEW" },
     { module: "CUSTOMERS", action: "TAB_OVERVIEW" },
+    { module: "DATA_CAPTURE", action: "VIEW" },
+    { module: "DATA_CAPTURE", action: "CREATE" },
+    { module: "DATA_CAPTURE", action: "EDIT" },
     { module: "ATTENDANCE", action: "VIEW" },
     { module: "ATTENDANCE", action: "PUNCH_IN" },
     { module: "ATTENDANCE", action: "PUNCH_OUT" },
@@ -517,6 +527,9 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "VISITS", action: "START" },
     { module: "VISITS", action: "COMPLETE" },
     { module: "CUSTOMERS", action: "VIEW" },
+    { module: "DATA_CAPTURE", action: "VIEW" },
+    { module: "DATA_CAPTURE", action: "CREATE" },
+    { module: "DATA_CAPTURE", action: "EDIT" },
     { module: "PROPOSALS", action: "VIEW" },
     { module: "PROPOSALS", action: "CREATE" },
     { module: "PACKAGES", action: "VIEW" },
@@ -591,6 +604,10 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "CUSTOMERS", action: "VIEW" },
     { module: "CUSTOMERS", action: "CREATE" },
     { module: "CUSTOMERS", action: "EDIT" },
+    { module: "DATA_CAPTURE", action: "VIEW" },
+    { module: "DATA_CAPTURE", action: "CREATE" },
+    { module: "DATA_CAPTURE", action: "EDIT" },
+    { module: "DATA_CAPTURE", action: "DELETE" },
     { module: "FOLLOW_UP", action: "VIEW" },
     { module: "FOLLOW_UP", action: "CREATE" },
     { module: "FOLLOW_UP", action: "EDIT" },
