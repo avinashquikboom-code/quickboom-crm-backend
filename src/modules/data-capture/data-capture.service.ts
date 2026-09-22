@@ -1346,19 +1346,35 @@ export class DataCaptureService {
     duplicateNames: string[];
     message: string;
   }> {
-    const numCustomerId = Number(customerId);
+    let numCustomerId = Number(customerId);
     const numUserId = Number(userId) || 1;
 
     let placesToImport: any[] = [];
 
     if (dto.jobId) {
-      const job = await this.prisma.dataCaptureJob.findFirst({
-        where: { jobId: dto.jobId, customerId: numCustomerId },
+      const whereJob: any = { jobId: dto.jobId };
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        whereJob.customerId = numCustomerId;
+      }
+      let job = await this.prisma.dataCaptureJob.findFirst({
+        where: whereJob,
         include: { places: { where: { deletedAt: null } } },
       });
 
+      if (!job && (!isNaN(numCustomerId) && numCustomerId > 0)) {
+        // Fallback: look up by jobId directly in case of tenant admin context mismatch
+        job = await this.prisma.dataCaptureJob.findFirst({
+          where: { jobId: dto.jobId },
+          include: { places: { where: { deletedAt: null } } },
+        });
+      }
+
       if (!job) {
         throw new BadRequestException(`Extraction job "${dto.jobId}" not found for this customer.`);
+      }
+
+      if (isNaN(numCustomerId) || numCustomerId <= 0) {
+        numCustomerId = job.customerId;
       }
 
       placesToImport = job.places;
