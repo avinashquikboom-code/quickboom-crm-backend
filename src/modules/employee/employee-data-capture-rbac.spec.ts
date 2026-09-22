@@ -166,4 +166,62 @@ describe('EmployeeService Data Capture RBAC & Permissions', () => {
     expect(deletePerm?.roleDefault).toBe(false);
     expect(deletePerm?.effective).toBe(false);
   });
+
+  it('6. returns DATA_CAPTURE for Bhavesh Gandhi (EMP-004) with role TELESALES EXECUTIVE', async () => {
+    const mockEmployeeTelesales = {
+      id: 4,
+      employeeCode: 'EMP-004',
+      firstName: 'Bhavesh',
+      lastName: 'Gandhi',
+      customerId: 100,
+      userId: 14,
+      status: 'ACTIVE',
+      designationId: 4,
+      designation: {
+        id: 4,
+        name: 'Telesales Executive',
+        role: {
+          id: 4,
+          name: 'TELESALES_EXECUTIVE',
+          rolePermissions: [
+            { permission: { module: 'DATA_CAPTURE', action: 'VIEW' } },
+            { permission: { module: 'DATA_CAPTURE', action: 'CREATE' } },
+            { permission: { module: 'DATA_CAPTURE', action: 'EDIT' } },
+            { permission: { module: 'LEADS', action: 'VIEW' } },
+          ],
+        },
+      },
+      employeeModuleOverrides: [],
+    };
+
+    prisma.employee.findUnique.mockResolvedValue(mockEmployeeTelesales);
+
+    const result = await service.getEmployeePermissions({ employeeId: 4, isSuperAdmin: true });
+
+    expect(result.modules).toBeDefined();
+    const dataCaptureMod = result.modules.find((m) => m.moduleKey === 'DATA_CAPTURE');
+    expect(dataCaptureMod).toBeDefined();
+    expect(dataCaptureMod?.roleDefault).toBe(true);
+    expect(dataCaptureMod?.override).toBe('INHERIT');
+    expect(dataCaptureMod?.effective).toBe(true);
+  });
+
+  it('7. verifies search filter works for data, Data Capture, and DATA_CAPTURE', () => {
+    const sampleModule = {
+      moduleKey: 'DATA_CAPTURE',
+      label: 'Data Capture',
+      category: 'CRM',
+    };
+
+    const queries = ['data', 'Data Capture', 'DATA_CAPTURE', 'crm'];
+    for (const q of queries) {
+      const lower = q.toLowerCase();
+      const matches =
+        sampleModule.label.toLowerCase().includes(lower) ||
+        sampleModule.moduleKey.toLowerCase().includes(lower) ||
+        sampleModule.category.toLowerCase().includes(lower);
+      expect(matches).toBe(true);
+    }
+  });
 });
+

@@ -160,7 +160,7 @@ export class WorkPermissionService {
     }
     // Partial match checks
     const lower = trimmed.toLowerCase();
-    if (lower.includes('telecall') || lower.includes('telesales') || lower.includes('sales') || lower.includes('lead') || lower.includes('bpo')) return ['leads'];
+    if (lower.includes('telecall') || lower.includes('telesales') || lower.includes('sales') || lower.includes('lead') || lower.includes('bpo')) return ['leads', 'data_capture'];
     if (lower.includes('video edit') || lower.includes('editor')) return ['video_edit'];
     if (lower.includes('graphic') || lower.includes('designer')) return ['post_design', 'story_design'];
     if (lower.includes('photo') || lower.includes('shoot') || lower.includes('videograph')) return ['reel_shoot'];
