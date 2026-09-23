@@ -839,6 +839,7 @@ export class LeadService {
         undefined,
         undefined,
         'LEAD_CREATED',
+        createdLead.stageId,
       ).catch((err) => {
         this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] ${err?.message}`);
       });
@@ -854,6 +855,7 @@ export class LeadService {
       undefined,
       undefined,
       'LEAD_CREATED',
+      createdLead.stageId,
     ).catch((err) => {
       this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] ${err?.message}`);
     });
@@ -946,6 +948,12 @@ export class LeadService {
         isActive: stage.isActive,
         isSystem: stage.isSystem ?? false,
         leadsCount: stage._count?.leads ?? 0,
+        emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
+        emailTemplateId: stage.emailTemplateId ?? null,
+        emailTemplate: stage.emailTemplate ?? null,
+        whatsappEnabled: stage.whatsappEnabled !== undefined ? Boolean(stage.whatsappEnabled) : true,
+        whatsappTemplateId: stage.whatsappTemplateId ?? null,
+        whatsappTemplate: stage.whatsappTemplate ?? null,
       }))
       .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }
@@ -1141,6 +1149,7 @@ export class LeadService {
             dto.customSubject,
             dto.customBody,
             'LEAD_STAGE_CHANGED',
+            resolvedStageId || updatedLead.stageId,
           )
         : Promise.resolve(emailNotification);
       const whatsappPromise = dto.sendWhatsapp !== false
@@ -1153,6 +1162,8 @@ export class LeadService {
             dto.whatsappMessage,
             dto.whatsappTemplateName,
             'LEAD_STAGE_CHANGED',
+            resolvedStageId || updatedLead.stageId,
+            dto.whatsappTemplateId,
           )
         : Promise.resolve(whatsappNotification);
 
@@ -1365,6 +1376,7 @@ export class LeadService {
             dto.customSubject,
             dto.customBody,
             'LEAD_STAGE_CHANGED',
+            resolvedStageId || updatedLead.stageId,
           )
         : Promise.resolve(emailNotification);
 
@@ -1378,6 +1390,8 @@ export class LeadService {
             dto.whatsappMessage,
             dto.whatsappTemplateName,
             'LEAD_STAGE_CHANGED',
+            resolvedStageId || updatedLead.stageId,
+            dto.whatsappTemplateId,
           )
         : Promise.resolve(whatsappNotification);
 
@@ -1460,6 +1474,7 @@ export class LeadService {
     customSubject?: string,
     customBody?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
+    explicitNewStageId?: number,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -1485,6 +1500,54 @@ export class LeadService {
           messageId: null,
           error: null,
           message: 'Stage did not change',
+        };
+      }
+
+      // Check per-stage email automation settings
+      const effectiveStageId = explicitNewStageId || lead.stageId || lead.stage?.id;
+      let stageConfig: any = null;
+      if (effectiveStageId && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: { id: Number(effectiveStageId) },
+          include: { emailTemplate: true },
+        }).catch(() => null);
+      }
+      if (!stageConfig && newStageName && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: {
+            OR: [
+              { name: { equals: newStageName, mode: 'insensitive' } },
+              { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
+            ],
+            customerId: lead.customerId ? { in: [Number(lead.customerId), null as any] } : undefined,
+          },
+          include: { emailTemplate: true },
+        }).catch(() => null);
+      }
+
+      if (stageConfig && stageConfig.emailEnabled === false) {
+        const disabledMsg = `Email automation is disabled for stage "${stageConfig.name}" (ID: ${stageConfig.id})`;
+        this.logger.log(`[EMAIL_AUTOMATION] ${disabledMsg}. Skipping email.`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
+          `Automatic stage email skipped: ${disabledMsg}`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            stageId: stageConfig.id,
+            status: 'SKIPPED',
+            reason: 'STAGE_EMAIL_DISABLED',
+          },
+        ).catch(() => null);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: lead.email,
+          messageId: null,
+          error: null,
+          message: disabledMsg,
         };
       }
 
@@ -1520,6 +1583,8 @@ export class LeadService {
       let template: any = null;
       if (overrideTemplateId && this.emailTemplateService) {
         template = await this.emailTemplateService.findOne(Number(overrideTemplateId), lead.customerId).catch(() => null);
+      } else if (stageConfig?.emailTemplateId) {
+        template = stageConfig.emailTemplate || (this.emailTemplateService ? await this.emailTemplateService.findOne(Number(stageConfig.emailTemplateId), lead.customerId).catch(() => null) : null);
       }
 
       // 1a. Search customer/global DB templates by candidate keys
@@ -2742,26 +2807,72 @@ Sent by ${senderOrgName} via CRM.
 
   /**
    * Returns all available WhatsApp templates for lead stages.
+   * Prioritizes approved templates from the meta_templates database table.
    */
-  getWhatsAppTemplates() {
+  async getWhatsAppTemplates(customerId?: number | string) {
+    if (this.prisma.metaTemplate) {
+      try {
+        const templates = await this.prisma.metaTemplate.findMany({
+          where: {
+            status: 'APPROVED',
+            isLocalActive: true,
+            ...(customerId
+              ? {
+                  OR: [
+                    { customerId: Number(customerId) },
+                    { customerId: null },
+                  ],
+                }
+              : {}),
+          },
+          orderBy: { id: 'asc' },
+        });
+        if (templates && templates.length > 0) {
+          return templates.map((tpl) => ({
+            id: tpl.id,
+            key: tpl.templateName,
+            templateName: tpl.templateName,
+            title: tpl.name || `${tpl.templateName} WhatsApp`,
+            name: tpl.name || tpl.templateName,
+            language: tpl.language || 'en',
+            category: tpl.category || 'MARKETING',
+            status: tpl.status,
+            body: tpl.body || '',
+          }));
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to fetch meta_templates from DB: ${err?.message}`);
+      }
+    }
+
     if (!this.whatsappService) return [];
     return this.whatsappService.getAllStageTemplates().map((tpl) => ({
+      id: tpl.id,
       key: tpl.key,
       templateName: tpl.templateName,
       title: `${tpl.name} WhatsApp`,
       name: tpl.name,
+      language: tpl.language || 'en',
+      category: 'MARKETING',
+      status: tpl.status || 'APPROVED',
       body: tpl.body,
     }));
   }
 
   /**
    * Dispatches a WhatsApp message for a lead and logs it to activity timeline.
+   * Strictly uses the WhatsApp template configured specifically for the target Lead Stage.
+   * Zero hardcoded fallback to hello_world or templates[0].
    */
   async sendLeadWhatsApp(
     customerId: number | string,
     id: number | string,
     userId?: number | string,
-    dto?: SendLeadWhatsAppDto & { eventType?: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' },
+    dto?: SendLeadWhatsAppDto & {
+      eventType?: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED';
+      stageId?: number;
+      whatsappTemplateId?: number;
+    },
   ) {
     const lead = await this.getLeadById(customerId, id);
     if (!lead) {
@@ -2794,25 +2905,121 @@ Sent by ${senderOrgName} via CRM.
       : (lead.stage?.key ? String(lead.stage.key).trim().toUpperCase().replace(/[\s-]+/g, '_') : normStage);
     const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[rawKey] || rawKey || 'NEW';
 
-    const template = typeof this.whatsappService?.getStageTemplate === 'function'
-      ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
-      : true;
-    if (!template && !dto?.message) {
+    // 1. Resolve Target Lead Stage Configuration from DB
+    const effectiveStageId = dto?.stageId || lead.stageId || lead.stage?.id;
+    let configuredStage: any = null;
+
+    if (effectiveStageId && this.prisma.leadStage) {
+      configuredStage = await this.prisma.leadStage.findFirst({
+        where: { id: Number(effectiveStageId) },
+        include: { whatsappTemplate: true },
+      }).catch(() => null);
+    }
+
+    if (!configuredStage && this.prisma.leadStage) {
+      configuredStage = await this.prisma.leadStage.findFirst({
+        where: {
+          OR: [
+            { key: normStage },
+            { name: { equals: targetStageName, mode: 'insensitive' } },
+            { key: stageKey },
+          ],
+          ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+        },
+        include: { whatsappTemplate: true },
+      }).catch(() => null);
+    }
+
+    // 2. Check if WhatsApp automation is explicitly disabled for this stage
+    if (configuredStage && configuredStage.whatsappEnabled === false) {
       this.logger.log(
-        `[WHATSAPP] Lead #${lead.id} stage is "${targetStageName}", but no WhatsApp template is configured for this stage. Skipping WhatsApp.`,
+        `[WHATSAPP_AUTOMATION] Stage: ${configuredStage.name} | ID: ${configuredStage.id} | Automation Enabled: false. Skipping WhatsApp message.`,
       );
       return {
         success: false,
         skipped: true,
-        reason: 'NO_TEMPLATE_CONFIGURED',
-        message: `No WhatsApp template is configured for stage "${targetStageName}". Skipping.`,
+        reason: 'STAGE_WHATSAPP_DISABLED',
+        message: `WhatsApp automation is disabled for stage "${configuredStage.name}".`,
       };
     }
 
-    this.logger.log(
-      `[LeadNotification] 4. Notification template found: ${template && typeof template === 'object' ? template.templateName : stageKey}`,
-    );
-    this.logger.log(`[LeadNotification] 5. Recipient resolved: ${maskPhone(phone)}`);
+    // 3. Resolve Exact WhatsApp Meta Template
+    let metaTemplate: any = null;
+    const requestedTemplateId = dto?.whatsappTemplateId || configuredStage?.whatsappTemplateId;
+
+    if (requestedTemplateId && this.prisma.metaTemplate) {
+      metaTemplate = (configuredStage?.whatsappTemplate && configuredStage.whatsappTemplate.id === Number(requestedTemplateId))
+        ? configuredStage.whatsappTemplate
+        : await this.prisma.metaTemplate.findUnique({
+            where: { id: Number(requestedTemplateId) },
+          }).catch(() => null);
+
+      if (!metaTemplate) {
+        this.logger.error(
+          `[WHATSAPP_AUTOMATION] Configured template ID #${requestedTemplateId} not found in database. Skipping without fallback.`,
+        );
+        return {
+          success: false,
+          skipped: true,
+          reason: 'TEMPLATE_NOT_FOUND',
+          message: `Configured WhatsApp template #${requestedTemplateId} not found in database.`,
+        };
+      }
+
+      if (metaTemplate.status !== 'APPROVED') {
+        this.logger.warn(
+          `[WHATSAPP_AUTOMATION] Template "${metaTemplate.templateName}" (ID: ${metaTemplate.id}) has status "${metaTemplate.status}". Expected APPROVED. Skipping without fallback.`,
+        );
+        return {
+          success: false,
+          skipped: true,
+          reason: 'TEMPLATE_NOT_APPROVED',
+          message: `WhatsApp template "${metaTemplate.templateName}" has status "${metaTemplate.status}" (must be APPROVED).`,
+        };
+      }
+    } else if (dto?.templateName && this.prisma.metaTemplate) {
+      metaTemplate = await this.prisma.metaTemplate.findFirst({
+        where: {
+          OR: [
+            { templateName: dto.templateName },
+            { name: dto.templateName },
+          ],
+          status: 'APPROVED',
+        },
+      }).catch(() => null);
+    }
+
+    // If no template is configured and no custom message is provided, fail/skip cleanly
+    let fallbackTemplate: any = null;
+    if (!metaTemplate && !dto?.message) {
+      // Check legacy in-memory templates
+      fallbackTemplate = typeof this.whatsappService?.getStageTemplate === 'function'
+        ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
+        : null;
+
+      if (!fallbackTemplate) {
+        this.logger.warn(
+          `[WHATSAPP_AUTOMATION] No WhatsApp template configured for stage "${targetStageName}" (Stage ID: ${configuredStage?.id || effectiveStageId || 'N/A'}). Skipping message without fallback.`,
+        );
+        return {
+          success: false,
+          skipped: true,
+          reason: 'NO_TEMPLATE_CONFIGURED',
+          message: `No WhatsApp template is configured for stage "${targetStageName}". Skipping.`,
+        };
+      }
+    }
+
+    // Diagnostic logging (Section 4 & 21)
+    const stageIdStr = String(configuredStage?.id || effectiveStageId || 'N/A');
+    const templateIdStr = String(metaTemplate?.id || 'N/A');
+    const templateNameStr = metaTemplate?.templateName || (dto?.message ? 'custom_message' : (fallbackTemplate?.templateName || stageKey));
+    const templateLangStr = metaTemplate?.language || fallbackTemplate?.language || 'en';
+
+    this.logger.log(`[STAGE_CHANGE] Lead ID: ${lead.id} | Stage: ${targetStageName} | Stage ID: ${stageIdStr}`);
+    this.logger.log(`[WHATSAPP_AUTOMATION] Stage: ${targetStageName} | Stage ID: ${stageIdStr} | Automation Enabled: ${configuredStage ? configuredStage.whatsappEnabled : true}`);
+    this.logger.log(`[WHATSAPP_TEMPLATE] Template ID: ${templateIdStr} | Meta Name: ${templateNameStr} | Language: ${templateLangStr} | Status: ${metaTemplate?.status || 'APPROVED'}`);
+    this.logger.log(`[WHATSAPP_SEND] Recipient: ${maskPhone(phone)} | Template: ${templateNameStr}`);
 
     const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
     const companyName = lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency';
@@ -2869,7 +3076,6 @@ Sent by ${senderOrgName} via CRM.
 
     let result: any = { success: false, messageId: undefined, skipped: true };
     if (this.whatsappService) {
-      this.logger.log(`[LeadNotification] 6. Notification service called: WhatsAppService.sendLeadStageMessage`);
       try {
         result = await this.whatsappService.sendLeadStageMessage({
           to: normalizedPhone,
@@ -2879,6 +3085,8 @@ Sent by ${senderOrgName} via CRM.
           stageName: targetStageName,
           customerId: Number(customerId),
           userId: userId ? Number(userId) : undefined,
+          metaTemplateId: metaTemplate?.id,
+          metaTemplate: metaTemplate || fallbackTemplate,
         });
       } catch (sendErr: any) {
         result = {
@@ -2899,9 +3107,15 @@ Sent by ${senderOrgName} via CRM.
       };
     }
 
+    this.logger.log(
+      `[WHATSAPP_PROVIDER] Status: ${result.success ? 'SUCCESS' : (result.skipped ? 'SKIPPED' : 'FAILED')} | Message ID: ${result.messageId || 'N/A'} | Provider Status: ${result.providerStatus || result.reason || 'N/A'}`,
+    );
+
     // Write to LeadActivityTimeline
     const eventType = dto?.eventType || 'LEAD_STAGE_CHANGED';
     const action = eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'WHATSAPP_SENT';
+    const templateDisplay = metaTemplate?.name || metaTemplate?.templateName || templateNameStr;
+
     await this.prisma.leadActivityTimeline
       .create({
         data: {
@@ -2909,15 +3123,20 @@ Sent by ${senderOrgName} via CRM.
           action,
           description: result.success
             ? (eventType === 'LEAD_CREATED'
-                ? `Welcome WhatsApp message sent to ${phone} for ${targetStageName} stage`
-                : `WhatsApp notification sent to ${phone} for stage ${targetStageName}`)
+                ? `Welcome WhatsApp message sent to ${phone} for ${targetStageName} stage (template: "${templateDisplay}")`
+                : `WhatsApp notification sent to ${phone} for stage ${targetStageName} (template: "${templateDisplay}")`)
             : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || result.error || 'Not delivered'}`,
           metadata: {
             eventType,
             phone: maskPhone(phone),
             normalizedPhone: maskPhone(normalizedPhone),
+            stageId: configuredStage?.id || effectiveStageId || null,
             stageName: targetStageName,
             stageKey,
+            templateId: metaTemplate?.id || null,
+            templateName: metaTemplate?.templateName || null,
+            templateTitle: metaTemplate?.name || null,
+            language: metaTemplate?.language || 'en',
             status: result.success ? 'Sent' : (result.skipped ? 'Skipped' : 'Failed'),
             success: result.success,
             messageId: result.messageId || null,
@@ -2928,14 +3147,6 @@ Sent by ${senderOrgName} via CRM.
         },
       })
       .catch(() => null);
-
-    this.logger.log(
-      `[LeadNotification] 9. Communication status saved: ${result.success ? 'SENT' : (result.skipped ? 'SKIPPED' : 'FAILED')}`,
-    );
-
-    this.logger.log(
-      `[LEAD_STAGE_NOTIFICATION]\nLead Stage Changed\nLead ID: ${lead.id}\nPrevious Stage: ${dto?.eventType === 'LEAD_CREATED' ? 'None' : (lead.stage?.name || 'N/A')}\nNew Stage: ${targetStageName}\nWhatsApp:\nTemplate Found: ${template ? 'YES' : 'NO'}\nTemplate ID: ${template && typeof template === 'object' ? template.templateName : stageKey}\nRecipient: ${maskPhone(phone)}\nProvider Status: ${result.success ? 'SUCCESS' : 'FAILED'}`
-    );
 
     const errorCode = result.errorCode || result.reason || (result.success ? undefined : 'WHATSAPP_UNKNOWN_ERROR');
     const safeDetails = result.providerMessage || result.details || (errorCode ? friendlyWhatsAppErrorMessage(errorCode) : undefined);
@@ -2961,7 +3172,7 @@ Sent by ${senderOrgName} via CRM.
 
   /**
    * Dispatches automatic WhatsApp notification upon lead creation or stage change with debouncing.
-   * Mirrors Email automation checking stage changes, phone, templates, and integration settings.
+   * Resolves the configured WhatsApp template strictly from the target Lead Stage in database.
    */
   async handleLeadStageChangeWhatsappNotification(
     customerId: number | string,
@@ -2972,6 +3183,8 @@ Sent by ${senderOrgName} via CRM.
     customMessage?: string,
     templateName?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
+    explicitNewStageId?: number,
+    whatsappTemplateId?: number,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -3060,19 +3273,70 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // 2. Resolve stage WhatsApp Template
+      // 2. Resolve Stage Automation Configuration from DB
+      const effectiveStageId = explicitNewStageId || lead.stageId || lead.stage?.id;
+      let stageConfig: any = null;
+      if (effectiveStageId && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: { id: Number(effectiveStageId) },
+          include: { whatsappTemplate: true },
+        }).catch(() => null);
+      }
+      if (!stageConfig && newStageName && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: {
+            OR: [
+              { name: { equals: newStageName, mode: 'insensitive' } },
+              { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
+            ],
+            ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+          },
+          include: { whatsappTemplate: true },
+        }).catch(() => null);
+      }
+
+      // Check if WhatsApp is disabled for this stage
+      if (stageConfig && stageConfig.whatsappEnabled === false) {
+        const disabledMsg = `WhatsApp automation disabled for stage "${stageConfig.name}" (ID: ${stageConfig.id})`;
+        this.logger.log(`[WHATSAPP_AUTOMATION] ${disabledMsg}. Skipping.`);
+        await this.leadRepository.logTimeline(
+          lead.id,
+          eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
+          `Automatic stage WhatsApp skipped: ${disabledMsg}`,
+          {
+            eventType,
+            previousStage: previousStageName,
+            newStage: newStageName,
+            stageId: stageConfig.id,
+            status: 'SKIPPED',
+            reason: 'STAGE_WHATSAPP_DISABLED',
+          },
+        ).catch(() => null);
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: maskPhone(phone),
+          messageId: null,
+          error: null,
+          message: disabledMsg,
+        };
+      }
+
+      // Check if template is configured
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const targetStageKey = normNewStage || normLeadStageKey;
       const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normLeadStageKey] || targetStageKey || 'NEW';
 
-      const template = this.whatsappService && typeof this.whatsappService.getStageTemplate === 'function'
-        ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage))
-        : null;
+      const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
+        Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
-      if (!template && !customMessage) {
-        const skipMsg = `No WhatsApp template configured for stage: ${newStageName}`;
-        this.logger.warn(`[WHATSAPP] ${skipMsg}`);
+      const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
+      const hasConfiguredTemplate = Boolean(resolvedTplId || stageConfig?.whatsappTemplate || customMessage || templateName || hasInMemoryFallback);
+
+      if (!hasConfiguredTemplate) {
+        const skipMsg = `No WhatsApp template configured for stage: ${stageConfig?.name || newStageName}`;
+        this.logger.warn(`[WHATSAPP_AUTOMATION] ${skipMsg}`);
         await this.leadRepository.logTimeline(
           lead.id,
           eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
@@ -3081,6 +3345,7 @@ Sent by ${senderOrgName} via CRM.
             eventType,
             previousStage: previousStageName,
             newStage: newStageName,
+            stageId: stageConfig?.id || effectiveStageId || null,
             status: 'SKIPPED',
             reason: 'NO_TEMPLATE_CONFIGURED',
             errorMessage: skipMsg,
@@ -3181,6 +3446,8 @@ Sent by ${senderOrgName} via CRM.
         message: customMessage,
         templateName,
         stageName: newStageName,
+        stageId: stageConfig?.id || effectiveStageId,
+        whatsappTemplateId: resolvedTplId,
         eventType,
       });
 

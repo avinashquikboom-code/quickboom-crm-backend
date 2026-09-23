@@ -469,6 +469,12 @@ export class UpdateLeadDto extends PartialType(CreateLeadDto) {
   @IsString()
   @IsOptional()
   whatsappTemplateName?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  whatsappTemplateId?: number;
 }
 
 export class CheckDuplicateDto {
@@ -797,6 +803,12 @@ export class UpdateLeadStatusDto {
   @IsString()
   @IsOptional()
   whatsappTemplateName?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  whatsappTemplateId?: number;
 }
 
 export class SendLeadWhatsAppDto {
@@ -814,6 +826,18 @@ export class SendLeadWhatsAppDto {
   @IsString()
   @IsOptional()
   stageName?: string;
+
+  @ApiPropertyOptional({ example: 2 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  stageId?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  whatsappTemplateId?: number;
 }
 
 export class SendLeadEmailDto {
@@ -858,6 +882,26 @@ export class CreateLeadStageDto {
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Whether automatic email notification is enabled for this stage' })
+  @IsBoolean()
+  @IsOptional()
+  emailEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 1, description: 'Email template ID to send on stage transition' })
+  @IsNumber()
+  @IsOptional()
+  emailTemplateId?: number | null;
+
+  @ApiPropertyOptional({ example: true, description: 'Whether automatic WhatsApp notification is enabled for this stage' })
+  @IsBoolean()
+  @IsOptional()
+  whatsappEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 2, description: 'Meta WhatsApp template ID to send on stage transition' })
+  @IsNumber()
+  @IsOptional()
+  whatsappTemplateId?: number | null;
 }
 
 export class UpdateLeadStageDto extends PartialType(CreateLeadStageDto) {}

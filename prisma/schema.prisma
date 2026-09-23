@@ -485,13 +485,22 @@ model LeadStage {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  leads       Lead[]
+  emailEnabled        Boolean        @default(true)
+  emailTemplateId     Int?
+  whatsappEnabled     Boolean        @default(true)
+  whatsappTemplateId  Int?
+
+  customer            Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  emailTemplate       EmailTemplate? @relation(fields: [emailTemplateId], references: [id], onDelete: SetNull)
+  whatsappTemplate    MetaTemplate?  @relation(fields: [whatsappTemplateId], references: [id], onDelete: SetNull)
+  leads               Lead[]
 
   @@unique([customerId, key])
   @@index([customerId])
   @@index([sortOrder])
   @@index([deletedAt])
+  @@index([emailTemplateId])
+  @@index([whatsappTemplateId])
   @@map("lead_stages")
 }
 
@@ -3084,6 +3093,7 @@ model EmailTemplate {
 
   customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   emailLogs          EmailLog[]
+  leadStages         LeadStage[]
 
   @@index([key])
   @@index([customerId])
@@ -3159,6 +3169,7 @@ model MetaTemplate {
   deletedAt          DateTime?
 
   customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  leadStages         LeadStage[]
 
   @@index([templateName])
   @@index([key])

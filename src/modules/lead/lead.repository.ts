@@ -1188,6 +1188,12 @@ export class LeadRepository {
       where,
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       include: {
+        emailTemplate: {
+          select: { id: true, name: true, key: true, subject: true },
+        },
+        whatsappTemplate: {
+          select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
+        },
         _count: {
           select: {
             leads: {
@@ -1206,6 +1212,12 @@ export class LeadRepository {
     return this.prisma.leadStage.findFirst({
       where: { id: Number(id), deletedAt: null },
       include: {
+        emailTemplate: {
+          select: { id: true, name: true, key: true, subject: true },
+        },
+        whatsappTemplate: {
+          select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
+        },
         _count: {
           select: {
             leads: { where: { deletedAt: null } },
@@ -1228,6 +1240,14 @@ export class LeadRepository {
         sortOrder: data.sortOrder !== undefined ? Number(data.sortOrder) : 0,
         isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
         customerId: numCustomerId,
+        emailEnabled: data.emailEnabled !== undefined ? Boolean(data.emailEnabled) : true,
+        emailTemplateId: data.emailTemplateId !== undefined ? (data.emailTemplateId ? Number(data.emailTemplateId) : null) : null,
+        whatsappEnabled: data.whatsappEnabled !== undefined ? Boolean(data.whatsappEnabled) : true,
+        whatsappTemplateId: data.whatsappTemplateId !== undefined ? (data.whatsappTemplateId ? Number(data.whatsappTemplateId) : null) : null,
+      },
+      include: {
+        emailTemplate: { select: { id: true, name: true, key: true } },
+        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true } },
       },
     });
   }
@@ -1243,10 +1263,22 @@ export class LeadRepository {
     if (data.borderColor !== undefined) updateData.borderColor = data.borderColor;
     if (data.sortOrder !== undefined) updateData.sortOrder = Number(data.sortOrder);
     if (data.isActive !== undefined) updateData.isActive = Boolean(data.isActive);
+    if (data.emailEnabled !== undefined) updateData.emailEnabled = Boolean(data.emailEnabled);
+    if (data.emailTemplateId !== undefined) {
+      updateData.emailTemplateId = data.emailTemplateId ? Number(data.emailTemplateId) : null;
+    }
+    if (data.whatsappEnabled !== undefined) updateData.whatsappEnabled = Boolean(data.whatsappEnabled);
+    if (data.whatsappTemplateId !== undefined) {
+      updateData.whatsappTemplateId = data.whatsappTemplateId ? Number(data.whatsappTemplateId) : null;
+    }
 
     return this.prisma.leadStage.update({
       where: { id: Number(id) },
       data: updateData,
+      include: {
+        emailTemplate: { select: { id: true, name: true, key: true } },
+        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true } },
+      },
     });
   }
 
@@ -1343,7 +1375,22 @@ export class LeadRepository {
     if (existingCount > 0) return; // Already has stages — don't overwrite
     if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
+    // Load available default templates to associate
+    const [metaTemplates, emailTemplates] = await Promise.all([
+      typeof this.prisma.metaTemplate?.findMany === 'function'
+        ? this.prisma.metaTemplate.findMany({ where: { deletedAt: null } }).catch(() => [])
+        : [],
+      typeof this.prisma.emailTemplate?.findMany === 'function'
+        ? this.prisma.emailTemplate.findMany({ where: { deletedAt: null } }).catch(() => [])
+        : [],
+    ]);
+
     for (const stage of DEFAULT_STAGES) {
+      const matchedMeta = (metaTemplates as any[]).find((m) => m.key === stage.key);
+      const matchedEmail = (emailTemplates as any[]).find((e) =>
+        e.key.includes(stage.key) || stage.key.includes(e.key.replace('QUIKBOOM_', ''))
+      );
+
       await this.prisma.leadStage.upsert({
         where: {
           customerId_key: { customerId: customerId as any, key: stage.key },
@@ -1359,6 +1406,10 @@ export class LeadRepository {
           borderColor: stage.borderColor,
           isActive: true,
           isSystem: true,
+          emailEnabled: true,
+          emailTemplateId: matchedEmail?.id ?? null,
+          whatsappEnabled: true,
+          whatsappTemplateId: matchedMeta?.id ?? null,
         },
       });
     }

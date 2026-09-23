@@ -170,8 +170,8 @@ export class LeadController {
   @Get(['whatsapp-templates', 'whatsapp/templates'])
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all available WhatsApp templates for leads' })
-  async getWhatsAppTemplates() {
-    return this.leadService.getWhatsAppTemplates();
+  async getWhatsAppTemplates(@CurrentCustomer() customerId?: string) {
+    return this.leadService.getWhatsAppTemplates(customerId);
   }
 
   @Get(':id/status')

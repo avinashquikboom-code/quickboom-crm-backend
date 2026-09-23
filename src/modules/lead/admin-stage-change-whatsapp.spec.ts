@@ -61,15 +61,31 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     ];
 
     stagesTable = [
-      { id: 1, customerId: null, name: 'New', key: 'NEW', isActive: true, deletedAt: null },
-      { id: 2, customerId: null, name: 'Contacted', key: 'CONTACTED', isActive: true, deletedAt: null },
-      { id: 3, customerId: null, name: 'Qualified', key: 'QUALIFIED', isActive: true, deletedAt: null },
-      { id: 4, customerId: null, name: 'Proposal', key: 'PROPOSAL_SENT', isActive: true, deletedAt: null },
-      { id: 5, customerId: null, name: 'Negotiation', key: 'NEGOTIATION', isActive: true, deletedAt: null },
-      { id: 6, customerId: null, name: 'Won', key: 'WON', isActive: true, deletedAt: null },
-      { id: 7, customerId: null, name: 'Lost', key: 'LOST', isActive: true, deletedAt: null },
-      { id: 8, customerId: null, name: 'Follow-up', key: 'FOLLOW_UP', isActive: true, deletedAt: null },
-      { id: 99, customerId: null, name: 'Custom Stage No Template', key: 'CUSTOM_UNCONFIGURED_STAGE', isActive: true, deletedAt: null },
+      { id: 1, customerId: null, name: 'New', key: 'NEW', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 1 },
+      { id: 2, customerId: null, name: 'Contacted', key: 'CONTACTED', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 2 },
+      { id: 3, customerId: null, name: 'Qualified', key: 'QUALIFIED', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 3 },
+      { id: 4, customerId: null, name: 'Proposal', key: 'PROPOSAL_SENT', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 4 },
+      { id: 5, customerId: null, name: 'Negotiation', key: 'NEGOTIATION', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 5 },
+      { id: 6, customerId: null, name: 'Won', key: 'WON', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 8 },
+      { id: 7, customerId: null, name: 'Lost', key: 'LOST', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 9 },
+      { id: 8, customerId: null, name: 'Follow-up', key: 'FOLLOW_UP', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 11 },
+      { id: 9, customerId: null, name: 'Visit Scheduled', key: 'VISIT_SCHEDULED', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 12 },
+      { id: 10, customerId: null, name: 'Disabled Stage', key: 'DISABLED_STAGE', isActive: true, deletedAt: null, whatsappEnabled: false, whatsappTemplateId: 2 },
+      { id: 11, customerId: null, name: 'Pending Template Stage', key: 'PENDING_TEMPLATE_STAGE', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: 13 },
+      { id: 99, customerId: null, name: 'Custom Stage No Template', key: 'CUSTOM_UNCONFIGURED_STAGE', isActive: true, deletedAt: null, whatsappEnabled: true, whatsappTemplateId: null },
+    ];
+
+    const metaTemplatesTable = [
+      { id: 1, templateName: 'lead_stage_new', name: 'New Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 2, templateName: 'lead_stage_contacted', name: 'Contacted Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 3, templateName: 'lead_stage_qualified', name: 'Qualified Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 4, templateName: 'lead_stage_proposal', name: 'Proposal Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 5, templateName: 'lead_stage_negotiation', name: 'Negotiation Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 8, templateName: 'lead_stage_won', name: 'Won Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 9, templateName: 'lead_stage_lost', name: 'Lost Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 11, templateName: 'lead_stage_follow_up', name: 'Follow Up Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 12, templateName: 'lead_stage_visit_scheduled', name: 'Visit Scheduled Stage', status: 'APPROVED', language: 'en', body: 'Hi {{leadName}}' },
+      { id: 13, templateName: 'lead_stage_pending', name: 'Pending Stage', status: 'PENDING', language: 'en', body: 'Hi {{leadName}}' },
     ];
 
     timelineTable = [];
@@ -86,12 +102,31 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
         }),
       },
       leadStage: {
-        findFirst: jest.fn(async ({ where }) => {
-          if (where.id) return stagesTable.find((s) => s.id === where.id) || null;
-          if (where.key) return stagesTable.find((s) => s.key === where.key) || null;
-          return null;
+        findFirst: jest.fn(async ({ where, include }: any) => {
+          const s = where.id
+            ? stagesTable.find((stage) => stage.id === where.id)
+            : where.key
+            ? stagesTable.find((stage) => stage.key === where.key)
+            : where.name
+            ? stagesTable.find((stage) => stage.name?.toLowerCase() === where.name?.equals?.toLowerCase())
+            : null;
+          if (!s) return null;
+          const copy = { ...s };
+          if (include?.whatsappTemplate && s.whatsappTemplateId) {
+            (copy as any).whatsappTemplate = metaTemplatesTable.find((t) => t.id === s.whatsappTemplateId) || null;
+          }
+          return copy;
         }),
         findMany: jest.fn(async () => stagesTable),
+      },
+      metaTemplate: {
+        findUnique: jest.fn(async ({ where }: any) => {
+          return metaTemplatesTable.find((t) => t.id === where.id) || null;
+        }),
+        findFirst: jest.fn(async ({ where }: any) => {
+          return metaTemplatesTable.find((t) => (where.templateName ? t.templateName === where.templateName : true)) || null;
+        }),
+        findMany: jest.fn(async () => metaTemplatesTable.filter((t) => t.status === 'APPROVED')),
       },
       leadStatusHistory: {
         create: jest.fn(async ({ data }) => data),
@@ -411,5 +446,135 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     expect(res.whatsappNotification?.sent).toBe(true);
     expect(mockEmailService.sendEmail).toHaveBeenCalledTimes(1);
     expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('Case 15: Stage Follow-Up (ID 8) dispatches template ID 11 (lead_stage_follow_up)', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    const res = await service.updateStatus(1, 101, 42, { stageId: 8 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(8);
+    expect(res.whatsappNotification?.sent).toBe(true);
+    expect(res.whatsappNotification?.status).toBe('SENT');
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metaTemplateId: 11,
+        metaTemplate: expect.objectContaining({
+          id: 11,
+          templateName: 'lead_stage_follow_up',
+        }),
+      }),
+    );
+  });
+
+  it('Case 16: Stage Visit Scheduled (ID 9) dispatches template ID 12 (lead_stage_visit_scheduled)', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    const res = await service.updateStatus(1, 101, 42, { stageId: 9 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(9);
+    expect(res.whatsappNotification?.sent).toBe(true);
+    expect(res.whatsappNotification?.status).toBe('SENT');
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metaTemplateId: 12,
+        metaTemplate: expect.objectContaining({
+          id: 12,
+          templateName: 'lead_stage_visit_scheduled',
+        }),
+      }),
+    );
+  });
+
+  it('Case 17: Stage Won (ID 6) dispatches template ID 8 (lead_stage_won)', async () => {
+    leadsTable[0].stageId = 2;
+    leadsTable[0].status = LeadStatus.CONTACTED;
+
+    const res = await service.updateStatus(1, 101, 42, { stageId: 6 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(6);
+    expect(res.whatsappNotification?.sent).toBe(true);
+    expect(res.whatsappNotification?.status).toBe('SENT');
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metaTemplateId: 8,
+        metaTemplate: expect.objectContaining({
+          id: 8,
+          templateName: 'lead_stage_won',
+        }),
+      }),
+    );
+  });
+
+  it('Case 18: Stage with whatsappEnabled: false skips WhatsApp automation cleanly', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    const res = await service.updateStatus(1, 101, 42, { stageId: 10 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(10);
+    expect(res.whatsappNotification?.sent).toBe(false);
+    expect(res.whatsappNotification?.status).toBe('SKIPPED');
+    expect(res.whatsappNotification?.message).toContain('WhatsApp automation disabled');
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
+
+  it('Case 19: Stage with non-APPROVED template skips without hello_world fallback', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    const res = await service.updateStatus(1, 101, 42, { stageId: 11 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(11);
+    expect(res.whatsappNotification?.sent).toBe(false);
+    expect(res.whatsappNotification?.status).toBe('SKIPPED');
+    expect(res.whatsappNotification?.error).toBe('TEMPLATE_NOT_APPROVED');
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
+
+  it('Case 20: Explicit whatsappTemplateId override in updateStatus overrides stage default template', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    // Contacted stage normally has template ID 2; here override with template ID 8 (Won)
+    const res = await service.updateStatus(1, 101, 42, { stageId: 2, whatsappTemplateId: 8 });
+
+    expect(res).toBeDefined();
+    expect(res.stageId).toBe(2);
+    expect(res.whatsappNotification?.sent).toBe(true);
+    expect(res.whatsappNotification?.status).toBe('SENT');
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metaTemplateId: 8,
+        metaTemplate: expect.objectContaining({
+          id: 8,
+          templateName: 'lead_stage_won',
+        }),
+      }),
+    );
+  });
+
+  it('Case 21: Timeline activity captures stageId, templateId, and template details correctly', async () => {
+    leadsTable[0].stageId = 1;
+    leadsTable[0].status = LeadStatus.NEW;
+
+    await service.updateStatus(1, 101, 42, { stageId: 8 });
+
+    const timelineEntry = timelineTable.find(
+      (t) => t.action === 'WHATSAPP_SENT' && t.leadId === 101 && (t.metadata as any)?.stageId === 8,
+    );
+
+    expect(timelineEntry).toBeDefined();
+    expect((timelineEntry?.metadata as any)?.stageId).toBe(8);
+    expect((timelineEntry?.metadata as any)?.templateId).toBe(11);
+    expect((timelineEntry?.metadata as any)?.templateName).toBe('lead_stage_follow_up');
+    expect((timelineEntry?.metadata as any)?.status).toBe('Sent');
   });
 });

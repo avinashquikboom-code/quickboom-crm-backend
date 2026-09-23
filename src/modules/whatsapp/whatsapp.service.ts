@@ -1142,14 +1142,39 @@ export class WhatsappService {
   }
 
   /**
-   * Resolves a WhatsApp template for a stage, prioritizing custom DB MetaTemplates.
+   * Resolves a WhatsApp template for a stage, prioritizing explicit DB MetaTemplate ID, then custom DB MetaTemplates.
    */
-  async getStageTemplateAsync(stageKey?: string | null, customerId?: number | null): Promise<LeadStageWhatsAppTemplate | null> {
-    if (!stageKey) return null;
-    const normalized = stageKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
-    const resolvedKey = STAGE_KEY_TO_WHATSAPP_KEY[normalized] || normalized;
-
+  async getStageTemplateAsync(
+    stageKey?: string | null,
+    customerId?: number | null,
+    templateId?: number | null,
+  ): Promise<LeadStageWhatsAppTemplate | null> {
     try {
+      if (templateId && this.prisma && (this.prisma as any).metaTemplate) {
+        const dbTpl = await (this.prisma as any).metaTemplate.findFirst({
+          where: {
+            id: Number(templateId),
+            deletedAt: null,
+            isLocalActive: true,
+          },
+        });
+        if (dbTpl) {
+          return {
+            key: dbTpl.key || stageKey || dbTpl.templateName,
+            templateName: dbTpl.templateName,
+            name: dbTpl.name,
+            body: dbTpl.body,
+            id: dbTpl.id,
+            language: dbTpl.language || 'en_US',
+            status: dbTpl.status,
+          };
+        }
+      }
+
+      if (!stageKey) return null;
+      const normalized = stageKey.trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const resolvedKey = STAGE_KEY_TO_WHATSAPP_KEY[normalized] || normalized;
+
       if (this.prisma && (this.prisma as any).metaTemplate) {
         const candidateKeys = [resolvedKey, normalized, stageKey];
         const dbTpl = await (this.prisma as any).metaTemplate.findFirst({
@@ -1171,6 +1196,9 @@ export class WhatsappService {
             templateName: dbTpl.templateName,
             name: dbTpl.name,
             body: dbTpl.body,
+            id: dbTpl.id,
+            language: dbTpl.language || 'en_US',
+            status: dbTpl.status,
           };
         }
       }
@@ -1200,9 +1228,27 @@ export class WhatsappService {
     stageName?: string;
     customerId?: number;
     userId?: number;
+    metaTemplateId?: number;
+    metaTemplate?: any;
   }): Promise<WhatsAppSendResult> {
-    const { to, stageKey, variables, customMessage, stageName, customerId, userId } = params;
-    const template = (await this.getStageTemplateAsync(stageKey, customerId)) || this.getStageTemplate(stageKey);
+    const { to, stageKey, variables, customMessage, stageName, customerId, userId, metaTemplateId, metaTemplate } = params;
+
+    let template: LeadStageWhatsAppTemplate | null = metaTemplate || null;
+    if (!template) {
+      template = (await this.getStageTemplateAsync(stageKey, customerId, metaTemplateId)) || this.getStageTemplate(stageKey);
+    }
+
+    if (template && template.status && template.status !== 'APPROVED') {
+      this.logger.warn(`[WHATSAPP] Meta template "${template.templateName}" has status "${template.status}" (must be APPROVED). Skipping message.`);
+      return {
+        success: false,
+        skipped: true,
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: `TEMPLATE_${template.status}`,
+        message: `WhatsApp template "${template.templateName}" is currently ${template.status}. Only APPROVED templates can be sent.`,
+        details: `WhatsApp template "${template.templateName}" is currently ${template.status}. Only APPROVED templates can be sent.`,
+      };
+    }
 
     let messageText = customMessage;
     if (!messageText) {
@@ -1223,11 +1269,13 @@ export class WhatsappService {
         skipped: true,
         errorCode: WHATSAPP_ERROR_CODES.NO_TEMPLATE_OR_MESSAGE,
         reason: WHATSAPP_ERROR_CODES.NO_TEMPLATE_OR_MESSAGE,
-        details: 'No template or message content configured for this stage',
+        message: `WhatsApp template not configured for stage: ${stageName || stageKey}`,
+        details: `WhatsApp template not configured for stage: ${stageName || stageKey}`,
       };
     }
 
     const templateName = template?.templateName || 'lead_stage_update';
+    const languageCode = template?.language || 'en_US';
     const templateParameters = template
       ? this.resolveTemplateParameters(template.body, variables)
       : Object.values(variables).slice(0, 3).map((v) => ({ type: 'text' as const, text: String(v) }));
@@ -1236,7 +1284,7 @@ export class WhatsappService {
       to,
       templateName,
       templateParameters,
-      'en_US',
+      languageCode,
       messageText,
       stageName || template?.name || stageKey,
       customerId,
@@ -2112,6 +2160,9 @@ export interface LeadStageWhatsAppTemplate {
   templateName: string;
   name: string;
   body: string;
+  id?: number;
+  language?: string;
+  status?: string;
 }
 
 export const LEAD_STAGE_WHATSAPP_TEMPLATES: Record<string, LeadStageWhatsAppTemplate> = {
