@@ -92,6 +92,11 @@ export class CreateCustomerDto {
   @IsOptional()
   assignedEmployeeId?: number;
 
+  @ApiPropertyOptional({ example: 2 })
+  @IsNumber()
+  @IsOptional()
+  createdByEmployeeId?: number;
+
   @ApiPropertyOptional({ example: 'Rahul Sharma' })
   @IsString()
   @IsOptional()

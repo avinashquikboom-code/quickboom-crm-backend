@@ -19,7 +19,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
-import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 
 /**
@@ -441,7 +441,7 @@ export class CustomerService {
     const employeeId = user?.employeeId || user?.employee?.id;
     const companyId = user?.customerId || user?.employee?.customerId;
     const isSuperAdmin = isUserSuperAdmin(user);
-    const isAdmin = isUserAdminOrStaff(user);
+    const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
 
     const where: any = {
       deletedAt: null,
@@ -475,16 +475,29 @@ export class CustomerService {
 
     const andConditions: any[] = [];
 
-    // Strict Employee Scoping & Tenant Isolation (Requirements 12 & 13)
-    // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see.
-    // Derived from auth context, never trusting client parameter to access another employee's customers.
-    if (employeeId && !isSuperAdmin && !isAdmin) {
+    // Strict Employee Scoping & Tenant Isolation (Requirements 1, 12, 13, 14)
+    // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see:
+    // 1. customer.assignedEmployeeId == loggedInEmployeeId
+    // 2. customer.createdByEmployeeId == loggedInEmployeeId
+    // 3. Or linked lead assigned to or created by that employee
+    // Exclude unassigned, other employee's customers, and company-wide accounts.
+    if (employeeId && !isPrivilegedAdmin) {
       andConditions.push({
         OR: [
           { assignedEmployeeId: employeeId },
-          { assignedTeam: { members: { some: { employeeId: employeeId } } } },
-          { leads: { some: { deletedAt: null, OR: [{ employeeId: employeeId }, { assignedToId: user?.id }] } } },
-          ...(companyId ? [{ id: companyId }] : []),
+          { createdByEmployeeId: employeeId },
+          {
+            leads: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { employeeId: employeeId },
+                  { createdById: user?.id },
+                  { assignedToId: user?.id },
+                ],
+              },
+            },
+          },
         ],
       });
     }
@@ -635,8 +648,17 @@ export class CustomerService {
           leads: {
             where: { deletedAt: null },
             orderBy: { updatedAt: 'desc' },
-            take: 1,
-            include: { stage: true },
+            include: {
+              stage: true,
+              reminders: {
+                where: { isCompleted: false },
+                orderBy: { remindAt: 'asc' },
+              },
+            },
+          },
+          tasks: {
+            where: { deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+            select: { id: true, title: true, status: true, dueDate: true, dueAt: true },
           },
           works: {
             select: { id: true, status: true, title: true, scheduledDate: true },
@@ -667,39 +689,67 @@ export class CustomerService {
     ]);
 
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     // Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
     const computeCustomerStatus = (c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' => {
+      // 1. COMPLETED: Leads that reached WON / CONVERTED (Requirements 9, 10, 11)
+      const linkedLeads = (c as any).leads || [];
+      const hasWonLead = linkedLeads.some((l: any) => {
+        const st = String(l.status || '').toUpperCase();
+        const stageKey = String(l.stage?.key || '').toUpperCase();
+        const stageName = String(l.stage?.name || '').toLowerCase();
+        return st === 'WON' || st === 'CONVERTED' || stageKey === 'WON' || stageName === 'won';
+      });
+
+      if (hasWonLead) {
+        return 'COMPLETED';
+      }
+
+      // 2. UPCOMING: Customers with upcoming scheduled call / follow-up / task / visit / activity (Requirements 6, 7, 8)
+      // Note: Past completed call itself does NOT count as upcoming unless a future call/follow-up is scheduled
+      const hasUpcomingCallOrFollowUp = linkedLeads.some((l: any) => {
+        if (l.nextFollowUpDate && new Date(l.nextFollowUpDate) >= startOfToday) {
+          return true;
+        }
+        if (Array.isArray(l.reminders) && l.reminders.some((r: any) => !r.isCompleted && new Date(r.remindAt) >= startOfToday)) {
+          return true;
+        }
+        return false;
+      });
+
+      const hasUpcomingTask = ((c as any).tasks || []).some((t: any) => {
+        const d = t.dueAt || t.dueDate;
+        return d && new Date(d) >= startOfToday;
+      });
+
       const works = (c as any).works || [];
-      const hasActiveWork = works.some((w: any) =>
-        ['IN_PROGRESS', 'ASSIGNED', 'PROCESSING', 'SUBMITTED', 'CUSTOMER_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'UNDER_REVIEW'].includes(w.status),
-      );
       const hasUpcomingWork = works.some((w: any) =>
-        ['SCHEDULED'].includes(w.status),
+        ['SCHEDULED'].includes(w.status) && (!w.scheduledDate || new Date(w.scheduledDate) >= startOfToday),
       );
-      const allWorksCompleted = works.length > 0 && works.every((w: any) =>
-        ['COMPLETED', 'CANCELLED'].includes(w.status),
-      );
-      const activeSub = c.subscriptions?.find(
-        (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
-      );
+
       const pendingSub = c.subscriptions?.find(
         (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
+      );
+
+      if (hasUpcomingCallOrFollowUp || hasUpcomingTask || hasUpcomingWork || pendingSub) {
+        return 'UPCOMING';
+      }
+
+      // 3. COMPLETED: Inactive, expired subscriptions, or all works completed
+      const allWorksCompleted = works.length > 0 && works.every((w: any) =>
+        ['COMPLETED', 'CANCELLED'].includes(w.status),
       );
       const expiredSub = c.subscriptions?.find(
         (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
       );
 
-      if (hasActiveWork || activeSub) {
-        return 'ACTIVE';
-      }
-      if (hasUpcomingWork || pendingSub) {
-        return 'UPCOMING';
-      }
-      if (allWorksCompleted || expiredSub || !c.isActive) {
+      if (!c.isActive || allWorksCompleted || expiredSub) {
         return 'COMPLETED';
       }
-      return c.isActive ? 'ACTIVE' : 'COMPLETED';
+
+      // 4. Default: ACTIVE
+      return 'ACTIVE';
     };
 
     const countsWhere: any = {
@@ -711,7 +761,7 @@ export class CustomerService {
       ...(where.assignedTeamId ? { assignedTeamId: where.assignedTeamId } : {}),
     };
 
-    // Calculate dynamic counts across customers for [ Active ] [ Upcoming ] [ Completed ] tabs
+    // Calculate dynamic counts across customers for [ All ] [ Active ] [ Upcoming ] [ Completed ] tabs
     const allCustomersForCounts = await this.prisma.customer.findMany({
       where: countsWhere,
       select: {
@@ -724,7 +774,23 @@ export class CustomerService {
           take: 1,
         },
         works: {
-          select: { status: true },
+          select: { status: true, scheduledDate: true },
+        },
+        leads: {
+          where: { deletedAt: null },
+          select: {
+            status: true,
+            nextFollowUpDate: true,
+            stage: { select: { name: true, key: true } },
+            reminders: {
+              where: { isCompleted: false },
+              select: { remindAt: true, isCompleted: true },
+            },
+          },
+        },
+        tasks: {
+          where: { deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+          select: { dueAt: true, dueDate: true },
         },
       },
     });
@@ -899,9 +965,10 @@ export class CustomerService {
       }
     }
 
-    const totalPages = Math.ceil(total / limit) || 1;
+    const effectiveTotal = (query.status && query.status !== 'ALL') ? formatted.length : total;
+    const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
-    // Requirement 27 Safe Logs
+    // Safe Logs
     const safeFilter = query.status || 'ALL';
     const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
@@ -920,19 +987,19 @@ export class CustomerService {
       pagination: {
         page,
         pageSize: limit,
-        total,
+        total: effectiveTotal,
         totalPages,
       },
       meta: {
-        total,
+        total: effectiveTotal,
         page,
         limit,
         totalPages,
         counts: {
+          all: allCustomersForCounts.length,
           active: activeCount,
           upcoming: upcomingCount,
           completed: completedCount,
-          all: allCustomersForCounts.length,
         },
       },
     };
@@ -943,36 +1010,63 @@ export class CustomerService {
    */
   public computeCustomerStatus(c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // 1. WON LEADS -> COMPLETED
+    const linkedLeads = (c as any).leads || [];
+    const hasWonLead = linkedLeads.some((l: any) => {
+      const st = String(l.status || '').toUpperCase();
+      const stageKey = String(l.stage?.key || '').toUpperCase();
+      const stageName = String(l.stage?.name || '').toLowerCase();
+      return st === 'WON' || st === 'CONVERTED' || stageKey === 'WON' || stageName === 'won';
+    });
+
+    if (hasWonLead) {
+      return 'COMPLETED';
+    }
+
+    // 2. UPCOMING -> Scheduled future call / follow-up / reminder / task / visit / work
+    const hasUpcomingCallOrFollowUp = linkedLeads.some((l: any) => {
+      if (l.nextFollowUpDate && new Date(l.nextFollowUpDate) >= startOfToday) {
+        return true;
+      }
+      if (Array.isArray(l.reminders) && l.reminders.some((r: any) => !r.isCompleted && new Date(r.remindAt) >= startOfToday)) {
+        return true;
+      }
+      return false;
+    });
+
+    const hasUpcomingTask = ((c as any).tasks || []).some((t: any) => {
+      const d = t.dueAt || t.dueDate;
+      return d && new Date(d) >= startOfToday;
+    });
+
     const works = (c as any).works || [];
-    const hasActiveWork = works.some((w: any) =>
-      ['IN_PROGRESS', 'ASSIGNED', 'PROCESSING', 'SUBMITTED', 'CUSTOMER_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'UNDER_REVIEW'].includes(w.status),
-    );
     const hasUpcomingWork = works.some((w: any) =>
-      ['SCHEDULED'].includes(w.status),
+      ['SCHEDULED'].includes(w.status) && (!w.scheduledDate || new Date(w.scheduledDate) >= startOfToday),
     );
-    const allWorksCompleted = works.length > 0 && works.every((w: any) =>
-      ['COMPLETED', 'CANCELLED'].includes(w.status),
-    );
-    const activeSub = c.subscriptions?.find(
-      (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
-    );
+
     const pendingSub = c.subscriptions?.find(
       (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
+    );
+
+    if (hasUpcomingCallOrFollowUp || hasUpcomingTask || hasUpcomingWork || pendingSub) {
+      return 'UPCOMING';
+    }
+
+    // 3. COMPLETED
+    const allWorksCompleted = works.length > 0 && works.every((w: any) =>
+      ['COMPLETED', 'CANCELLED'].includes(w.status),
     );
     const expiredSub = c.subscriptions?.find(
       (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
     );
 
-    if (hasActiveWork || activeSub) {
-      return 'ACTIVE';
-    }
-    if (hasUpcomingWork || pendingSub) {
-      return 'UPCOMING';
-    }
-    if (allWorksCompleted || expiredSub || !c.isActive) {
+    if (!c.isActive || allWorksCompleted || expiredSub) {
       return 'COMPLETED';
     }
-    return c.isActive ? 'ACTIVE' : 'COMPLETED';
+
+    return 'ACTIVE';
   }
 
   /**
@@ -1080,7 +1174,15 @@ export class CustomerService {
         callerCustomerId === numericId ||
         customer.users.some((u) => u.id === user.id);
 
-      if (!isCustomerUser && !isAssignedEmployee && !isAssignedTeamMember) {
+      const isCreatorEmployee = Boolean(user.employee && customer.createdByEmployeeId === user.employee.id);
+      const isLeadEmployee = Boolean(
+        user.employee &&
+        customer.leads?.some(
+          (l: any) => l.employeeId === user.employee.id || l.createdById === user.id || l.assignedToId === user.id,
+        ),
+      );
+
+      if (!isCustomerUser && !isAssignedEmployee && !isCreatorEmployee && !isLeadEmployee && !isAssignedTeamMember) {
         throw new ForbiddenException(
           'You do not have permission to access details for this customer.',
         );
@@ -1279,7 +1381,7 @@ export class CustomerService {
   /**
    * Create new Customer organization
    */
-  async create(dto: CreateCustomerDto) {
+  async create(dto: CreateCustomerDto, user?: any) {
     const normalizedEmail = dto.email?.trim().toLowerCase();
     if (normalizedEmail) {
       const existing = await this.prisma.customer.findFirst({
@@ -1307,9 +1409,23 @@ export class CustomerService {
       }
     }
 
+    const callerEmpId = user?.employeeId || user?.employee?.id;
+    let createdByEmpId: number | null = dto.createdByEmployeeId ? Number(dto.createdByEmployeeId) : (callerEmpId ? Number(callerEmpId) : null);
+
     let assignedEmpId: number | null = dto.assignedEmployeeId ? Number(dto.assignedEmployeeId) : null;
     let assignedEmpName: string | null = dto.assignedEmployee || null;
     let resolvedDepartment: string | null = dto.department || null;
+
+    // If assigned employee was not provided and creator is an employee, default assigned to creator
+    if (!assignedEmpId && callerEmpId && !dto.assignedEmployee) {
+      assignedEmpId = Number(callerEmpId);
+      if (user?.employee) {
+        assignedEmpName = `${user.employee.firstName} ${user.employee.lastName}`.trim();
+        if (!resolvedDepartment && user.employee.department?.name) {
+          resolvedDepartment = user.employee.department.name;
+        }
+      }
+    }
 
     if (assignedEmpId) {
       const emp = await this.prisma.employee.findUnique({
@@ -1363,6 +1479,7 @@ export class CustomerService {
           assignedTeamId: assignedTeamId,
           assignedEmployeeId: assignedEmpId,
           assignedEmployee: assignedEmpName,
+          createdByEmployeeId: createdByEmpId,
           department: resolvedDepartment,
           notes: dto.notes,
           userLimit: dto.userLimit || 15,

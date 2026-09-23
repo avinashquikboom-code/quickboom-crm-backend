@@ -34,6 +34,7 @@ model Customer {
   source                   String?                   @default("DIRECT")
   assignedEmployee         String?
   assignedEmployeeId       Int?
+  createdByEmployeeId      Int?
   department               String?
   notes                    String?
   attendancePolicies       AttendancePolicy[]
@@ -93,6 +94,7 @@ model Customer {
   roleLeadLimits           RoleLeadLimit[]
   employeeLeadLimits       EmployeeLeadLimit[]
   assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  createdByEmployeeRel     Employee?                 @relation("CustomerCreatedStaff", fields: [createdByEmployeeId], references: [id], onDelete: SetNull)
   assignedTeamId           Int?
   assignedTeam             Team?                     @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   influencerBookings       InfluencerBooking[]
@@ -111,6 +113,7 @@ model Customer {
   @@index([deletedAt])
   @@index([isActive])
   @@index([assignedEmployeeId])
+  @@index([createdByEmployeeId])
   @@index([assignedTeamId])
   @@map("customers")
 }
@@ -1149,6 +1152,7 @@ model Employee {
   leadLimit                EmployeeLeadLimit?
   leads                    Lead[]                   @relation("EmployeeLeads")
   assignedCustomers        Customer[]               @relation("CustomerAssignedStaff")
+  createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
 
   @@unique([customerId, employeeCode])
   @@index([customerId])

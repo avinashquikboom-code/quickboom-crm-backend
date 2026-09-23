@@ -229,8 +229,8 @@ export class CustomerController {
 
   @Post()
   @ApiOperation({ summary: 'Create new customer' })
-  async create(@Body() dto: CreateCustomerDto) {
-    return this.customerService.create(dto);
+  async create(@Body() dto: CreateCustomerDto, @CurrentUser() user: any) {
+    return this.customerService.create(dto, user);
   }
 
   @Patch(':id')
