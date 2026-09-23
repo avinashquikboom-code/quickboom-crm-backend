@@ -363,9 +363,12 @@ export class CustomerService {
    * Maps an unconverted CRM Lead to the unified Customer Card format for Upcoming / All tabs
    */
   public mapLeadToCustomerItem(l: any, upcomingCall: UpcomingCallInfo | null): any {
-    const contactName =
-      `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.companyName || 'Lead Contact';
-    const businessName = l.companyName || contactName;
+    const contactName = `${l.firstName || ''} ${l.lastName || ''}`.trim();
+    const companyName = (l.companyName || '').trim();
+    const businessName = companyName.length > 0 ? companyName : (contactName.length > 0 ? contactName : `Lead #${l.id}`);
+    const resolvedCustomerName = contactName.length > 0 ? contactName : (l.title || businessName);
+    const resolvedCompanyName = companyName.length > 0 ? companyName : businessName;
+
     const stageName = l.stage?.name || (l.status === 'NEW' ? 'New' : l.status);
     const stageColor = l.stage?.color || (l.status === 'WON' ? '#10B981' : '#6366F1');
     const stageId = l.stage?.id || l.stageId || null;
@@ -377,14 +380,14 @@ export class CustomerService {
       id: -(l.id),
       customerId: `LEAD-${String(l.id).padStart(4, '0')}`,
       name: businessName,
-      customerName: businessName,
-      companyName: businessName,
-      company: businessName,
-      workspaceName: businessName,
+      customerName: resolvedCustomerName,
+      companyName: resolvedCompanyName,
+      company: resolvedCompanyName,
+      workspaceName: resolvedCompanyName,
       contactFirstName: l.firstName || '',
       contactLastName: l.lastName || '',
-      contactFullName: contactName,
-      contactPerson: contactName,
+      contactFullName: contactName || resolvedCustomerName,
+      contactPerson: contactName || resolvedCustomerName,
       domain: l.website || (l.email ? l.email.split('@')[1] : null) || 'N/A',
       email: l.email || 'N/A',
       phone: l.phone || 'N/A',
@@ -697,6 +700,7 @@ export class CustomerService {
         customerId: `CUST-${c.id}`,
         name: c.name || c.companyName || `Customer #${c.id}`,
         companyName: c.companyName || c.name || '',
+        customerName: contactPerson || c.name || 'Primary Contact',
         contactPerson: contactPerson || c.name || 'Primary Contact',
         domain: c.domain || (c.email ? c.email.split('@')[1] : '') || 'N/A',
         email: c.email || linkedLead?.email || '',
@@ -1344,20 +1348,27 @@ export class CustomerService {
       const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;
       const contactPerson = primaryUser
         ? `${primaryUser.firstName || ''} ${primaryUser.lastName || ''}`.trim()
-        : (linkedLead ? `${linkedLead.firstName || ''} ${linkedLead.lastName || ''}`.trim() : (c.name || 'Primary Contact'));
+        : (linkedLead ? `${linkedLead.firstName || ''} ${linkedLead.lastName || ''}`.trim() : '');
+
+      const resolvedCompanyName = (c.companyName || linkedLead?.companyName || '').trim();
+      const resolvedCustomerName = (contactPerson && contactPerson !== 'Primary Contact' && contactPerson.toLowerCase() !== resolvedCompanyName.toLowerCase())
+        ? contactPerson
+        : (c.name || linkedLead?.title || 'Customer');
+
+      const primaryDisplayName = resolvedCompanyName.length > 0 ? resolvedCompanyName : (c.name || resolvedCustomerName);
 
       return {
         id: c.id,
         customerId: `CUST-${String(c.id).padStart(4, '0')}`,
-        name: c.name,
-        customerName: c.name,
-        companyName: c.companyName || c.name,
-        company: c.companyName || c.name,
-        workspaceName: c.companyName || c.name,
-        contactFirstName: primaryUser?.firstName || '',
-        contactLastName: primaryUser?.lastName || '',
-        contactFullName: contactPerson,
-        contactPerson: contactPerson,
+        name: primaryDisplayName,
+        customerName: resolvedCustomerName,
+        companyName: resolvedCompanyName.length > 0 ? resolvedCompanyName : primaryDisplayName,
+        company: resolvedCompanyName.length > 0 ? resolvedCompanyName : primaryDisplayName,
+        workspaceName: resolvedCompanyName.length > 0 ? resolvedCompanyName : primaryDisplayName,
+        contactFirstName: primaryUser?.firstName || linkedLead?.firstName || '',
+        contactLastName: primaryUser?.lastName || linkedLead?.lastName || '',
+        contactFullName: contactPerson || resolvedCustomerName,
+        contactPerson: contactPerson || resolvedCustomerName,
         domain: c.domain,
         email: c.email || primaryUser?.email || linkedLead?.email || 'N/A',
         phone: c.phone || primaryUser?.phone || linkedLead?.phone || 'N/A',
