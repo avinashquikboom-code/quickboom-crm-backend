@@ -63,6 +63,197 @@ export const SYSTEM_CUSTOMER_EXCLUSIONS: Prisma.CustomerWhereInput[] = [
   },
 ];
 
+export interface UpcomingCallInfo {
+  type: 'Final Call' | 'Next Call';
+  callType: 'FINAL_CALL' | 'NEXT_CALL';
+  date: string;
+  formattedDate: string;
+  time: string;
+  formattedTime: string;
+  scheduledAt: string;
+  status: 'SCHEDULED';
+  notes?: string;
+}
+
+export function parseCallDateTime(dateVal: Date | string, timeStr?: string | null): Date {
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return new Date(0);
+
+  let year = d.getFullYear();
+  let month = d.getMonth();
+  let day = d.getDate();
+
+  if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateVal.trim())) {
+    const parts = dateVal.trim().split('-').map(Number);
+    year = parts[0];
+    month = parts[1] - 1;
+    day = parts[2];
+  }
+
+  let hours = d.getHours();
+  let minutes = d.getMinutes();
+  let hasExplicitTime = false;
+
+  if (timeStr && typeof timeStr === 'string' && timeStr.trim()) {
+    const trimmed = timeStr.trim();
+    const match12 = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+    if (match12) {
+      let h = parseInt(match12[1], 10);
+      const m = parseInt(match12[2], 10);
+      const meridiem = match12[3]?.toUpperCase();
+      if (meridiem === 'PM' && h < 12) h += 12;
+      if (meridiem === 'AM' && h === 12) h = 0;
+      hours = h;
+      minutes = m;
+      hasExplicitTime = true;
+    } else {
+      const match24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+      if (match24) {
+        hours = parseInt(match24[1], 10);
+        minutes = parseInt(match24[2], 10);
+        hasExplicitTime = true;
+      }
+    }
+  }
+
+  if (!hasExplicitTime) {
+    if (hours === 0 && minutes === 0) {
+      hours = 23;
+      minutes = 59;
+    }
+  }
+
+  return new Date(year, month, day, hours, minutes, 0, 0);
+}
+
+export function formatCallDate(d: Date): string {
+  const day = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day} ${month} ${year}`;
+}
+
+export function formatCallTime(d: Date, originalTimeStr?: string | null): string {
+  if (originalTimeStr && /^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(originalTimeStr.trim())) {
+    const parts = originalTimeStr.trim().split(/\s+/);
+    const timeParts = parts[0].split(':');
+    const h = timeParts[0].padStart(2, '0');
+    const m = timeParts[1].padStart(2, '0');
+    const meridiem = parts[1].toUpperCase();
+    return `${h}:${m} ${meridiem}`;
+  }
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const meridiem = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  const hStr = String(h).padStart(2, '0');
+  return `${hStr}:${m} ${meridiem}`;
+}
+
+export function extractUpcomingCall(c: any, now: Date = new Date()): UpcomingCallInfo | null {
+  const linkedLeads = [
+    ...((c as any).originLead ? [(c as any).originLead] : []),
+    ...((c as any).leads || []),
+  ].filter((l: any) => l && !l.deletedAt);
+
+  const candidates: Array<{
+    type: 'Final Call' | 'Next Call';
+    callType: 'FINAL_CALL' | 'NEXT_CALL';
+    scheduledAt: Date;
+    originalTime?: string | null;
+    notes?: string;
+  }> = [];
+
+  for (const l of linkedLeads) {
+    const st = String(l.status || '').toUpperCase();
+    const stageKey = String(l.stage?.key || '').toUpperCase();
+    const stageName = String(l.stage?.name || '').toLowerCase();
+
+    // 1. Exclude terminal completed or cancelled leads
+    const isCompletedOrCancelled =
+      ['WON', 'CONVERTED', 'LOST', 'CANCELLED'].includes(st) ||
+      ['WON', 'LOST', 'CANCELLED'].includes(stageKey) ||
+      ['won', 'lost', 'cancelled'].includes(stageName);
+
+    if (isCompletedOrCancelled) {
+      continue;
+    }
+
+    const isFinalCall = st === 'FINAL_CALL' || stageKey === 'FINAL_CALL' || stageName.includes('final');
+
+    if (isFinalCall) {
+      let scheduledAt: Date;
+      if (l.nextFollowUpDate) {
+        scheduledAt = parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime);
+      } else {
+        scheduledAt = new Date(now.getTime() + 3600000); // Default future time for final call stage
+      }
+      candidates.push({
+        type: 'Final Call',
+        callType: 'FINAL_CALL',
+        scheduledAt: scheduledAt > now ? scheduledAt : new Date(now.getTime() + 3600000),
+        originalTime: l.nextFollowUpTime || '11:00 AM',
+        notes: l.workNotes || undefined,
+      });
+    } else if (l.nextFollowUpDate) {
+      const callDateTime = parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime);
+      if (callDateTime > now) {
+        candidates.push({
+          type: 'Next Call',
+          callType: 'NEXT_CALL',
+          scheduledAt: callDateTime,
+          originalTime: l.nextFollowUpTime,
+          notes: l.workNotes || undefined,
+        });
+      }
+    }
+
+    // Active uncompleted reminders
+    if (Array.isArray(l.reminders)) {
+      for (const r of l.reminders) {
+        if (!r.isCompleted && r.remindAt) {
+          const remDate = new Date(r.remindAt);
+          if (remDate > now) {
+            const rIsFinal = isFinalCall || String(r.title || '').toLowerCase().includes('final');
+            candidates.push({
+              type: rIsFinal ? 'Final Call' : 'Next Call',
+              callType: rIsFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+              scheduledAt: remDate,
+              originalTime: null,
+              notes: r.title,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+  const earliest = candidates[0];
+
+  const formattedDate = formatCallDate(earliest.scheduledAt);
+  const formattedTime = formatCallTime(earliest.scheduledAt, earliest.originalTime);
+  const isoDate = `${earliest.scheduledAt.getFullYear()}-${String(earliest.scheduledAt.getMonth() + 1).padStart(2, '0')}-${String(earliest.scheduledAt.getDate()).padStart(2, '0')}`;
+
+  return {
+    type: earliest.type,
+    callType: earliest.callType,
+    date: isoDate,
+    formattedDate,
+    time: formattedTime,
+    formattedTime,
+    scheduledAt: earliest.scheduledAt.toISOString(),
+    status: 'SCHEDULED',
+    notes: earliest.notes,
+  };
+}
+
 @Injectable()
 export class CustomerService {
   private readonly logger = new Logger(CustomerService.name);
@@ -789,7 +980,7 @@ export class CustomerService {
       ...(where.assignedTeamId ? { assignedTeamId: where.assignedTeamId } : {}),
     };
 
-    // Calculate dynamic counts across customers for [ All ] [ Active ] [ Upcoming ] [ Completed ] tabs
+    // Calculate dynamic counts across customers for [ All ] [ Active ] [ Upcoming ] [ Inactive ] tabs
     const allCustomersForCounts = await this.prisma.customer.findMany({
       where: countsWhere,
       select: {
@@ -807,12 +998,27 @@ export class CustomerService {
         leads: {
           where: { deletedAt: null },
           select: {
+            id: true,
             status: true,
             nextFollowUpDate: true,
+            nextFollowUpTime: true,
             stage: { select: { name: true, key: true } },
             reminders: {
               where: { isCompleted: false },
-              select: { remindAt: true, isCompleted: true },
+              select: { remindAt: true, isCompleted: true, title: true },
+            },
+          },
+        },
+        originLead: {
+          select: {
+            id: true,
+            status: true,
+            nextFollowUpDate: true,
+            nextFollowUpTime: true,
+            stage: { select: { name: true, key: true } },
+            reminders: {
+              where: { isCompleted: false },
+              select: { remindAt: true, isCompleted: true, title: true },
             },
           },
         },
@@ -825,12 +1031,26 @@ export class CustomerService {
 
     let activeCount = 0;
     let upcomingCount = 0;
+    let inactiveCount = 0;
     let completedCount = 0;
     for (const c of allCustomersForCounts) {
-      const st = computeCustomerStatus(c);
-      if (st === 'ACTIVE') activeCount++;
-      else if (st === 'UPCOMING') upcomingCount++;
-      else if (st === 'COMPLETED') completedCount++;
+      const sub = c.subscriptions?.[0];
+      const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= now);
+      if (isSubActive) {
+        activeCount++;
+      } else {
+        inactiveCount++;
+      }
+
+      const call = extractUpcomingCall(c, now);
+      if (call !== null) {
+        upcomingCount++;
+      }
+
+      const st = this.computeCustomerStatus(c);
+      if (st === 'COMPLETED') {
+        completedCount++;
+      }
     }
 
     let formatted = items.map((c) => {
@@ -880,7 +1100,9 @@ export class CustomerService {
       const resolvedDepartment =
         c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
-      const customerStatus = computeCustomerStatus(c);
+      const upcomingCall = extractUpcomingCall(c, now);
+      const hasUpcomingCall = upcomingCall !== null;
+      const customerStatus = this.computeCustomerStatus(c);
       const linkedLead = (c as any).originLead || (c as any).leads?.[0];
       const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (c.leadId ? String(c.leadId) : null);
       const leadStatus = linkedLead?.status || (c.leads?.length > 0 || c.leadId ? 'WON' : null);
@@ -936,6 +1158,11 @@ export class CustomerService {
         isActive: c.isActive,
         status: customerStatus,
         customerStatus,
+        upcomingCall: upcomingCall || null,
+        hasUpcomingCall,
+        upcomingCallType: upcomingCall?.type || null,
+        upcomingCallDate: upcomingCall?.formattedDate || null,
+        upcomingCallTime: upcomingCall?.formattedTime || null,
         leadId: rawLeadId,
         leadStatus,
         leadStageId,
@@ -988,8 +1215,14 @@ export class CustomerService {
 
     if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
       const targetStatus = query.status.trim().toUpperCase();
-      if (['ACTIVE', 'UPCOMING', 'COMPLETED'].includes(targetStatus)) {
-        formatted = formatted.filter((item) => item.customerStatus === targetStatus);
+      if (targetStatus === 'UPCOMING') {
+        formatted = formatted.filter((item) => item.hasUpcomingCall === true);
+      } else if (targetStatus === 'ACTIVE') {
+        formatted = formatted.filter((item) => item.subscriptionStatus === 'ACTIVE' || item.isActive === true);
+      } else if (targetStatus === 'INACTIVE') {
+        formatted = formatted.filter((item) => item.subscriptionStatus !== 'ACTIVE' && item.isActive === false);
+      } else if (targetStatus === 'COMPLETED') {
+        formatted = formatted.filter((item) => item.customerStatus === 'COMPLETED' || item.leadStatus === 'WON');
       }
     }
 
@@ -1027,6 +1260,7 @@ export class CustomerService {
           all: allCustomersForCounts.length,
           active: activeCount,
           upcoming: upcomingCount,
+          inactive: inactiveCount,
           completed: completedCount,
         },
       },
@@ -1037,18 +1271,18 @@ export class CustomerService {
    * Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
    */
   public computeCustomerStatus(c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    // 1. WON LEADS -> COMPLETED
+    const call = extractUpcomingCall(c);
+    if (call !== null) {
+      return 'UPCOMING';
+    }
     const linkedLeads = [
       ...((c as any).originLead ? [(c as any).originLead] : []),
       ...((c as any).leads || []),
     ];
     const hasWonLead = linkedLeads.some((l: any) => {
-      const st = String(l.status || '').toUpperCase();
-      const stageKey = String(l.stage?.key || '').toUpperCase();
-      const stageName = String(l.stage?.name || '').toLowerCase();
+      const st = String(l?.status || '').toUpperCase();
+      const stageKey = String(l?.stage?.key || '').toUpperCase();
+      const stageName = String(l?.stage?.name || '').toLowerCase();
       return st === 'WON' || st === 'CONVERTED' || stageKey === 'WON' || stageName === 'won';
     });
 
@@ -1056,48 +1290,12 @@ export class CustomerService {
       return 'COMPLETED';
     }
 
-    // 2. UPCOMING -> Scheduled future call / follow-up / reminder / task / visit / work
-    const hasUpcomingCallOrFollowUp = linkedLeads.some((l: any) => {
-      if (l.nextFollowUpDate && new Date(l.nextFollowUpDate) >= startOfToday) {
-        return true;
-      }
-      if (Array.isArray(l.reminders) && l.reminders.some((r: any) => !r.isCompleted && new Date(r.remindAt) >= startOfToday)) {
-        return true;
-      }
-      return false;
-    });
-
-    const hasUpcomingTask = ((c as any).tasks || []).some((t: any) => {
-      const d = t.dueAt || t.dueDate;
-      return d && new Date(d) >= startOfToday;
-    });
-
-    const works = (c as any).works || [];
-    const hasUpcomingWork = works.some((w: any) =>
-      ['SCHEDULED'].includes(w.status) && (!w.scheduledDate || new Date(w.scheduledDate) >= startOfToday),
-    );
-
-    const pendingSub = c.subscriptions?.find(
-      (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
-    );
-
-    if (hasUpcomingCallOrFollowUp || hasUpcomingTask || hasUpcomingWork || pendingSub) {
-      return 'UPCOMING';
+    const sub = c.subscriptions?.[0];
+    const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= new Date());
+    if (isSubActive) {
+      return 'ACTIVE';
     }
-
-    // 3. COMPLETED
-    const allWorksCompleted = works.length > 0 && works.every((w: any) =>
-      ['COMPLETED', 'CANCELLED'].includes(w.status),
-    );
-    const expiredSub = c.subscriptions?.find(
-      (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
-    );
-
-    if (!c.isActive || allWorksCompleted || expiredSub) {
-      return 'COMPLETED';
-    }
-
-    return 'ACTIVE';
+    return c.isActive ? 'ACTIVE' : 'COMPLETED';
   }
 
   /**
@@ -1162,10 +1360,22 @@ export class CustomerService {
           where: { deletedAt: null },
           orderBy: { updatedAt: 'desc' },
           take: 1,
-          include: { stage: true },
+          include: {
+            stage: true,
+            reminders: {
+              where: { isCompleted: false },
+              select: { id: true, remindAt: true, title: true, isCompleted: true },
+            },
+          },
         },
         originLead: {
-          include: { stage: true },
+          include: {
+            stage: true,
+            reminders: {
+              where: { isCompleted: false },
+              select: { id: true, remindAt: true, title: true, isCompleted: true },
+            },
+          },
         },
         works: {
           select: { id: true, status: true, title: true, scheduledDate: true },
@@ -1264,12 +1474,20 @@ export class CustomerService {
     const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
     const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;
 
+    const upcomingCall = extractUpcomingCall(customer, now);
+    const hasUpcomingCall = upcomingCall !== null;
+
     return {
       ...safeCustomer,
       customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
       company: customer.companyName || customer.name,
       status: customerStatus,
       customerStatus,
+      upcomingCall: upcomingCall || null,
+      hasUpcomingCall,
+      upcomingCallType: upcomingCall?.type || null,
+      upcomingCallDate: upcomingCall?.formattedDate || null,
+      upcomingCallTime: upcomingCall?.formattedTime || null,
       leadId: rawLeadId,
       leadStatus,
       leadStageId,
