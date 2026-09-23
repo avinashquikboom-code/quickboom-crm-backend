@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
-import { RoleType, Prisma, AccessOverrideType } from '@prisma/client';
+import { RoleType, Prisma, AccessOverrideType, AttendanceStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 import {
@@ -2519,6 +2519,7 @@ export class EmployeeService {
   }
 
   async getAttendance(
+    user?: any,
     customerId?: number | string,
     isSuperAdmin = false,
     options?: { date?: string; branch?: string; search?: string; page?: number; limit?: number },
@@ -2534,6 +2535,21 @@ export class EmployeeService {
       where.customerId = numCustomerId;
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for attendance access');
+    }
+
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    if (isEmpUser) {
+      const emp = user.employee || (await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(user.email ? [{ email: { equals: user.email.trim().toLowerCase(), mode: 'insensitive' as Prisma.QueryMode } }] : []),
+          ],
+        },
+      }));
+      if (emp) {
+        where.employeeId = emp.id;
+      }
     }
 
     if (options?.date) {
@@ -2580,7 +2596,7 @@ export class EmployeeService {
     // Auto-checkout any open attendances before listing
     await this.autoCheckOutOpenAttendances(where.customerId);
 
-    const [records, total] = await Promise.all([
+    const [rawRecords, total] = await Promise.all([
       this.prisma.attendance.findMany({
         where,
         include: {
@@ -2593,6 +2609,46 @@ export class EmployeeService {
       }),
       this.prisma.attendance.count({ where }),
     ]);
+
+    // Consolidate duplicate records per employee per business day into a single canonical daily record
+    const dailyMap = new Map<string, (typeof rawRecords)[0]>();
+    for (const record of rawRecords) {
+      const bDate = record.date ? getBusinessDate(record.date) : 'unknown';
+      const key = `${record.employeeId}_${bDate}`;
+      const existing = dailyMap.get(key);
+      if (!existing) {
+        dailyMap.set(key, { ...record, breaks: [...record.breaks] });
+      } else {
+        // Merge into canonical daily record:
+        // 1. Earliest punchIn
+        if (record.punchIn && (!existing.punchIn || new Date(record.punchIn) < new Date(existing.punchIn))) {
+          existing.punchIn = record.punchIn;
+        }
+        // 2. Latest punchOut
+        if (record.punchOut && (!existing.punchOut || new Date(record.punchOut) > new Date(existing.punchOut))) {
+          existing.punchOut = record.punchOut;
+        }
+        // 3. Keep highest valid working duration
+        existing.workingMinutes = Math.max(existing.workingMinutes || 0, record.workingMinutes || 0);
+        existing.workingHours = Math.max(existing.workingHours || 0, record.workingHours || 0);
+        // 4. Combine breaks without duplicates
+        const existingBreakIds = new Set(existing.breaks.map((b) => b.id));
+        for (const brk of record.breaks) {
+          if (!existingBreakIds.has(brk.id)) {
+            existing.breaks.push(brk);
+            existingBreakIds.add(brk.id);
+          }
+        }
+        // 5. Prefer populated location and accurate status
+        if ((!existing.locationIn || existing.locationIn === 'Office GPS') && record.locationIn) {
+          existing.locationIn = record.locationIn;
+        }
+        if (record.status === AttendanceStatus.PRESENT && existing.status !== AttendanceStatus.PRESENT) {
+          existing.status = record.status;
+        }
+      }
+    }
+    const records = Array.from(dailyMap.values());
 
     const formatted = records.map((a) => {
       const breakSessions = a.breaks.map((b, idx) => {

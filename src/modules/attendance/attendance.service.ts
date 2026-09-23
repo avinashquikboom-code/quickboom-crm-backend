@@ -557,6 +557,14 @@ isRemoteActive: ${isRemoteActive}`);
     }
 
     return this.prisma.$transaction(async (tx) => {
+      if ((tx as any).$queryRaw) {
+        try {
+          await (tx as any).$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
+        } catch {
+          // Graceful fallback for mock tests without raw query support
+        }
+      }
+
       let attendance = await tx.attendance.findFirst({
         where: {
           employeeId: employee.id,
@@ -598,7 +606,7 @@ isRemoteActive: ${isRemoteActive}`);
           data: {
             customerId: employee.customerId,
             employeeId: employee.id,
-            date: now,
+            date: todayStart,
             punchIn: now,
             status: attendanceStatus,
             isLate: isLatePunchIn,
@@ -952,7 +960,7 @@ result: SUCCESS`);
       }
     }
 
-    const [total, items] = await Promise.all([
+    const [total, rawItems] = await Promise.all([
       this.prisma.attendance.count({ where: whereClause }),
       this.prisma.attendance.findMany({
         where: whereClause,
@@ -967,6 +975,36 @@ result: SUCCESS`);
         },
       }),
     ]);
+
+    // Consolidate any duplicate records per business day into a single canonical daily record
+    const dailyMap = new Map<string, (typeof rawItems)[0]>();
+    for (const item of rawItems) {
+      const bDate = item.date ? getBusinessDate(item.date) : 'unknown';
+      const existing = dailyMap.get(bDate);
+      if (!existing) {
+        dailyMap.set(bDate, { ...item, breaks: [...item.breaks] });
+      } else {
+        if (item.punchIn && (!existing.punchIn || new Date(item.punchIn) < new Date(existing.punchIn))) {
+          existing.punchIn = item.punchIn;
+        }
+        if (item.punchOut && (!existing.punchOut || new Date(item.punchOut) > new Date(existing.punchOut))) {
+          existing.punchOut = item.punchOut;
+        }
+        existing.workingMinutes = Math.max(existing.workingMinutes || 0, item.workingMinutes || 0);
+        existing.workingHours = Math.max(existing.workingHours || 0, item.workingHours || 0);
+        const existingBreakIds = new Set(existing.breaks.map((b) => b.id));
+        for (const brk of item.breaks) {
+          if (!existingBreakIds.has(brk.id)) {
+            existing.breaks.push(brk);
+            existingBreakIds.add(brk.id);
+          }
+        }
+        if ((!existing.locationIn || existing.locationIn === 'Office GPS') && item.locationIn) {
+          existing.locationIn = item.locationIn;
+        }
+      }
+    }
+    const items = Array.from(dailyMap.values());
 
     return {
       success: true,

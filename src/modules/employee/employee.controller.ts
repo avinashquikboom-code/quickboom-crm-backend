@@ -236,7 +236,7 @@ export class EmployeeController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.employeeService.getAttendance(targetCustomerId, isSuperAdmin, {
+    return this.employeeService.getAttendance(user, targetCustomerId, isSuperAdmin, {
       date,
       branch,
       search,

@@ -1342,6 +1342,7 @@ export class AuthService {
       emp = user.employee;
       const targetNumericId = emp.id || user.id;
       const qbCode = emp.employeeCode || this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      const isCrmEligible = this.determineCrmEligibility(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -1358,6 +1359,8 @@ export class AuthService {
         status: emp.status || 'ACTIVE',
         mobileLoginEnabled: emp.mobileLoginEnabled !== false,
         joiningDate: emp.joiningDate || user.createdAt,
+        isCrmEligible,
+        crmMobileAccess: isCrmEligible,
       };
     }
 
@@ -1408,6 +1411,8 @@ export class AuthService {
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
     userData.permissionKeys = rbacData.permissionKeys;
+    userData.isCrmEligible = rbacData.isCrmEligible ?? false;
+    userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
 
     return {
       success: true,
@@ -1914,6 +1919,7 @@ export class AuthService {
       emp = await this.ensureEmployee(user);
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      const isCrmEligible = this.determineCrmEligibility(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -1930,6 +1936,8 @@ export class AuthService {
         status: emp.status || 'ACTIVE',
         mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
         joiningDate: emp.joiningDate || user.createdAt,
+        isCrmEligible,
+        crmMobileAccess: isCrmEligible,
       };
     }
 
@@ -1963,6 +1971,8 @@ export class AuthService {
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
     userData.permissionKeys = rbacData.permissionKeys;
+    userData.isCrmEligible = rbacData.isCrmEligible ?? false;
+    userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
 
     return {
       statusCode: 200,
@@ -2192,6 +2202,7 @@ export class AuthService {
       emp = await this.ensureEmployee(user);
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      const isCrmEligible = this.determineCrmEligibility(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -2208,6 +2219,8 @@ export class AuthService {
         status: emp.status || 'ACTIVE',
         mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
         joiningDate: emp.joiningDate || user.createdAt,
+        isCrmEligible,
+        crmMobileAccess: isCrmEligible,
       };
     }
 
@@ -2241,6 +2254,8 @@ export class AuthService {
     userData.permissions = rbacData.permissions;
     userData.effectivePermissions = rbacData.effectivePermissions;
     userData.permissionKeys = rbacData.permissionKeys;
+    userData.isCrmEligible = rbacData.isCrmEligible ?? false;
+    userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
 
     return {
       statusCode: 200,
@@ -2310,6 +2325,7 @@ export class AuthService {
       emp = await this.ensureEmployee(user);
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
+      const isCrmEligible = this.determineCrmEligibility(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -2326,6 +2342,8 @@ export class AuthService {
         status: emp.status || 'ACTIVE',
         mobileLoginEnabled: emp.mobileLoginEnabled ?? true,
         joiningDate: emp.joiningDate || user.createdAt,
+        isCrmEligible,
+        crmMobileAccess: isCrmEligible,
       };
     }
 
@@ -2361,6 +2379,8 @@ export class AuthService {
     profileData.permissions = rbacData.permissions;
     profileData.effectivePermissions = rbacData.effectivePermissions;
     profileData.permissionKeys = rbacData.permissionKeys;
+    profileData.isCrmEligible = rbacData.isCrmEligible ?? false;
+    profileData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
 
     return profileData;
   }
@@ -2746,6 +2766,7 @@ export class AuthService {
     }
 
     const permissionKeys = permissions.map((p) => toPermissionKey(p.module, p.action));
+    const isCrmEligible = this.determineCrmEligibility(user.employee);
 
     return {
       role: specificRoleName,
@@ -2753,7 +2774,18 @@ export class AuthService {
       permissions,
       effectivePermissions,
       permissionKeys,
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
     };
+  }
+
+  private determineCrmEligibility(emp: any): boolean {
+    if (!emp) return false;
+    if (emp.designation?.crmMobileAccess !== undefined && emp.designation?.crmMobileAccess !== null) {
+      return Boolean(emp.designation.crmMobileAccess);
+    }
+    const desigName = (emp.designation?.name || '').toUpperCase();
+    return desigName.includes('TELE') || desigName.includes('BPO');
   }
 
   private formatRoleDisplayName(name: string): string {
