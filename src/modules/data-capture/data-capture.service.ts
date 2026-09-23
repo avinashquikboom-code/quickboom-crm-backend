@@ -1397,10 +1397,14 @@ export class DataCaptureService {
     userId: string | number,
     dto: ImportToLeadsDto,
   ): Promise<{
+    success: boolean;
     totalRequested: number;
     imported: number;
     skippedDuplicates: number;
     duplicateNames: string[];
+    lead?: any;
+    leads?: any[];
+    capture?: { id: string; status: string };
     message: string;
   }> {
     let numCustomerId = Number(customerId);
@@ -1408,7 +1412,45 @@ export class DataCaptureService {
 
     let placesToImport: any[] = [];
 
-    if (dto.jobId) {
+    // 1. Direct places array provided by frontend
+    if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
+      placesToImport = dto.places.map((p, idx) => ({
+        id: p.id || `custom_${idx}`,
+        googlePlaceId: p.googlePlaceId || p.sourceRecordId || p.id,
+        businessName: p.businessName || p.companyName || p.name || 'Business Lead',
+        category: p.category || 'General',
+        address: p.address,
+        phone: p.phone,
+        email: p.email,
+        website: p.website,
+        rating: p.rating,
+        reviewCount: p.reviewCount,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        source: p.source || p.sourceType || 'GOOGLE_DISCOVERY',
+        sourceRecordId: p.sourceRecordId || p.googlePlaceId,
+        sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
+        captureRequestId: p.captureRequestId || dto.captureRequestId,
+      }));
+    } else if (dto.companyName || dto.businessName) {
+      // Single place payload
+      placesToImport = [{
+        googlePlaceId: dto.googlePlaceId || dto.sourceRecordId,
+        businessName: dto.companyName || dto.businessName,
+        category: dto.category || 'General',
+        address: dto.address,
+        phone: dto.phone,
+        email: dto.email,
+        website: dto.website,
+        source: dto.sourceType || 'GOOGLE_DISCOVERY',
+        sourceRecordId: dto.sourceRecordId || dto.googlePlaceId,
+        sourceUrl: dto.sourceUrl || dto.website,
+        captureRequestId: dto.captureRequestId,
+      }];
+    }
+
+    // 2. Job-based lookup
+    if (placesToImport.length === 0 && dto.jobId) {
       const whereJob: any = { jobId: dto.jobId };
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
         whereJob.customerId = numCustomerId;
@@ -1419,30 +1461,28 @@ export class DataCaptureService {
       });
 
       if (!job && (!isNaN(numCustomerId) && numCustomerId > 0)) {
-        // Fallback: look up by jobId directly in case of tenant admin context mismatch
         job = await this.prisma.dataCaptureJob.findFirst({
           where: { jobId: dto.jobId },
           include: { places: { where: { deletedAt: null } } },
         });
       }
 
-      if (!job) {
-        throw new BadRequestException(`Extraction job "${dto.jobId}" not found for this customer.`);
+      if (job) {
+        if (isNaN(numCustomerId) || numCustomerId <= 0) {
+          numCustomerId = job.customerId;
+        }
+        placesToImport = job.places;
+        if (dto.placeIds && dto.placeIds.length > 0) {
+          const selectedSet = new Set(dto.placeIds);
+          placesToImport = job.places.filter(
+            (p) => selectedSet.has(p.googlePlaceId || '') || selectedSet.has(String(p.id)),
+          );
+        }
       }
+    }
 
-      if (isNaN(numCustomerId) || numCustomerId <= 0) {
-        numCustomerId = job.customerId;
-      }
-
-      placesToImport = job.places;
-      if (dto.placeIds && dto.placeIds.length > 0) {
-        const selectedSet = new Set(dto.placeIds);
-        placesToImport = job.places.filter(
-          (p) => selectedSet.has(p.googlePlaceId || '') || selectedSet.has(String(p.id)),
-        );
-      }
-    } else if (dto.placeIds && dto.placeIds.length > 0) {
-      // Find places directly by IDs or googlePlaceIds
+    // 3. Fallback: placeIds lookup directly in DataCapturePlace
+    if (placesToImport.length === 0 && dto.placeIds && dto.placeIds.length > 0) {
       const numericIds = dto.placeIds.map((id) => Number(id)).filter((id) => !isNaN(id));
       placesToImport = await this.prisma.dataCapturePlace.findMany({
         where: {
@@ -1463,54 +1503,91 @@ export class DataCaptureService {
     let importedCount = 0;
     let skippedDuplicates = 0;
     const duplicateNames: string[] = [];
+    const createdLeads: any[] = [];
 
     for (const place of placesToImport) {
-      // Duplicate detection by phone, googlePlaceId, or business name
+      const normalizedPhone = place.phone && place.phone !== 'N/A' ? String(place.phone).trim() : undefined;
+      const normalizedEmail = place.email && String(place.email).trim().length > 0 ? String(place.email).trim() : undefined;
+      const businessName = place.businessName || place.companyName || 'Business Lead';
+      const googlePlaceId = place.googlePlaceId || place.sourceRecordId || undefined;
+
+      // Safe debug log for each selected place
+      this.logger.log(
+        `[DATA CAPTURE IMPORT]\n` +
+        `captureRequestId: ${place.captureRequestId || dto.jobId || 'N/A'}\n` +
+        `sourceType: ${place.source || place.sourceType || 'GOOGLE_DISCOVERY'}\n` +
+        `sourceRecordId: ${googlePlaceId || place.id || 'N/A'}\n` +
+        `sourceUrl: ${place.sourceUrl || place.website || place.googleMapsUrl || 'N/A'}\n` +
+        `companyName: ${businessName}\n` +
+        `phone: ${normalizedPhone || 'N/A'}\n` +
+        `email: ${normalizedEmail || 'N/A'}\n` +
+        `website: ${place.website || 'N/A'}\n` +
+        `address: ${place.address || 'N/A'}\n` +
+        `selectedResultId: ${googlePlaceId || place.id || 'N/A'}`
+      );
+
+      // Duplicate detection by googlePlaceId, phone, email, or exact title
+      const duplicateConditions: any[] = [];
+      if (googlePlaceId) {
+        duplicateConditions.push({ googlePlaceId });
+      }
+      if (normalizedPhone && normalizedPhone.length >= 10) {
+        duplicateConditions.push({ phone: normalizedPhone });
+      }
+      if (normalizedEmail && normalizedEmail.includes('@')) {
+        duplicateConditions.push({ email: normalizedEmail });
+      }
+      duplicateConditions.push({ title: { equals: businessName, mode: 'insensitive' } });
+
       const existingLead = await this.prisma.lead.findFirst({
         where: {
           customerId: numCustomerId,
-          OR: [
-            place.googlePlaceId ? { googlePlaceId: place.googlePlaceId } : undefined,
-            place.phone && place.phone !== 'N/A' ? { phone: place.phone } : undefined,
-            place.email ? { email: place.email } : undefined,
-            { title: { equals: place.businessName, mode: 'insensitive' } },
-          ].filter(Boolean) as any[],
+          deletedAt: null,
+          OR: duplicateConditions,
         },
       });
 
       if (existingLead) {
         skippedDuplicates++;
-        duplicateNames.push(place.businessName);
+        duplicateNames.push(businessName);
         continue;
       }
 
-      const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
+      // Contact extraction
+      let firstName = 'Business';
+      let lastName = 'Owner';
+      if (businessName) {
+        const parts = businessName.trim().split(/\s+/);
+        firstName = parts[0] || 'Business';
+        lastName = parts.length > 1 ? parts.slice(1).join(' ') : 'Owner';
+      }
 
-      // Create new Lead via LeadService (or fallback)
       let createdLead: any;
       if (this.leadService) {
         createdLead = await this.leadService.createLead(
           numCustomerId,
           numUserId,
           {
-            title: place.businessName,
+            title: businessName,
             firstName,
             lastName,
-            companyName: place.businessName,
-            phone,
-            email,
+            companyName: businessName,
+            phone: normalizedPhone,
+            email: normalizedEmail,
             website: place.website || undefined,
             address: place.address && place.address !== 'N/A' ? place.address : undefined,
             category: place.category || undefined,
-            googlePlaceId: place.googlePlaceId || undefined,
-            latitude: place.latitude || undefined,
-            longitude: place.longitude || undefined,
-            rating: place.rating || undefined,
-            reviewCount: place.reviewCount || undefined,
-            source: place.source || 'GOOGLE_PLACES',
+            googlePlaceId: googlePlaceId,
+            sourceRecordId: googlePlaceId,
+            latitude: place.latitude ? Number(place.latitude) : undefined,
+            longitude: place.longitude ? Number(place.longitude) : undefined,
+            rating: place.rating ? Number(place.rating) : undefined,
+            reviewCount: place.reviewCount ? Number(place.reviewCount) : undefined,
+            source: place.source || 'GOOGLE_DISCOVERY',
             status: 'NEW',
             priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
             value: 0,
+            captureRequestId: place.captureRequestId || dto.jobId || undefined,
           } as any,
         );
       } else {
@@ -1534,67 +1611,85 @@ export class DataCaptureService {
         createdLead = await this.prisma.lead.create({
           data: {
             customerId: numCustomerId,
-            title: place.businessName,
+            title: businessName,
             firstName,
             lastName,
-            companyName: place.businessName,
-            phone,
-            email,
+            companyName: businessName,
+            phone: normalizedPhone,
+            email: normalizedEmail,
             website: place.website || undefined,
             address: place.address && place.address !== 'N/A' ? place.address : undefined,
             category: place.category || undefined,
-            googlePlaceId: place.googlePlaceId || undefined,
-            latitude: place.latitude || undefined,
-            longitude: place.longitude || undefined,
-            rating: place.rating || undefined,
-            reviewCount: place.reviewCount || undefined,
-            source: place.source || 'GOOGLE_PLACES',
+            googlePlaceId: googlePlaceId,
+            sourceRecordId: googlePlaceId,
+            latitude: place.latitude ? Number(place.latitude) : undefined,
+            longitude: place.longitude ? Number(place.longitude) : undefined,
+            rating: place.rating ? Number(place.rating) : undefined,
+            reviewCount: place.reviewCount ? Number(place.reviewCount) : undefined,
+            source: place.source || 'GOOGLE_DISCOVERY',
             status: 'NEW',
             stageId: newStage?.id || undefined,
             priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
             value: 0,
             createdById: numUserId,
+            captureRequestId: place.captureRequestId || dto.jobId || undefined,
           },
         });
       }
 
       // Attach note with metadata
-      await this.prisma.leadNote.create({
-        data: {
-          leadId: createdLead.id,
-          userId: numUserId,
-          content: `[DATA_CAPTURE_METADATA]\nGoogle Place ID: ${place.googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}`,
-        },
-      });
+      try {
+        await this.prisma.leadNote.create({
+          data: {
+            leadId: createdLead.id,
+            userId: numUserId,
+            content: `[DATA_CAPTURE_METADATA]\nGoogle Place ID: ${googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}`,
+          },
+        });
+      } catch (_) {}
 
       // Log timeline
-      await this.prisma.leadActivityTimeline.create({
-        data: {
-          leadId: createdLead.id,
-          action: 'PROSPECT_IMPORTED_FROM_DATA_CAPTURE',
-          description: `Imported prospect "${place.businessName}" into CRM Leads`,
-          metadata: {
-            googlePlaceId: place.googlePlaceId,
-            dataCapturePlaceId: place.id,
-            jobId: place.jobId,
+      try {
+        await this.prisma.leadActivityTimeline.create({
+          data: {
+            leadId: createdLead.id,
+            action: 'PROSPECT_IMPORTED_FROM_DATA_CAPTURE',
+            description: `Imported prospect "${businessName}" into CRM Leads`,
+            metadata: {
+              googlePlaceId,
+              dataCapturePlaceId: place.id && typeof place.id === 'number' ? place.id : undefined,
+              jobId: dto.jobId || place.jobId,
+            },
           },
-        },
-      });
+        });
+      } catch (_) {}
 
-      // Mark as imported in DataCapturePlace
-      await this.prisma.dataCapturePlace.update({
-        where: { id: place.id },
-        data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
-      });
+      // Update DataCapturePlace record if numeric ID exists
+      if (place.id && typeof place.id === 'number') {
+        try {
+          await this.prisma.dataCapturePlace.update({
+            where: { id: place.id },
+            data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
+          });
+        } catch (_) {}
+      }
 
+      createdLeads.push(createdLead);
       importedCount++;
     }
 
     return {
+      success: true,
       totalRequested: placesToImport.length,
       imported: importedCount,
       skippedDuplicates,
       duplicateNames,
+      lead: createdLeads[0] || null,
+      leads: createdLeads,
+      capture: {
+        id: dto.jobId || 'captured',
+        status: importedCount > 0 ? 'IMPORTED' : (skippedDuplicates > 0 ? 'DUPLICATE' : 'FAILED'),
+      },
       message: `Successfully imported ${importedCount} leads into CRM. (${skippedDuplicates} duplicates skipped)`,
     };
   }
@@ -1916,7 +2011,12 @@ export class DataCaptureService {
       const reviewCount = 45 + ((i * 19) % 350);
       const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      const randDigits = String(10000000 + ((i * 1234567 + 345678) % 89999999)).slice(0, 8);
+      let kwHash = 0;
+      for (let c = 0; c < keyword.length; c++) {
+        kwHash = (kwHash * 31 + keyword.charCodeAt(c)) & 0xffffffff;
+      }
+      const kwOffset = Math.abs(kwHash) % 10000000;
+      const randDigits = String(10000000 + ((i * 1234567 + 345678 + kwOffset) % 89999999)).slice(0, 8);
       const normalizedPhone = `+9198${randDigits}`;
       const normalizedEmail = `info@${cleanName}.in`;
 

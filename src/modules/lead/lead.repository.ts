@@ -136,6 +136,7 @@ export class LeadRepository {
     } else {
       delete createData.email;
     }
+    delete createData.sourceUrl;
 
     const lead = await client.lead.create({
       data: createData,

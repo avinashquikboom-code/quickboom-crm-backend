@@ -93,6 +93,58 @@ export class ImportToLeadsDto {
   placeIds?: string[];
 
   @IsOptional()
+  @IsArray()
+  places?: any[];
+
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
+  @IsOptional()
+  @IsString()
+  businessName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  website?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceType?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceRecordId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  googlePlaceId?: string;
+
+  @IsOptional()
+  @IsString()
+  captureRequestId?: string;
+
+  @IsOptional()
   @IsString()
   leadStatus?: string;
 
