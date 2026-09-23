@@ -785,11 +785,11 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
     body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b; }
     .email-wrapper { width: 100% !important; background-color: #f8fafc; margin: 0; padding: 24px 12px; }
     .email-container { width: 100% !important; max-width: 600px !important; margin: 0 auto; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .email-header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 32px 24px; text-align: center; color: #ffffff; }
+    .email-header { background-color: #ffffff; background: #ffffff; padding: 32px 24px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0; }
     .email-logo-container { margin: 0 auto 16px; text-align: center; }
     .email-logo { width: 200px !important; max-width: 200px !important; height: auto !important; display: block; margin: 0 auto; border: 0; outline: none; text-decoration: none; }
-    .header-title { margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #ffffff; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
-    .header-subtitle { margin: 0; font-size: 14px; line-height: 18px; color: rgba(255, 255, 255, 0.95); font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
+    .header-title { margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #0f172a; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
+    .header-subtitle { margin: 0; font-size: 14px; line-height: 18px; color: #64748b; font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; }
     .email-body { padding: 36px 32px; font-size: 15px; line-height: 1.65; color: #334155; word-wrap: break-word; overflow-wrap: break-word; }
     .email-btn { display: inline-block; padding: 12px 28px; background-color: ${primaryColor}; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); max-width: 100%; box-sizing: border-box; }
     .email-footer { padding: 20px 24px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; line-height: 1.6; color: #94a3b8; text-align: center; word-wrap: break-word; overflow-wrap: break-word; }
@@ -818,7 +818,7 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
         <![endif]-->
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-container" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
           <tr>
-            <td class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 32px 24px; text-align: center; color: #ffffff;">
+            <td class="email-header" style="background-color: #ffffff; background: #ffffff; padding: 32px 24px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
                   <td align="center" class="email-logo-container" style="padding: 0 0 16px; text-align: center;">
@@ -827,8 +827,8 @@ export function wrapInQuikboomEmailHtml(content: string, options?: WrapEmailOpti
                 </tr>
                 <tr>
                   <td align="center" style="text-align: center;">
-                    <h1 class="header-title" style="margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #ffffff; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${companyName}</h1>
-                    <p class="header-subtitle" style="margin: 0; font-size: 14px; line-height: 18px; color: rgba(255, 255, 255, 0.95); font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${options?.previewText || 'Digital Marketing Agency'}</p>
+                    <h1 class="header-title" style="margin: 0 0 6px; font-size: 22px; font-weight: 800; line-height: 28px; letter-spacing: -0.02em; color: #0f172a; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${companyName}</h1>
+                    <p class="header-subtitle" style="margin: 0; font-size: 14px; line-height: 18px; color: #64748b; font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word;">${options?.previewText || 'Digital Marketing Agency'}</p>
                   </td>
                 </tr>
               </table>

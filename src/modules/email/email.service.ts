@@ -221,17 +221,17 @@ export class EmailService {
       // Replace hardcoded dark/navy gradients with dynamic primary color
       htmlContent = htmlContent.replace(/linear-gradient\(135deg,\s*#0f172a,\s*#1e293b\)/g, primaryColor);
 
-      // Ensure inline background styles on email headers
+      // Ensure inline background styles on email headers (clean white neutral header)
       if (htmlContent.includes('class="email-header"') && !htmlContent.includes('class="email-header" style="background')) {
         htmlContent = htmlContent.replace(
           'class="email-header"',
-          `class="email-header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`,
+          'class="email-header" style="background-color: #ffffff; background: #ffffff; padding: 32px 24px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0;"',
         );
       }
       if (htmlContent.includes('class="header"') && !htmlContent.includes('class="header" style="background')) {
         htmlContent = htmlContent.replace(
           'class="header"',
-          `class="header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; text-align: center; color: #ffffff;"`,
+          'class="header" style="background-color: #ffffff; background: #ffffff; padding: 28px 32px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0;"',
         );
       }
     }

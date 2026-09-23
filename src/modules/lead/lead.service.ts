@@ -2241,10 +2241,10 @@ export class LeadService {
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
     .card { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .header { background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; color: #ffffff; text-align: center; }
+    .header { background-color: #ffffff; background: #ffffff; padding: 28px 32px; color: #0f172a; text-align: center; border-bottom: 1px solid #e2e8f0; }
     .header img { max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0; }
-    .header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #ffffff; }
-    .header p { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9); }
+    .header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #0f172a; }
+    .header p { margin: 0; font-size: 13px; color: #64748b; }
     .body { padding: 32px; }
     .intro { font-size: 14px; line-height: 1.6; margin-bottom: 24px; color: #334155; }
     .section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 12px; }
@@ -2259,10 +2259,10 @@ export class LeadService {
 </head>
 <body>
   <div class="card" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
-    <div class="header" style="background-color: ${primaryColor}; background: ${primaryColor}; padding: 28px 32px; color: #ffffff; text-align: center;">
+    <div class="header" style="background-color: #ffffff; background: #ffffff; padding: 28px 32px; color: #0f172a; text-align: center; border-bottom: 1px solid #e2e8f0;">
       <img src="${logoUrl}" alt="${senderOrgName}" width="160" style="max-height: 48px; width: auto; display: inline-block; margin-bottom: 12px; border: 0;" />
-      <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #ffffff;">${businessName}</h1>
-      <p style="margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.9);">Lead Reference #${lead.id} • Registered Profile Details</p>
+      <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #0f172a;">${businessName}</h1>
+      <p style="margin: 0; font-size: 13px; color: #64748b;">Lead Reference #${lead.id} • Registered Profile Details</p>
     </div>
     <div class="body">
       <p class="intro">

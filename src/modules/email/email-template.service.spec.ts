@@ -170,8 +170,8 @@ QUIKBOOM Digital Marketing Agency`,
     });
   });
 
-  describe('wrapInQuikboomEmailHtml (Dynamic Primary Color, Public HTTPS Logo & Responsive Design)', () => {
-    it('should dynamically render the configured primary color into inline header and button styles with responsive layout', () => {
+  describe('wrapInQuikboomEmailHtml (Clean White Neutral Header, Public HTTPS Logo & Responsive Design)', () => {
+    it('should render clean neutral white header with dark text, primary color button, and responsive layout', () => {
       const customPrimaryColor = '#7C3AED';
       const html = service.wrapInQuikboomEmailHtml('Welcome to our service.\n\nVisit QUIKBOOM Website', {
         primaryColor: customPrimaryColor,
@@ -179,8 +179,10 @@ QUIKBOOM Digital Marketing Agency`,
         companyName: 'Madhuban Hotel',
       });
 
-      // Header background must use email-safe inline style with primary color
-      expect(html).toContain(`style="background-color: ${customPrimaryColor}; background: ${customPrimaryColor}; padding: 32px 24px; text-align: center; color: #ffffff;"`);
+      // Header background must be clean neutral white with dark navy text and clean border
+      expect(html).toContain('style="background-color: #ffffff; background: #ffffff; padding: 32px 24px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0;"');
+      expect(html).toContain('color: #0f172a;');
+      expect(html).toContain('color: #64748b;');
       // Button must use email-safe inline style with primary color
       expect(html).toContain(`background-color: ${customPrimaryColor}`);
       // Logo must be absolute public HTTPS URL with 200px width and email-logo class
@@ -202,14 +204,13 @@ QUIKBOOM Digital Marketing Agency`,
       expect(html).not.toContain('linear-gradient(135deg, #0f172a, #1e293b)');
     });
 
-    it('should use default primary color (#16A34A) and public HTTPS logo when options are omitted', () => {
+    it('should use clean neutral white header and public HTTPS logo when options are omitted', () => {
       const html = service.wrapInQuikboomEmailHtml('Hello World');
 
-      expect(html).toContain('style="background-color: #16A34A; background: #16A34A;');
+      expect(html).toContain('style="background-color: #ffffff; background: #ffffff; padding: 32px 24px; text-align: center; color: #0f172a; border-bottom: 1px solid #e2e8f0;"');
       expect(html).toContain('src="https://admin.qbapp.online/logo.png"');
       expect(html).toContain('width="200"');
       expect(html).not.toContain('cid:quikboom-logo');
-      expect(html).not.toContain('#0f172a');
     });
   });
 });
