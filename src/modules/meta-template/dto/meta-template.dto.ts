@@ -226,3 +226,29 @@ export class PreviewMetaTemplateDto {
   @IsOptional()
   variables?: Record<string, any>;
 }
+
+export class TestSendMetaTemplateDto {
+  @ApiPropertyOptional({ description: 'Database ID of the Meta template' })
+  @IsOptional()
+  templateId?: number;
+
+  @ApiPropertyOptional({ description: 'Meta technical template name' })
+  @IsOptional()
+  @IsString()
+  templateName?: string;
+
+  @ApiProperty({ description: 'Recipient phone number (E.164 or national format)' })
+  @IsNotEmpty()
+  @IsString()
+  to: string;
+
+  @ApiPropertyOptional({ description: 'Template language code', default: 'en_US' })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional({ description: 'Key-value mapping of template variable values' })
+  @IsOptional()
+  variables?: Record<string, string>;
+}
+

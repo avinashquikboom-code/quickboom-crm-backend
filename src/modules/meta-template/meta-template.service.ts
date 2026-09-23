@@ -12,8 +12,9 @@ import {
   UpdateMetaTemplateDto,
   QueryMetaTemplateDto,
   PreviewMetaTemplateDto,
+  TestSendMetaTemplateDto,
 } from './dto/meta-template.dto';
-import { LEAD_STAGE_WHATSAPP_TEMPLATES } from '../whatsapp/whatsapp.service';
+import { LEAD_STAGE_WHATSAPP_TEMPLATES, WhatsappService } from '../whatsapp/whatsapp.service';
 import { resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
 
 export const CRM_META_TEMPLATE_VARIABLES = [
@@ -39,6 +40,7 @@ export class MetaTemplateService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   /**
@@ -584,6 +586,164 @@ export class MetaTemplateService {
       resolvedHeader,
       resolvedBody,
       variablesUsed: this.extractVariables(body + ' ' + headerContent),
+    };
+  }
+
+  /**
+   * Dispatches a live test WhatsApp template message using Meta Cloud API.
+   * - Validates recipient phone number using WhatsappService.normalizePhoneNumber
+   * - Scopes template to authenticated admin / tenant (or global system template)
+   * - Verifies template is APPROVED on Meta
+   * - Dynamically detects & orders variables from body & header
+   * - Reuses existing Meta WhatsApp Cloud API credentials
+   * - Captures message ID on success
+   */
+  async testSend(dto: TestSendMetaTemplateDto, user: any) {
+    if (!dto.to || !dto.to.trim()) {
+      throw new BadRequestException('Recipient WhatsApp number is required');
+    }
+
+    const normalizedPhone = this.whatsappService.normalizePhoneNumber(dto.to);
+    if (!normalizedPhone) {
+      throw new BadRequestException(
+        'Invalid WhatsApp phone number format. Please provide a valid 10-15 digit phone number (e.g. +91 98200 10000).',
+      );
+    }
+
+    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+
+    // 1. Locate the exact selected template with tenant isolation
+    let template: any = null;
+    if (dto.templateId) {
+      template = await this.prisma.metaTemplate.findFirst({
+        where: {
+          id: Number(dto.templateId),
+          deletedAt: null,
+          OR: [
+            { customerId: null },
+            ...(customerId ? [{ customerId }] : []),
+          ],
+        },
+      });
+    } else if (dto.templateName) {
+      template = await this.prisma.metaTemplate.findFirst({
+        where: {
+          templateName: dto.templateName.trim().toLowerCase(),
+          deletedAt: null,
+          OR: [
+            { customerId: null },
+            ...(customerId ? [{ customerId }] : []),
+          ],
+        },
+      });
+    }
+
+    if (!template) {
+      throw new NotFoundException('Selected WhatsApp template not found or access denied.');
+    }
+
+    // 2. Validate template status on Meta (Requirement 4: Only APPROVED templates can be tested)
+    const status = (template.status || '').toUpperCase();
+    if (status !== 'APPROVED') {
+      throw new BadRequestException(
+        `This WhatsApp template is currently "${status || 'NOT APPROVED'}" on Meta and cannot be tested. Only APPROVED templates can be sent via Meta Cloud API.`,
+      );
+    }
+
+    if (template.isLocalActive === false) {
+      throw new BadRequestException('This WhatsApp template is currently deactivated in your CRM settings.');
+    }
+
+    // 3. Extract variables from body & header in exact order of appearance
+    const bodyText = template.body || '';
+    const headerText = template.headerContent || '';
+    const fullText = `${headerText} ${bodyText}`;
+    const matches = fullText.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || [];
+    const orderedVars: string[] = [];
+    const seen = new Set<string>();
+    for (const m of matches) {
+      const v = m.replace(/[\{\}\s]/g, '');
+      if (!seen.has(v)) {
+        seen.add(v);
+        orderedVars.push(v);
+      }
+    }
+
+    // 4. Build parameters for Meta Cloud API
+    const userVars = dto.variables || {};
+    const sampleVars: Record<string, string> = {
+      leadName: 'Mr. Raj Sharma',
+      leadTitle: 'Mr. Raj Sharma',
+      companyName: 'QUIKBOOM',
+      userName: user?.firstName || 'Admin',
+      assignedUser: user?.firstName || 'Admin',
+      assignedEmployeeName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Admin Team',
+      assignedEmployeePhone: user?.phone || '+91 98765 43210',
+      assignedEmployeeEmail: user?.email || 'admin@quikboom.com',
+      stage: 'Contacted',
+      startDate: '25 September 2026',
+      startTime: '11:30 AM',
+      dealValue: '₹1,50,000',
+      serviceName: 'Digital Marketing',
+      1: 'Mr. Raj Sharma',
+      2: 'QUIKBOOM',
+      3: '25 September 2026',
+      4: '11:30 AM',
+    };
+
+    const parameters: Array<{ type: 'text'; text: string }> = orderedVars.map((varName, idx) => {
+      const val =
+        userVars[varName] !== undefined && userVars[varName] !== null && String(userVars[varName]).trim() !== ''
+          ? String(userVars[varName]).trim()
+          : userVars[String(idx + 1)] !== undefined && String(userVars[String(idx + 1)]).trim() !== ''
+          ? String(userVars[String(idx + 1)]).trim()
+          : sampleVars[varName] || sampleVars[String(idx + 1)] || `Sample ${varName}`;
+
+      return {
+        type: 'text',
+        text: val,
+      };
+    });
+
+    this.logger.log(
+      `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${template.language || dto.language || 'en_US'}) ` +
+      `to recipient ${this.whatsappService.maskPhone(normalizedPhone)} with ${parameters.length} parameters. ` +
+      `Company ID: ${customerId || 'GLOBAL'}`
+    );
+
+    // 5. Send via existing WhatsappService (Meta WhatsApp Cloud API)
+    // NOTE: fallbackText is intentionally undefined so only the actual template is tested
+    const sendResult = await this.whatsappService.sendTemplate(
+      normalizedPhone,
+      template.templateName,
+      parameters,
+      template.language || dto.language || 'en_US',
+      undefined,
+      'TEMPLATE_TEST',
+      customerId ? Number(customerId) : undefined,
+      user?.id ? Number(user.id) : undefined,
+    );
+
+    if (!sendResult.success) {
+      const errStatus = sendResult.providerStatus || 400;
+      const errMsg = sendResult.message || sendResult.details || 'Failed to send WhatsApp test message via Meta';
+      this.logger.warn(`[WHATSAPP TEST SEND FAILED] Template: "${template.templateName}", Error: ${errMsg}, ProviderStatus: ${errStatus}`);
+
+      throw new BadRequestException(errMsg);
+    }
+
+    return {
+      success: true,
+      message: 'Test WhatsApp message sent successfully.',
+      messageId: sendResult.messageId || null,
+      status: 'SENT',
+      recipient: normalizedPhone,
+      template: {
+        id: template.id,
+        name: template.name,
+        templateName: template.templateName,
+        language: template.language,
+      },
     };
   }
 }

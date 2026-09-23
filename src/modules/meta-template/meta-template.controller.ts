@@ -20,6 +20,7 @@ import {
   UpdateMetaTemplateDto,
   QueryMetaTemplateDto,
   PreviewMetaTemplateDto,
+  TestSendMetaTemplateDto,
 } from './dto/meta-template.dto';
 
 @ApiTags('Meta WhatsApp Templates')
@@ -99,4 +100,11 @@ export class MetaTemplateController {
   async preview(@Body() dto: PreviewMetaTemplateDto, @CurrentUser() user: any) {
     return this.metaTemplateService.preview(dto, user?.customerId);
   }
+
+  @Post('test-send')
+  @ApiOperation({ summary: 'Send a live test WhatsApp message using the selected Meta template via Meta Cloud API' })
+  async testSend(@Body() dto: TestSendMetaTemplateDto, @CurrentUser() user: any) {
+    return this.metaTemplateService.testSend(dto, user);
+  }
 }
+
