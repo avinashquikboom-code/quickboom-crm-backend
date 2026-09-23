@@ -76,6 +76,10 @@ export class ExtractPlacesDto {
 
   @IsOptional()
   companyId?: number | string;
+
+  @IsOptional()
+  @IsString()
+  requestId?: string;
 }
 
 export class ImportToLeadsDto {

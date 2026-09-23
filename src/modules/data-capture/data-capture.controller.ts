@@ -61,15 +61,21 @@ export class DataCaptureController {
   @Get('usage')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get customer extraction usage and remaining quota' })
-  async getUsageSummary(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getUsageSummary(customerId);
+  async getUsageSummary(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.dataCaptureService.getUsageSummary(customerId, user);
   }
 
   @Post('usage')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for get usage summary (POST)' })
-  async postUsageSummary(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getUsageSummary(customerId);
+  async postUsageSummary(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.dataCaptureService.getUsageSummary(customerId, user);
   }
 
   /**

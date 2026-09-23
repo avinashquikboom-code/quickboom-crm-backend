@@ -44,6 +44,7 @@ model Customer {
   contacts                 Contact[]
   dataCaptureJobs          DataCaptureJob[]
   dataCapturePlaces        DataCapturePlace[]
+  dataCaptureSearches      DataCaptureSearch[]
   deals                    Deal[]
   departments              Department[]
   designations             Designation[]
@@ -1125,6 +1126,7 @@ model Employee {
   shift                    Shift?                   @relation(fields: [shiftId], references: [id])
   user                     User?                    @relation(fields: [userId], references: [id])
   employeeClaims           EmployeeClaim[]
+  dataCaptureSearches      DataCaptureSearch[]
   leaveBalances            EmployeeLeaveBalance[]
   employeeLoans            EmployeeLoan[]
   employeeLocations        EmployeeLocation[]
@@ -1889,6 +1891,28 @@ model DataCapturePlace {
   @@index([customerId, deletedAt, createdAt])
 }
 
+model DataCaptureSearch {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  employeeId  Int
+  userId      Int?
+  searchQuery String
+  location    String?
+  requestId   String?
+  searchedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([customerId, employeeId])
+  @@index([requestId])
+  @@index([searchedAt])
+  @@index([customerId, employeeId, searchedAt])
+}
+
 model EmployeeLoan {
   id               Int        @id @default(autoincrement())
   customerId       Int
@@ -2576,6 +2600,7 @@ model WorkAccessRequest {
 
 enum AccessOverrideType {
   DEFAULT
+  INHERIT
   ALLOW
   DENY
 }

@@ -362,6 +362,63 @@ export class DataCaptureService {
       },
     });
 
+    // 6.1 Record Employee Search Event (authoritative employee-specific count)
+    try {
+      let employeeId: number | undefined = user?.employee?.id ? Number(user.employee.id) : undefined;
+      if (!employeeId && effectiveUserId) {
+        const emp = await this.prisma.employee.findFirst({
+          where: {
+            userId: effectiveUserId,
+            customerId: effectiveCustomerId,
+            status: 'ACTIVE',
+          },
+          select: { id: true },
+        });
+        if (emp) {
+          employeeId = emp.id;
+        }
+      }
+
+      if (employeeId && effectiveCustomerId) {
+        // Idempotency check: if client passed requestId and already recorded, don't double count
+        const clientRequestId = dto.requestId ? String(dto.requestId).trim() : null;
+        let isDuplicateRequest = false;
+        if (clientRequestId) {
+          const existingSearch = await this.prisma.dataCaptureSearch.findFirst({
+            where: {
+              customerId: effectiveCustomerId,
+              employeeId,
+              requestId: clientRequestId,
+            },
+            select: { id: true },
+          });
+          if (existingSearch) {
+            isDuplicateRequest = true;
+          }
+        }
+
+        if (!isDuplicateRequest) {
+          const searchQuery = `${keyword} in ${location}`;
+          await this.prisma.dataCaptureSearch.create({
+            data: {
+              customerId: effectiveCustomerId,
+              employeeId,
+              userId: effectiveUserId,
+              searchQuery,
+              location,
+              requestId: clientRequestId,
+              searchedAt: new Date(),
+            },
+          });
+          this.logger.log(
+            `[DATA_CAPTURE_SEARCH] Recorded search for employeeId=${employeeId} customerId=${effectiveCustomerId} query="${searchQuery}" requestId=${clientRequestId || 'none'}`,
+          );
+        }
+      }
+    } catch (searchErr: any) {
+      this.logger.warn(`Failed to record DataCaptureSearch event: ${searchErr?.message}`);
+    }
+
     const mappedPlaces: CapturedPlace[] = createdJob.places.map((p) => ({
       id: p.id,
       provider: p.source || 'GOOGLE_PLACES',
@@ -1666,14 +1723,31 @@ export class DataCaptureService {
   /**
    * Get customer extraction usage summary from PostgreSQL
    */
-  async getUsageSummary(customerId?: string | number): Promise<ExtractionUsageSummary> {
+  async getUsageSummary(customerId?: string | number, user?: any): Promise<ExtractionUsageSummary> {
     const numCustomerId = Number(customerId);
     const customerWhere: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       customerWhere.customerId = numCustomerId;
     }
 
-    const [totalExtractions, aggregatePlaces, aggregateRequests, validatedCount, convertedCount] = await Promise.all([
+    // Resolve employee for employee-specific search count
+    let employeeId: number | undefined = user?.employee?.id ? Number(user.employee.id) : undefined;
+    const directUserId = user?.id || user?.userId;
+    if (!employeeId && directUserId) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          userId: Number(directUserId),
+          ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+          status: 'ACTIVE',
+        },
+        select: { id: true },
+      });
+      if (emp) {
+        employeeId = emp.id;
+      }
+    }
+
+    const [totalExtractions, aggregatePlaces, aggregateRequests, validatedCount, convertedCount, searchesCount] = await Promise.all([
       this.prisma.dataCaptureJob.count({ where: customerWhere }),
       this.prisma.dataCapturePlace.count({ where: { ...customerWhere, deletedAt: null } }),
       this.prisma.dataCaptureJob.aggregate({
@@ -1686,6 +1760,21 @@ export class DataCaptureService {
       this.prisma.dataCapturePlace.count({
         where: { ...customerWhere, isImported: true, deletedAt: null },
       }),
+      employeeId
+        ? this.prisma.dataCaptureSearch.count({
+            where: {
+              ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+              employeeId,
+            },
+          })
+        : (directUserId
+            ? this.prisma.dataCaptureSearch.count({
+                where: {
+                  ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+                  userId: Number(directUserId),
+                },
+              })
+            : 0),
     ]);
 
     const totalGoogleApiCalls = aggregateRequests._sum?.googleApiRequests || 0;
@@ -1701,6 +1790,8 @@ export class DataCaptureService {
       quotaRemaining: Math.max(quotaLimit - totalLeadsCaptured, 0),
       validatedCount,
       convertedCount,
+      searches: searchesCount || 0,
+      totalSearches: searchesCount || 0,
     };
   }
 

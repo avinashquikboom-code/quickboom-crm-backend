@@ -59,4 +59,6 @@ export interface ExtractionUsageSummary {
   quotaRemaining: number;
   validatedCount?: number;
   convertedCount?: number;
+  searches?: number;
+  totalSearches?: number;
 }
