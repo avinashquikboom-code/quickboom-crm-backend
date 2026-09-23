@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { LeadStatus } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { LeadRepository } from './lead.repository';
 import { NotificationService } from '../notification/notification.service';
 import {
@@ -1225,8 +1226,21 @@ export class LeadService {
       }
     }
 
+    const effectiveNewStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
+    let customerConversion: any = null;
+    if (this.isWonOrConvertedStage(updatedLead.status, effectiveNewStageName, updatedLead.stage?.key || updatedLead.stage?.name)) {
+      customerConversion = await this.handleLeadWonCustomerConversion(
+        customerId,
+        updatedLead,
+        userId,
+        previousStageName,
+        effectiveNewStageName,
+      );
+    }
+
     return {
       ...updatedLead,
+      customerConversion,
       emailNotification,
       whatsappNotification,
     };
@@ -1453,11 +1467,338 @@ export class LeadService {
       }
     }
 
+    let customerConversion: any = null;
+    if (this.isWonOrConvertedStage(resolvedStatus, newStageName, stageName || updatedLead.stage?.key || updatedLead.stage?.name)) {
+      customerConversion = await this.handleLeadWonCustomerConversion(
+        customerId,
+        updatedLead,
+        userId,
+        previousStageName,
+        newStageName,
+      );
+    }
+
     return {
       ...updatedLead,
+      customerConversion,
       emailNotification,
       whatsappNotification,
     };
+  }
+
+  /**
+   * Helper to detect if a given stage name, key, or status represents a WON / CONVERTED state.
+   * Completely dynamic - no hardcoded stage IDs.
+   */
+  isWonOrConvertedStage(
+    resolvedStatus?: string | null,
+    stageName?: string | null,
+    stageKey?: string | null,
+  ): boolean {
+    const norm = (val?: string | null) => (val || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const sStatus = norm(resolvedStatus);
+    const sStage = norm(stageName);
+    const sKey = norm(stageKey);
+
+    const wonIndicators = ['WON', 'CONVERTED', 'CLOSED_WON', 'DEAL_WON', 'SALE_WON'];
+    return (
+      wonIndicators.includes(sStatus) ||
+      wonIndicators.includes(sStage) ||
+      wonIndicators.includes(sKey) ||
+      sStatus.includes('WON') ||
+      sStage.includes('WON') ||
+      sKey.includes('WON') ||
+      sStatus.includes('CONVERT') ||
+      sStage.includes('CONVERT')
+    );
+  }
+
+  /**
+   * Executes the Lead WON -> Customer Creation -> Customer Login Account workflow.
+   * Ensures idempotency: will not recreate customer or user if already linked/existing.
+   * Guarantees non-blocking execution: errors are logged and caught so lead update doesn't crash.
+   */
+  async handleLeadWonCustomerConversion(
+    customerId: number | string,
+    updatedLead: any,
+    userId?: number | string,
+    previousStageName?: string,
+    newStageName?: string,
+  ): Promise<{
+    success: boolean;
+    customerId?: number;
+    customerName?: string;
+    isNew?: boolean;
+    alreadyConverted?: boolean;
+    userCreated?: boolean;
+    userExisted?: boolean;
+    assignedEmployeeId?: number | null;
+    createdByEmployeeId?: number | null;
+    error?: string;
+  }> {
+    try {
+      this.logger.log(`[LEAD_WON_CONVERSION] Starting conversion for Lead #${updatedLead.id} (Stage: ${newStageName})`);
+
+      const leadId = Number(updatedLead.id);
+      const normalizedEmail = updatedLead.email ? ContactExtractor.normalizeEmail(updatedLead.email) : null;
+      const normalizedPhone = updatedLead.phone ? updatedLead.phone.trim() : null;
+
+      // 1. Idempotency Check: Customer already linked to this leadId?
+      let customer = await this.prisma.customer.findFirst({
+        where: { leadId },
+        include: { originLead: true },
+      });
+
+      // 1b. Check if existing customer matches email or phone
+      if (!customer && normalizedEmail) {
+        customer = await this.prisma.customer.findFirst({
+          where: {
+            deletedAt: null,
+            email: { equals: normalizedEmail, mode: 'insensitive' },
+          },
+          include: { originLead: true },
+        });
+      }
+
+      if (!customer && normalizedPhone) {
+        customer = await this.prisma.customer.findFirst({
+          where: {
+            deletedAt: null,
+            phone: normalizedPhone,
+          },
+          include: { originLead: true },
+        });
+      }
+
+      // 2. Resolve Employee Hierarchy:
+      // Converting employee (from current calling user)
+      let convertingEmp: any = null;
+      if (userId) {
+        convertingEmp = await this.prisma.employee.findFirst({
+          where: { userId: Number(userId), status: 'ACTIVE' },
+          include: { department: true },
+        });
+      }
+      const convertingEmpId = convertingEmp?.id || null;
+
+      // Assigned employee resolution:
+      // Priority 1: updatedLead.employeeId
+      // Priority 2: updatedLead.assignedToId -> employee via userId
+      // Priority 3: converting employee
+      let assignedEmpId: number | null = updatedLead.employeeId ? Number(updatedLead.employeeId) : null;
+      let assignedEmpName: string | null = null;
+      let resolvedDepartment: string | null = null;
+
+      if (!assignedEmpId && updatedLead.assignedToId) {
+        const staffEmp: any = await this.prisma.employee.findFirst({
+          where: { userId: Number(updatedLead.assignedToId), status: 'ACTIVE' },
+          include: { department: true },
+        });
+        if (staffEmp) {
+          assignedEmpId = staffEmp.id;
+          assignedEmpName = `${staffEmp.firstName} ${staffEmp.lastName || ''}`.trim();
+          resolvedDepartment = staffEmp.department?.name || null;
+        }
+      }
+
+      if (assignedEmpId && !assignedEmpName) {
+        const assignedEmp: any = await this.prisma.employee.findFirst({
+          where: { id: assignedEmpId, status: 'ACTIVE' },
+          include: { department: true },
+        });
+        if (assignedEmp) {
+          assignedEmpName = `${assignedEmp.firstName} ${assignedEmp.lastName || ''}`.trim();
+          if (!resolvedDepartment) resolvedDepartment = assignedEmp.department?.name || null;
+        }
+      }
+
+      if (!assignedEmpId && convertingEmpId) {
+        assignedEmpId = convertingEmpId;
+        assignedEmpName = convertingEmp ? `${convertingEmp.firstName} ${convertingEmp.lastName || ''}`.trim() : null;
+        if (!resolvedDepartment && convertingEmp?.department?.name) {
+          resolvedDepartment = convertingEmp.department.name;
+        }
+      }
+
+      const createdByEmpId: number | null = convertingEmpId || assignedEmpId;
+
+      let isNewCustomer = false;
+
+      // 3. Create or Link Customer
+      if (customer) {
+        this.logger.log(`[LEAD_WON_CONVERSION] Existing customer found: #${customer.id} (${customer.name})`);
+        // If customer exists but leadId is not linked or employee is missing, update it
+        const updateData: any = {};
+        if (!customer.leadId) {
+          updateData.leadId = leadId;
+        }
+        if (!customer.assignedEmployeeId && assignedEmpId) {
+          updateData.assignedEmployeeId = assignedEmpId;
+          updateData.assignedEmployee = assignedEmpName;
+        }
+        if (!customer.createdByEmployeeId && createdByEmpId) {
+          updateData.createdByEmployeeId = createdByEmpId;
+        }
+        if (Object.keys(updateData).length > 0) {
+          customer = await this.prisma.customer.update({
+            where: { id: customer.id },
+            data: updateData,
+            include: { originLead: true },
+          });
+        }
+      } else {
+        // Build customer name
+        const leadFullName = `${updatedLead.firstName || ''} ${updatedLead.lastName || ''}`.trim();
+        const customerName = (
+          updatedLead.companyName ||
+          updatedLead.title ||
+          leadFullName ||
+          'Valued Customer'
+        ).trim();
+
+        customer = await this.prisma.customer.create({
+          data: {
+            name: customerName,
+            companyName: updatedLead.companyName || customerName,
+            domain: updatedLead.website ? updatedLead.website.replace(/^https?:\/\//, '') : undefined,
+            email: normalizedEmail,
+            phone: normalizedPhone,
+            alternatePhone: updatedLead.alternatePhone || null,
+            address: updatedLead.address || null,
+            city: updatedLead.city || null,
+            state: updatedLead.state || null,
+            country: updatedLead.country || 'India',
+            pincode: updatedLead.pincode || null,
+            customerType: 'ENTERPRISE',
+            source: updatedLead.source || 'LEAD_CONVERSION',
+            leadId,
+            assignedEmployeeId: assignedEmpId,
+            assignedEmployee: assignedEmpName,
+            createdByEmployeeId: createdByEmpId,
+            department: resolvedDepartment,
+            notes: `Converted automatically from Lead #${leadId} upon transition to WON.`,
+            userLimit: 15,
+            leadLimit: 1000,
+          },
+          include: { originLead: true },
+        });
+        isNewCustomer = true;
+        this.logger.log(`[LEAD_WON_CONVERSION] Created new customer: #${customer.id} (${customer.name})`);
+      }
+
+      // 4. Create or Link Customer User Account (for Employee Mobile -> Customer or Customer Mobile Login)
+      let userCreated = false;
+      let userExisted = false;
+
+      if (normalizedEmail) {
+        let customerUser: any = await this.prisma.user.findFirst({
+          where: {
+            OR: [
+              { email: { equals: normalizedEmail, mode: 'insensitive' } },
+              ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+            ],
+            deletedAt: null,
+          },
+          include: { userRoles: { include: { role: true } } },
+        });
+
+        if (customerUser) {
+          userExisted = true;
+          // If user exists but is not linked to customer, link them
+          if (!customerUser.customerId) {
+            await this.prisma.user.update({
+              where: { id: customerUser.id },
+              data: { customerId: customer.id, isActive: true, isVerified: true },
+            });
+            this.logger.log(`[LEAD_WON_CONVERSION] Linked existing user #${customerUser.id} (${customerUser.email}) to Customer #${customer.id}`);
+          }
+        } else {
+          // Check if phone number is already occupied by another user
+          let safePhone: string | null = normalizedPhone;
+          if (safePhone) {
+            const phoneConflict = await this.prisma.user.findFirst({
+              where: { phone: safePhone },
+              select: { id: true },
+            });
+            if (phoneConflict) {
+              safePhone = null;
+            }
+          }
+
+          // Create default password hash for '123456'
+          const passwordHash = await bcrypt.hash('123456', 10);
+          const firstName = updatedLead.firstName || customer.name.split(' ')[0] || 'Customer';
+          const lastName = updatedLead.lastName || customer.name.split(' ').slice(1).join(' ') || '';
+
+          // Find Role for CUSTOMER
+          let customerRole = await this.prisma.role.findFirst({
+            where: { name: { in: ['CUSTOMER', 'Customer'] } },
+          });
+          if (!customerRole) {
+            customerRole = await this.prisma.role.findFirst({
+              where: { name: { contains: 'CUSTOMER', mode: 'insensitive' } },
+            });
+          }
+
+          customerUser = await this.prisma.user.create({
+            data: {
+              customerId: customer.id,
+              email: normalizedEmail,
+              phone: safePhone,
+              firstName,
+              lastName,
+              passwordHash,
+              isActive: true,
+              isVerified: true,
+            },
+          });
+
+          if (customerRole) {
+            await this.prisma.userRole.create({
+              data: {
+                userId: customerUser.id,
+                roleId: customerRole.id,
+              },
+            });
+          }
+
+          userCreated = true;
+          this.logger.log(`[LEAD_WON_CONVERSION] Created Customer User login account for ${normalizedEmail} (Role: CUSTOMER, User ID: ${customerUser.id})`);
+        }
+      }
+
+      // 5. Update Lead convertedAt & status
+      await this.prisma.lead.update({
+        where: { id: leadId },
+        data: {
+          convertedAt: updatedLead.convertedAt || new Date(),
+          status: LeadStatus.WON,
+        },
+      });
+
+      this.logger.log(
+        `[LEAD_WON_CONVERSION] Completed successfully. Lead #${leadId} -> Customer #${customer.id}. ` +
+        `AssignedEmp: ${assignedEmpId}, CreatedByEmp: ${createdByEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
+      );
+
+      return {
+        success: true,
+        customerId: customer.id,
+        customerName: customer.name,
+        isNew: isNewCustomer,
+        alreadyConverted: !isNewCustomer,
+        userCreated,
+        userExisted,
+        assignedEmployeeId: assignedEmpId,
+        createdByEmployeeId: createdByEmpId,
+      };
+    } catch (err: any) {
+      this.logger.error(`[LEAD_WON_CONVERSION] Failed to convert Lead #${updatedLead?.id} to Customer: ${err?.message}`, err?.stack);
+      return {
+        success: false,
+        error: err?.message || 'Conversion failed',
+      };
+    }
   }
 
   /**

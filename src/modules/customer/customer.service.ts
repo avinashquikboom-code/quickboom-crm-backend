@@ -165,6 +165,9 @@ export class CustomerService {
             take: 1,
             include: { plan: true },
           },
+          originLead: {
+            include: { stage: true },
+          },
           leads: {
             where: { deletedAt: null },
             orderBy: { updatedAt: 'desc' },
@@ -194,6 +197,9 @@ export class CustomerService {
             orderBy: { createdAt: 'desc' },
             take: 1,
             include: { plan: true },
+          },
+          originLead: {
+            include: { stage: true },
           },
           leads: {
             where: { deletedAt: null },
@@ -295,7 +301,7 @@ export class CustomerService {
       const leadPct = maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : 0;
 
       const customerStatus = computeCustomerStatus(c);
-      const linkedLead = c.leads?.[0];
+      const linkedLead = (c as any).originLead || c.leads?.[0];
       const leadStatus = linkedLead?.status || (c.leads?.length > 0 ? 'WON' : null);
       const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
       const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
@@ -498,6 +504,16 @@ export class CustomerService {
               },
             },
           },
+          {
+            originLead: {
+              deletedAt: null,
+              OR: [
+                { employeeId: employeeId },
+                { createdById: user?.id },
+                { assignedToId: user?.id },
+              ],
+            },
+          },
         ],
       });
     }
@@ -656,6 +672,15 @@ export class CustomerService {
               },
             },
           },
+          originLead: {
+            include: {
+              stage: true,
+              reminders: {
+                where: { isCompleted: false },
+                orderBy: { remindAt: 'asc' },
+              },
+            },
+          },
           tasks: {
             where: { deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
             select: { id: true, title: true, status: true, dueDate: true, dueAt: true },
@@ -694,7 +719,10 @@ export class CustomerService {
     // Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
     const computeCustomerStatus = (c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' => {
       // 1. COMPLETED: Leads that reached WON / CONVERTED (Requirements 9, 10, 11)
-      const linkedLeads = (c as any).leads || [];
+      const linkedLeads = [
+        ...((c as any).originLead ? [(c as any).originLead] : []),
+        ...((c as any).leads || []),
+      ];
       const hasWonLead = linkedLeads.some((l: any) => {
         const st = String(l.status || '').toUpperCase();
         const stageKey = String(l.stage?.key || '').toUpperCase();
@@ -853,9 +881,9 @@ export class CustomerService {
         c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
       const customerStatus = computeCustomerStatus(c);
-      const linkedLead = (c as any).leads?.[0];
-      const rawLeadId = linkedLead?.id ? String(linkedLead.id) : null;
-      const leadStatus = linkedLead?.status || (c.leads?.length > 0 ? 'WON' : null);
+      const linkedLead = (c as any).originLead || (c as any).leads?.[0];
+      const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (c.leadId ? String(c.leadId) : null);
+      const leadStatus = linkedLead?.status || (c.leads?.length > 0 || c.leadId ? 'WON' : null);
       const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
       const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
       const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;
@@ -1013,7 +1041,10 @@ export class CustomerService {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     // 1. WON LEADS -> COMPLETED
-    const linkedLeads = (c as any).leads || [];
+    const linkedLeads = [
+      ...((c as any).originLead ? [(c as any).originLead] : []),
+      ...((c as any).leads || []),
+    ];
     const hasWonLead = linkedLeads.some((l: any) => {
       const st = String(l.status || '').toUpperCase();
       const stageKey = String(l.stage?.key || '').toUpperCase();
@@ -1133,6 +1164,9 @@ export class CustomerService {
           take: 1,
           include: { stage: true },
         },
+        originLead: {
+          include: { stage: true },
+        },
         works: {
           select: { id: true, status: true, title: true, scheduledDate: true },
           orderBy: { updatedAt: 'desc' },
@@ -1223,9 +1257,9 @@ export class CustomerService {
 
     const assignedTeamObj = (customer as any).assignedTeam;
     const customerStatus = this.computeCustomerStatus(customer);
-    const linkedLead = (customer as any).leads?.[0];
-    const rawLeadId = linkedLead?.id ? String(linkedLead.id) : null;
-    const leadStatus = linkedLead?.status || ((customer as any).leads?.length > 0 ? 'WON' : null);
+    const linkedLead = (customer as any).originLead || (customer as any).leads?.[0];
+    const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (customer.leadId ? String(customer.leadId) : null);
+    const leadStatus = linkedLead?.status || ((customer as any).leads?.length > 0 || customer.leadId ? 'WON' : null);
     const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
     const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
     const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;

@@ -35,6 +35,7 @@ model Customer {
   assignedEmployee         String?
   assignedEmployeeId       Int?
   createdByEmployeeId      Int?
+  leadId                   Int?                      @unique
   department               String?
   notes                    String?
   attendancePolicies       AttendancePolicy[]
@@ -95,6 +96,7 @@ model Customer {
   employeeLeadLimits       EmployeeLeadLimit[]
   assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
   createdByEmployeeRel     Employee?                 @relation("CustomerCreatedStaff", fields: [createdByEmployeeId], references: [id], onDelete: SetNull)
+  originLead               Lead?                     @relation("CustomerOriginLead", fields: [leadId], references: [id], onDelete: SetNull)
   assignedTeamId           Int?
   assignedTeam             Team?                     @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   influencerBookings       InfluencerBooking[]
@@ -399,6 +401,7 @@ model Lead {
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employeeId           Int?
   employee             Employee?              @relation("EmployeeLeads", fields: [employeeId], references: [id])
+  convertedCustomer    Customer?              @relation("CustomerOriginLead")
   timeline             LeadActivityTimeline[]
   notes                LeadNote[]
   reminders            LeadReminder[]
