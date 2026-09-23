@@ -31,6 +31,11 @@ export class CreateDesignationDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether staff with this designation have access to CRM mobile navigation' })
+  @IsBoolean()
+  @IsOptional()
+  crmMobileAccess?: boolean;
 }
 
 export class UpdateDesignationDto {
@@ -63,4 +68,9 @@ export class UpdateDesignationDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether staff with this designation have access to CRM mobile navigation' })
+  @IsBoolean()
+  @IsOptional()
+  crmMobileAccess?: boolean;
 }

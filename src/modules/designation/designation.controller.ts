@@ -115,7 +115,7 @@ export class DesignationController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[] },
+    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[]; crmMobileAccess?: boolean },
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
@@ -123,7 +123,13 @@ export class DesignationController {
     if (!isSuperAdmin && !targetCustomerId) {
       throw new ForbiddenException('User does not belong to any customer');
     }
-    return this.designationService.saveDesignationPermissions(targetCustomerId, id, body?.permissions || [], user);
+    return this.designationService.saveDesignationPermissions(
+      targetCustomerId,
+      id,
+      body?.permissions || [],
+      user,
+      body?.crmMobileAccess,
+    );
   }
 
   @Get(':id')

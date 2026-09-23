@@ -3069,6 +3069,13 @@ export class EmployeeService {
       (ov) => ov.override === 'ALLOW' || ov.override === 'DENY',
     );
 
+    const isCrmEligible = employee.designation?.crmMobileAccess !== undefined && employee.designation?.crmMobileAccess !== null
+      ? Boolean(employee.designation.crmMobileAccess)
+      : (
+          (employee.designation?.name || '').toUpperCase().includes('TELE') ||
+          (employee.designation?.name || '').toUpperCase().includes('BPO')
+        );
+
     return {
       employeeId: employee.id,
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -3076,6 +3083,8 @@ export class EmployeeService {
       roleName,
       roles: [roleName],
       customPermissionsEnabled,
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
       effectivePermissionsCount,
       modules,
       granularPermissions,
@@ -3412,6 +3421,13 @@ export class EmployeeService {
       }
     }
 
+    const isCrmEligible = user.employee.designation?.crmMobileAccess !== undefined && user.employee.designation?.crmMobileAccess !== null
+      ? Boolean(user.employee.designation.crmMobileAccess)
+      : (
+          (user.employee.designation?.name || '').toUpperCase().includes('TELE') ||
+          (user.employee.designation?.name || '').toUpperCase().includes('BPO')
+        );
+
     return {
       success: true,
       employeeId: user.employee.id,
@@ -3419,6 +3435,8 @@ export class EmployeeService {
       role: user.employee.designation?.name || empPerms.roleName,
       permissionsUpdatedAt: user.employee.permissionsUpdatedAt,
       customPermissionsEnabled: Boolean(empPerms.customPermissionsEnabled),
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
       effectivePermissions,
       modules: modulesMap,
     };

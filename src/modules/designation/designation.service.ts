@@ -126,6 +126,7 @@ export class DesignationService {
       description: d.description,
       level: d.level,
       isActive: d.isActive,
+      crmMobileAccess: Boolean(d.crmMobileAccess),
       status: d.isActive ? 'ACTIVE' : 'INACTIVE',
       employeesCount: d._count.employees,
       createdAt: d.createdAt,
@@ -177,6 +178,7 @@ export class DesignationService {
       description: designation.description,
       level: designation.level,
       isActive: designation.isActive,
+      crmMobileAccess: Boolean(designation.crmMobileAccess),
       status: designation.isActive ? 'ACTIVE' : 'INACTIVE',
       employeesCount: designation._count.employees,
       createdAt: designation.createdAt,
@@ -215,6 +217,14 @@ export class DesignationService {
       code = `${code.substring(0, 4)}${Math.floor(10 + Math.random() * 90)}`;
     }
 
+    const upperName = name.toUpperCase();
+    let crmMobileAccess = false;
+    if (dto.crmMobileAccess !== undefined) {
+      crmMobileAccess = Boolean(dto.crmMobileAccess);
+    } else if (upperName.includes('TELE') || upperName.includes('BPO')) {
+      crmMobileAccess = true;
+    }
+
     const created = await this.prisma.designation.create({
       data: {
         customerId: numCustomerId,
@@ -224,6 +234,7 @@ export class DesignationService {
         description: dto.description?.trim() || null,
         level: dto.level !== undefined ? dto.level : 1,
         isActive: dto.isActive !== undefined ? dto.isActive : true,
+        crmMobileAccess,
       },
       include: {
         department: {
@@ -257,6 +268,7 @@ export class DesignationService {
       description: created.description,
       level: created.level,
       isActive: created.isActive,
+      crmMobileAccess: Boolean(created.crmMobileAccess),
       status: created.isActive ? 'ACTIVE' : 'INACTIVE',
       createdAt: created.createdAt,
       updatedAt: created.updatedAt,
@@ -318,6 +330,7 @@ export class DesignationService {
         description: dto.description !== undefined ? dto.description : undefined,
         level: dto.level !== undefined ? dto.level : undefined,
         isActive: dto.isActive !== undefined ? dto.isActive : undefined,
+        crmMobileAccess: dto.crmMobileAccess !== undefined ? Boolean(dto.crmMobileAccess) : undefined,
       },
       include: {
         department: {
@@ -336,6 +349,7 @@ export class DesignationService {
       description: updated.description,
       level: updated.level,
       isActive: updated.isActive,
+      crmMobileAccess: Boolean(updated.crmMobileAccess),
       status: updated.isActive ? 'ACTIVE' : 'INACTIVE',
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
@@ -602,6 +616,7 @@ export class DesignationService {
         usersCount: d._count.employees,
         isSystem: false,
         isActive: d.isActive,
+        crmMobileAccess: Boolean(d.crmMobileAccess),
         permissionsUpdatedAt: role?.permissionsUpdatedAt || d.updatedAt,
         permissions: perms.map((rp) => ({
           module: rp.permission.module,
@@ -645,6 +660,7 @@ export class DesignationService {
       roleId: role?.id,
       designationId: designation.id,
       designationName: designation.name,
+      crmMobileAccess: Boolean(designation.crmMobileAccess),
       permissionsCount: perms.length,
       permissionsUpdatedAt: role?.permissionsUpdatedAt,
       permissions: perms.map((rp) => ({
@@ -665,6 +681,7 @@ export class DesignationService {
     designationId: number,
     permissions: (string | { module?: string; action?: string; key?: string })[],
     adminUser?: any,
+    crmMobileAccess?: boolean,
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const designation = await this.prisma.designation.findFirst({
@@ -749,6 +766,14 @@ export class DesignationService {
       where: { id: role.id },
       data: { permissionsUpdatedAt: now },
     });
+
+    // If crmMobileAccess is explicitly passed, update Designation
+    if (crmMobileAccess !== undefined) {
+      await this.prisma.designation.update({
+        where: { id: designationId },
+        data: { crmMobileAccess: Boolean(crmMobileAccess) },
+      });
+    }
 
     // Find all active employees assigned to this designation
     const activeEmployees = await this.prisma.employee.findMany({

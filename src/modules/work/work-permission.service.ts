@@ -738,12 +738,21 @@ export class WorkPermissionService {
       effectiveMap[m.key] = activePermissions.has(m.key);
     });
 
+    const isCrmEligible = employee.designation?.crmMobileAccess !== undefined && employee.designation?.crmMobileAccess !== null
+      ? Boolean(employee.designation.crmMobileAccess)
+      : (
+          (employee.designation?.name || '').toUpperCase().includes('TELE') ||
+          (employee.designation?.name || '').toUpperCase().includes('BPO')
+        );
+
     return {
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
       firstName: employee.firstName,
       lastName: employee.lastName,
       role: normalizedRole,
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
       workPermissions: Array.from(activePermissions),
       effectivePermissions: effectiveMap,
       commonModules: COMMON_MODULES.map((m) => m.key),

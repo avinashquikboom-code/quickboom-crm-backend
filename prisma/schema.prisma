@@ -1074,6 +1074,7 @@ model Designation {
   description  String?
   level        Int         @default(1)
   isActive     Boolean     @default(true)
+  crmMobileAccess Boolean  @default(false)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
