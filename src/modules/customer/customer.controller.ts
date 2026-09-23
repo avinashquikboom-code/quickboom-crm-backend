@@ -143,6 +143,7 @@ export class CustomerController {
   @ApiQuery({ name: 'sortOrder', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
   async findAll(
+    @CurrentUser() user: any,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('isActive') isActive?: string,
@@ -175,7 +176,7 @@ export class CustomerController {
       sortBy,
       sortOrder,
       excludeAdmins: excludeAdmins !== 'false',
-    });
+    }, user);
   }
 
   @Get(':id')

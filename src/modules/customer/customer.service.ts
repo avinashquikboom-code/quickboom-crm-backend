@@ -165,6 +165,17 @@ export class CustomerService {
             take: 1,
             include: { plan: true },
           },
+          leads: {
+            where: { deletedAt: null },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+            include: { stage: true },
+          },
+          works: {
+            select: { id: true, status: true, title: true, scheduledDate: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 5,
+          },
           _count: {
             select: {
               users: { where: { deletedAt: null } },
@@ -183,6 +194,15 @@ export class CustomerService {
             orderBy: { createdAt: 'desc' },
             take: 1,
             include: { plan: true },
+          },
+          leads: {
+            where: { deletedAt: null },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+            include: { stage: true },
+          },
+          works: {
+            select: { id: true, status: true },
           },
           _count: {
             select: {
@@ -205,15 +225,48 @@ export class CustomerService {
       return (numBytes / (1024 * 1024)).toFixed(1) + ' MB';
     };
 
+    // Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
+    const computeCustomerStatus = (c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' => {
+      const sub = c.subscriptions?.[0];
+      const works = c.works || [];
+      const hasActiveWork = works.some((w: any) =>
+        ['IN_PROGRESS', 'ASSIGNED', 'PROCESSING', 'SUBMITTED', 'CUSTOMER_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'UNDER_REVIEW'].includes(w.status),
+      );
+      const hasUpcomingWork = works.some((w: any) =>
+        ['SCHEDULED'].includes(w.status),
+      );
+      const allWorksCompleted = works.length > 0 && works.every((w: any) =>
+        ['COMPLETED', 'CANCELLED'].includes(w.status),
+      );
+      const subStatus = sub?.status;
+
+      if (hasActiveWork || subStatus === 'ACTIVE') {
+        return 'ACTIVE';
+      }
+      if (hasUpcomingWork || subStatus === 'PENDING' || subStatus === 'TRIAL') {
+        return 'UPCOMING';
+      }
+      if (allWorksCompleted || subStatus === 'EXPIRED' || subStatus === 'CANCELED' || !c.isActive) {
+        return 'COMPLETED';
+      }
+      return c.isActive ? 'ACTIVE' : 'COMPLETED';
+    };
+
     // Calculate Global Aggregated KPIs
     let totalAllocatedSeats = 0;
     let totalMaxSeats = 0;
     let totalLeads = 0;
     let totalStorageBytes = 0;
     let activeCustomersCount = 0;
+    let upcomingCustomersCount = 0;
+    let completedCustomersCount = 0;
 
     for (const c of allCustomersStats as any[]) {
-      if (c.isActive) activeCustomersCount++;
+      const st = computeCustomerStatus(c);
+      if (st === 'ACTIVE') activeCustomersCount++;
+      else if (st === 'UPCOMING') upcomingCustomersCount++;
+      else if (st === 'COMPLETED') completedCustomersCount++;
+
       const userCount = c._count?.users || 0;
       const leadCount = c._count?.leads || 0;
       const sub = c.subscriptions?.[0];
@@ -230,7 +283,7 @@ export class CustomerService {
       totalMaxSeats > 0 ? ((totalAllocatedSeats / totalMaxSeats) * 100).toFixed(1) + '%' : '0.0%';
 
     // Map Items for current page
-    const items = (customers as any[]).map((c) => {
+    let items = (customers as any[]).map((c) => {
       const sub = c.subscriptions?.[0];
       const users = c._count?.users || 0;
       const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 50;
@@ -241,15 +294,30 @@ export class CustomerService {
       const seatPct = maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : 0;
       const leadPct = maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : 0;
 
+      const customerStatus = computeCustomerStatus(c);
+      const linkedLead = c.leads?.[0];
+      const leadStatus = linkedLead?.status || (c.leads?.length > 0 ? 'WON' : null);
+      const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
+      const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
+      const rawLeadId = linkedLead?.id ? String(linkedLead.id) : null;
+      const contactPerson = linkedLead ? `${linkedLead.firstName || ''} ${linkedLead.lastName || ''}`.trim() : (c.name || '');
+
       return {
         id: c.id,
+        customerId: `CUST-${c.id}`,
         name: c.name || c.companyName || `Customer #${c.id}`,
         companyName: c.companyName || c.name || '',
+        contactPerson: contactPerson || c.name || 'Primary Contact',
         domain: c.domain || (c.email ? c.email.split('@')[1] : '') || 'N/A',
-        email: c.email || '',
-        phone: c.phone || '',
+        email: c.email || linkedLead?.email || '',
+        phone: c.phone || linkedLead?.phone || '',
         isActive: c.isActive,
-        status: c.isActive ? 'ACTIVE' : 'INACTIVE',
+        status: customerStatus,
+        customerStatus: customerStatus,
+        leadId: rawLeadId,
+        leadStatus: leadStatus,
+        leadStageName: leadStageName,
+        leadStageColor: leadStageColor,
         planName: sub ? (sub.customFeatures ? 'Custom Plan' : sub.plan?.name || 'Standard Plan') : 'No Active Plan',
         users,
         maxUsers,
@@ -267,6 +335,13 @@ export class CustomerService {
       };
     });
 
+    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
+      const targetStatus = query.status.trim().toUpperCase();
+      if (['ACTIVE', 'UPCOMING', 'COMPLETED'].includes(targetStatus)) {
+        items = items.filter((item) => item.customerStatus === targetStatus);
+      }
+    }
+
     return {
       success: true,
       summary: {
@@ -278,13 +353,23 @@ export class CustomerService {
         totalStorage: formatStorage(totalStorageBytes),
         totalCustomers: allCustomersStats.length,
         activeCustomers: activeCustomersCount,
+        upcomingCustomers: upcomingCustomersCount,
+        completedCustomers: completedCustomersCount,
+      },
+      meta: {
+        counts: {
+          active: activeCustomersCount,
+          upcoming: upcomingCustomersCount,
+          completed: completedCustomersCount,
+          all: allCustomersStats.length,
+        },
       },
       items,
       pagination: {
-        total,
+        total: items.length,
         page,
         limit,
-        totalPages: Math.ceil(total / limit) || 1,
+        totalPages: Math.ceil(items.length / limit) || 1,
       },
     };
   }
@@ -348,10 +433,15 @@ export class CustomerService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     excludeAdmins?: boolean;
-  }) {
+  }, user?: any) {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
     const skip = (page - 1) * limit;
+
+    const employeeId = user?.employeeId || user?.employee?.id;
+    const companyId = user?.customerId || user?.employee?.customerId;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdminOrStaff(user);
 
     const where: any = {
       deletedAt: null,
@@ -366,9 +456,7 @@ export class CustomerService {
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
     } else if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
-      if (query.status.toUpperCase() === 'ACTIVE') {
-        where.isActive = true;
-      } else if (query.status.toUpperCase() === 'INACTIVE') {
+      if (query.status.toUpperCase() === 'INACTIVE') {
         where.isActive = false;
       }
     }
@@ -386,6 +474,20 @@ export class CustomerService {
     }
 
     const andConditions: any[] = [];
+
+    // Strict Employee Scoping & Tenant Isolation (Requirements 12 & 13)
+    // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see.
+    // Derived from auth context, never trusting client parameter to access another employee's customers.
+    if (employeeId && !isSuperAdmin && !isAdmin) {
+      andConditions.push({
+        OR: [
+          { assignedEmployeeId: employeeId },
+          { assignedTeam: { members: { some: { employeeId: employeeId } } } },
+          { leads: { some: { deletedAt: null, OR: [{ employeeId: employeeId }, { assignedToId: user?.id }] } } },
+          ...(companyId ? [{ id: companyId }] : []),
+        ],
+      });
+    }
 
     if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {
       const trimmedEmp = query.assignedEmployee.trim();
@@ -530,6 +632,17 @@ export class CustomerService {
             include: { plan: true },
             orderBy: { createdAt: 'desc' },
           },
+          leads: {
+            where: { deletedAt: null },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+            include: { stage: true },
+          },
+          works: {
+            select: { id: true, status: true, title: true, scheduledDate: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 5,
+          },
           _count: {
             select: {
               users: true,
@@ -554,7 +667,79 @@ export class CustomerService {
     ]);
 
     const now = new Date();
-    const formatted = items.map((c) => {
+
+    // Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
+    const computeCustomerStatus = (c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' => {
+      const works = (c as any).works || [];
+      const hasActiveWork = works.some((w: any) =>
+        ['IN_PROGRESS', 'ASSIGNED', 'PROCESSING', 'SUBMITTED', 'CUSTOMER_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'UNDER_REVIEW'].includes(w.status),
+      );
+      const hasUpcomingWork = works.some((w: any) =>
+        ['SCHEDULED'].includes(w.status),
+      );
+      const allWorksCompleted = works.length > 0 && works.every((w: any) =>
+        ['COMPLETED', 'CANCELLED'].includes(w.status),
+      );
+      const activeSub = c.subscriptions?.find(
+        (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
+      );
+      const pendingSub = c.subscriptions?.find(
+        (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
+      );
+      const expiredSub = c.subscriptions?.find(
+        (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
+      );
+
+      if (hasActiveWork || activeSub) {
+        return 'ACTIVE';
+      }
+      if (hasUpcomingWork || pendingSub) {
+        return 'UPCOMING';
+      }
+      if (allWorksCompleted || expiredSub || !c.isActive) {
+        return 'COMPLETED';
+      }
+      return c.isActive ? 'ACTIVE' : 'COMPLETED';
+    };
+
+    const countsWhere: any = {
+      deletedAt: null,
+      ...(shouldExcludeAdmins ? { NOT: SYSTEM_CUSTOMER_EXCLUSIONS } : {}),
+      ...(andConditions.length > 0 ? { AND: andConditions } : {}),
+      ...(where.createdAt ? { createdAt: where.createdAt } : {}),
+      ...(where.source ? { source: where.source } : {}),
+      ...(where.assignedTeamId ? { assignedTeamId: where.assignedTeamId } : {}),
+    };
+
+    // Calculate dynamic counts across customers for [ Active ] [ Upcoming ] [ Completed ] tabs
+    const allCustomersForCounts = await this.prisma.customer.findMany({
+      where: countsWhere,
+      select: {
+        id: true,
+        isActive: true,
+        subscriptions: {
+          where: { deletedAt: null },
+          select: { status: true, endDate: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+        works: {
+          select: { status: true },
+        },
+      },
+    });
+
+    let activeCount = 0;
+    let upcomingCount = 0;
+    let completedCount = 0;
+    for (const c of allCustomersForCounts) {
+      const st = computeCustomerStatus(c);
+      if (st === 'ACTIVE') activeCount++;
+      else if (st === 'UPCOMING') upcomingCount++;
+      else if (st === 'COMPLETED') completedCount++;
+    }
+
+    let formatted = items.map((c) => {
       const primaryUser = (c as any).users?.[0];
       // Find latest valid active subscription strictly
       const activeSub =
@@ -601,6 +786,17 @@ export class CustomerService {
       const resolvedDepartment =
         c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
+      const customerStatus = computeCustomerStatus(c);
+      const linkedLead = (c as any).leads?.[0];
+      const rawLeadId = linkedLead?.id ? String(linkedLead.id) : null;
+      const leadStatus = linkedLead?.status || (c.leads?.length > 0 ? 'WON' : null);
+      const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
+      const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
+      const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;
+      const contactPerson = primaryUser
+        ? `${primaryUser.firstName || ''} ${primaryUser.lastName || ''}`.trim()
+        : (linkedLead ? `${linkedLead.firstName || ''} ${linkedLead.lastName || ''}`.trim() : (c.name || 'Primary Contact'));
+
       return {
         id: c.id,
         customerId: `CUST-${String(c.id).padStart(4, '0')}`,
@@ -609,24 +805,22 @@ export class CustomerService {
         companyName: c.companyName || c.name,
         company: c.companyName || c.name,
         workspaceName: c.companyName || c.name,
-        // ── Contact person full name (from the primary linked User) ──
         contactFirstName: primaryUser?.firstName || '',
         contactLastName: primaryUser?.lastName || '',
-        contactFullName: primaryUser
-          ? `${primaryUser.firstName || ''} ${primaryUser.lastName || ''}`.trim()
-          : '',
+        contactFullName: contactPerson,
+        contactPerson: contactPerson,
         domain: c.domain,
-        email: c.email || primaryUser?.email || 'N/A',
-        phone: c.phone || primaryUser?.phone || 'N/A',
+        email: c.email || primaryUser?.email || linkedLead?.email || 'N/A',
+        phone: c.phone || primaryUser?.phone || linkedLead?.phone || 'N/A',
         alternatePhone: c.alternatePhone,
-        address: c.address,
-        city: c.city || 'N/A',
-        state: c.state || 'N/A',
+        address: c.address || linkedLead?.address,
+        city: c.city || linkedLead?.city || 'N/A',
+        state: c.state || linkedLead?.state || 'N/A',
         country: c.country || 'India',
         pincode: c.pincode,
         customerType: c.customerType || 'ENTERPRISE',
         industry: c.industry || 'General',
-        source: c.source || 'DIRECT',
+        source: c.source || linkedLead?.source || 'DIRECT',
         teamId: c.assignedTeamId,
         team: (c as any).assignedTeam
           ? {
@@ -644,9 +838,36 @@ export class CustomerService {
         assignedEmployeeId: c.assignedEmployeeId,
         assignedEmployee: resolvedAssignedName,
         department: resolvedDepartment,
-        notes: c.notes,
+        notes: c.notes || linkedLead?.workNotes,
         isActive: c.isActive,
-        status: c.isActive ? 'ACTIVE' : 'INACTIVE',
+        status: customerStatus,
+        customerStatus,
+        leadId: rawLeadId,
+        leadStatus,
+        leadStageId,
+        leadStageName,
+        leadStageColor,
+        lead: linkedLead
+          ? {
+              id: linkedLead.id,
+              status: linkedLead.status,
+              stageId: leadStageId,
+              stage: linkedLead.stage
+                ? {
+                    id: linkedLead.stage.id,
+                    name: linkedLead.stage.name,
+                    color: linkedLead.stage.color,
+                    key: linkedLead.stage.key,
+                  }
+                : (leadStageName
+                    ? {
+                        id: leadStageId,
+                        name: leadStageName,
+                        color: leadStageColor,
+                      }
+                    : null),
+            }
+          : null,
         plan: planName,
         planCode,
         billingCycle,
@@ -671,11 +892,27 @@ export class CustomerService {
       };
     });
 
+    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
+      const targetStatus = query.status.trim().toUpperCase();
+      if (['ACTIVE', 'UPCOMING', 'COMPLETED'].includes(targetStatus)) {
+        formatted = formatted.filter((item) => item.customerStatus === targetStatus);
+      }
+    }
+
     const totalPages = Math.ceil(total / limit) || 1;
 
+    // Requirement 27 Safe Logs
+    const safeFilter = query.status || 'ALL';
+    const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
-      `[ADMIN_GET_CUSTOMERS] Total count: ${total}, Returned customer IDs: [${items.map((c) => c.id).join(', ')}]`,
+      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${formatted.length}`,
     );
+
+    for (const c of formatted) {
+      this.logger.log(
+        `[CUSTOMER_LEAD] customerId=${c.id} leadId=${c.leadId || 'none'} leadStageId=${(c as any).lead?.stage?.id || (c as any).leadStageId || 'none'} leadStageName=${c.leadStageName || 'none'}`,
+      );
+    }
 
     return {
       data: formatted,
@@ -691,8 +928,51 @@ export class CustomerService {
         page,
         limit,
         totalPages,
+        counts: {
+          active: activeCount,
+          upcoming: upcomingCount,
+          completed: completedCount,
+          all: allCustomersForCounts.length,
+        },
       },
     };
+  }
+
+  /**
+   * Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
+   */
+  public computeCustomerStatus(c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
+    const now = new Date();
+    const works = (c as any).works || [];
+    const hasActiveWork = works.some((w: any) =>
+      ['IN_PROGRESS', 'ASSIGNED', 'PROCESSING', 'SUBMITTED', 'CUSTOMER_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'UNDER_REVIEW'].includes(w.status),
+    );
+    const hasUpcomingWork = works.some((w: any) =>
+      ['SCHEDULED'].includes(w.status),
+    );
+    const allWorksCompleted = works.length > 0 && works.every((w: any) =>
+      ['COMPLETED', 'CANCELLED'].includes(w.status),
+    );
+    const activeSub = c.subscriptions?.find(
+      (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
+    );
+    const pendingSub = c.subscriptions?.find(
+      (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
+    );
+    const expiredSub = c.subscriptions?.find(
+      (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
+    );
+
+    if (hasActiveWork || activeSub) {
+      return 'ACTIVE';
+    }
+    if (hasUpcomingWork || pendingSub) {
+      return 'UPCOMING';
+    }
+    if (allWorksCompleted || expiredSub || !c.isActive) {
+      return 'COMPLETED';
+    }
+    return c.isActive ? 'ACTIVE' : 'COMPLETED';
   }
 
   /**
@@ -752,6 +1032,17 @@ export class CustomerService {
             designation: true,
             isActive: true,
           },
+        },
+        leads: {
+          where: { deletedAt: null },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+          include: { stage: true },
+        },
+        works: {
+          select: { id: true, status: true, title: true, scheduledDate: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
         },
         _count: {
           select: {
@@ -829,11 +1120,46 @@ export class CustomerService {
       customer.assignedEmployeeRel?.department?.name || customer.department || 'General';
 
     const assignedTeamObj = (customer as any).assignedTeam;
+    const customerStatus = this.computeCustomerStatus(customer);
+    const linkedLead = (customer as any).leads?.[0];
+    const rawLeadId = linkedLead?.id ? String(linkedLead.id) : null;
+    const leadStatus = linkedLead?.status || ((customer as any).leads?.length > 0 ? 'WON' : null);
+    const leadStageName = linkedLead?.stage?.name || (leadStatus ? 'Won' : null);
+    const leadStageColor = linkedLead?.stage?.color || (leadStatus === 'WON' ? '#10B981' : '#6366F1');
+    const leadStageId = linkedLead?.stage?.id || linkedLead?.stageId || null;
 
     return {
       ...safeCustomer,
       customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
       company: customer.companyName || customer.name,
+      status: customerStatus,
+      customerStatus,
+      leadId: rawLeadId,
+      leadStatus,
+      leadStageId,
+      leadStageName,
+      leadStageColor,
+      lead: linkedLead
+        ? {
+            id: linkedLead.id,
+            status: linkedLead.status,
+            stageId: leadStageId,
+            stage: linkedLead.stage
+              ? {
+                  id: linkedLead.stage.id,
+                  name: linkedLead.stage.name,
+                  color: linkedLead.stage.color,
+                  key: linkedLead.stage.key,
+                }
+              : (leadStageName
+                  ? {
+                      id: leadStageId,
+                      name: leadStageName,
+                      color: leadStageColor,
+                    }
+                  : null),
+          }
+        : null,
       teamId: customer.assignedTeamId,
       team: assignedTeamObj
         ? {

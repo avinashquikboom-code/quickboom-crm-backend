@@ -3065,12 +3065,17 @@ export class EmployeeService {
       `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${employee.customerId} tenantId=${employee.customerId} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
     );
 
+    const customPermissionsEnabled = (employee.employeeModuleOverrides || []).some(
+      (ov) => ov.override === 'ALLOW' || ov.override === 'DENY',
+    );
+
     return {
       employeeId: employee.id,
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       designationName: employee.designation?.name || roleName,
       roleName,
       roles: [roleName],
+      customPermissionsEnabled,
       effectivePermissionsCount,
       modules,
       granularPermissions,
@@ -3413,6 +3418,7 @@ export class EmployeeService {
       designationId: user.employee.designationId,
       role: user.employee.designation?.name || empPerms.roleName,
       permissionsUpdatedAt: user.employee.permissionsUpdatedAt,
+      customPermissionsEnabled: Boolean(empPerms.customPermissionsEnabled),
       effectivePermissions,
       modules: modulesMap,
     };
