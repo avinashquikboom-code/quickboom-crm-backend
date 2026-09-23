@@ -298,6 +298,174 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
     customer9,
   ];
 
+  // Mock Leads for New + Old Lead Upcoming Verification Matrix
+  const leadNewHotel = {
+    id: 801,
+    companyName: 'ABC Hotel',
+    firstName: 'ABC',
+    lastName: 'Manager',
+    customerId: 1,
+    employeeId: 101,
+    status: 'NEW',
+    stage: { id: 1, name: 'New', key: 'NEW' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '03:00 PM',
+    callStatus: 'SCHEDULED',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadOldRestaurant = {
+    id: 802,
+    companyName: 'XYZ Restaurant',
+    firstName: 'XYZ',
+    lastName: 'Owner',
+    customerId: 1,
+    employeeId: 101,
+    status: 'FOLLOW_UP',
+    stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    callStatus: 'SCHEDULED',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadContacted = {
+    id: 803,
+    companyName: 'Contacted Firm',
+    customerId: 1,
+    employeeId: 101,
+    status: 'CONTACTED',
+    stage: { id: 2, name: 'Contacted', key: 'CONTACTED' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '02:00 PM',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadProposal = {
+    id: 804,
+    companyName: 'Proposal Client',
+    customerId: 1,
+    employeeId: 101,
+    status: 'PROPOSAL',
+    stage: { id: 6, name: 'Proposal', key: 'PROPOSAL' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '04:00 PM',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadNoCall = {
+    id: 805,
+    companyName: 'No Call Lead',
+    customerId: 1,
+    employeeId: 101,
+    status: 'NEW',
+    stage: { id: 1, name: 'New', key: 'NEW' },
+    nextFollowUpDate: null,
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadCompletedCall = {
+    id: 806,
+    companyName: 'Completed Call Lead',
+    customerId: 1,
+    employeeId: 101,
+    status: 'FOLLOW_UP',
+    stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    isFinalCallCompleted: true,
+    isCallCompleted: true,
+    finalCallStatus: 'COMPLETED',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadCancelledCall = {
+    id: 807,
+    companyName: 'Cancelled Call Lead',
+    customerId: 1,
+    employeeId: 101,
+    status: 'FOLLOW_UP',
+    stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    isFinalCallCancelled: true,
+    finalCallStatus: 'CANCELLED',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadPastCall = {
+    id: 808,
+    companyName: 'Past Call Lead',
+    customerId: 1,
+    employeeId: 101,
+    status: 'FOLLOW_UP',
+    stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+    nextFollowUpDate: yesterday,
+    nextFollowUpTime: '11:00 AM',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadEmpB = {
+    id: 809,
+    companyName: 'Employee B Exclusive Lead',
+    customerId: 1,
+    employeeId: 102,
+    status: 'NEW',
+    stage: { id: 1, name: 'New', key: 'NEW' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadOtherTenant = {
+    id: 810,
+    companyName: 'Other Tenant Lead',
+    customerId: 999, // Different company
+    employeeId: 101,
+    status: 'NEW',
+    stage: { id: 1, name: 'New', key: 'NEW' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    reminders: [],
+    convertedCustomer: null,
+  };
+
+  const leadAlreadyConverted = {
+    id: 101, // Linked to customer1
+    companyName: 'Customer 1 Origin Lead',
+    customerId: 1,
+    employeeId: 101,
+    status: 'FINAL_CALL',
+    stage: { id: 10, name: 'Final Call', key: 'FINAL_CALL' },
+    nextFollowUpDate: tomorrow,
+    nextFollowUpTime: '11:00 AM',
+    reminders: [],
+    convertedCustomer: { id: 1 },
+  };
+
+  const allMockLeads = [
+    leadNewHotel,
+    leadOldRestaurant,
+    leadContacted,
+    leadProposal,
+    leadNoCall,
+    leadCompletedCall,
+    leadCancelledCall,
+    leadPastCall,
+    leadEmpB,
+    leadOtherTenant,
+    leadAlreadyConverted,
+  ];
+
   beforeEach(async () => {
     prisma = {
       customer: {
@@ -340,6 +508,30 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
         count: jest.fn().mockImplementation(() => allMockCustomers.length),
         findFirst: jest.fn(),
         findUnique: jest.fn(),
+      },
+      lead: {
+        findMany: jest.fn().mockImplementation((args: any) => {
+          let list = [...allMockLeads];
+
+          // Tenant isolation
+          if (args?.where?.customerId) {
+            list = list.filter((l) => l.customerId === args.where.customerId);
+          }
+
+          // Employee scoping
+          if (args?.where?.OR) {
+            list = list.filter((l) =>
+              args.where.OR.some(
+                (clause: any) =>
+                  (clause.employeeId && l.employeeId === clause.employeeId) ||
+                  (clause.createdById && (l as any).createdById === clause.createdById) ||
+                  (clause.assignedToId && (l as any).assignedToId === clause.assignedToId),
+              ),
+            );
+          }
+
+          return list;
+        }),
       },
     };
 
@@ -451,4 +643,115 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
     const ids = res.items.map((c) => c.id);
     expect(ids).toContain(customer9.id);
   });
+
+  // =========================================================================
+  // SECTION 16: NEW + OLD LEAD UPCOMING VERIFICATION TEST MATRIX
+  // =========================================================================
+
+  // TEST 10 (Section 2 & 16): NEW LEAD (ABC Hotel) + upcoming call -> Appears in Upcoming
+  it('TEST 10: NEW lead (ABC Hotel) with upcoming call -> Appears in Upcoming without requiring Customer conversion', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const hotelCard = res.items.find((c) => c.companyName === 'ABC Hotel' || c.name === 'ABC Hotel');
+    expect(hotelCard).toBeDefined();
+    expect(hotelCard?.hasUpcomingCall).toBe(true);
+    expect(hotelCard?.leadStageName).toBe('New');
+    expect(hotelCard?.leadId).toBe(String(leadNewHotel.id));
+  });
+
+  // TEST 11 (Section 3 & 16): OLD LEAD (XYZ Restaurant, FOLLOW-UP) + upcoming call -> Appears in Upcoming
+  it('TEST 11: OLD lead (XYZ Restaurant, FOLLOW-UP) with upcoming call -> Appears in Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const restCard = res.items.find((c) => c.companyName === 'XYZ Restaurant' || c.name === 'XYZ Restaurant');
+    expect(restCard).toBeDefined();
+    expect(restCard?.hasUpcomingCall).toBe(true);
+    expect(restCard?.leadStageName).toBe('Follow-up');
+    expect(restCard?.leadId).toBe(String(leadOldRestaurant.id));
+  });
+
+  // TEST 12 (Section 4): Configured Lead stages (CONTACTED, PROPOSAL) -> Appear in Upcoming if future call exists
+  it('TEST 12: Configured lead stages (CONTACTED, PROPOSAL) appear in Upcoming when call is future & scheduled', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const contactedCard = res.items.find((c) => c.companyName === 'Contacted Firm');
+    const proposalCard = res.items.find((c) => c.companyName === 'Proposal Client');
+    expect(contactedCard).toBeDefined();
+    expect(proposalCard).toBeDefined();
+  });
+
+  // TEST 13 (Section 5): Both unconverted leads and converted customer records appear in Upcoming
+  it('TEST 13: Customer conversion is NOT required; both unconverted leads and converted customers appear in Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    // Unconverted lead
+    const unconvertedLead = res.items.find((c) => c.id === -leadNewHotel.id);
+    expect(unconvertedLead).toBeDefined();
+    expect(unconvertedLead?.planName).toBe('No Active Plan');
+
+    // Converted customer (Customer 1)
+    const convertedCust = res.items.find((c) => c.id === customer1.id);
+    expect(convertedCust).toBeDefined();
+  });
+
+  // TEST 14 (Section 9 & 16): NEW LEAD without call -> Excluded from Upcoming
+  it('TEST 14: NEW lead without any upcoming call -> Excluded from Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const noCallCard = res.items.find((c) => c.companyName === 'No Call Lead');
+    expect(noCallCard).toBeUndefined();
+  });
+
+  // TEST 15 (Section 9 & 16): OLD LEAD with completed call -> Excluded from Upcoming
+  it('TEST 15: OLD lead with completed call -> Excluded from Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const completedCard = res.items.find((c) => c.companyName === 'Completed Call Lead');
+    expect(completedCard).toBeUndefined();
+  });
+
+  // TEST 16 (Section 9 & 16): OLD LEAD with cancelled call -> Excluded from Upcoming
+  it('TEST 16: OLD lead with cancelled call -> Excluded from Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const cancelledCard = res.items.find((c) => c.companyName === 'Cancelled Call Lead');
+    expect(cancelledCard).toBeUndefined();
+  });
+
+  // TEST 17 (Section 9 & 16): OLD LEAD with past/overdue call -> Excluded from Upcoming
+  it('TEST 17: OLD lead with past/overdue call -> Excluded from Upcoming', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const pastCard = res.items.find((c) => c.companyName === 'Past Call Lead');
+    expect(pastCard).toBeUndefined();
+  });
+
+  // TEST 18 (Section 10 & 16): Employee Visibility -> Employee B lead NOT visible to Employee A
+  it('TEST 18: Employee B lead with upcoming call is NOT visible to logged-in Employee A', async () => {
+    const resA = await service.findAll({ status: 'UPCOMING' }, userA);
+    const empBCardForA = resA.items.find((c) => c.companyName === 'Employee B Exclusive Lead');
+    expect(empBCardForA).toBeUndefined();
+
+    const resB = await service.findAll({ status: 'UPCOMING' }, userB);
+    const empBCardForB = resB.items.find((c) => c.companyName === 'Employee B Exclusive Lead');
+    expect(empBCardForB).toBeDefined();
+  });
+
+  // TEST 19 (Section 11): Tenant Isolation -> Different companyId lead is excluded
+  it('TEST 19: Tenant Isolation: Lead belonging to companyId 999 is NOT returned for Employee with companyId 1', async () => {
+    const resA = await service.findAll({ status: 'UPCOMING' }, userA);
+    const otherTenantCard = resA.items.find((c) => c.companyName === 'Other Tenant Lead');
+    expect(otherTenantCard).toBeUndefined();
+  });
+
+  // TEST 20 (Section 12): Deduplication -> Converted Lead does NOT create duplicate cards
+  it('TEST 20: Deduplication: Lead already converted to Customer 1 does NOT produce a separate lead card', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    // Customer 1 card exists
+    const cust1Cards = res.items.filter((c) => c.id === customer1.id);
+    expect(cust1Cards.length).toBe(1);
+
+    // Unconverted lead card for lead 101 must NOT exist
+    const duplicateLeadCard = res.items.find((c) => c.id === -leadAlreadyConverted.id);
+    expect(duplicateLeadCard).toBeUndefined();
+  });
+
+  // TEST 21 (Section 15): Upcoming count equals the Upcoming items length
+  it('TEST 21: Upcoming count matches Upcoming list length exactly', async () => {
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    expect(res.meta.counts.upcoming).toBe(res.items.length);
+  });
 });
+

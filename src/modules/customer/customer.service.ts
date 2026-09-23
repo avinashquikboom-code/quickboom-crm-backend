@@ -360,6 +360,105 @@ export class CustomerService {
   ) {}
 
   /**
+   * Maps an unconverted CRM Lead to the unified Customer Card format for Upcoming / All tabs
+   */
+  public mapLeadToCustomerItem(l: any, upcomingCall: UpcomingCallInfo | null): any {
+    const contactName =
+      `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.companyName || 'Lead Contact';
+    const businessName = l.companyName || contactName;
+    const stageName = l.stage?.name || (l.status === 'NEW' ? 'New' : l.status);
+    const stageColor = l.stage?.color || (l.status === 'WON' ? '#10B981' : '#6366F1');
+    const stageId = l.stage?.id || l.stageId || null;
+    const resolvedAssignedName = l.employee
+      ? `${l.employee.firstName || ''} ${l.employee.lastName || ''}`.trim()
+      : (l.assignedTo?.firstName ? `${l.assignedTo.firstName} ${l.assignedTo.lastName || ''}`.trim() : 'Assigned');
+
+    return {
+      id: -(l.id),
+      customerId: `LEAD-${String(l.id).padStart(4, '0')}`,
+      name: businessName,
+      customerName: businessName,
+      companyName: businessName,
+      company: businessName,
+      workspaceName: businessName,
+      contactFirstName: l.firstName || '',
+      contactLastName: l.lastName || '',
+      contactFullName: contactName,
+      contactPerson: contactName,
+      domain: l.website || (l.email ? l.email.split('@')[1] : null) || 'N/A',
+      email: l.email || 'N/A',
+      phone: l.phone || 'N/A',
+      alternatePhone: null,
+      address: l.address,
+      city: l.city || 'N/A',
+      state: l.state || 'N/A',
+      country: l.country || 'India',
+      pincode: null,
+      customerType: 'LEAD',
+      industry: l.category || 'General',
+      source: l.source || 'DIRECT',
+      teamId: null,
+      team: null,
+      assignedEmployeeId: l.employeeId,
+      assignedEmployee: resolvedAssignedName,
+      department: 'Sales',
+      notes: l.workNotes,
+      isActive: false,
+      status: upcomingCall ? 'UPCOMING' : 'LEAD',
+      customerStatus: upcomingCall ? 'UPCOMING' : 'LEAD',
+      upcomingCall: upcomingCall || null,
+      hasUpcomingCall: upcomingCall !== null,
+      upcomingCallType: upcomingCall?.type || null,
+      upcomingCallDate: upcomingCall?.formattedDate || null,
+      upcomingCallTime: upcomingCall?.formattedTime || null,
+      leadId: String(l.id),
+      leadStatus: l.status,
+      leadStageId: stageId,
+      leadStageName: stageName,
+      leadStageColor: stageColor,
+      lead: {
+        id: l.id,
+        status: l.status,
+        stageId: stageId,
+        stage: l.stage
+          ? {
+              id: l.stage.id,
+              name: l.stage.name,
+              color: l.stage.color,
+              key: l.stage.key,
+            }
+          : {
+              id: stageId,
+              name: stageName,
+              color: stageColor,
+            },
+      },
+      plan: 'No Active Plan',
+      planName: 'No Active Plan',
+      planCode: 'NONE',
+      billingCycle: 'MONTHLY',
+      subscriptionStatus: 'NO_PLAN',
+      subscriptionStartDate: null,
+      subscriptionEndDate: null,
+      subscriptionAmount: 0,
+      baseAmount: 0,
+      gstAmount: 0,
+      users: 1,
+      leads: 1,
+      deals: 0,
+      contacts: 1,
+      tasks: 0,
+      storageUsed: 0,
+      storage: '0 MB',
+      mrr: 0,
+      aiCredits: 0,
+      aiWallet: { balance: 0, totalEarned: 0, totalSpent: 0 },
+      lastActivity: l.updatedAt || l.createdAt,
+      createdAt: l.createdAt,
+    };
+  }
+
+  /**
    * Helper to safely serialize BigInt fields to numbers/strings
    */
   private serializeBigInt(obj: any): any {
@@ -994,6 +1093,90 @@ export class CustomerService {
       }
     }
 
+    // Query unconverted Leads accessible to the employee/tenant
+    const unconvertedUpcomingLeads: any[] = [];
+    const unconvertedAllLeads: any[] = [];
+
+    if (this.prisma.lead) {
+      try {
+        const leadWhere: any = {
+          deletedAt: null,
+        };
+
+        if (companyId) {
+          leadWhere.customerId = companyId;
+        }
+
+        if (employeeId && !isPrivilegedAdmin) {
+          leadWhere.OR = [
+            { employeeId: employeeId },
+            { createdById: user?.id },
+            { assignedToId: user?.id },
+          ];
+        }
+
+        if (query.search && query.search.trim()) {
+          const s = query.search.trim();
+          const searchCond = {
+            OR: [
+              { firstName: { contains: s, mode: 'insensitive' } },
+              { lastName: { contains: s, mode: 'insensitive' } },
+              { companyName: { contains: s, mode: 'insensitive' } },
+              { phone: { contains: s, mode: 'insensitive' } },
+              { email: { contains: s, mode: 'insensitive' } },
+              { city: { contains: s, mode: 'insensitive' } },
+            ],
+          };
+          if (leadWhere.OR) {
+            leadWhere.AND = [searchCond];
+          } else {
+            leadWhere.OR = searchCond.OR;
+          }
+        }
+
+        const leads = await this.prisma.lead.findMany({
+          where: leadWhere,
+          include: {
+            stage: true,
+            employee: true,
+            convertedCustomer: { select: { id: true } },
+            reminders: {
+              where: { isCompleted: false },
+              orderBy: { remindAt: 'asc' },
+            },
+          },
+        });
+
+        // Set of lead IDs already converted to or associated with a Customer
+        const convertedLeadIds = new Set<number>();
+        for (const c of allCustomersForCounts) {
+          if ((c as any).leadId) convertedLeadIds.add(Number((c as any).leadId));
+          if ((c as any).originLead?.id) convertedLeadIds.add(Number((c as any).originLead.id));
+          if (Array.isArray((c as any).leads)) {
+            for (const l of (c as any).leads) {
+              if (l.id) convertedLeadIds.add(Number(l.id));
+            }
+          }
+        }
+
+        for (const l of leads) {
+          // If already converted to or linked with a Customer, skip to prevent duplicates
+          if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
+            continue;
+          }
+
+          const call = extractUpcomingCall({ leads: [l] }, now);
+          const leadItem = this.mapLeadToCustomerItem(l, call);
+          if (call !== null) {
+            unconvertedUpcomingLeads.push(leadItem);
+          }
+          unconvertedAllLeads.push(leadItem);
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to fetch leads for upcoming customer list: ${err}`);
+      }
+    }
+
     if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
       const targetStatus = query.status.trim().toUpperCase();
       if (targetStatus === 'UPCOMING') {
@@ -1009,8 +1192,6 @@ export class CustomerService {
 
     const items = await this.prisma.customer.findMany({
       where,
-      skip,
-      take: limit,
       orderBy,
       include: {
         assignedTeam: {
@@ -1262,48 +1443,61 @@ export class CustomerService {
       };
     });
 
-    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
-      const targetStatus = query.status.trim().toUpperCase();
-      if (targetStatus === 'UPCOMING') {
-        formatted = formatted.filter((item) => item.hasUpcomingCall === true);
-      } else if (targetStatus === 'ACTIVE') {
-        formatted = formatted.filter((item) => item.subscriptionStatus === 'ACTIVE' || item.isActive === true);
-      } else if (targetStatus === 'INACTIVE') {
-        formatted = formatted.filter((item) => item.subscriptionStatus !== 'ACTIVE' && item.isActive === false);
-      } else if (targetStatus === 'COMPLETED') {
-        formatted = formatted.filter((item) => item.customerStatus === 'COMPLETED' || item.leadStatus === 'WON');
-      }
+    const targetStatus = query.status ? query.status.trim().toUpperCase() : 'ALL';
+    let finalItems: any[] = [];
+    let effectiveTotal = 0;
+
+    const totalUpcoming = upcomingCustomerIds.length + unconvertedUpcomingLeads.length;
+    const totalAll = allCustomersForCounts.length + unconvertedUpcomingLeads.length;
+
+    if (targetStatus === 'UPCOMING') {
+      const customerUpcoming = formatted.filter((item) => item.hasUpcomingCall === true);
+      const combinedUpcoming = [...customerUpcoming, ...unconvertedUpcomingLeads];
+      // Sort upcoming items strictly by scheduled call date/time ascending
+      combinedUpcoming.sort((a, b) => {
+        const timeA = a.upcomingCall?.scheduledAt ? new Date(a.upcomingCall.scheduledAt).getTime() : 0;
+        const timeB = b.upcomingCall?.scheduledAt ? new Date(b.upcomingCall.scheduledAt).getTime() : 0;
+        return timeA - timeB;
+      });
+      effectiveTotal = combinedUpcoming.length;
+      finalItems = combinedUpcoming.slice(skip, skip + limit);
+    } else if (targetStatus === 'ACTIVE') {
+      const activeItems = formatted.filter((item) => item.subscriptionStatus === 'ACTIVE' || item.isActive === true);
+      effectiveTotal = activeItems.length;
+      finalItems = activeItems.slice(skip, skip + limit);
+    } else if (targetStatus === 'INACTIVE') {
+      const inactiveItems = formatted.filter((item) => item.subscriptionStatus !== 'ACTIVE' && item.isActive === false && !item.hasUpcomingCall);
+      effectiveTotal = inactiveItems.length;
+      finalItems = inactiveItems.slice(skip, skip + limit);
+    } else if (targetStatus === 'COMPLETED') {
+      const completedItems = formatted.filter((item) => item.customerStatus === 'COMPLETED' || item.leadStatus === 'WON');
+      effectiveTotal = completedItems.length;
+      finalItems = completedItems.slice(skip, skip + limit);
+    } else {
+      // 'ALL' tab: all customers + unconverted upcoming leads
+      const combinedAll = [...formatted, ...unconvertedUpcomingLeads];
+      effectiveTotal = combinedAll.length;
+      finalItems = combinedAll.slice(skip, skip + limit);
     }
 
-    const targetStatus = query.status ? query.status.trim().toUpperCase() : 'ALL';
-    let effectiveTotal = allCustomersForCounts.length;
-    if (targetStatus === 'UPCOMING') {
-      effectiveTotal = upcomingCustomerIds.length;
-    } else if (targetStatus === 'ACTIVE') {
-      effectiveTotal = activeCustomerIds.length;
-    } else if (targetStatus === 'INACTIVE') {
-      effectiveTotal = inactiveCustomerIds.length;
-    } else if (targetStatus === 'COMPLETED') {
-      effectiveTotal = completedCustomerIds.length;
-    }
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
     // Safe Diagnostic Logs
     const safeFilter = query.status || 'ALL';
     const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
-      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${formatted.length} total=${effectiveTotal}`,
+      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${finalItems.length} total=${effectiveTotal} (customers=${formatted.length} unconvertedUpcomingLeads=${unconvertedUpcomingLeads.length})`,
     );
 
-    for (const c of formatted) {
+    for (const c of finalItems) {
       this.logger.log(
         `[CUSTOMER_LEAD] customerId=${c.id} leadId=${c.leadId || 'none'} leadStageId=${(c as any).lead?.stage?.id || (c as any).leadStageId || 'none'} leadStageName=${c.leadStageName || 'none'} upcomingCall=${c.hasUpcomingCall ? `${c.upcomingCallType} @ ${c.upcomingCallDate} ${c.upcomingCallTime}` : 'none'}`,
       );
     }
 
     return {
-      data: formatted,
-      items: formatted,
+      data: finalItems,
+      items: finalItems,
       pagination: {
         page,
         pageSize: limit,
@@ -1316,9 +1510,9 @@ export class CustomerService {
         limit,
         totalPages,
         counts: {
-          all: allCustomersForCounts.length,
+          all: totalAll,
           active: activeCount,
-          upcoming: upcomingCount,
+          upcoming: totalUpcoming,
           inactive: inactiveCount,
           completed: completedCount,
         },
