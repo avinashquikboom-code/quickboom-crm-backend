@@ -171,52 +171,101 @@ export function extractUpcomingCall(c: any, now: Date = new Date()): UpcomingCal
     const stageKey = String(l.stage?.key || '').toUpperCase();
     const stageName = String(l.stage?.name || '').toLowerCase();
 
-    // 1. Exclude terminal completed or cancelled leads
-    const isCompletedOrCancelled =
-      ['WON', 'CONVERTED', 'LOST', 'CANCELLED'].includes(st) ||
-      ['WON', 'LOST', 'CANCELLED'].includes(stageKey) ||
-      ['won', 'lost', 'cancelled'].includes(stageName);
+    // Check if the lead is terminal LOST or CANCELLED without reminders/calls
+    const isLeadLostOrCancelled =
+      ['LOST', 'CANCELLED'].includes(st) ||
+      ['LOST', 'CANCELLED'].includes(stageKey) ||
+      ['lost', 'cancelled'].includes(stageName);
 
-    if (isCompletedOrCancelled) {
-      continue;
+    // Final Call stage detection
+    const isFinalCallStage =
+      st === 'FINAL_CALL' ||
+      stageKey === 'FINAL_CALL' ||
+      stageName.includes('final') ||
+      l.isFinalCall === true ||
+      String(l.callType || '').toUpperCase() === 'FINAL_CALL';
+
+    // Call completion and cancellation flags
+    const isFinalCallCompleted =
+      l.isFinalCallCompleted === true ||
+      l.finalCallCompleted === true ||
+      ['COMPLETED', 'DONE'].includes(String(l.finalCallStatus || '').toUpperCase());
+
+    const isFinalCallCancelled =
+      l.isFinalCallCancelled === true ||
+      ['CANCELLED'].includes(String(l.finalCallStatus || '').toUpperCase());
+
+    const isLeadCallCompleted =
+      l.isCompleted === true ||
+      l.isCallCompleted === true ||
+      ['COMPLETED', 'DONE'].includes(String(l.callStatus || '').toUpperCase());
+
+    const isLeadCallCancelled =
+      l.isCancelled === true ||
+      ['CANCELLED'].includes(String(l.callStatus || '').toUpperCase()) ||
+      st === 'CANCELLED';
+
+    // 1. Follow-up / Final call scheduled via nextFollowUpDate
+    if (l.nextFollowUpDate && !isLeadLostOrCancelled) {
+      const scheduledAt = parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime);
+
+      // Only scheduled calls strictly in the future are upcoming candidates (overdue calls are excluded)
+      if (scheduledAt > now) {
+        if (isFinalCallStage) {
+          if (!isFinalCallCompleted && !isFinalCallCancelled && !isLeadCallCompleted && !isLeadCallCancelled) {
+            candidates.push({
+              type: 'Final Call',
+              callType: 'FINAL_CALL',
+              scheduledAt,
+              originalTime: l.nextFollowUpTime || '11:00 AM',
+              notes: l.workNotes || undefined,
+            });
+          }
+        } else {
+          // Non-final-call stage (e.g. Follow-up, Negotiation, Contacted)
+          // If a final call on this lead was completed or cancelled:
+          // check if nextFollowUpDate is a subsequent next call (after the final call date)
+          const isDateCompletedFinalCall =
+            (isFinalCallCompleted || isFinalCallCancelled) &&
+            (!l.finalCallDate || new Date(l.nextFollowUpDate).getTime() <= new Date(l.finalCallDate).getTime());
+
+          if (!isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled) {
+            candidates.push({
+              type: 'Next Call',
+              callType: 'NEXT_CALL',
+              scheduledAt,
+              originalTime: l.nextFollowUpTime,
+              notes: l.workNotes || undefined,
+            });
+          }
+        }
+      }
     }
 
-    const isFinalCall = st === 'FINAL_CALL' || stageKey === 'FINAL_CALL' || stageName.includes('final');
-
-    if (isFinalCall) {
-      let scheduledAt: Date;
-      if (l.nextFollowUpDate) {
-        scheduledAt = parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime);
-      } else {
-        scheduledAt = new Date(now.getTime() + 3600000); // Default future time for final call stage
-      }
-      candidates.push({
-        type: 'Final Call',
-        callType: 'FINAL_CALL',
-        scheduledAt: scheduledAt > now ? scheduledAt : new Date(now.getTime() + 3600000),
-        originalTime: l.nextFollowUpTime || '11:00 AM',
-        notes: l.workNotes || undefined,
-      });
-    } else if (l.nextFollowUpDate) {
-      const callDateTime = parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime);
-      if (callDateTime > now) {
+    // 1b. Check explicit nextCallDate if provided separately
+    if (l.nextCallDate && !isLeadLostOrCancelled) {
+      const nextCallAt = parseCallDateTime(l.nextCallDate, l.nextCallTime);
+      if (nextCallAt > now && !isLeadCallCompleted && !isLeadCallCancelled) {
         candidates.push({
           type: 'Next Call',
           callType: 'NEXT_CALL',
-          scheduledAt: callDateTime,
-          originalTime: l.nextFollowUpTime,
+          scheduledAt: nextCallAt,
+          originalTime: l.nextCallTime || null,
           notes: l.workNotes || undefined,
         });
       }
     }
 
-    // Active uncompleted reminders
+    // 2. Active uncompleted reminders on the lead
     if (Array.isArray(l.reminders)) {
       for (const r of l.reminders) {
-        if (!r.isCompleted && r.remindAt) {
+        const rCompleted = r.isCompleted === true || ['COMPLETED', 'DONE'].includes(String(r.status || '').toUpperCase());
+        const rCancelled = r.isCancelled === true || String(r.status || '').toUpperCase() === 'CANCELLED';
+        if (!rCompleted && !rCancelled && r.remindAt) {
           const remDate = new Date(r.remindAt);
-          if (remDate > now) {
-            const rIsFinal = isFinalCall || String(r.title || '').toLowerCase().includes('final');
+          if (!isNaN(remDate.getTime()) && remDate > now) {
+            const rTitle = String(r.title || '').toLowerCase();
+            const rIsFinal = isFinalCallStage || rTitle.includes('final');
             candidates.push({
               type: rIsFinal ? 'Final Call' : 'Next Call',
               callType: rIsFinal ? 'FINAL_CALL' : 'NEXT_CALL',
@@ -228,12 +277,57 @@ export function extractUpcomingCall(c: any, now: Date = new Date()): UpcomingCal
         }
       }
     }
+
+    // 3. Explicit scheduled calls on the lead (e.g. calls array)
+    if (Array.isArray((l as any).calls)) {
+      for (const call of (l as any).calls) {
+        const cCompleted = call.isCompleted === true || ['COMPLETED', 'DONE'].includes(String(call.status || '').toUpperCase());
+        const cCancelled = call.isCancelled === true || String(call.status || '').toUpperCase() === 'CANCELLED';
+        if (!cCompleted && !cCancelled) {
+          const callDate = call.scheduledAt ? new Date(call.scheduledAt) : (call.date ? parseCallDateTime(call.date, call.time) : null);
+          if (callDate && !isNaN(callDate.getTime()) && callDate > now) {
+            const callTitle = String(call.title || call.type || '').toLowerCase();
+            const isCallFinal = isFinalCallStage || callTitle.includes('final');
+            candidates.push({
+              type: isCallFinal ? 'Final Call' : 'Next Call',
+              callType: isCallFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+              scheduledAt: callDate,
+              originalTime: call.time || null,
+              notes: call.notes || call.title,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Customer-level direct reminders/calls if any
+  if (Array.isArray((c as any).reminders)) {
+    for (const r of (c as any).reminders) {
+      const rCompleted = r.isCompleted === true || ['COMPLETED', 'DONE'].includes(String(r.status || '').toUpperCase());
+      const rCancelled = r.isCancelled === true || String(r.status || '').toUpperCase() === 'CANCELLED';
+      if (!rCompleted && !rCancelled && r.remindAt) {
+        const remDate = new Date(r.remindAt);
+        if (!isNaN(remDate.getTime()) && remDate > now) {
+          const rTitle = String(r.title || '').toLowerCase();
+          const rIsFinal = rTitle.includes('final');
+          candidates.push({
+            type: rIsFinal ? 'Final Call' : 'Next Call',
+            callType: rIsFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+            scheduledAt: remDate,
+            originalTime: null,
+            notes: r.title,
+          });
+        }
+      }
+    }
   }
 
   if (candidates.length === 0) {
     return null;
   }
 
+  // Sort strictly by scheduledAt ascending: earliest / nearest future call first
   candidates.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
   const earliest = candidates[0];
 
@@ -806,170 +900,8 @@ export class CustomerService {
     const sortField = query.sortBy && validSortFields.includes(query.sortBy) ? query.sortBy : 'createdAt';
     orderBy[sortField] = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
-    const [items, total] = await Promise.all([
-      this.prisma.customer.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          assignedTeam: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              leader: {
-                select: { id: true, firstName: true, lastName: true },
-              },
-              members: {
-                include: {
-                  employee: {
-                    select: { id: true, firstName: true, lastName: true },
-                  },
-                },
-              },
-              _count: {
-                select: { members: true },
-              },
-            },
-          },
-          assignedEmployeeRel: {
-            include: { department: true, designation: true },
-          },
-          users: {
-            where: { deletedAt: null },
-            select: {
-              id: true,
-              email: true,
-              phone: true,
-              firstName: true,
-              lastName: true,
-            },
-            take: 5,
-          },
-          subscriptions: {
-            where: { deletedAt: null },
-            include: { plan: true },
-            orderBy: { createdAt: 'desc' },
-          },
-          leads: {
-            where: { deletedAt: null },
-            orderBy: { updatedAt: 'desc' },
-            include: {
-              stage: true,
-              reminders: {
-                where: { isCompleted: false },
-                orderBy: { remindAt: 'asc' },
-              },
-            },
-          },
-          originLead: {
-            include: {
-              stage: true,
-              reminders: {
-                where: { isCompleted: false },
-                orderBy: { remindAt: 'asc' },
-              },
-            },
-          },
-          tasks: {
-            where: { deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
-            select: { id: true, title: true, status: true, dueDate: true, dueAt: true },
-          },
-          works: {
-            select: { id: true, status: true, title: true, scheduledDate: true },
-            orderBy: { updatedAt: 'desc' },
-            take: 5,
-          },
-          _count: {
-            select: {
-              users: true,
-              leads: true,
-              deals: true,
-              contacts: true,
-              tasks: true,
-              tickets: true,
-            },
-          },
-          aiWallet: {
-            select: {
-              id: true,
-              balance: true,
-              totalEarned: true,
-              totalSpent: true,
-            },
-          },
-        },
-      }),
-      this.prisma.customer.count({ where }),
-    ]);
-
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    // Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
-    const computeCustomerStatus = (c: any): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' => {
-      // 1. COMPLETED: Leads that reached WON / CONVERTED (Requirements 9, 10, 11)
-      const linkedLeads = [
-        ...((c as any).originLead ? [(c as any).originLead] : []),
-        ...((c as any).leads || []),
-      ];
-      const hasWonLead = linkedLeads.some((l: any) => {
-        const st = String(l.status || '').toUpperCase();
-        const stageKey = String(l.stage?.key || '').toUpperCase();
-        const stageName = String(l.stage?.name || '').toLowerCase();
-        return st === 'WON' || st === 'CONVERTED' || stageKey === 'WON' || stageName === 'won';
-      });
-
-      if (hasWonLead) {
-        return 'COMPLETED';
-      }
-
-      // 2. UPCOMING: Customers with upcoming scheduled call / follow-up / task / visit / activity (Requirements 6, 7, 8)
-      // Note: Past completed call itself does NOT count as upcoming unless a future call/follow-up is scheduled
-      const hasUpcomingCallOrFollowUp = linkedLeads.some((l: any) => {
-        if (l.nextFollowUpDate && new Date(l.nextFollowUpDate) >= startOfToday) {
-          return true;
-        }
-        if (Array.isArray(l.reminders) && l.reminders.some((r: any) => !r.isCompleted && new Date(r.remindAt) >= startOfToday)) {
-          return true;
-        }
-        return false;
-      });
-
-      const hasUpcomingTask = ((c as any).tasks || []).some((t: any) => {
-        const d = t.dueAt || t.dueDate;
-        return d && new Date(d) >= startOfToday;
-      });
-
-      const works = (c as any).works || [];
-      const hasUpcomingWork = works.some((w: any) =>
-        ['SCHEDULED'].includes(w.status) && (!w.scheduledDate || new Date(w.scheduledDate) >= startOfToday),
-      );
-
-      const pendingSub = c.subscriptions?.find(
-        (s: any) => s.status === 'PENDING' || s.status === 'TRIAL',
-      );
-
-      if (hasUpcomingCallOrFollowUp || hasUpcomingTask || hasUpcomingWork || pendingSub) {
-        return 'UPCOMING';
-      }
-
-      // 3. COMPLETED: Inactive, expired subscriptions, or all works completed
-      const allWorksCompleted = works.length > 0 && works.every((w: any) =>
-        ['COMPLETED', 'CANCELLED'].includes(w.status),
-      );
-      const expiredSub = c.subscriptions?.find(
-        (s: any) => s.status === 'EXPIRED' || s.status === 'CANCELED',
-      );
-
-      if (!c.isActive || allWorksCompleted || expiredSub) {
-        return 'COMPLETED';
-      }
-
-      // 4. Default: ACTIVE
-      return 'ACTIVE';
-    };
 
     const countsWhere: any = {
       deletedAt: null,
@@ -980,7 +912,7 @@ export class CustomerService {
       ...(where.assignedTeamId ? { assignedTeamId: where.assignedTeamId } : {}),
     };
 
-    // Calculate dynamic counts across customers for [ All ] [ Active ] [ Upcoming ] [ Inactive ] tabs
+    // Calculate dynamic counts and matching ID sets across customers for [ All ] [ Active ] [ Upcoming ] [ Inactive ] tabs
     const allCustomersForCounts = await this.prisma.customer.findMany({
       where: countsWhere,
       select: {
@@ -1002,10 +934,10 @@ export class CustomerService {
             status: true,
             nextFollowUpDate: true,
             nextFollowUpTime: true,
-            stage: { select: { name: true, key: true } },
+            stage: { select: { id: true, name: true, key: true, color: true } },
             reminders: {
               where: { isCompleted: false },
-              select: { remindAt: true, isCompleted: true, title: true },
+              select: { id: true, remindAt: true, isCompleted: true, title: true },
             },
           },
         },
@@ -1015,10 +947,10 @@ export class CustomerService {
             status: true,
             nextFollowUpDate: true,
             nextFollowUpTime: true,
-            stage: { select: { name: true, key: true } },
+            stage: { select: { id: true, name: true, key: true, color: true } },
             reminders: {
               where: { isCompleted: false },
-              select: { remindAt: true, isCompleted: true, title: true },
+              select: { id: true, remindAt: true, isCompleted: true, title: true },
             },
           },
         },
@@ -1033,25 +965,142 @@ export class CustomerService {
     let upcomingCount = 0;
     let inactiveCount = 0;
     let completedCount = 0;
+    const upcomingCustomerIds: number[] = [];
+    const activeCustomerIds: number[] = [];
+    const inactiveCustomerIds: number[] = [];
+    const completedCustomerIds: number[] = [];
+
     for (const c of allCustomersForCounts) {
       const sub = c.subscriptions?.[0];
       const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= now);
       const call = extractUpcomingCall(c, now);
       if (call !== null) {
         upcomingCount++;
+        upcomingCustomerIds.push(c.id);
       }
 
       if (isSubActive) {
         activeCount++;
+        activeCustomerIds.push(c.id);
       } else if (call === null) {
         inactiveCount++;
+        inactiveCustomerIds.push(c.id);
       }
 
       const st = this.computeCustomerStatus(c);
       if (st === 'COMPLETED') {
         completedCount++;
+        completedCustomerIds.push(c.id);
       }
     }
+
+    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
+      const targetStatus = query.status.trim().toUpperCase();
+      if (targetStatus === 'UPCOMING') {
+        where.id = { in: upcomingCustomerIds };
+      } else if (targetStatus === 'ACTIVE') {
+        where.id = { in: activeCustomerIds };
+      } else if (targetStatus === 'INACTIVE') {
+        where.id = { in: inactiveCustomerIds };
+      } else if (targetStatus === 'COMPLETED') {
+        where.id = { in: completedCustomerIds };
+      }
+    }
+
+    const items = await this.prisma.customer.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy,
+      include: {
+        assignedTeam: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            leader: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+            members: {
+              include: {
+                employee: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+              },
+            },
+            _count: {
+              select: { members: true },
+            },
+          },
+        },
+        assignedEmployeeRel: {
+          include: { department: true, designation: true },
+        },
+        users: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            firstName: true,
+            lastName: true,
+          },
+          take: 5,
+        },
+        subscriptions: {
+          where: { deletedAt: null },
+          include: { plan: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        leads: {
+          where: { deletedAt: null },
+          orderBy: { updatedAt: 'desc' },
+          include: {
+            stage: true,
+            reminders: {
+              where: { isCompleted: false },
+              orderBy: { remindAt: 'asc' },
+            },
+          },
+        },
+        originLead: {
+          include: {
+            stage: true,
+            reminders: {
+              where: { isCompleted: false },
+              orderBy: { remindAt: 'asc' },
+            },
+          },
+        },
+        tasks: {
+          where: { deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+          select: { id: true, title: true, status: true, dueDate: true, dueAt: true },
+        },
+        works: {
+          select: { id: true, status: true, title: true, scheduledDate: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
+        },
+        _count: {
+          select: {
+            users: true,
+            leads: true,
+            deals: true,
+            contacts: true,
+            tasks: true,
+            tickets: true,
+          },
+        },
+        aiWallet: {
+          select: {
+            id: true,
+            balance: true,
+            totalEarned: true,
+            totalSpent: true,
+          },
+        },
+      },
+    });
 
     let formatted = items.map((c) => {
       const primaryUser = (c as any).users?.[0];
@@ -1226,19 +1275,29 @@ export class CustomerService {
       }
     }
 
-    const effectiveTotal = (query.status && query.status !== 'ALL') ? formatted.length : total;
+    const targetStatus = query.status ? query.status.trim().toUpperCase() : 'ALL';
+    let effectiveTotal = allCustomersForCounts.length;
+    if (targetStatus === 'UPCOMING') {
+      effectiveTotal = upcomingCustomerIds.length;
+    } else if (targetStatus === 'ACTIVE') {
+      effectiveTotal = activeCustomerIds.length;
+    } else if (targetStatus === 'INACTIVE') {
+      effectiveTotal = inactiveCustomerIds.length;
+    } else if (targetStatus === 'COMPLETED') {
+      effectiveTotal = completedCustomerIds.length;
+    }
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
-    // Safe Logs
+    // Safe Diagnostic Logs
     const safeFilter = query.status || 'ALL';
     const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
-      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${formatted.length}`,
+      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${formatted.length} total=${effectiveTotal}`,
     );
 
     for (const c of formatted) {
       this.logger.log(
-        `[CUSTOMER_LEAD] customerId=${c.id} leadId=${c.leadId || 'none'} leadStageId=${(c as any).lead?.stage?.id || (c as any).leadStageId || 'none'} leadStageName=${c.leadStageName || 'none'}`,
+        `[CUSTOMER_LEAD] customerId=${c.id} leadId=${c.leadId || 'none'} leadStageId=${(c as any).lead?.stage?.id || (c as any).leadStageId || 'none'} leadStageName=${c.leadStageName || 'none'} upcomingCall=${c.hasUpcomingCall ? `${c.upcomingCallType} @ ${c.upcomingCallDate} ${c.upcomingCallTime}` : 'none'}`,
       );
     }
 
