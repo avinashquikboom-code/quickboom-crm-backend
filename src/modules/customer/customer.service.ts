@@ -1036,15 +1036,15 @@ export class CustomerService {
     for (const c of allCustomersForCounts) {
       const sub = c.subscriptions?.[0];
       const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= now);
-      if (isSubActive) {
-        activeCount++;
-      } else {
-        inactiveCount++;
-      }
-
       const call = extractUpcomingCall(c, now);
       if (call !== null) {
         upcomingCount++;
+      }
+
+      if (isSubActive) {
+        activeCount++;
+      } else if (call === null) {
+        inactiveCount++;
       }
 
       const st = this.computeCustomerStatus(c);
