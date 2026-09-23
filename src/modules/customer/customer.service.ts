@@ -1107,17 +1107,21 @@ export class CustomerService {
           leadWhere.customerId = companyId;
         }
 
+        const leadAndConditions: any[] = [];
+        const currentUserId = user?.id || user?.employee?.userId || user?.sub;
+
         if (employeeId && !isPrivilegedAdmin) {
-          leadWhere.OR = [
-            { employeeId: employeeId },
-            { createdById: user?.id },
-            { assignedToId: user?.id },
-          ];
+          const empOrClauses: any[] = [{ employeeId: employeeId }];
+          if (currentUserId) {
+            empOrClauses.push({ createdById: currentUserId });
+            empOrClauses.push({ assignedToId: currentUserId });
+          }
+          leadAndConditions.push({ OR: empOrClauses });
         }
 
         if (query.search && query.search.trim()) {
           const s = query.search.trim();
-          const searchCond = {
+          leadAndConditions.push({
             OR: [
               { firstName: { contains: s, mode: 'insensitive' } },
               { lastName: { contains: s, mode: 'insensitive' } },
@@ -1126,12 +1130,11 @@ export class CustomerService {
               { email: { contains: s, mode: 'insensitive' } },
               { city: { contains: s, mode: 'insensitive' } },
             ],
-          };
-          if (leadWhere.OR) {
-            leadWhere.AND = [searchCond];
-          } else {
-            leadWhere.OR = searchCond.OR;
-          }
+          });
+        }
+
+        if (leadAndConditions.length > 0) {
+          leadWhere.AND = leadAndConditions;
         }
 
         const leads = await this.prisma.lead.findMany({

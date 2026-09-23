@@ -519,9 +519,10 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
           }
 
           // Employee scoping
-          if (args?.where?.OR) {
+          const orConditions = args?.where?.OR || (args?.where?.AND ? args.where.AND.find((c: any) => c.OR)?.OR : null);
+          if (orConditions) {
             list = list.filter((l) =>
-              args.where.OR.some(
+              orConditions.some(
                 (clause: any) =>
                   (clause.employeeId && l.employeeId === clause.employeeId) ||
                   (clause.createdById && (l as any).createdById === clause.createdById) ||
