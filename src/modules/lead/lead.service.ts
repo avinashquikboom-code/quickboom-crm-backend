@@ -213,8 +213,16 @@ export class LeadService {
       payload.company_name ||
       payload.businessName ||
       payload.business_name ||
+      (typeof payload.displayName === 'object' ? payload.displayName?.text : payload.displayName) ||
+      payload.placeName ||
+      payload.establishmentName ||
+      payload.organizationName ||
+      payload.formattedName ||
       nested.companyName ||
-      nested.company_name;
+      nested.company_name ||
+      nested.businessName ||
+      nested.business_name ||
+      (typeof nested.displayName === 'object' ? nested.displayName?.text : nested.displayName);
     const directPlaceId =
       payload.googlePlaceId ||
       payload.placeId ||
@@ -232,7 +240,7 @@ export class LeadService {
     }
     if (!result.email && directEmail) result.email = ContactExtractor.normalizeEmail(directEmail) || undefined;
     if (!result.phone && directPhone) result.phone = ContactExtractor.normalizePhoneNumber(directPhone) || undefined;
-    if (!result.companyName && directCompany) result.companyName = String(directCompany).trim();
+    if (!result.companyName && directCompany && directCompany !== 'Business Lead') result.companyName = String(directCompany).trim();
     if (!result.googlePlaceId && directPlaceId) result.googlePlaceId = String(directPlaceId).trim();
 
     return result;
@@ -252,6 +260,21 @@ export class LeadService {
 
     const cleaned = { ...dto } as any;
 
+    // Resolve company / business name aliases directly
+    const directResolvedCompany =
+      cleaned.companyName ||
+      cleaned.company_name ||
+      cleaned.businessName ||
+      cleaned.business_name ||
+      (typeof cleaned.displayName === 'object' ? cleaned.displayName?.text : cleaned.displayName) ||
+      cleaned.placeName ||
+      cleaned.establishmentName ||
+      cleaned.organizationName ||
+      cleaned.formattedName;
+    if (directResolvedCompany && directResolvedCompany !== 'Business Lead' && !isInvalid(directResolvedCompany)) {
+      cleaned.companyName = String(directResolvedCompany).trim();
+    }
+
     // 0. Extract from Google Discovery / Google Lead payload if present
     const isGooglePayload =
       (cleaned.source && String(cleaned.source).toUpperCase().includes('DISCOVERY')) ||
@@ -269,7 +292,7 @@ export class LeadService {
       if (googleData.lastName && !cleaned.lastName && !cleaned.last_name) cleaned.lastName = googleData.lastName;
       if (googleData.email && !cleaned.email && !cleaned.emailAddress) cleaned.email = googleData.email;
       if (googleData.phone && !cleaned.phone && !cleaned.mobile) cleaned.phone = googleData.phone;
-      if (googleData.companyName && !cleaned.companyName) cleaned.companyName = googleData.companyName;
+      if (googleData.companyName && (!cleaned.companyName || cleaned.companyName === 'Business Lead')) cleaned.companyName = googleData.companyName;
       if (googleData.city && !cleaned.city) cleaned.city = googleData.city;
       if (googleData.state && !cleaned.state) cleaned.state = googleData.state;
       if (googleData.googlePlaceId && !cleaned.googlePlaceId) cleaned.googlePlaceId = googleData.googlePlaceId;
@@ -371,10 +394,24 @@ export class LeadService {
       }
     }
 
-    // 4. Resolve Title if missing
-    if (!cleaned.title || isInvalid(cleaned.title)) {
-      const fullName = [cleaned.firstName, cleaned.lastName].filter(Boolean).join(' ').trim();
-      cleaned.title = fullName || cleaned.companyName || cleaned.email || cleaned.phone || 'New Lead';
+    // 4. Resolve Title if missing or generic placeholder
+    if (
+      !cleaned.title ||
+      isInvalid(cleaned.title) ||
+      cleaned.title === 'Business Lead' ||
+      cleaned.title === 'Direct Lead' ||
+      cleaned.title === 'New Lead'
+    ) {
+      if (cleaned.companyName && cleaned.companyName !== 'Business Lead') {
+        cleaned.title = cleaned.companyName;
+      } else {
+        const fullName = [cleaned.firstName, cleaned.lastName].filter(Boolean).join(' ').trim();
+        if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business') {
+          cleaned.title = fullName;
+        } else {
+          cleaned.title = cleaned.companyName || cleaned.email || cleaned.phone || 'Unnamed Business';
+        }
+      }
     }
 
     const optionalKeys = [

@@ -59,21 +59,47 @@ export function cleanOptionalField({ value }: { value: any }): any {
 }
 
 export class CreateLeadDto {
-  @ApiPropertyOptional({ example: 'Enterprise Cloud Modernization' })
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub' })
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
-    if (direct) return direct;
-    const name = [
+    if (direct && direct !== 'Business Lead' && direct !== 'Direct Lead') return direct;
+
+    // 1. Real business / display / company name
+    const comp = cleanOptionalField({ value: obj?.companyName }) || cleanOptionalField({ value: obj?.businessName });
+    if (comp && comp !== 'Business Lead') return comp;
+
+    if (obj?.displayName) {
+      const dn = typeof obj.displayName === 'object' ? obj.displayName?.text : obj.displayName;
+      const cleanDn = cleanOptionalField({ value: dn });
+      if (cleanDn && cleanDn !== 'Business Lead') return cleanDn;
+    }
+
+    const place = cleanOptionalField({ value: obj?.placeName }) ||
+      cleanOptionalField({ value: obj?.establishmentName }) ||
+      cleanOptionalField({ value: obj?.organizationName }) ||
+      cleanOptionalField({ value: obj?.formattedName });
+    if (place && place !== 'Business Lead') return place;
+
+    // 2. Real name if not resource ID or placeholder
+    if (obj?.name && typeof obj.name === 'string' && obj.name.trim() && !obj.name.startsWith('places/')) {
+      const cleanN = obj.name.trim();
+      if (cleanN !== 'Business Lead') return cleanN;
+    }
+
+    // 3. Contact person name
+    const contactName = [
       obj?.firstName || obj?.first_name,
       obj?.lastName || obj?.last_name,
     ].filter(Boolean).join(' ').trim();
-    if (name) return name;
-    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) return obj.name.trim();
-    if (obj?.companyName && typeof obj.companyName === 'string' && obj.companyName.trim()) return obj.companyName.trim();
-    if (obj?.businessName && typeof obj.businessName === 'string' && obj.businessName.trim()) return obj.businessName.trim();
+    if (contactName && contactName !== 'Business Owner' && contactName !== 'Unknown Business') return contactName;
+
+    // 4. Existing direct title if available
+    if (direct) return direct;
+
+    // 5. Fallback
     if (obj?.email || obj?.emailAddress) return (obj.email || obj.emailAddress).trim();
     if (obj?.phone || obj?.mobile) return (obj.phone || obj.mobile).trim();
-    return 'Direct Lead';
+    return 'Unnamed Business';
   })
   @IsString()
   @IsOptional()
@@ -257,11 +283,71 @@ export class CreateLeadDto {
   @IsOptional()
   data?: any;
 
-  @ApiPropertyOptional({ example: 'TechCorp Solutions' })
-  @Transform(cleanOptionalField)
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub' })
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct && direct !== 'Business Lead') return direct;
+    const bName = cleanOptionalField({ value: obj?.businessName });
+    if (bName && bName !== 'Business Lead') return bName;
+    if (obj?.displayName) {
+      const dn = typeof obj.displayName === 'object' ? obj.displayName?.text : obj.displayName;
+      const cleanDn = cleanOptionalField({ value: dn });
+      if (cleanDn && cleanDn !== 'Business Lead') return cleanDn;
+    }
+    const place = cleanOptionalField({ value: obj?.placeName }) ||
+      cleanOptionalField({ value: obj?.establishmentName }) ||
+      cleanOptionalField({ value: obj?.organizationName }) ||
+      cleanOptionalField({ value: obj?.formattedName });
+    if (place && place !== 'Business Lead') return place;
+    if (obj?.name && typeof obj.name === 'string' && obj.name.trim() && !obj.name.startsWith('places/')) {
+      const cleanN = obj.name.trim();
+      if (cleanN !== 'Business Lead') return cleanN;
+    }
+    return direct || null;
+  })
   @IsString()
   @IsOptional()
   companyName?: string;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for companyName' })
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct && direct !== 'Business Lead') return direct;
+    return cleanOptionalField({ value: obj?.companyName }) || undefined;
+  })
+  @IsString()
+  @IsOptional()
+  businessName?: string;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Google Discovery display name' })
+  @Transform(({ value }) => {
+    if (!value) return undefined;
+    if (typeof value === 'string') return cleanOptionalField({ value });
+    if (typeof value === 'object' && value.text) return cleanOptionalField({ value: value.text });
+    return undefined;
+  })
+  @IsOptional()
+  displayName?: any;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for business / place name' })
+  @IsString()
+  @IsOptional()
+  placeName?: string;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for business / establishment name' })
+  @IsString()
+  @IsOptional()
+  establishmentName?: string;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for business / organization name' })
+  @IsString()
+  @IsOptional()
+  organizationName?: string;
+
+  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for formatted business name' })
+  @IsString()
+  @IsOptional()
+  formattedName?: string;
 
   @ApiPropertyOptional({ example: 'uuid-1234-5678', description: 'Unique capture event / request identifier' })
   @IsString()

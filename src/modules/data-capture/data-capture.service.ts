@@ -1430,30 +1430,49 @@ export class DataCaptureService {
 
     // 1. Direct places array provided by frontend
     if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
-      placesToImport = dto.places.map((p, idx) => ({
-        id: p.id || `custom_${idx}`,
-        googlePlaceId: p.googlePlaceId || p.sourceRecordId || p.id,
-        businessName: p.businessName || p.companyName || p.name || p.title || '',
-        category: p.category || 'General',
-        address: p.address,
-        phone: p.phone,
-        email: p.email,
-        website: p.website,
-        rating: p.rating,
-        reviewCount: p.reviewCount,
-        latitude: p.latitude,
-        longitude: p.longitude,
-        source: p.source || p.sourceType || 'GOOGLE_DISCOVERY',
-        sourceRecordId: p.sourceRecordId || p.googlePlaceId,
-        sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
-        captureRequestId: p.captureRequestId || dto.captureRequestId || dto.jobId,
-        jobId: p.jobId || dto.jobId,
-      }));
-    } else if (dto.companyName || dto.businessName) {
+      placesToImport = dto.places.map((p, idx) => {
+        const resolvedName =
+          p.businessName ||
+          p.companyName ||
+          (typeof p.displayName === 'object' ? p.displayName?.text : p.displayName) ||
+          p.placeName ||
+          p.establishmentName ||
+          p.organizationName ||
+          p.title ||
+          (p.name && !String(p.name).startsWith('places/') ? p.name : '') ||
+          '';
+        return {
+          id: p.id || `custom_${idx}`,
+          googlePlaceId: p.googlePlaceId || p.sourceRecordId || p.id,
+          businessName: resolvedName,
+          category: p.category || 'General',
+          address: p.address,
+          phone: p.phone,
+          email: p.email,
+          website: p.website,
+          rating: p.rating,
+          reviewCount: p.reviewCount,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          source: p.source || p.sourceType || 'GOOGLE_DISCOVERY',
+          sourceRecordId: p.sourceRecordId || p.googlePlaceId,
+          sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
+          captureRequestId: p.captureRequestId || dto.captureRequestId || dto.jobId,
+          jobId: p.jobId || dto.jobId,
+        };
+      });
+    } else if (dto.companyName || dto.businessName || (dto as any).displayName) {
       // Single place payload
+      const singleName =
+        dto.companyName ||
+        dto.businessName ||
+        (typeof (dto as any).displayName === 'object' ? (dto as any).displayName?.text : (dto as any).displayName) ||
+        (dto as any).placeName ||
+        (dto as any).title ||
+        '';
       placesToImport = [{
         googlePlaceId: dto.googlePlaceId || dto.sourceRecordId,
-        businessName: dto.companyName || dto.businessName,
+        businessName: singleName,
         category: dto.category || 'General',
         address: dto.address,
         phone: dto.phone,
@@ -1546,9 +1565,19 @@ export class DataCaptureService {
         } catch (_) {}
       }
 
-      const rawBusinessName = place.businessName || place.companyName || place.name || place.title || '';
+      const rawBusinessName =
+        place.businessName ||
+        place.companyName ||
+        (typeof place.displayName === 'object' ? place.displayName?.text : place.displayName) ||
+        place.placeName ||
+        place.establishmentName ||
+        place.organizationName ||
+        place.formattedName ||
+        place.title ||
+        (place.name && !String(place.name).startsWith('places/') ? place.name : '') ||
+        '';
       const businessName =
-        ContactExtractor.normalizeCompanyName(rawBusinessName) || 'Unnamed Business';
+        ContactExtractor.normalizeCompanyName(rawBusinessName) || rawBusinessName.trim() || 'Unnamed Business';
       this.logger.log(
         `[IMPORT DEBUG] idx=${idx} rawBusinessName="${rawBusinessName}" businessName="${businessName}" ` +
         `placeId=${googlePlaceId || 'N/A'} phone=${normalizedPhone || 'N/A'}`,
@@ -1719,6 +1748,7 @@ export class DataCaptureService {
             firstName,
             lastName,
             companyName: businessName,
+            businessName: businessName,
             phone: normalizedPhone || undefined,
             email: normalizedEmail || undefined,
             website: normalizedWebsite || undefined,

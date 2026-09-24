@@ -122,8 +122,27 @@ export class LeadRepository {
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
+    const resolvedBusinessName =
+      (leadData.companyName && leadData.companyName !== 'Business Lead' ? leadData.companyName : null) ||
+      (leadData.businessName && leadData.businessName !== 'Business Lead' ? leadData.businessName : null) ||
+      (typeof leadData.displayName === 'object' ? leadData.displayName?.text : leadData.displayName) ||
+      (dto as any).businessName ||
+      (dto as any).companyName ||
+      (typeof (dto as any).displayName === 'object' ? (dto as any).displayName?.text : (dto as any).displayName) ||
+      (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
+      (name && !String(name).startsWith('places/') && name !== 'Business Lead' ? name : null) ||
+      (full_name && !String(full_name).startsWith('places/') && full_name !== 'Business Lead' ? full_name : null);
+
+    const resolvedTitle =
+      (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
+      resolvedBusinessName ||
+      (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null) ||
+      'Unnamed Business';
+
     const createData: any = {
       ...leadData,
+      title: resolvedTitle,
+      companyName: resolvedBusinessName || leadData.companyName || null,
       city: resolvedCity,
       pincode: resolvedPincode,
       firstName: resolvedFirstName,
@@ -135,6 +154,14 @@ export class LeadRepository {
       createdById: numCreatedById,
       employeeId: employeeId ? Number(employeeId) : undefined,
     };
+    delete createData.businessName;
+    delete createData.displayName;
+    delete createData.placeName;
+    delete createData.establishmentName;
+    delete createData.organizationName;
+    delete createData.formattedName;
+    delete createData.name;
+    delete createData.full_name;
     if (resolvedPhone) {
       createData.phone = resolvedPhone;
     } else {
