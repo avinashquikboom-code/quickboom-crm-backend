@@ -83,21 +83,13 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "set -e
-             cd '${DEPLOY_DIR}'
+            "cd '${DEPLOY_DIR}'
              chmod +x ./*.sh
              sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-             source ./config.sh
-
-             echo '[quikboom] Resolving any failed migrations (P3009 guard)...'
-             aws ecr get-login-password --region \${AWS_REGION:-ap-south-1} | docker login --username AWS --password-stdin \${API_ECR_REGISTRY} || true
-             docker pull \${API_ECR_REGISTRY}/\${API_ECR_REPOSITORY}:${{ steps.meta.outputs.sha_tag }} || true
-             docker run --rm \
-               --network host \
-               -e DATABASE_URL=\"\${DATABASE_URL}\" \
-               \${API_ECR_REGISTRY}/\${API_ECR_REPOSITORY}:${{ steps.meta.outputs.sha_tag }} \
-               npx prisma migrate resolve --rolled-back 20260924160000_add_lead_image_primary || true
-
+             echo '=== CONFIG.SH (sanitized) ==='
+             sed -E 's/([A-Za-z0-9_]*(PASS|SECRET|KEY)[A-Za-z0-9_]*=)[^ ]+/\1***/g' config.sh
+             echo '=== BACKEND.SH ==='
+             cat backend.sh
              ./backend.sh"
 
       - name: Deploy summary
