@@ -208,7 +208,7 @@ export class CommissionService {
               title: true,
             },
           },
-          plan: { select: { id: true, name: true, price: true } },
+          plan: { select: { id: true, name: true, monthlyPrice: true, yearlyPrice: true } },
         },
       });
 
@@ -345,8 +345,8 @@ export class CommissionService {
             select: {
               id: true,
               name: true,
-              price: true,
-              billingCycle: true,
+              monthlyPrice: true,
+              yearlyPrice: true,
             },
           },
           purchase: {
@@ -487,7 +487,8 @@ export class CommissionService {
             select: {
               id: true,
               name: true,
-              price: true,
+              monthlyPrice: true,
+              yearlyPrice: true,
             },
           },
           purchase: {
@@ -594,7 +595,7 @@ export class CommissionService {
 
     if (dto.status === CommissionStatus.PAID) {
       updateData.paidAt = new Date();
-    } else if (dto.status !== CommissionStatus.PAID && commission.paidAt) {
+    } else if (commission.paidAt) {
       updateData.paidAt = null;
     }
 
