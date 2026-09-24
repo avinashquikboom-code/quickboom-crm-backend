@@ -42,8 +42,34 @@ export class DataCaptureService {
     'places.websiteUri',
     'places.rating',
     'places.userRatingCount',
+    'places.photos',
     'nextPageToken',
   ].join(',');
+
+  /**
+   * Resolve Google Places photo references to backend-proxied photo URLs.
+   * Uses the Google Places API (New) Photos endpoint.
+   * Returns up to 5 public photo URLs for the given place.
+   * Never throws — returns an empty array on any failure.
+   */
+  private resolveGooglePhotoUrls(rawPlace: any, apiKey: string, maxPhotos = 5): string[] {
+    if (!rawPlace?.photos || !Array.isArray(rawPlace.photos) || rawPlace.photos.length === 0) {
+      return [];
+    }
+    const urls: string[] = [];
+    for (const photo of rawPlace.photos.slice(0, maxPhotos)) {
+      // photo.name is the full resource name e.g. "places/ChI.../photos/Adri..."
+      const ref = photo?.name || photo?.photoReference || photo?.photo_reference;
+      if (!ref) continue;
+      try {
+        // Google Places API (New) photo URL format — no server-side request needed, browser-resolvable
+        const photoName = String(ref).startsWith('places/') ? ref : `places/${rawPlace.id}/photos/${ref}`;
+        const url = `https://places.googleapis.com/v1/${photoName}/media?key=${apiKey}&maxHeightPx=800&maxWidthPx=800`;
+        urls.push(url);
+      } catch (_) {}
+    }
+    return urls;
+  }
 
   constructor(
     private readonly configService: ConfigService,
@@ -221,6 +247,8 @@ export class DataCaptureService {
               if (!finalPhone && webContact.phone) finalPhone = webContact.phone;
             }
 
+            const resolvedPhotos = apiKey ? this.resolveGooglePhotoUrls(p, apiKey) : [];
+
             const placeRecord: CapturedPlace = {
               provider: 'GOOGLE_PLACES',
               googlePlaceId: p.id,
@@ -243,6 +271,7 @@ export class DataCaptureService {
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
               rawData: p,
+              photos: resolvedPhotos.length > 0 ? resolvedPhotos : undefined,
             };
 
             allPlaces.push(placeRecord);
@@ -333,6 +362,7 @@ export class DataCaptureService {
         status: isDuplicate ? 'DUPLICATE' : 'CAPTURED',
         notes: isDuplicate ? 'Identified as duplicate of existing business prospect or lead' : undefined,
         rawData: p.rawData ? JSON.parse(JSON.stringify(p.rawData)) : undefined,
+        photos: p.photos && p.photos.length > 0 ? p.photos : undefined,
       };
     });
 
@@ -437,6 +467,9 @@ export class DataCaptureService {
       capturedBy: String(effectiveUserId),
       extractionJobId: p.jobId || undefined,
       notes: p.notes || undefined,
+      photos: Array.isArray((p as any).photos) && (p as any).photos.length > 0
+        ? (p as any).photos as string[]
+        : undefined,
     }));
 
     return {
@@ -1738,6 +1771,18 @@ export class DataCaptureService {
       // Generate a unique per-place idempotency key so multiple records in the same job don't collide
       const placeCaptureRequestId = `${dto.jobId || place.jobId || 'job'}_${googlePlaceId || place.id || idx}`;
 
+      // Preserve socialMedia from Data Capture if available
+      let placeSocialMedia: any = place.socialMedia;
+      if (!placeSocialMedia && (place.instagram || place.facebook || place.linkedin || place.youtube || place.twitter)) {
+        placeSocialMedia = {
+          ...(place.instagram ? { instagram: String(place.instagram).trim() } : {}),
+          ...(place.facebook ? { facebook: String(place.facebook).trim() } : {}),
+          ...(place.linkedin ? { linkedin: String(place.linkedin).trim() } : {}),
+          ...(place.youtube ? { youtube: String(place.youtube).trim() } : {}),
+          ...(place.twitter ? { twitter: String(place.twitter).trim() } : {}),
+        };
+      }
+
       let createdLead: any;
       if (this.leadService) {
         createdLead = await this.leadService.createLead(
@@ -1765,6 +1810,7 @@ export class DataCaptureService {
             priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
             value: 0,
             captureRequestId: placeCaptureRequestId,
+            socialMedia: placeSocialMedia,
           } as any,
         );
       } else {
@@ -1810,8 +1856,42 @@ export class DataCaptureService {
             value: 0,
             createdById: numUserId,
             captureRequestId: placeCaptureRequestId,
+            socialMedia: placeSocialMedia || undefined,
           },
         });
+      }
+
+      // Import captured Google photos into LeadImage records
+      let photosToImport: string[] = [];
+      if (Array.isArray(place.photos) && place.photos.length > 0) {
+        photosToImport = place.photos.filter((u: any) => typeof u === 'string' && u.trim().length > 0);
+      } else if (place.id && typeof place.id === 'number') {
+        try {
+          const dbPlace = await this.prisma.dataCapturePlace.findUnique({
+            where: { id: place.id },
+            select: { photos: true },
+          });
+          if (dbPlace?.photos && Array.isArray(dbPlace.photos)) {
+            photosToImport = (dbPlace.photos as string[]).filter((u: any) => typeof u === 'string' && u.trim().length > 0);
+          }
+        } catch (_) {}
+      }
+
+      if (photosToImport.length > 0 && this.prisma.leadImage && createdLead?.id) {
+        for (let pIdx = 0; pIdx < photosToImport.length; pIdx++) {
+          try {
+            await this.prisma.leadImage.create({
+              data: {
+                leadId: createdLead.id,
+                url: photosToImport[pIdx],
+                isPrimary: pIdx === 0,
+                caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
+              },
+            });
+          } catch (imgErr: any) {
+            this.logger.warn(`Failed to attach image to imported lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+          }
+        }
       }
 
       // Attach note with metadata

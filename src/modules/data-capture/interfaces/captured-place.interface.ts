@@ -26,7 +26,10 @@ export interface CapturedPlace {
   capturedBy?: string;
   extractionJobId?: string;
   duplicateMatches?: DuplicateMatch[];
+  /** Array of resolved Google photo URLs for this business (from Google Places API) */
+  photos?: string[];
 }
+
 
 export interface DuplicateMatch {
   type: 'LEAD' | 'COMPANY' | 'CONTACT' | 'DATA_CAPTURE';

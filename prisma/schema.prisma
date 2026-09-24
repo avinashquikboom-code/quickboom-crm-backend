@@ -1903,6 +1903,7 @@ model DataCapturePlace {
   source         String?         @default("GOOGLE_PLACES")
   status         String?         @default("CAPTURED")
   rawData        Json?
+  photos         Json?             // Array of Google photo URLs for this business
   notes          String?
   isImported       Boolean         @default(false)
   importedLeadId   Int?

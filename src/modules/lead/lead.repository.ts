@@ -172,7 +172,48 @@ export class LeadRepository {
     } else {
       delete createData.email;
     }
-    delete createData.sourceUrl;
+
+    // Process and sanitize social media
+    let resolvedSocialMedia = leadData.socialMedia;
+    if (typeof resolvedSocialMedia === 'string' && resolvedSocialMedia.trim().startsWith('{')) {
+      try {
+        resolvedSocialMedia = JSON.parse(resolvedSocialMedia);
+      } catch (_) {}
+    }
+    const incomingSocial = typeof resolvedSocialMedia === 'object' && resolvedSocialMedia !== null ? resolvedSocialMedia : {};
+    const mergedSocial: Record<string, any> = {
+      ...incomingSocial,
+      ...(leadData.instagram ? { instagram: String(leadData.instagram).trim() } : {}),
+      ...(leadData.facebook ? { facebook: String(leadData.facebook).trim() } : {}),
+      ...(leadData.linkedin ? { linkedin: String(leadData.linkedin).trim() } : {}),
+      ...(leadData.youtube ? { youtube: String(leadData.youtube).trim() } : {}),
+      ...(leadData.twitter ? { twitter: String(leadData.twitter).trim() } : {}),
+    };
+    if (typeof resolvedSocialMedia === 'string' && resolvedSocialMedia.trim().length > 0 && !resolvedSocialMedia.trim().startsWith('{')) {
+      const trimmed = resolvedSocialMedia.trim();
+      if (trimmed.includes('instagram.com')) mergedSocial.instagram = trimmed;
+      else if (trimmed.includes('facebook.com')) mergedSocial.facebook = trimmed;
+      else if (trimmed.includes('linkedin.com')) mergedSocial.linkedin = trimmed;
+      else if (trimmed.includes('youtube.com')) mergedSocial.youtube = trimmed;
+      else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) mergedSocial.twitter = trimmed;
+      else mergedSocial.website = trimmed;
+    }
+    Object.keys(mergedSocial).forEach((k) => {
+      if (!mergedSocial[k] || mergedSocial[k] === 'N/A' || mergedSocial[k] === 'null') {
+        delete mergedSocial[k];
+      }
+    });
+
+    if (Object.keys(mergedSocial).length > 0) {
+      createData.socialMedia = mergedSocial;
+    } else {
+      delete createData.socialMedia;
+    }
+    delete createData.instagram;
+    delete createData.facebook;
+    delete createData.linkedin;
+    delete createData.youtube;
+    delete createData.twitter;
 
     const lead = await client.lead.create({
       data: createData,
@@ -818,8 +859,13 @@ export class LeadRepository {
         select: { socialMedia: true },
       });
       const current = (existing?.socialMedia as Record<string, any>) || {};
-      const incoming = typeof leadData.socialMedia === 'object' && leadData.socialMedia !== null ? leadData.socialMedia : {};
-      const merged = {
+      let incoming = typeof leadData.socialMedia === 'object' && leadData.socialMedia !== null ? leadData.socialMedia : {};
+      if (typeof leadData.socialMedia === 'string' && leadData.socialMedia.trim().startsWith('{')) {
+        try {
+          incoming = JSON.parse(leadData.socialMedia);
+        } catch (_) {}
+      }
+      const merged: Record<string, any> = {
         ...current,
         ...incoming,
         ...(leadData.instagram !== undefined ? { instagram: leadData.instagram ? String(leadData.instagram).trim() : '' } : {}),
@@ -829,12 +875,21 @@ export class LeadRepository {
         ...(leadData.twitter !== undefined ? { twitter: leadData.twitter ? String(leadData.twitter).trim() : '' } : {}),
         ...(leadData.website !== undefined ? { website: leadData.website ? String(leadData.website).trim() : '' } : {}),
       };
+      if (typeof leadData.socialMedia === 'string' && leadData.socialMedia.trim().length > 0 && !leadData.socialMedia.trim().startsWith('{')) {
+        const trimmed = leadData.socialMedia.trim();
+        if (trimmed.includes('instagram.com')) merged.instagram = trimmed;
+        else if (trimmed.includes('facebook.com')) merged.facebook = trimmed;
+        else if (trimmed.includes('linkedin.com')) merged.linkedin = trimmed;
+        else if (trimmed.includes('youtube.com')) merged.youtube = trimmed;
+        else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) merged.twitter = trimmed;
+        else merged.website = trimmed;
+      }
       Object.keys(merged).forEach((k) => {
         if (!merged[k] || merged[k] === 'N/A' || merged[k] === 'null') {
           delete merged[k];
         }
       });
-      updateData.socialMedia = merged;
+      updateData.socialMedia = Object.keys(merged).length > 0 ? merged : null;
     }
 
     if (leadData.latitude !== undefined) {
