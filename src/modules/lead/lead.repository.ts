@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CheckDuplicateDto,
@@ -18,6 +18,8 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class LeadRepository {
+  private readonly logger = new Logger(LeadRepository.name);
+
   constructor(private prisma: PrismaService) {}
 
   async create(
@@ -585,29 +587,55 @@ export class LeadRepository {
       ];
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.lead.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          stage: true,
-          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
-          createdBy: { select: { id: true, firstName: true, lastName: true } },
-          images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
-        },
-      }),
-      this.prisma.lead.count({ where }),
-    ]);
+    let data: any[] = [];
+    let total = 0;
+
+    try {
+      [data, total] = await Promise.all([
+        this.prisma.lead.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            stage: true,
+            assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+            createdBy: { select: { id: true, firstName: true, lastName: true } },
+            images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
+          },
+        }),
+        this.prisma.lead.count({ where }),
+      ]);
+    } catch (queryErr: any) {
+      this.logger.warn(`findAll with full include failed: ${queryErr?.message || queryErr}. Attempting fallback without images...`);
+      try {
+        [data, total] = await Promise.all([
+          this.prisma.lead.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              stage: true,
+              assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+              createdBy: { select: { id: true, firstName: true, lastName: true } },
+            },
+          }),
+          this.prisma.lead.count({ where }),
+        ]);
+      } catch (fallbackErr: any) {
+        this.logger.error(`findAll fallback query failed: ${fallbackErr?.message || fallbackErr}`);
+        throw fallbackErr;
+      }
+    }
 
     return {
-      data,
+      data: Array.isArray(data) ? data : [],
       meta: {
-        total,
+        total: Number(total) || 0,
         page,
         limit,
-        totalPages: Math.ceil(total / limit) || 1,
+        totalPages: Math.max(Math.ceil((Number(total) || 0) / limit), 1),
       },
     };
   }
@@ -625,30 +653,55 @@ export class LeadRepository {
       where.customerId = numCustomerId;
     }
 
-    return this.prisma.lead.findFirst({
-      where,
-      include: {
-        customer: true,
-        stage: true,
-        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
-        createdBy: { select: { id: true, firstName: true, lastName: true } },
-        notes: {
-          include: { user: { select: { id: true, firstName: true, lastName: true } } },
-          orderBy: { createdAt: 'desc' },
+    try {
+      return await this.prisma.lead.findFirst({
+        where,
+        include: {
+          customer: true,
+          stage: true,
+          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+          notes: {
+            include: { user: { select: { id: true, firstName: true, lastName: true } } },
+            orderBy: { createdAt: 'desc' },
+          },
+          timeline: { orderBy: { createdAt: 'desc' } },
+          statusHistory: { orderBy: { createdAt: 'desc' } },
+          reminders: { orderBy: { remindAt: 'asc' } },
+          visits: { orderBy: { createdAt: 'desc' } },
+          quotations: {
+            include: { items: true },
+            orderBy: { createdAt: 'desc' },
+          },
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+          },
         },
-        timeline: { orderBy: { createdAt: 'desc' } },
-        statusHistory: { orderBy: { createdAt: 'desc' } },
-        reminders: { orderBy: { remindAt: 'asc' } },
-        visits: { orderBy: { createdAt: 'desc' } },
-        quotations: {
-          include: { items: true },
-          orderBy: { createdAt: 'desc' },
+      });
+    } catch (err: any) {
+      this.logger.warn(`findOne with images failed: ${err?.message || err}. Attempting fallback without images...`);
+      return this.prisma.lead.findFirst({
+        where,
+        include: {
+          customer: true,
+          stage: true,
+          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+          notes: {
+            include: { user: { select: { id: true, firstName: true, lastName: true } } },
+            orderBy: { createdAt: 'desc' },
+          },
+          timeline: { orderBy: { createdAt: 'desc' } },
+          statusHistory: { orderBy: { createdAt: 'desc' } },
+          reminders: { orderBy: { remindAt: 'asc' } },
+          visits: { orderBy: { createdAt: 'desc' } },
+          quotations: {
+            include: { items: true },
+            orderBy: { createdAt: 'desc' },
+          },
         },
-        images: {
-          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
-        },
-      },
-    });
+      });
+    }
   }
 
   async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null }) {
