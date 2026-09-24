@@ -1433,7 +1433,7 @@ export class DataCaptureService {
       placesToImport = dto.places.map((p, idx) => ({
         id: p.id || `custom_${idx}`,
         googlePlaceId: p.googlePlaceId || p.sourceRecordId || p.id,
-        businessName: p.businessName || p.companyName || p.name || 'Business Lead',
+        businessName: p.businessName || p.companyName || p.name || p.title || '',
         category: p.category || 'General',
         address: p.address,
         phone: p.phone,
@@ -1546,8 +1546,13 @@ export class DataCaptureService {
         } catch (_) {}
       }
 
+      const rawBusinessName = place.businessName || place.companyName || place.name || place.title || '';
       const businessName =
-        ContactExtractor.normalizeCompanyName(place.businessName || place.companyName) || 'Business Lead';
+        ContactExtractor.normalizeCompanyName(rawBusinessName) || 'Unnamed Business';
+      this.logger.log(
+        `[IMPORT DEBUG] idx=${idx} rawBusinessName="${rawBusinessName}" businessName="${businessName}" ` +
+        `placeId=${googlePlaceId || 'N/A'} phone=${normalizedPhone || 'N/A'}`,
+      );
 
       // 2. Build duplicate query conditions against existing CRM Leads for the authenticated tenant
       // We check googlePlaceId/sourceRecordId, normalized phone, normalized email, and normalized domain.
@@ -1684,12 +1689,21 @@ export class DataCaptureService {
       }
 
       // Contact extraction (First Name / Last Name)
-      let firstName = 'Business';
-      let lastName = 'Owner';
-      if (businessName) {
+      // Priority: explicit contact fields on place → split from businessName → placeholder
+      // Note: Lead.firstName and Lead.lastName are required (non-nullable) in the schema.
+      let firstName: string;
+      let lastName: string;
+      if (place.firstName && String(place.firstName).trim()) {
+        firstName = String(place.firstName).trim();
+        lastName = String(place.lastName || '').trim() || '.';
+      } else if (businessName && businessName !== 'Unnamed Business') {
         const parts = businessName.trim().split(/\s+/);
-        firstName = parts[0] || 'Business';
-        lastName = parts.length > 1 ? parts.slice(1).join(' ') : 'Owner';
+        firstName = parts[0];
+        lastName = parts.length > 1 ? parts.slice(1).join(' ') : '.';
+      } else {
+        // Last resort: use 'Unknown' / 'Business' rather than a misleading name
+        firstName = 'Unknown';
+        lastName = 'Business';
       }
 
       // Generate a unique per-place idempotency key so multiple records in the same job don't collide
