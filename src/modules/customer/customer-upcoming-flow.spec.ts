@@ -754,5 +754,173 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
     const res = await service.findAll({ status: 'UPCOMING' }, userA);
     expect(res.meta.counts.upcoming).toBe(res.items.length);
   });
+
+  // =========================================================================
+  // SECTION 18: FINAL CALL LEAD -> UPCOMING CUSTOMER VERIFICATION TESTS
+  // =========================================================================
+
+  // TEST 22: Employee A: Lead in Follow-up stage without call -> NOT visible in Upcoming
+  it('TEST 22: Lead 1 in Follow-up stage -> NOT visible in Upcoming', async () => {
+    const lead1FollowUp = {
+      id: 901,
+      companyName: 'Lead 1 Corp',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FOLLOW_UP',
+      stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+    prisma.lead.findMany.mockResolvedValueOnce([lead1FollowUp]);
+
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const card = res.items.find((c) => c.companyName === 'Lead 1 Corp');
+    expect(card).toBeUndefined();
+  });
+
+  // TEST 23: Lead 1 moves Follow-up -> Final Call (nextFollowUpDate: null) -> Automatically visible in Upcoming
+  it('TEST 23: Lead 1 moves to Final Call -> Automatically appears in Upcoming without manual customer creation', async () => {
+    const lead1FinalCall = {
+      id: 901,
+      companyName: 'Lead 1 Corp',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FINAL_CALL',
+      stage: { id: 10, name: 'Final Call', key: 'FINAL_CALL' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+    prisma.lead.findMany.mockResolvedValueOnce([lead1FinalCall]);
+
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const card = res.items.find((c) => c.companyName === 'Lead 1 Corp');
+    expect(card).toBeDefined();
+    expect(card?.hasUpcomingCall).toBe(true);
+    expect(card?.upcomingCallType).toBe('Final Call');
+    expect(card?.status).toBe('UPCOMING');
+  });
+
+  // TEST 24: Lead 1 moves Final Call -> Follow-up -> Drops out of Upcoming immediately
+  it('TEST 24: Lead 1 moves back from Final Call to Follow-up -> Disappears from Upcoming', async () => {
+    const lead1BackToFollowUp = {
+      id: 901,
+      companyName: 'Lead 1 Corp',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FOLLOW_UP',
+      stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+    prisma.lead.findMany.mockResolvedValueOnce([lead1BackToFollowUp]);
+
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const card = res.items.find((c) => c.companyName === 'Lead 1 Corp');
+    expect(card).toBeUndefined();
+  });
+
+  // TEST 25: Lead 1 moves Final Call -> Won -> Excluded from Upcoming (moves to Customer conversion)
+  it('TEST 25: Lead 1 moves Final Call to Won -> Excluded from Upcoming', async () => {
+    const lead1Won = {
+      id: 901,
+      companyName: 'Lead 1 Corp',
+      customerId: 1,
+      employeeId: 101,
+      status: 'WON',
+      stage: { id: 11, name: 'Won', key: 'WON' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+    prisma.lead.findMany.mockResolvedValueOnce([lead1Won]);
+
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const card = res.items.find((c) => c.companyName === 'Lead 1 Corp');
+    expect(card).toBeUndefined();
+  });
+
+  // TEST 26: Lead 1 in Final Call assigned to Employee A -> Login as Employee B -> NOT visible
+  it('TEST 26: Employee A Final Call lead is NOT visible when logged in as Employee B', async () => {
+    const leadEmpA = {
+      id: 902,
+      companyName: 'Emp A Exclusive Final Call',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FINAL_CALL',
+      stage: { id: 10, name: 'Final Call', key: 'FINAL_CALL' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+
+    // Employee A sees it
+    prisma.lead.findMany.mockResolvedValueOnce([leadEmpA]);
+    const resA = await service.findAll({ status: 'UPCOMING' }, userA);
+    expect(resA.items.find((c) => c.companyName === 'Emp A Exclusive Final Call')).toBeDefined();
+
+    // Employee B does NOT see it (filtered out by employee scoping in lead query)
+    prisma.lead.findMany.mockImplementationOnce((args: any) => {
+      // Scoping filter applied for userB (employeeId: 102)
+      const empOr = args?.where?.AND?.find((c: any) => c.OR)?.OR;
+      if (empOr && !empOr.some((c: any) => c.employeeId === leadEmpA.employeeId)) {
+        return [];
+      }
+      return [leadEmpA];
+    });
+    const resB = await service.findAll({ status: 'UPCOMING' }, userB);
+    expect(resB.items.find((c) => c.companyName === 'Emp A Exclusive Final Call')).toBeUndefined();
+  });
+
+  // TEST 27: Data Capture imported lead assigned to Employee A in Final Call -> Visible in Upcoming
+  it('TEST 27: Data Capture imported lead assigned to Employee A in Final Call -> Appears in Upcoming', async () => {
+    const dataCaptureLead = {
+      id: 903,
+      companyName: 'Data Capture Hotel',
+      firstName: 'Data',
+      lastName: 'Manager',
+      source: 'DATA_CAPTURE',
+      captureRequestId: 'req-12345',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FINAL_CALL',
+      stage: { id: 10, name: 'Final Call', key: 'FINAL_CALL' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+    prisma.lead.findMany.mockResolvedValueOnce([dataCaptureLead]);
+
+    const res = await service.findAll({ status: 'UPCOMING' }, userA);
+    const card = res.items.find((c) => c.companyName === 'Data Capture Hotel');
+    expect(card).toBeDefined();
+    expect(card?.source).toBe('DATA_CAPTURE');
+    expect(card?.hasUpcomingCall).toBe(true);
+    expect(card?.status).toBe('UPCOMING');
+  });
+
+  // TEST 28: Refresh 10 times -> No duplicate records created or returned
+  it('TEST 28: Refresh Customers 10 times -> Idempotent, no duplicate records', async () => {
+    const leadFinalCall = {
+      id: 904,
+      companyName: 'Idempotent Corp',
+      customerId: 1,
+      employeeId: 101,
+      status: 'FINAL_CALL',
+      stage: { id: 10, name: 'Final Call', key: 'FINAL_CALL' },
+      nextFollowUpDate: null,
+      reminders: [],
+      convertedCustomer: null,
+    };
+
+    for (let i = 0; i < 10; i++) {
+      prisma.lead.findMany.mockResolvedValueOnce([leadFinalCall]);
+      const res = await service.findAll({ status: 'UPCOMING' }, userA);
+      const matchingCards = res.items.filter((c) => c.companyName === 'Idempotent Corp');
+      expect(matchingCards.length).toBe(1);
+    }
+  });
 });
 
