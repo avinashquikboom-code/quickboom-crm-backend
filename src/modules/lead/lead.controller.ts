@@ -7,11 +7,15 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
 import {
+  AddLeadImageDto,
   CheckDuplicateDto,
   ConvertLeadDto,
   CreateLeadDto,
@@ -224,6 +228,30 @@ export class LeadController {
   @ApiOperation({ summary: 'Soft delete lead' })
   async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.leadService.deleteLead(customerId, id);
+  }
+
+  @Post(':id/images')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Upload an image or attach image URL to a lead' })
+  async addImage(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+    @Body() dto?: AddLeadImageDto,
+  ) {
+    return this.leadService.addImage(customerId, id, file, dto);
+  }
+
+  @Delete(':id/images/:imageId')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Delete a lead image' })
+  async deleteImage(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.leadService.deleteImage(customerId, id, imageId);
   }
 
   @Post(':id/notes')

@@ -461,10 +461,56 @@ export class CreateLeadDto {
   @IsOptional()
   reviewCount?: number;
 
+  @ApiPropertyOptional({ description: 'Social media links dictionary (instagram, facebook, linkedin, youtube, twitter, website)' })
+  @IsOptional()
+  socialMedia?: Record<string, string>;
+
+  @ApiPropertyOptional({ example: 'https://instagram.com/company', description: 'Alias for socialMedia.instagram' })
+  @IsString()
+  @IsOptional()
+  instagram?: string;
+
+  @ApiPropertyOptional({ example: 'https://facebook.com/company', description: 'Alias for socialMedia.facebook' })
+  @IsString()
+  @IsOptional()
+  facebook?: string;
+
+  @ApiPropertyOptional({ example: 'https://linkedin.com/company/profile', description: 'Alias for socialMedia.linkedin' })
+  @IsString()
+  @IsOptional()
+  linkedin?: string;
+
+  @ApiPropertyOptional({ example: 'https://youtube.com/@channel', description: 'Alias for socialMedia.youtube' })
+  @IsString()
+  @IsOptional()
+  youtube?: string;
+
+  @ApiPropertyOptional({ example: 'https://x.com/company', description: 'Alias for socialMedia.twitter' })
+  @IsString()
+  @IsOptional()
+  twitter?: string;
+
   @ApiPropertyOptional({ example: 'Initial requirement notes' })
   @IsString()
   @IsOptional()
   notes?: string;
+}
+
+export class AddLeadImageDto {
+  @ApiPropertyOptional({ example: 'https://example.com/store.jpg' })
+  @IsString()
+  @IsOptional()
+  url?: string;
+
+  @ApiPropertyOptional({ example: 'Storefront entrance photo' })
+  @IsString()
+  @IsOptional()
+  caption?: string;
+
+  @ApiPropertyOptional({ example: 'leads/images/123-abc.jpg' })
+  @IsString()
+  @IsOptional()
+  key?: string;
 }
 
 export class UpdateLeadDto extends PartialType(CreateLeadDto) {

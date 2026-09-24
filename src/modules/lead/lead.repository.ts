@@ -595,6 +595,7 @@ export class LeadRepository {
           stage: true,
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
+          images: { orderBy: { createdAt: 'desc' } },
         },
       }),
       this.prisma.lead.count({ where }),
@@ -641,6 +642,9 @@ export class LeadRepository {
         visits: { orderBy: { createdAt: 'desc' } },
         quotations: {
           include: { items: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        images: {
           orderBy: { createdAt: 'desc' },
         },
       },
@@ -719,6 +723,57 @@ export class LeadRepository {
       } else {
         delete updateData.email;
       }
+    }
+
+    if (
+      leadData.socialMedia !== undefined ||
+      leadData.instagram !== undefined ||
+      leadData.facebook !== undefined ||
+      leadData.linkedin !== undefined ||
+      leadData.youtube !== undefined ||
+      leadData.twitter !== undefined
+    ) {
+      const existing = await this.prisma.lead.findUnique({
+        where: { id: numId },
+        select: { socialMedia: true },
+      });
+      const current = (existing?.socialMedia as Record<string, any>) || {};
+      const incoming = typeof leadData.socialMedia === 'object' && leadData.socialMedia !== null ? leadData.socialMedia : {};
+      const merged = {
+        ...current,
+        ...incoming,
+        ...(leadData.instagram !== undefined ? { instagram: leadData.instagram ? String(leadData.instagram).trim() : '' } : {}),
+        ...(leadData.facebook !== undefined ? { facebook: leadData.facebook ? String(leadData.facebook).trim() : '' } : {}),
+        ...(leadData.linkedin !== undefined ? { linkedin: leadData.linkedin ? String(leadData.linkedin).trim() : '' } : {}),
+        ...(leadData.youtube !== undefined ? { youtube: leadData.youtube ? String(leadData.youtube).trim() : '' } : {}),
+        ...(leadData.twitter !== undefined ? { twitter: leadData.twitter ? String(leadData.twitter).trim() : '' } : {}),
+        ...(leadData.website !== undefined ? { website: leadData.website ? String(leadData.website).trim() : '' } : {}),
+      };
+      Object.keys(merged).forEach((k) => {
+        if (!merged[k] || merged[k] === 'N/A' || merged[k] === 'null') {
+          delete merged[k];
+        }
+      });
+      updateData.socialMedia = merged;
+    }
+
+    if (leadData.latitude !== undefined) {
+      updateData.latitude = leadData.latitude !== null && !isNaN(Number(leadData.latitude)) ? Number(leadData.latitude) : null;
+    }
+    if (leadData.longitude !== undefined) {
+      updateData.longitude = leadData.longitude !== null && !isNaN(Number(leadData.longitude)) ? Number(leadData.longitude) : null;
+    }
+    if (leadData.country !== undefined) {
+      const c = leadData.country ? String(leadData.country).trim() : '';
+      updateData.country = c && c !== 'N/A' && c !== 'null' ? c : null;
+    }
+    if (leadData.address !== undefined) {
+      const a = leadData.address ? String(leadData.address).trim() : '';
+      updateData.address = a && a !== 'N/A' && a !== 'null' ? a : null;
+    }
+    if (leadData.website !== undefined) {
+      const w = leadData.website ? String(leadData.website).trim() : '';
+      updateData.website = w && w !== 'N/A' && w !== 'null' ? w : null;
     }
 
     return this.prisma.lead.updateMany({
@@ -1439,5 +1494,28 @@ export class LeadRepository {
         },
       });
     }
+  }
+
+  async addImage(leadId: number, data: { url: string; key?: string; caption?: string }) {
+    return this.prisma.leadImage.create({
+      data: {
+        leadId,
+        url: data.url,
+        key: data.key,
+        caption: data.caption,
+      },
+    });
+  }
+
+  async findImageById(leadId: number, imageId: number) {
+    return this.prisma.leadImage.findFirst({
+      where: { id: imageId, leadId },
+    });
+  }
+
+  async deleteImage(leadId: number, imageId: number) {
+    return this.prisma.leadImage.deleteMany({
+      where: { id: imageId, leadId },
+    });
   }
 }

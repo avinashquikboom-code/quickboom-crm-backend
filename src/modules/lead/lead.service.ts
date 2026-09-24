@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import { LeadRepository } from './lead.repository';
 import { NotificationService } from '../notification/notification.service';
 import {
+  AddLeadImageDto,
   CheckDuplicateDto,
   ConvertLeadDto,
   CreateLeadDto,
@@ -43,6 +44,7 @@ import {
 } from '../whatsapp/whatsapp.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
+import { S3Service } from '../s3/s3.service';
 
 function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return '***';
@@ -70,6 +72,7 @@ export class LeadService {
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
+    @Optional() private readonly s3Service?: S3Service,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
@@ -3839,5 +3842,79 @@ Sent by ${senderOrgName} via CRM.
         message: err?.message || 'WhatsApp delivery failed',
       };
     }
+  }
+
+  async addImage(
+    customerId: number | string,
+    leadId: number | string,
+    file?: Express.Multer.File,
+    dto?: AddLeadImageDto,
+  ) {
+    const lead = await this.getLeadById(customerId, leadId);
+    let imageUrl = dto?.url ? String(dto.url).trim() : undefined;
+    let imageKey = dto?.key ? String(dto.key).trim() : undefined;
+    const caption = dto?.caption ? String(dto.caption).trim() : undefined;
+
+    if (file) {
+      if (this.s3Service) {
+        try {
+          const res = await this.s3Service.uploadFile(file, `leads/${customerId}/${lead.id}`);
+          imageUrl = res.imageUrl;
+          imageKey = res.imageKey;
+        } catch (err: any) {
+          this.logger.warn(`[LEAD_IMAGE_S3_FALLBACK] S3 upload failed: ${err?.message}`);
+          imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+          imageKey = `inline-${Date.now()}`;
+        }
+      } else {
+        imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+        imageKey = `inline-${Date.now()}`;
+      }
+    }
+
+    if (!imageUrl) {
+      throw new BadRequestException('Image file or valid image URL is required');
+    }
+
+    const image = await this.leadRepository.addImage(Number(lead.id), {
+      url: imageUrl,
+      key: imageKey,
+      caption,
+    });
+
+    await this.leadRepository.logTimeline(
+      lead.id,
+      'IMAGE_ADDED',
+      caption ? `Lead photo uploaded: ${caption}` : 'New lead photo uploaded',
+    );
+
+    return image;
+  }
+
+  async deleteImage(customerId: number | string, leadId: number | string, imageId: number | string) {
+    const lead = await this.getLeadById(customerId, leadId);
+    const numImageId = Number(imageId);
+    const existing = await this.leadRepository.findImageById(Number(lead.id), numImageId);
+    if (!existing) {
+      throw new NotFoundException('Lead image not found');
+    }
+
+    if (existing.key && !existing.key.startsWith('inline-') && this.s3Service) {
+      try {
+        await this.s3Service.deleteFile(existing.key);
+      } catch (err: any) {
+        this.logger.warn(`Failed to delete S3 file ${existing.key}: ${err?.message}`);
+      }
+    }
+
+    await this.leadRepository.deleteImage(Number(lead.id), numImageId);
+
+    await this.leadRepository.logTimeline(
+      lead.id,
+      'IMAGE_DELETED',
+      'Lead photo deleted',
+    );
+
+    return { success: true, message: 'Image deleted successfully' };
   }
 }

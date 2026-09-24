@@ -111,6 +111,8 @@ model Customer {
   emailTemplates           EmailTemplate[]
   emailLogs                EmailLog[]
   metaTemplates            MetaTemplate[]
+  commissionConfigs        CommissionConfig[]
+  commissions              Commission[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -137,6 +139,7 @@ model Plan {
   deletedAt        DateTime?
   subscriptions    CustomerSubscription[]
   monthlySchedules MonthlySchedule[]
+  commissions      Commission[]
 
   @@index([deletedAt])
 }
@@ -218,6 +221,7 @@ model PaymentHistory {
   customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   installments   SubscriptionInstallment[]
+  commission     Commission?
 
   @@index([customerId])
   @@index([deletedAt])
@@ -410,6 +414,9 @@ model Lead {
   quotations           Quotation[]
   visits               Visit[]
   emailLogs            EmailLog[]
+  socialMedia          Json?
+  images               LeadImage[]
+  commissions          Commission[]
 
   @@index([customerId])
   @@index([status])
@@ -452,6 +459,19 @@ model LeadNote {
   user      User     @relation(fields: [userId], references: [id])
 
   @@index([leadId])
+}
+
+model LeadImage {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  url       String
+  key       String?
+  caption   String?
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("lead_images")
 }
 
 model LeadActivityTimeline {
@@ -1157,6 +1177,8 @@ model Employee {
   leads                    Lead[]                   @relation("EmployeeLeads")
   assignedCustomers        Customer[]               @relation("CustomerAssignedStaff")
   createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
+  commissionConfig         CommissionConfig?
+  commissions              Commission[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -3212,4 +3234,74 @@ model MetaTemplate {
   @@index([isLocalActive])
   @@index([deletedAt])
   @@map("meta_templates")
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum CommissionConfigStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+model CommissionConfig {
+  id              Int                    @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int                    @unique
+  commissionType  CommissionType         @default(PERCENTAGE)
+  commissionValue Float                  @default(0)
+  status          CommissionConfigStatus @default(ACTIVE)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("commission_configs")
+}
+
+model Commission {
+  id               Int              @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  leadId           Int?
+  planId           Int?
+  purchaseId       Int?             @unique @map("purchase_id")
+  orderId          String?          @map("order_id")
+  commissionType   CommissionType
+  commissionRate   Float            @default(0)
+  purchaseAmount   Float            @default(0)
+  commissionAmount Float            @default(0)
+  status           CommissionStatus @default(PENDING)
+  paidAt           DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  plan     Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)
+  purchase PaymentHistory? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([leadId])
+  @@index([planId])
+  @@index([purchaseId])
+  @@index([orderId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("commissions")
 }
