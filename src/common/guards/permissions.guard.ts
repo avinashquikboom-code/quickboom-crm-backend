@@ -28,7 +28,14 @@ export class PermissionsGuard implements CanActivate {
 
     if (
       userRoles.some((r: string) =>
-        ['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(r),
+        [
+          'SUPER_ADMIN',
+          'CUSTOMER_ADMIN',
+          'COMPANY_ADMIN',
+          'TENANT_ADMIN',
+          'CUSTOMER',
+          'ADMIN',
+        ].includes(r),
       )
     ) {
       return true;

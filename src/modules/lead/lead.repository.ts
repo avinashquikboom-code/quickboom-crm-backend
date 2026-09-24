@@ -928,8 +928,12 @@ export class LeadRepository {
   async softDelete(customerId: number | string, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
+    const where: any = { id: numId };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
     return this.prisma.lead.updateMany({
-      where: { id: numId, customerId: numCustomerId },
+      where,
       data: { deletedAt: new Date() },
     });
   }

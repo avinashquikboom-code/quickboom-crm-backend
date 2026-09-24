@@ -55,6 +55,20 @@ describe('RBAC & Module Permission System', () => {
       expect(permissionsGuard.canActivate(context)).toBe(true);
     });
 
+    it('bypasses checks for CUSTOMER and CUSTOMER_ADMIN role', () => {
+      const customerContext = createMockContext(
+        { role: 'CUSTOMER', roles: ['CUSTOMER'], permissions: [] },
+        [{ module: 'LEADS', action: 'DELETE' }],
+      );
+      expect(permissionsGuard.canActivate(customerContext)).toBe(true);
+
+      const customerAdminContext = createMockContext(
+        { role: 'CUSTOMER_ADMIN', roles: ['CUSTOMER_ADMIN'], permissions: [] },
+        [{ module: 'LEADS', action: 'DELETE' }],
+      );
+      expect(permissionsGuard.canActivate(customerAdminContext)).toBe(true);
+    });
+
     it('allows access for TELECALLER with LEADS:VIEW permission', () => {
       const telecallerUser = {
         role: 'TELECALLER',
