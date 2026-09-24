@@ -11,9 +11,10 @@ import { NotificationModule } from '../notification/notification.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { InvoiceModule } from '../invoice/invoice.module';
 import { InstallmentService } from './installment.service';
+import { CommissionModule } from '../commission/commission.module';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule],
+  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule, CommissionModule],
   controllers: [SubscriptionController, CustomPlanController],
   providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
   exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],

@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Designation" ADD COLUMN IF NOT EXISTS "commissionEnabled" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Designation" ADD COLUMN IF NOT EXISTS "commissionType" "CommissionType" NOT NULL DEFAULT 'PERCENTAGE';
+ALTER TABLE "Designation" ADD COLUMN IF NOT EXISTS "commissionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0;

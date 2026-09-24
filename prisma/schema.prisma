@@ -1105,6 +1105,9 @@ model Designation {
   level        Int         @default(1)
   isActive     Boolean     @default(true)
   crmMobileAccess Boolean  @default(false)
+  commissionEnabled Boolean @default(false)
+  commissionType   CommissionType @default(PERCENTAGE)
+  commissionRate   Float          @default(0.0)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)

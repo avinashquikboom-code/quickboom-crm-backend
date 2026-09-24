@@ -7,9 +7,10 @@ import { WorkModule } from '../work/work.module';
 import { NotificationModule } from '../notification/notification.module';
 import { InvoiceModule } from '../invoice/invoice.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { CommissionModule } from '../commission/commission.module';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, InvoiceModule, WhatsappModule],
+  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, InvoiceModule, WhatsappModule, CommissionModule],
   controllers: [PaymentController],
   providers: [PaymentService],
   exports: [PaymentService],

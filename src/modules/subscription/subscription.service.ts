@@ -24,6 +24,7 @@ import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
+import { CommissionService } from '../commission/commission.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
@@ -47,6 +48,7 @@ export class SubscriptionService {
     @Optional() private emailTemplateService?: EmailTemplateService,
     @Optional() private whatsappService?: WhatsappService,
     @Optional() private invoiceService?: InvoiceService,
+    @Optional() private commissionService?: CommissionService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -2964,6 +2966,24 @@ export class SubscriptionService {
       }
     } catch (err: any) {
       this.logger.warn(`[OFFLINE_APPROVE_SCHEDULE_WARN] ${err?.message}`);
+    }
+
+    // 7b. Trigger Employee Commission Calculation for BPO/Telecaller/Telesales
+    try {
+      if (this.commissionService && payment) {
+        await this.commissionService.calculateAndAwardCommission({
+          customerId: sub.customerId,
+          purchaseId: payment.id,
+          purchaseAmount: Number(payment.amount || fullBaseAmount),
+          planId: plan.id,
+          orderId: payment.orderId,
+        });
+      }
+    } catch (commErr: any) {
+      this.logger.error(
+        `[COMMISSION_WARNING] Failed to award commission on offline payment approve: ${commErr?.message}`,
+        commErr?.stack,
+      );
     }
 
     // 8. Write Audit Log

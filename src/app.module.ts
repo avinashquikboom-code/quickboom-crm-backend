@@ -49,6 +49,7 @@ import { AiStudioModule } from './modules/ai-studio/ai-studio.module';
 import { SocialPublishingModule } from './modules/social-publishing/social-publishing.module';
 import { MasterModule } from './modules/master/master.module';
 import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
+import { CommissionModule } from './modules/commission/commission.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -106,6 +107,7 @@ import { AppController } from './app.controller';
     SocialPublishingModule,
     MasterModule,
     MetaTemplateModule,
+    CommissionModule,
   ],
   controllers: [AppController],
 })

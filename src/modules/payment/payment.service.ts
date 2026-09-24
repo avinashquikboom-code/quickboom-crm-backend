@@ -34,6 +34,7 @@ import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
+import { CommissionService } from '../commission/commission.service';
 
 @Injectable()
 export class PaymentService {
@@ -49,6 +50,7 @@ export class PaymentService {
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly invoiceService?: InvoiceService,
+    @Optional() private readonly commissionService?: CommissionService,
   ) {}
 
   /**
@@ -705,6 +707,24 @@ export class PaymentService {
       await this.workService.generatePlanSchedules(customerId, result.subscription.id);
     } catch (schedErr: any) {
       this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
+    }
+
+    // 5. Trigger Employee Commission Calculation for BPO/Telecaller/Telesales
+    try {
+      if (this.commissionService && result.payment) {
+        await this.commissionService.calculateAndAwardCommission({
+          customerId,
+          purchaseId: result.payment.id,
+          purchaseAmount: Number(result.payment.amount || chargedBase),
+          planId: plan.id,
+          orderId: dto.razorpay_order_id,
+        });
+      }
+    } catch (commErr: any) {
+      this.logger.error(
+        `[COMMISSION_WARNING] Failed to award commission: ${commErr?.message}`,
+        commErr?.stack,
+      );
     }
 
     this.logger.log(
