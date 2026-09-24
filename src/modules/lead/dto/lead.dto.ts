@@ -511,6 +511,11 @@ export class AddLeadImageDto {
   @IsString()
   @IsOptional()
   key?: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isPrimary?: boolean;
 }
 
 export class UpdateLeadDto extends PartialType(CreateLeadDto) {

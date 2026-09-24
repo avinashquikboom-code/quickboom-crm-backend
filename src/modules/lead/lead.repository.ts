@@ -595,7 +595,7 @@ export class LeadRepository {
           stage: true,
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
-          images: { orderBy: { createdAt: 'desc' } },
+          images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
         },
       }),
       this.prisma.lead.count({ where }),
@@ -645,7 +645,7 @@ export class LeadRepository {
           orderBy: { createdAt: 'desc' },
         },
         images: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
         },
       },
     });
@@ -1496,13 +1496,29 @@ export class LeadRepository {
     }
   }
 
-  async addImage(leadId: number, data: { url: string; key?: string; caption?: string }) {
+  async addImage(
+    leadId: number,
+    data: { url: string; key?: string; caption?: string; isPrimary?: boolean },
+  ) {
+    const existingCount = typeof this.prisma.leadImage?.count === 'function'
+      ? await this.prisma.leadImage.count({ where: { leadId } })
+      : 0;
+    const shouldBePrimary = data.isPrimary ?? (existingCount === 0);
+
+    if (shouldBePrimary && existingCount > 0 && typeof this.prisma.leadImage?.updateMany === 'function') {
+      await this.prisma.leadImage.updateMany({
+        where: { leadId, isPrimary: true },
+        data: { isPrimary: false },
+      });
+    }
+
     return this.prisma.leadImage.create({
       data: {
         leadId,
         url: data.url,
         key: data.key,
         caption: data.caption,
+        isPrimary: shouldBePrimary,
       },
     });
   }
@@ -1513,9 +1529,48 @@ export class LeadRepository {
     });
   }
 
+  async findImagesByLeadId(leadId: number) {
+    return this.prisma.leadImage.findMany({
+      where: { leadId },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async setPrimaryImage(leadId: number, imageId: number) {
+    if (typeof this.prisma.leadImage?.updateMany === 'function') {
+      await this.prisma.leadImage.updateMany({
+        where: { leadId },
+        data: { isPrimary: false },
+      });
+    }
+    return this.prisma.leadImage.update({
+      where: { id: imageId },
+      data: { isPrimary: true },
+    });
+  }
+
   async deleteImage(leadId: number, imageId: number) {
-    return this.prisma.leadImage.deleteMany({
+    const imgToDelete = await this.prisma.leadImage.findFirst({
       where: { id: imageId, leadId },
     });
+    const result = await this.prisma.leadImage.deleteMany({
+      where: { id: imageId, leadId },
+    });
+
+    // If the deleted image was primary, set the next most recent image as primary
+    if (imgToDelete?.isPrimary) {
+      const nextPrimary = await this.prisma.leadImage.findFirst({
+        where: { leadId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (nextPrimary) {
+        await this.prisma.leadImage.update({
+          where: { id: nextPrimary.id },
+          data: { isPrimary: true },
+        });
+      }
+    }
+
+    return result;
   }
 }

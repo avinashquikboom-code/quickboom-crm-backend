@@ -3880,6 +3880,7 @@ Sent by ${senderOrgName} via CRM.
       url: imageUrl,
       key: imageKey,
       caption,
+      isPrimary: dto?.isPrimary,
     });
 
     await this.leadRepository.logTimeline(
@@ -3889,6 +3890,34 @@ Sent by ${senderOrgName} via CRM.
     );
 
     return image;
+  }
+
+  async getLeadImages(customerId: number | string, leadId: number | string) {
+    const lead = await this.getLeadById(customerId, leadId);
+    return this.leadRepository.findImagesByLeadId(Number(lead.id));
+  }
+
+  async setPrimaryImage(
+    customerId: number | string,
+    leadId: number | string,
+    imageId: number | string,
+  ) {
+    const lead = await this.getLeadById(customerId, leadId);
+    const numImageId = Number(imageId);
+    const existing = await this.leadRepository.findImageById(Number(lead.id), numImageId);
+    if (!existing) {
+      throw new NotFoundException('Lead image not found');
+    }
+
+    const updated = await this.leadRepository.setPrimaryImage(Number(lead.id), numImageId);
+
+    await this.leadRepository.logTimeline(
+      lead.id,
+      'PRIMARY_IMAGE_UPDATED',
+      'Lead primary photo updated',
+    );
+
+    return updated;
   }
 
   async deleteImage(customerId: number | string, leadId: number | string, imageId: number | string) {

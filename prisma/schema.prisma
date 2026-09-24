@@ -467,10 +467,12 @@ model LeadImage {
   url       String
   key       String?
   caption   String?
+  isPrimary Boolean  @default(false)
   createdAt DateTime @default(now())
   lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([leadId])
+  @@index([leadId, isPrimary])
   @@map("lead_images")
 }
 

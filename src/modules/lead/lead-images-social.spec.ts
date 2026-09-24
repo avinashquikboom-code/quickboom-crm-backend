@@ -32,6 +32,13 @@ describe('Lead Images, Location & Social Media Backend Tests', () => {
           createdAt: new Date(),
         }),
       ),
+      findImagesByLeadId: jest.fn().mockResolvedValue([
+        { id: 10, leadId: 100, url: 'https://s3.amazonaws.com/test.jpg', isPrimary: true },
+        { id: 11, leadId: 100, url: 'https://s3.amazonaws.com/test2.jpg', isPrimary: false },
+      ]),
+      setPrimaryImage: jest.fn().mockImplementation((leadId, imageId) =>
+        Promise.resolve({ id: imageId, leadId, isPrimary: true }),
+      ),
       deleteImage: jest.fn().mockResolvedValue({ count: 1 }),
       logTimeline: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({ count: 1 }),
@@ -185,4 +192,24 @@ describe('Lead Images, Location & Social Media Backend Tests', () => {
       }),
     );
   });
+
+  it('fetches all lead images using getLeadImages', async () => {
+    const images = await leadService.getLeadImages(1, 100);
+    expect(mockLeadRepository.findImagesByLeadId).toHaveBeenCalledWith(100);
+    expect(images).toHaveLength(2);
+    expect(images[0].isPrimary).toBe(true);
+  });
+
+  it('sets an image as primary via setPrimaryImage and logs timeline', async () => {
+    const updated = await leadService.setPrimaryImage(1, 100, 11);
+    expect(mockLeadRepository.findImageById).toHaveBeenCalledWith(100, 11);
+    expect(mockLeadRepository.setPrimaryImage).toHaveBeenCalledWith(100, 11);
+    expect(mockLeadRepository.logTimeline).toHaveBeenCalledWith(
+      100,
+      'PRIMARY_IMAGE_UPDATED',
+      expect.any(String),
+    );
+    expect(updated.isPrimary).toBe(true);
+  });
 });
+

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UploadedFile,
   UseGuards,
@@ -252,6 +253,27 @@ export class LeadController {
     @Param('imageId') imageId: string,
   ) {
     return this.leadService.deleteImage(customerId, id, imageId);
+  }
+
+  @Get(':id/images')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get all images for a lead' })
+  async getImages(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.getLeadImages(customerId, id);
+  }
+
+  @Put(':id/images/:imageId/primary')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Set an image as the primary image for a lead' })
+  async setPrimaryImage(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.leadService.setPrimaryImage(customerId, id, imageId);
   }
 
   @Post(':id/notes')
