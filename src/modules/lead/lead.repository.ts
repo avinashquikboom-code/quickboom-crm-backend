@@ -93,6 +93,10 @@ export class LeadRepository {
       emailAddress,
       email_address,
       user_email,
+      postalCode,
+      zipCode,
+      pinCode,
+      pin_code,
       stage: rawStageArg,
       stage_name: rawStageNameArg,
       lead_stage: rawLeadStageArg,
@@ -109,6 +113,8 @@ export class LeadRepository {
       ...leadData
     } = dto as any;
     const resolvedCity = (leadData.city || location || '').trim() || null;
+    const rawPin = leadData.pincode ?? postalCode ?? zipCode ?? pinCode ?? pin_code;
+    const resolvedPincode = rawPin && String(rawPin).trim() !== 'N/A' && String(rawPin).trim() !== 'null' ? String(rawPin).trim() : null;
     const resolvedFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
     const resolvedLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
@@ -117,6 +123,7 @@ export class LeadRepository {
     const createData: any = {
       ...leadData,
       city: resolvedCity,
+      pincode: resolvedPincode,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
       assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
@@ -213,18 +220,14 @@ export class LeadRepository {
     if (placeId) {
       orClauses.push({ googlePlaceId: placeId });
     }
-    if (normPhone.length >= 7) {
-      orClauses.push({ phone: { contains: normPhone.slice(-7) } });
+    if (normPhone.length >= 10) {
+      orClauses.push({ phone: { contains: normPhone.slice(-10) } });
       if (dto.phone && dto.phone.trim()) {
         orClauses.push({ phone: dto.phone.trim() });
       }
     }
     if (cleanEmail.length >= 5 && cleanEmail.includes('@')) {
       orClauses.push({ email: { equals: cleanEmail, mode: 'insensitive' } });
-    }
-    if (cleanCompany.length >= 3) {
-      orClauses.push({ companyName: { equals: cleanCompany, mode: 'insensitive' } });
-      orClauses.push({ title: { equals: cleanCompany, mode: 'insensitive' } });
     }
     if (cleanWebsite.length >= 4) {
       orClauses.push({ website: { contains: cleanWebsite, mode: 'insensitive' } });
@@ -258,17 +261,28 @@ export class LeadRepository {
 
     for (const lead of candidates) {
       const leadPhone = (lead.phone || '').replace(/\D/g, '');
-      const leadCompany = (lead.companyName || lead.title || '').toLowerCase().trim();
-      const leadWebsite = (lead.website || '').toLowerCase().trim().replace(/^https?:\/\//, '');
+      const leadWebsite = (lead.website || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
       const leadEmail = (lead.email || '').toLowerCase().trim();
 
-      const isPlaceMatch = placeId && lead.googlePlaceId === placeId;
-      const isPhoneMatch = normPhone.length >= 7 && leadPhone.length >= 7 && normPhone === leadPhone;
-      const isEmailMatch = cleanEmail.length >= 5 && leadEmail === cleanEmail;
-      const isCompanyMatch = cleanCompany.length >= 3 && leadCompany === cleanCompany;
-      const isWebsiteMatch = cleanWebsite.length >= 4 && leadWebsite === cleanWebsite;
+      const isPlaceMatch = Boolean(placeId && lead.googlePlaceId && lead.googlePlaceId === placeId);
+      const isPhoneMatch = Boolean(
+        normPhone.length >= 10 &&
+        leadPhone.length >= 10 &&
+        normPhone.slice(-10) === leadPhone.slice(-10),
+      );
+      const isEmailMatch = Boolean(
+        cleanEmail.length >= 5 &&
+        cleanEmail.includes('@') &&
+        leadEmail &&
+        leadEmail === cleanEmail,
+      );
+      const isWebsiteMatch = Boolean(
+        cleanWebsite.length >= 4 &&
+        leadWebsite &&
+        (leadWebsite === cleanWebsite || leadWebsite.includes(cleanWebsite) || cleanWebsite.includes(leadWebsite)),
+      );
 
-      if (isPlaceMatch || isPhoneMatch || isEmailMatch || isCompanyMatch || isWebsiteMatch) {
+      if (isPlaceMatch || isPhoneMatch || isEmailMatch || isWebsiteMatch) {
         return {
           isDuplicate: true,
           matchReason: isPlaceMatch
@@ -277,8 +291,6 @@ export class LeadRepository {
             ? 'Phone number match'
             : isEmailMatch
             ? 'Email address match'
-            : isCompanyMatch
-            ? 'Company name match'
             : 'Website match',
           existingLead: lead,
         };
@@ -649,6 +661,10 @@ export class LeadRepository {
       phoneNumber,
       contactNumber,
       emailAddress,
+      postalCode,
+      zipCode,
+      pinCode,
+      pin_code,
       ...leadData
     } = dto as any;
     const updateData: any = {
@@ -662,6 +678,15 @@ export class LeadRepository {
     if (leadData.city !== undefined || location !== undefined) {
       const c = (leadData.city || location || '').trim();
       updateData.city = c ? c : null;
+    }
+    if (leadData.pincode !== undefined || postalCode !== undefined || zipCode !== undefined || pinCode !== undefined || pin_code !== undefined) {
+      const pinRaw = leadData.pincode ?? postalCode ?? zipCode ?? pinCode ?? pin_code;
+      const p = pinRaw ? String(pinRaw).trim() : '';
+      updateData.pincode = (p && p !== 'N/A' && p !== 'null' && p !== 'undefined') ? p : null;
+    }
+    if (updateData.workNotes === undefined && notes !== undefined) {
+      const n = notes ? String(notes).trim() : '';
+      updateData.workNotes = (n && n !== 'N/A' && n !== 'null' && n !== 'undefined') ? n : null;
     }
     if (leadData.firstName !== undefined) {
       const fn = leadData.firstName ? String(leadData.firstName).trim() : '';

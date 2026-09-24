@@ -381,6 +381,7 @@ export class LeadService {
       'city',
       'location',
       'state',
+      'pincode',
       'category',
       'googlePlaceId',
     ];
@@ -401,6 +402,14 @@ export class LeadService {
     }
     if (!cleaned.location && cleaned.city) {
       cleaned.location = cleaned.city;
+    }
+
+    // Fallback for pincode aliases
+    if (!cleaned.pincode) {
+      const aliasPin = cleaned.postalCode || cleaned.zipCode || cleaned.pinCode || cleaned.pin_code;
+      if (aliasPin && !isInvalid(aliasPin)) {
+        cleaned.pincode = String(aliasPin).trim();
+      }
     }
 
     // Strip transient webhook / mapper fields so Prisma model does not receive unknown properties
@@ -424,6 +433,10 @@ export class LeadService {
     delete cleaned.contactNumber;
     delete cleaned.first_name;
     delete cleaned.last_name;
+    delete cleaned.postalCode;
+    delete cleaned.zipCode;
+    delete cleaned.pinCode;
+    delete cleaned.pin_code;
 
     return cleaned;
   }
@@ -563,12 +576,19 @@ export class LeadService {
 
     // 1. Check idempotency if captureRequestId is present (rapid double-click protection)
     if (cleaned.captureRequestId) {
+      const reqWhere: any = {
+        customerId: numCustomerId,
+        captureRequestId: cleaned.captureRequestId,
+        deletedAt: null,
+      };
+      if (cleaned.sourceRecordId || cleaned.googlePlaceId) {
+        reqWhere.OR = [
+          ...(cleaned.sourceRecordId ? [{ sourceRecordId: cleaned.sourceRecordId }] : []),
+          ...(cleaned.googlePlaceId ? [{ googlePlaceId: cleaned.googlePlaceId }] : []),
+        ];
+      }
       const existingLeadByReq = await this.prisma.lead.findFirst({
-        where: {
-          customerId: numCustomerId,
-          captureRequestId: cleaned.captureRequestId,
-          deletedAt: null,
-        },
+        where: reqWhere,
         include: { stage: true },
       });
       if (existingLeadByReq) {

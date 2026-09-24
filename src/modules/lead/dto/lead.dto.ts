@@ -315,6 +315,40 @@ export class CreateLeadDto {
   @IsOptional()
   state?: string;
 
+  @ApiPropertyOptional({ example: '560078' })
+  @Transform(({ value, obj }) => {
+    const direct = cleanOptionalField({ value });
+    if (direct) return direct;
+    const fallback = cleanOptionalField({
+      value: obj?.postalCode || obj?.zipCode || obj?.pinCode || obj?.pin_code,
+    });
+    if (fallback) return fallback;
+    return undefined;
+  })
+  @IsString()
+  @IsOptional()
+  pincode?: string;
+
+  @ApiPropertyOptional({ example: '560078', description: 'Alias for pincode' })
+  @IsString()
+  @IsOptional()
+  postalCode?: string;
+
+  @ApiPropertyOptional({ example: '560078', description: 'Alias for pincode' })
+  @IsString()
+  @IsOptional()
+  zipCode?: string;
+
+  @ApiPropertyOptional({ example: '560078', description: 'Alias for pincode' })
+  @IsString()
+  @IsOptional()
+  pinCode?: string;
+
+  @ApiPropertyOptional({ example: '560078', description: 'Alias for pincode' })
+  @IsString()
+  @IsOptional()
+  pin_code?: string;
+
   @ApiPropertyOptional({ example: 'IT & Software' })
   @Transform(cleanOptionalField)
   @IsString()

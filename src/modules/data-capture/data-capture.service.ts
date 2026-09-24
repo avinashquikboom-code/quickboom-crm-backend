@@ -286,34 +286,28 @@ export class DataCaptureService {
     }
 
     // 5. Duplicate Detection Before Insertion
+    // A record in DataCapturePlace that has NOT been imported to Leads is NOT a duplicate Lead.
+    // Only check CRM Leads for already-imported/linked Google source records.
     const existingPlaceIds = new Set<string>();
     const candidatePlaceIds = allPlaces
       .map((p) => p.googlePlaceId)
       .filter((id): id is string => Boolean(id));
 
     if (candidatePlaceIds.length > 0) {
-      const existingPlaces = await this.prisma.dataCapturePlace.findMany({
-        where: {
-          customerId: effectiveCustomerId,
-          deletedAt: null,
-          googlePlaceId: { in: candidatePlaceIds },
-        },
-        select: { googlePlaceId: true },
-      });
-      for (const ep of existingPlaces) {
-        if (ep.googlePlaceId) existingPlaceIds.add(ep.googlePlaceId);
-      }
-
       const existingLeads = await this.prisma.lead.findMany({
         where: {
           customerId: effectiveCustomerId,
           deletedAt: null,
-          googlePlaceId: { in: candidatePlaceIds },
+          OR: [
+            { googlePlaceId: { in: candidatePlaceIds } },
+            { sourceRecordId: { in: candidatePlaceIds } },
+          ],
         },
-        select: { googlePlaceId: true },
+        select: { googlePlaceId: true, sourceRecordId: true },
       });
       for (const el of existingLeads) {
         if (el.googlePlaceId) existingPlaceIds.add(el.googlePlaceId);
+        if (el.sourceRecordId) existingPlaceIds.add(el.sourceRecordId);
       }
     }
 
@@ -1402,6 +1396,7 @@ export class DataCaptureService {
     imported: number;
     skippedDuplicates: number;
     duplicateNames: string[];
+    records?: any[];
     lead?: any;
     leads?: any[];
     capture?: { id: string; status: string };
@@ -1409,6 +1404,27 @@ export class DataCaptureService {
   }> {
     let numCustomerId = Number(customerId);
     const numUserId = Number(userId) || 1;
+
+    // Resolve tenant customerId safely if missing or NaN
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      if (dto.jobId) {
+        const job = await this.prisma.dataCaptureJob.findFirst({
+          where: { jobId: dto.jobId },
+          select: { customerId: true },
+        });
+        if (job) {
+          numCustomerId = job.customerId;
+        }
+      }
+      if (isNaN(numCustomerId) || numCustomerId <= 0) {
+        const activeCustomer = await this.prisma.customer.findFirst({
+          where: { deletedAt: null, isActive: true },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        });
+        numCustomerId = activeCustomer?.id || 1;
+      }
+    }
 
     let placesToImport: any[] = [];
 
@@ -1430,7 +1446,8 @@ export class DataCaptureService {
         source: p.source || p.sourceType || 'GOOGLE_DISCOVERY',
         sourceRecordId: p.sourceRecordId || p.googlePlaceId,
         sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
-        captureRequestId: p.captureRequestId || dto.captureRequestId,
+        captureRequestId: p.captureRequestId || dto.captureRequestId || dto.jobId,
+        jobId: p.jobId || dto.jobId,
       }));
     } else if (dto.companyName || dto.businessName) {
       // Single place payload
@@ -1445,7 +1462,8 @@ export class DataCaptureService {
         source: dto.sourceType || 'GOOGLE_DISCOVERY',
         sourceRecordId: dto.sourceRecordId || dto.googlePlaceId,
         sourceUrl: dto.sourceUrl || dto.website,
-        captureRequestId: dto.captureRequestId,
+        captureRequestId: dto.captureRequestId || dto.jobId,
+        jobId: dto.jobId,
       }];
     }
 
@@ -1489,7 +1507,7 @@ export class DataCaptureService {
           customerId: numCustomerId,
           deletedAt: null,
           OR: [
-            { id: { in: numericIds } },
+            ...(numericIds.length > 0 ? [{ id: { in: numericIds } }] : []),
             { googlePlaceId: { in: dto.placeIds } },
           ],
         },
@@ -1504,56 +1522,168 @@ export class DataCaptureService {
     let skippedDuplicates = 0;
     const duplicateNames: string[] = [];
     const createdLeads: any[] = [];
+    const perRecordResults: any[] = [];
 
-    for (const place of placesToImport) {
-      const normalizedPhone = place.phone && place.phone !== 'N/A' ? String(place.phone).trim() : undefined;
-      const normalizedEmail = place.email && String(place.email).trim().length > 0 ? String(place.email).trim() : undefined;
-      const businessName = place.businessName || place.companyName || 'Business Lead';
-      const googlePlaceId = place.googlePlaceId || place.sourceRecordId || undefined;
+    for (let idx = 0; idx < placesToImport.length; idx++) {
+      const place = placesToImport[idx];
 
-      // Safe debug log for each selected place
+      // 1. Normalized values - strictly prevent empty values from becoming empty string matchers
+      const rawPlaceId = place.googlePlaceId || place.sourceRecordId;
+      const googlePlaceId =
+        rawPlaceId && String(rawPlaceId).trim().length > 0 && String(rawPlaceId).trim() !== 'N/A' && !String(rawPlaceId).startsWith('custom_')
+          ? String(rawPlaceId).trim()
+          : undefined;
+
+      const normalizedPhone = ContactExtractor.normalizePhoneNumber(place.phone);
+      const phoneDigits = place.phone ? String(place.phone).replace(/\D/g, '') : '';
+
+      const normalizedEmail = ContactExtractor.normalizeEmail(place.email);
+      const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(place.website);
+      let websiteHost = '';
+      if (normalizedWebsite) {
+        try {
+          websiteHost = new URL(normalizedWebsite).hostname.replace(/^www\./i, '').toLowerCase();
+        } catch (_) {}
+      }
+
+      const businessName =
+        ContactExtractor.normalizeCompanyName(place.businessName || place.companyName) || 'Business Lead';
+
+      // 2. Build duplicate query conditions against existing CRM Leads for the authenticated tenant
+      // We check googlePlaceId/sourceRecordId, normalized phone, normalized email, and normalized domain.
+      // We NEVER match on empty/null values, and we do NOT use company name alone across different locations.
+      const leadOrConditions: any[] = [];
+
+      if (googlePlaceId) {
+        leadOrConditions.push({ googlePlaceId });
+        leadOrConditions.push({ sourceRecordId: googlePlaceId });
+      }
+
+      if (normalizedPhone) {
+        leadOrConditions.push({ phone: normalizedPhone });
+      }
+      if (phoneDigits.length >= 10) {
+        leadOrConditions.push({ phone: { contains: phoneDigits.slice(-10) } });
+      }
+
+      if (normalizedEmail) {
+        leadOrConditions.push({ email: { equals: normalizedEmail, mode: 'insensitive' } });
+      }
+
+      if (websiteHost.length >= 4 && !websiteHost.includes('google.') && !websiteHost.includes('maps.')) {
+        leadOrConditions.push({ website: { contains: websiteHost, mode: 'insensitive' } });
+      }
+
+      let matchedLead: any = null;
+      let duplicateMatchReason: string | null = null;
+
+      if (leadOrConditions.length > 0) {
+        const candidateLeads = await this.prisma.lead.findMany({
+          where: {
+            customerId: numCustomerId,
+            deletedAt: null,
+            OR: leadOrConditions,
+          },
+          select: {
+            id: true,
+            title: true,
+            companyName: true,
+            phone: true,
+            email: true,
+            website: true,
+            googlePlaceId: true,
+            sourceRecordId: true,
+          },
+          take: 10,
+        });
+
+        for (const cl of candidateLeads) {
+          // Priority 1: Google Place ID / source record identity match
+          if (
+            googlePlaceId &&
+            (cl.googlePlaceId === googlePlaceId || cl.sourceRecordId === googlePlaceId)
+          ) {
+            matchedLead = cl;
+            duplicateMatchReason = `Google Place ID match (${googlePlaceId})`;
+            break;
+          }
+
+          // Priority 2: Phone number match (normalized digits)
+          if (phoneDigits.length >= 10 && cl.phone) {
+            const clDigits = cl.phone.replace(/\D/g, '');
+            if (
+              clDigits.length >= 10 &&
+              (clDigits.slice(-10) === phoneDigits.slice(-10) || cl.phone === normalizedPhone)
+            ) {
+              matchedLead = cl;
+              duplicateMatchReason = `Phone number match (${cl.phone})`;
+              break;
+            }
+          }
+
+          // Priority 3: Email address match
+          if (normalizedEmail && cl.email) {
+            const clNormEmail = ContactExtractor.normalizeEmail(cl.email);
+            if (clNormEmail && clNormEmail === normalizedEmail) {
+              matchedLead = cl;
+              duplicateMatchReason = `Email address match (${clNormEmail})`;
+              break;
+            }
+          }
+
+          // Priority 4: Website domain match
+          if (websiteHost.length >= 4 && cl.website) {
+            try {
+              const clNormWeb = ContactExtractor.normalizeWebsiteUrl(cl.website);
+              if (clNormWeb) {
+                const clHost = new URL(clNormWeb).hostname.replace(/^www\./i, '').toLowerCase();
+                if (clHost && clHost === websiteHost) {
+                  matchedLead = cl;
+                  duplicateMatchReason = `Website match (${websiteHost})`;
+                  break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      // Safe debug log for every selected record (Requirement 2)
       this.logger.log(
-        `[DATA CAPTURE IMPORT]\n` +
-        `captureRequestId: ${place.captureRequestId || dto.jobId || 'N/A'}\n` +
-        `sourceType: ${place.source || place.sourceType || 'GOOGLE_DISCOVERY'}\n` +
-        `sourceRecordId: ${googlePlaceId || place.id || 'N/A'}\n` +
-        `sourceUrl: ${place.sourceUrl || place.website || place.googleMapsUrl || 'N/A'}\n` +
+        `[DATA CAPTURE IMPORT DEBUG]\n` +
+        `captureId: ${place.id || place.jobId || dto.jobId || 'N/A'}\n` +
+        `sourceRecordId: ${googlePlaceId || place.sourceRecordId || place.id || 'N/A'}\n` +
+        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
         `companyName: ${businessName}\n` +
         `phone: ${normalizedPhone || 'N/A'}\n` +
         `email: ${normalizedEmail || 'N/A'}\n` +
-        `website: ${place.website || 'N/A'}\n` +
-        `address: ${place.address || 'N/A'}\n` +
-        `selectedResultId: ${googlePlaceId || place.id || 'N/A'}`
+        `website: ${place.website || 'N/A'}\n\n` +
+        `Duplicate Check:\n` +
+        `matchedLeadId: ${matchedLead?.id || 'none'}\n` +
+        `matchedLeadCompanyName: ${matchedLead?.companyName || matchedLead?.title || 'none'}\n` +
+        `matchedLeadPhone: ${matchedLead?.phone || 'none'}\n` +
+        `matchedLeadEmail: ${matchedLead?.email || 'none'}\n` +
+        `matchedLeadWebsite: ${matchedLead?.website || 'none'}\n` +
+        `duplicateMatchReason: ${duplicateMatchReason || 'none'}`
       );
 
-      // Duplicate detection by googlePlaceId, phone, email, or exact title
-      const duplicateConditions: any[] = [];
-      if (googlePlaceId) {
-        duplicateConditions.push({ googlePlaceId });
-      }
-      if (normalizedPhone && normalizedPhone.length >= 10) {
-        duplicateConditions.push({ phone: normalizedPhone });
-      }
-      if (normalizedEmail && normalizedEmail.includes('@')) {
-        duplicateConditions.push({ email: normalizedEmail });
-      }
-      duplicateConditions.push({ title: { equals: businessName, mode: 'insensitive' } });
-
-      const existingLead = await this.prisma.lead.findFirst({
-        where: {
-          customerId: numCustomerId,
-          deletedAt: null,
-          OR: duplicateConditions,
-        },
-      });
-
-      if (existingLead) {
+      // If a genuine Lead duplicate exists in CRM, skip and record duplicate details
+      if (matchedLead) {
         skippedDuplicates++;
         duplicateNames.push(businessName);
+        perRecordResults.push({
+          sourceRecordId: googlePlaceId || place.sourceRecordId || String(place.id || ''),
+          googlePlaceId: googlePlaceId || undefined,
+          businessName,
+          imported: false,
+          duplicate: true,
+          existingLeadId: matchedLead.id,
+          duplicateMatchReason,
+        });
         continue;
       }
 
-      // Contact extraction
+      // Contact extraction (First Name / Last Name)
       let firstName = 'Business';
       let lastName = 'Owner';
       if (businessName) {
@@ -1561,6 +1691,9 @@ export class DataCaptureService {
         firstName = parts[0] || 'Business';
         lastName = parts.length > 1 ? parts.slice(1).join(' ') : 'Owner';
       }
+
+      // Generate a unique per-place idempotency key so multiple records in the same job don't collide
+      const placeCaptureRequestId = `${dto.jobId || place.jobId || 'job'}_${googlePlaceId || place.id || idx}`;
 
       let createdLead: any;
       if (this.leadService) {
@@ -1572,13 +1705,13 @@ export class DataCaptureService {
             firstName,
             lastName,
             companyName: businessName,
-            phone: normalizedPhone,
-            email: normalizedEmail,
-            website: place.website || undefined,
+            phone: normalizedPhone || undefined,
+            email: normalizedEmail || undefined,
+            website: normalizedWebsite || undefined,
             address: place.address && place.address !== 'N/A' ? place.address : undefined,
             category: place.category || undefined,
             googlePlaceId: googlePlaceId,
-            sourceRecordId: googlePlaceId,
+            sourceRecordId: googlePlaceId || place.sourceRecordId,
             latitude: place.latitude ? Number(place.latitude) : undefined,
             longitude: place.longitude ? Number(place.longitude) : undefined,
             rating: place.rating ? Number(place.rating) : undefined,
@@ -1587,7 +1720,7 @@ export class DataCaptureService {
             status: 'NEW',
             priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
             value: 0,
-            captureRequestId: place.captureRequestId || dto.jobId || undefined,
+            captureRequestId: placeCaptureRequestId,
           } as any,
         );
       } else {
@@ -1615,13 +1748,13 @@ export class DataCaptureService {
             firstName,
             lastName,
             companyName: businessName,
-            phone: normalizedPhone,
-            email: normalizedEmail,
-            website: place.website || undefined,
+            phone: normalizedPhone || undefined,
+            email: normalizedEmail || undefined,
+            website: normalizedWebsite || undefined,
             address: place.address && place.address !== 'N/A' ? place.address : undefined,
             category: place.category || undefined,
             googlePlaceId: googlePlaceId,
-            sourceRecordId: googlePlaceId,
+            sourceRecordId: googlePlaceId || place.sourceRecordId,
             latitude: place.latitude ? Number(place.latitude) : undefined,
             longitude: place.longitude ? Number(place.longitude) : undefined,
             rating: place.rating ? Number(place.rating) : undefined,
@@ -1632,7 +1765,7 @@ export class DataCaptureService {
             priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
             value: 0,
             createdById: numUserId,
-            captureRequestId: place.captureRequestId || dto.jobId || undefined,
+            captureRequestId: placeCaptureRequestId,
           },
         });
       }
@@ -1664,19 +1797,36 @@ export class DataCaptureService {
         });
       } catch (_) {}
 
-      // Update DataCapturePlace record if numeric ID exists
-      if (place.id && typeof place.id === 'number') {
-        try {
+      // Update DataCapturePlace record ONLY after Lead creation succeeds (Requirement 22)
+      try {
+        if (place.id && typeof place.id === 'number') {
           await this.prisma.dataCapturePlace.update({
             where: { id: place.id },
             data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
           });
-        } catch (_) {}
-      }
+        } else if (googlePlaceId) {
+          await this.prisma.dataCapturePlace.updateMany({
+            where: { customerId: numCustomerId, googlePlaceId, deletedAt: null },
+            data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
+          });
+        }
+      } catch (_) {}
+
+      perRecordResults.push({
+        sourceRecordId: googlePlaceId || place.sourceRecordId || String(place.id || ''),
+        googlePlaceId: googlePlaceId || undefined,
+        businessName,
+        imported: true,
+        leadId: createdLead.id,
+        duplicate: false,
+        duplicateMatchReason: null,
+      });
 
       createdLeads.push(createdLead);
       importedCount++;
     }
+
+    // Update place records was done per-record above
 
     return {
       success: true,
@@ -1684,13 +1834,14 @@ export class DataCaptureService {
       imported: importedCount,
       skippedDuplicates,
       duplicateNames,
+      records: perRecordResults,
       lead: createdLeads[0] || null,
       leads: createdLeads,
       capture: {
         id: dto.jobId || 'captured',
         status: importedCount > 0 ? 'IMPORTED' : (skippedDuplicates > 0 ? 'DUPLICATE' : 'FAILED'),
       },
-      message: `Successfully imported ${importedCount} leads into CRM. (${skippedDuplicates} duplicates skipped)`,
+      message: `Successfully imported ${importedCount} leads into CRM (${skippedDuplicates} duplicates skipped).`,
     };
   }
 

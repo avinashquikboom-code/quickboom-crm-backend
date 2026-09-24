@@ -363,6 +363,7 @@ model Lead {
   address              String?
   city                 String?
   state                String?
+  pincode              String?
   category             String?
   source               String                 @default("WEBSITE")
   status               LeadStatus             @default(NEW)
