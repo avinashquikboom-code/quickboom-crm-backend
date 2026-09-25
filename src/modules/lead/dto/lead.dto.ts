@@ -317,7 +317,7 @@ export class CreateLeadDto {
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
     if (direct && direct !== 'Business Lead' && direct !== 'Direct Lead' && direct !== 'New Lead') return direct;
-    const bName = cleanOptionalField({ value: obj?.businessName });
+    const bName = cleanOptionalField({ value: obj?.businessName }) || cleanOptionalField({ value: obj?.business_name });
     if (bName && bName !== 'Business Lead' && bName !== 'Direct Lead' && bName !== 'New Lead') return bName;
     if (obj?.displayName) {
       const dn = typeof obj.displayName === 'object' ? obj.displayName?.text : obj.displayName;
@@ -619,6 +619,11 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   businessName?: string;
+
+  @ApiPropertyOptional({ description: 'Google Discovery business name alias for companyName' })
+  @IsString()
+  @IsOptional()
+  business_name?: string;
 }
 
 export class AddLeadImageDto {

@@ -685,6 +685,102 @@ export class LeadService {
 
     const cleaned = this.sanitizeLeadFields(dto);
 
+    // Pre-transaction resolution from DataCapturePlace for Google Discovery / Data Capture leads
+    const isFakeCompanyName =
+      !cleaned.companyName ||
+      cleaned.companyName === 'Business Lead' ||
+      cleaned.companyName === 'Direct Lead' ||
+      cleaned.companyName === 'New Lead' ||
+      cleaned.companyName === 'Unnamed Business' ||
+      cleaned.companyName === 'Lead' ||
+      cleaned.companyName === 'Business';
+
+    if (isFakeCompanyName || !cleaned.sourceRecordId || !cleaned.googlePlaceId) {
+      try {
+        let matchingPlace: any = null;
+        // Priority 1: Match by googlePlaceId
+        if (cleaned.googlePlaceId && !cleaned.googlePlaceId.startsWith('custom_')) {
+          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: { customerId: numCustomerId, googlePlaceId: cleaned.googlePlaceId, deletedAt: null },
+          });
+        }
+        // Priority 2: Match by sourceRecordId
+        if (!matchingPlace && cleaned.sourceRecordId && !cleaned.sourceRecordId.startsWith('custom_')) {
+          const numSourceId = Number(cleaned.sourceRecordId);
+          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: {
+              customerId: numCustomerId,
+              deletedAt: null,
+              OR: [
+                ...(!isNaN(numSourceId) && numSourceId > 0 ? [{ id: numSourceId }] : []),
+                { googlePlaceId: cleaned.sourceRecordId },
+                { sourceRecordId: cleaned.sourceRecordId },
+              ],
+            },
+          });
+        }
+        // Priority 3: Match by captureRequestId (e.g. job-0a2ffd2a_custom_7 -> jobId: job-0a2ffd2a, index: 7)
+        if (!matchingPlace && cleaned.captureRequestId) {
+          const parsedJobId = cleaned.captureRequestId.includes('_custom_')
+            ? cleaned.captureRequestId.split('_custom_')[0]
+            : (cleaned.captureRequestId.match(/^(job-[a-zA-Z0-9_\-]+)/)?.[1] || cleaned.captureRequestId);
+          const idxMatch = cleaned.captureRequestId.match(/_custom_(\d+)/);
+          const targetIdx = idxMatch ? parseInt(idxMatch[1], 10) : 0;
+          const jobPlaces = await this.prisma.dataCapturePlace.findMany({
+            where: { customerId: numCustomerId, jobId: parsedJobId, deletedAt: null },
+            orderBy: { id: 'asc' },
+          });
+          if (jobPlaces.length > 0) {
+            matchingPlace = jobPlaces[targetIdx] || jobPlaces[0];
+          }
+        }
+
+        if (matchingPlace) {
+          const rawBiz = (matchingPlace.businessName || '').trim();
+          if (rawBiz && rawBiz !== 'Business Lead' && rawBiz !== 'Direct Lead' && rawBiz !== 'New Lead' && rawBiz !== 'Unnamed Business') {
+            cleaned.companyName = rawBiz;
+            cleaned.title = rawBiz;
+          }
+          if (!cleaned.googlePlaceId && matchingPlace.googlePlaceId && !matchingPlace.googlePlaceId.startsWith('custom_')) {
+            cleaned.googlePlaceId = matchingPlace.googlePlaceId;
+          }
+          if (!cleaned.sourceRecordId) {
+            cleaned.sourceRecordId = matchingPlace.sourceRecordId || String(matchingPlace.id);
+          }
+          if (!cleaned.phone && matchingPlace.phone) cleaned.phone = matchingPlace.phone;
+          if (!cleaned.email && matchingPlace.email) cleaned.email = matchingPlace.email;
+          if (!cleaned.website && matchingPlace.website) cleaned.website = matchingPlace.website;
+          if (!cleaned.address && matchingPlace.address) cleaned.address = matchingPlace.address;
+          if (!cleaned.category && matchingPlace.category) cleaned.category = matchingPlace.category;
+          if (cleaned.rating === undefined && matchingPlace.rating !== null && matchingPlace.rating !== undefined) cleaned.rating = Number(matchingPlace.rating);
+          if (cleaned.reviewCount === undefined && matchingPlace.reviewCount !== null && matchingPlace.reviewCount !== undefined) cleaned.reviewCount = Number(matchingPlace.reviewCount);
+          if (cleaned.latitude === undefined && matchingPlace.latitude !== null && matchingPlace.latitude !== undefined) cleaned.latitude = Number(matchingPlace.latitude);
+          if (cleaned.longitude === undefined && matchingPlace.longitude !== null && matchingPlace.longitude !== undefined) cleaned.longitude = Number(matchingPlace.longitude);
+        }
+      } catch (placeErr: any) {
+        this.logger.warn(`[LeadService] DataCapturePlace pre-resolution warning: ${placeErr?.message}`);
+      }
+    }
+
+    // Ensure business name does NOT become contact name
+    if (cleaned.firstName === 'Business' && (cleaned.lastName === 'Lead' || cleaned.lastName === 'Owner' || cleaned.lastName === 'Prospect' || !cleaned.lastName)) {
+      cleaned.firstName = '';
+      cleaned.lastName = '';
+    }
+    if (cleaned.firstName && cleaned.companyName && cleaned.firstName.toLowerCase() === cleaned.companyName.toLowerCase()) {
+      cleaned.firstName = '';
+    }
+    if (cleaned.lastName && cleaned.companyName && cleaned.lastName.toLowerCase() === cleaned.companyName.toLowerCase()) {
+      cleaned.lastName = '';
+    }
+
+    // Ensure title matches companyName if title was placeholder
+    if (cleaned.companyName && cleaned.companyName !== 'Business Lead' && cleaned.companyName !== 'Direct Lead' && cleaned.companyName !== 'New Lead' && cleaned.companyName !== 'Unnamed Business') {
+      if (!cleaned.title || cleaned.title === 'Business Lead' || cleaned.title === 'Direct Lead' || cleaned.title === 'New Lead' || cleaned.title === 'Unnamed Business') {
+        cleaned.title = cleaned.companyName;
+      }
+    }
+
     if (isGoogleLead) {
       this.logger.log(
         `[GoogleDiscovery]\nFirst name present: ${Boolean(cleaned.firstName)}\nLast name present: ${Boolean(cleaned.lastName)}\nEmail present: ${Boolean(cleaned.email)}\nMobile present: ${Boolean(cleaned.phone)}`,

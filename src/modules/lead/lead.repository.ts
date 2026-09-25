@@ -120,8 +120,8 @@ export class LeadRepository {
     const rawFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
     const rawLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
     const isFakeName = (s: string) => ['business', 'lead', 'owner', 'unknown', 'direct', 'prospect'].includes(s.toLowerCase());
-    const resolvedFirstName = isFakeName(rawFirstName) ? '' : rawFirstName;
-    const resolvedLastName = isFakeName(rawLastName) ? '' : rawLastName;
+    let resolvedFirstName: string | null = isFakeName(rawFirstName) ? '' : rawFirstName;
+    let resolvedLastName: string | null = isFakeName(rawLastName) ? '' : rawLastName;
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
@@ -139,25 +139,59 @@ export class LeadRepository {
     if (!resolvedBusinessName && (leadData.googlePlaceId || leadData.sourceRecordId || leadData.captureRequestId)) {
       try {
         const numSrc = Number(leadData.sourceRecordId);
-        const matchPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: {
-            customerId: numCustomerId,
-            deletedAt: null,
-            OR: [
-              ...(leadData.googlePlaceId && !leadData.googlePlaceId.startsWith('custom_') ? [{ googlePlaceId: leadData.googlePlaceId }] : []),
-              ...(!isNaN(numSrc) && numSrc > 0 ? [{ id: numSrc }] : []),
-              ...(leadData.sourceRecordId ? [{ sourceRecordId: leadData.sourceRecordId }] : []),
-            ],
-          },
-          select: { businessName: true },
-        });
+        let matchPlace: any = null;
+        if (leadData.googlePlaceId && !leadData.googlePlaceId.startsWith('custom_')) {
+          matchPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: { customerId: numCustomerId, googlePlaceId: leadData.googlePlaceId, deletedAt: null },
+          });
+        }
+        if (!matchPlace && leadData.sourceRecordId && !leadData.sourceRecordId.startsWith('custom_')) {
+          matchPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: {
+              customerId: numCustomerId,
+              deletedAt: null,
+              OR: [
+                ...(!isNaN(numSrc) && numSrc > 0 ? [{ id: numSrc }] : []),
+                { googlePlaceId: leadData.sourceRecordId },
+                { sourceRecordId: leadData.sourceRecordId },
+              ],
+            },
+          });
+        }
+        if (!matchPlace && leadData.captureRequestId) {
+          const parsedJobId = leadData.captureRequestId.includes('_custom_')
+            ? leadData.captureRequestId.split('_custom_')[0]
+            : (leadData.captureRequestId.match(/^(job-[a-zA-Z0-9_\-]+)/)?.[1] || leadData.captureRequestId);
+          const idxMatch = leadData.captureRequestId.match(/_custom_(\d+)/);
+          const targetIdx = idxMatch ? parseInt(idxMatch[1], 10) : 0;
+          const jobPlaces = await this.prisma.dataCapturePlace.findMany({
+            where: { customerId: numCustomerId, jobId: parsedJobId, deletedAt: null },
+            orderBy: { id: 'asc' },
+          });
+          if (jobPlaces.length > 0) {
+            matchPlace = jobPlaces[targetIdx] || jobPlaces[0];
+          }
+        }
         if (matchPlace?.businessName && matchPlace.businessName !== 'Business Lead' && matchPlace.businessName !== 'Direct Lead' && matchPlace.businessName !== 'New Lead' && matchPlace.businessName !== 'Unnamed Business') {
           resolvedBusinessName = matchPlace.businessName.trim();
+          if (!leadData.sourceRecordId) leadData.sourceRecordId = matchPlace.sourceRecordId || String(matchPlace.id);
+          if (!leadData.googlePlaceId && matchPlace.googlePlaceId && !matchPlace.googlePlaceId.startsWith('custom_')) leadData.googlePlaceId = matchPlace.googlePlaceId;
         }
       } catch (_) {}
     }
 
-    const contactPerson = (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null);
+    if (resolvedFirstName === 'Business' && (resolvedLastName === 'Lead' || resolvedLastName === 'Owner' || resolvedLastName === 'Prospect' || !resolvedLastName)) {
+      resolvedFirstName = null;
+      resolvedLastName = null;
+    }
+    if (resolvedFirstName && resolvedBusinessName && resolvedFirstName.toLowerCase() === resolvedBusinessName.toLowerCase()) {
+      resolvedFirstName = null;
+    }
+    if (resolvedLastName && resolvedBusinessName && resolvedLastName.toLowerCase() === resolvedBusinessName.toLowerCase()) {
+      resolvedLastName = null;
+    }
+
+    const contactPerson = (resolvedFirstName || resolvedLastName ? `${resolvedFirstName || ''} ${resolvedLastName || ''}`.trim() : null);
     const validContact = contactPerson && contactPerson !== 'Business Lead' && contactPerson !== 'Business Owner' && contactPerson !== 'Unknown Business' ? contactPerson : null;
 
     const resolvedTitle =
