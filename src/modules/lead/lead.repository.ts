@@ -125,7 +125,7 @@ export class LeadRepository {
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
-    const resolvedBusinessName =
+    let resolvedBusinessName =
       (leadData.companyName && leadData.companyName !== 'Business Lead' && leadData.companyName !== 'Direct Lead' && leadData.companyName !== 'New Lead' ? leadData.companyName : null) ||
       (leadData.businessName && leadData.businessName !== 'Business Lead' && leadData.businessName !== 'Direct Lead' && leadData.businessName !== 'New Lead' ? leadData.businessName : null) ||
       (typeof leadData.displayName === 'object' ? leadData.displayName?.text : leadData.displayName) ||
@@ -135,6 +135,27 @@ export class LeadRepository {
       (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
       (name && !String(name).startsWith('places/') && name !== 'Business Lead' && name !== 'Direct Lead' && name !== 'New Lead' ? name : null) ||
       (full_name && !String(full_name).startsWith('places/') && full_name !== 'Business Lead' && full_name !== 'Direct Lead' && full_name !== 'New Lead' ? full_name : null);
+
+    if (!resolvedBusinessName && (leadData.googlePlaceId || leadData.sourceRecordId || leadData.captureRequestId)) {
+      try {
+        const numSrc = Number(leadData.sourceRecordId);
+        const matchPlace = await this.prisma.dataCapturePlace.findFirst({
+          where: {
+            customerId: numCustomerId,
+            deletedAt: null,
+            OR: [
+              ...(leadData.googlePlaceId && !leadData.googlePlaceId.startsWith('custom_') ? [{ googlePlaceId: leadData.googlePlaceId }] : []),
+              ...(!isNaN(numSrc) && numSrc > 0 ? [{ id: numSrc }] : []),
+              ...(leadData.sourceRecordId ? [{ sourceRecordId: leadData.sourceRecordId }] : []),
+            ],
+          },
+          select: { businessName: true },
+        });
+        if (matchPlace?.businessName && matchPlace.businessName !== 'Business Lead' && matchPlace.businessName !== 'Direct Lead' && matchPlace.businessName !== 'New Lead' && matchPlace.businessName !== 'Unnamed Business') {
+          resolvedBusinessName = matchPlace.businessName.trim();
+        }
+      } catch (_) {}
+    }
 
     const contactPerson = (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null);
     const validContact = contactPerson && contactPerson !== 'Business Lead' && contactPerson !== 'Business Owner' && contactPerson !== 'Unknown Business' ? contactPerson : null;
@@ -824,6 +845,10 @@ export class LeadRepository {
       }
     }
 
+    if (Array.isArray(data) && data.length > 0) {
+      await this.resolveMissingLeadBusinessNames(data);
+    }
+
     return {
       data: Array.isArray(data) ? data.map((l) => this.enrichLeadRecord(l)) : [],
       meta: {
@@ -833,6 +858,111 @@ export class LeadRepository {
         totalPages: Math.max(Math.ceil((Number(total) || 0) / limit), 1),
       },
     };
+  }
+
+  public async resolveMissingLeadBusinessNames(leads: any[]): Promise<void> {
+    const isFake = (s: any) =>
+      !s ||
+      typeof s !== 'string' ||
+      ['business lead', 'direct lead', 'new lead', 'unnamed business', 'unknown business', 'placeholder lead', 'test lead', 'placeholder customer', 'test customer', '.'].includes(s.trim().toLowerCase());
+
+    const candidateLeads = leads.filter((l) => {
+      const hasValidCompany = !isFake(l.companyName);
+      const hasValidBiz = !isFake(l.businessName);
+      return !hasValidCompany || !hasValidBiz || isFake(l.title);
+    });
+
+    if (candidateLeads.length === 0) return;
+
+    for (const lead of candidateLeads) {
+      try {
+        let matchingPlace: any = null;
+
+        // 1. By importedLeadId in DataCapturePlace
+        matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+          where: {
+            customerId: lead.customerId,
+            importedLeadId: lead.id,
+            deletedAt: null,
+          },
+          select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
+        });
+
+        // 2. By googlePlaceId
+        if (!matchingPlace && lead.googlePlaceId && !lead.googlePlaceId.startsWith('custom_')) {
+          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: {
+              customerId: lead.customerId,
+              googlePlaceId: lead.googlePlaceId,
+              deletedAt: null,
+            },
+            select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
+          });
+        }
+
+        // 3. By sourceRecordId
+        if (!matchingPlace && lead.sourceRecordId && !lead.sourceRecordId.startsWith('custom_')) {
+          const numSrc = Number(lead.sourceRecordId);
+          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+            where: {
+              customerId: lead.customerId,
+              deletedAt: null,
+              OR: [
+                ...(!isNaN(numSrc) && numSrc > 0 ? [{ id: numSrc }] : []),
+                { sourceRecordId: lead.sourceRecordId },
+                { googlePlaceId: lead.sourceRecordId },
+              ],
+            },
+            select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
+          });
+        }
+
+        // 4. By captureRequestId job ID
+        if (!matchingPlace && lead.captureRequestId) {
+          const jobIdMatch = lead.captureRequestId.match(/^(job-[a-zA-Z0-9]+)/);
+          if (jobIdMatch) {
+            const parsedJobId = jobIdMatch[1];
+            matchingPlace = await this.prisma.dataCapturePlace.findFirst({
+              where: {
+                customerId: lead.customerId,
+                jobId: parsedJobId,
+                deletedAt: null,
+              },
+              select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
+            });
+          }
+        }
+
+        if (matchingPlace && matchingPlace.businessName && !isFake(matchingPlace.businessName)) {
+          const resolvedName = matchingPlace.businessName.trim();
+          lead.companyName = resolvedName;
+          lead.businessName = resolvedName;
+          lead.name = resolvedName;
+          if (isFake(lead.title)) {
+            lead.title = resolvedName;
+          }
+          if (!lead.phone && matchingPlace.phone) lead.phone = matchingPlace.phone;
+          if (!lead.website && matchingPlace.website) lead.website = matchingPlace.website;
+          if (!lead.email && matchingPlace.email) lead.email = matchingPlace.email;
+          if (!lead.address && matchingPlace.address) lead.address = matchingPlace.address;
+
+          // Asynchronously update in PostgreSQL so database has real companyName
+          this.prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              companyName: resolvedName,
+              ...(isFake(lead.title) ? { title: resolvedName } : {}),
+              ...(!lead.phone && matchingPlace.phone ? { phone: matchingPlace.phone } : {}),
+              ...(!lead.website && matchingPlace.website ? { website: matchingPlace.website } : {}),
+              ...(!lead.email && matchingPlace.email ? { email: matchingPlace.email } : {}),
+              ...(!lead.address && matchingPlace.address ? { address: matchingPlace.address } : {}),
+            },
+          }).catch(() => {});
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to resolve DataCapturePlace for lead #${lead.id}: ${err?.message || err}`);
+      }
+    }
   }
 
   public enrichLeadRecord(lead: any): any {
@@ -876,6 +1006,7 @@ export class LeadRepository {
       lastName: resolvedLastName,
       companyName: resolvedBiz || safeFallbackBiz,
       businessName: safeFallbackBiz,
+      title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : safeFallbackBiz),
       name: safeFallbackBiz,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
     };
@@ -925,6 +1056,9 @@ export class LeadRepository {
           },
         },
       });
+      if (result) {
+        await this.resolveMissingLeadBusinessNames([result]);
+      }
       return this.enrichLeadRecord(result);
     } catch (err: any) {
       this.logger.warn(`findOne with images failed: ${err?.message || err}. Attempting fallback without images...`);
@@ -955,6 +1089,9 @@ export class LeadRepository {
           },
         },
       });
+      if (fallbackResult) {
+        await this.resolveMissingLeadBusinessNames([fallbackResult]);
+      }
       return this.enrichLeadRecord(fallbackResult);
     }
   }
