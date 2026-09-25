@@ -9,7 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, RoleType } from '@prisma/client';
+import { Prisma, RoleType, CommissionStatus } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -488,6 +488,8 @@ export class CustomerService {
       mrr: 0,
       aiCredits: 0,
       aiWallet: { balance: 0, totalEarned: 0, totalSpent: 0 },
+      commission: null,
+      upcomingCommission: null,
       lastActivity: l.updatedAt || l.createdAt,
       createdAt: l.createdAt,
     };
@@ -868,6 +870,17 @@ export class CustomerService {
     const companyId = user?.customerId || user?.employee?.customerId;
     const isSuperAdmin = isUserSuperAdmin(user);
     const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
+
+    let effectiveEmployeeId = employeeId;
+    if (!effectiveEmployeeId && user?.id && !isPrivilegedAdmin) {
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (emp) {
+        effectiveEmployeeId = emp.id;
+      }
+    }
 
     const where: any = {
       deletedAt: null,
@@ -1341,6 +1354,12 @@ export class CustomerService {
             totalSpent: true,
           },
         },
+        commissions: {
+          where: {
+            status: { in: [CommissionStatus.PENDING, CommissionStatus.APPROVED, CommissionStatus.PAID] },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
 
@@ -1410,6 +1429,56 @@ export class CustomerService {
         : (c.name || linkedLead?.title || 'Customer');
 
       const primaryDisplayName = resolvedCompanyName.length > 0 ? resolvedCompanyName : (c.name || resolvedCustomerName);
+
+      // Commission Resolution (Strict Employee Scoping & Single Source of Truth)
+      const empCommissions = (c.commissions || []).filter((comm: any) => {
+        if (effectiveEmployeeId) {
+          return comm.employeeId === effectiveEmployeeId;
+        }
+        return true;
+      });
+
+      const upcomingList = empCommissions.filter(
+        (comm: any) =>
+          (comm.status === CommissionStatus.PENDING || comm.status === CommissionStatus.APPROVED) &&
+          Number(comm.commissionAmount) > 0,
+      );
+
+      const upcomingAmount = upcomingList.reduce(
+        (acc: number, curr: any) => acc + Number(curr.commissionAmount || 0),
+        0,
+      );
+
+      const latestUpcoming = upcomingList[0];
+
+      let commissionData: any = null;
+      let upcomingCommissionVal: number | null = null;
+
+      if (upcomingAmount > 0) {
+        commissionData = {
+          amount: upcomingAmount,
+          status: 'UPCOMING',
+          rate: latestUpcoming?.commissionRate,
+          type: latestUpcoming?.commissionType,
+        };
+        upcomingCommissionVal = upcomingAmount;
+      } else {
+        const paidList = empCommissions.filter(
+          (comm: any) => comm.status === CommissionStatus.PAID && Number(comm.commissionAmount) > 0,
+        );
+        if (paidList.length > 0) {
+          const paidAmount = paidList.reduce(
+            (acc: number, curr: any) => acc + Number(curr.commissionAmount || 0),
+            0,
+          );
+          commissionData = {
+            amount: paidAmount,
+            status: 'PAID',
+            paidAt: paidList[0]?.paidAt,
+          };
+          upcomingCommissionVal = null;
+        }
+      }
 
       return {
         id: c.id,
@@ -1496,6 +1565,8 @@ export class CustomerService {
         subscriptionAmount: totalAmount,
         baseAmount: basePrice,
         gstAmount: gst,
+        commission: commissionData,
+        upcomingCommission: upcomingCommissionVal,
         users: c._count.users || 1,
         leads: c._count.leads || 0,
         deals: c._count.deals || 0,
@@ -1714,6 +1785,12 @@ export class CustomerService {
             companies: true,
           },
         },
+        commissions: {
+          where: {
+            status: { in: [CommissionStatus.PENDING, CommissionStatus.APPROVED, CommissionStatus.PAID] },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
 
@@ -1751,6 +1828,67 @@ export class CustomerService {
         throw new ForbiddenException(
           'You do not have permission to access details for this customer.',
         );
+      }
+    }
+
+    const employeeId = user?.employeeId || user?.employee?.id;
+    let effectiveEmployeeId = employeeId;
+    if (!effectiveEmployeeId && user?.id && !isUserSuperAdmin(user) && !isUserAdmin(user)) {
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (emp) {
+        effectiveEmployeeId = emp.id;
+      }
+    }
+
+    const empCommissions = (customer.commissions || []).filter((comm: any) => {
+      if (effectiveEmployeeId) {
+        return comm.employeeId === effectiveEmployeeId;
+      }
+      return true;
+    });
+
+    const upcomingList = empCommissions.filter(
+      (comm: any) =>
+        (comm.status === CommissionStatus.PENDING || comm.status === CommissionStatus.APPROVED) &&
+        Number(comm.commissionAmount) > 0,
+    );
+
+    const upcomingAmount = upcomingList.reduce(
+      (acc: number, curr: any) => acc + Number(curr.commissionAmount || 0),
+      0,
+    );
+
+    const latestUpcoming = upcomingList[0];
+
+    let commissionData: any = null;
+    let upcomingCommissionVal: number | null = null;
+
+    if (upcomingAmount > 0) {
+      commissionData = {
+        amount: upcomingAmount,
+        status: 'UPCOMING',
+        rate: latestUpcoming?.commissionRate,
+        type: latestUpcoming?.commissionType,
+      };
+      upcomingCommissionVal = upcomingAmount;
+    } else {
+      const paidList = empCommissions.filter(
+        (comm: any) => comm.status === CommissionStatus.PAID && Number(comm.commissionAmount) > 0,
+      );
+      if (paidList.length > 0) {
+        const paidAmount = paidList.reduce(
+          (acc: number, curr: any) => acc + Number(curr.commissionAmount || 0),
+          0,
+        );
+        commissionData = {
+          amount: paidAmount,
+          status: 'PAID',
+          paidAt: paidList[0]?.paidAt,
+        };
+        upcomingCommissionVal = null;
       }
     }
 
@@ -1881,6 +2019,8 @@ export class CustomerService {
                 : Number(activeSub.plan.monthlyPrice),
           }
         : null,
+      commission: commissionData,
+      upcomingCommission: upcomingCommissionVal,
       userCount: customer._count.users,
       leadCount: customer._count.leads,
       dealCount: customer._count.deals,
