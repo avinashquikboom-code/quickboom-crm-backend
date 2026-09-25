@@ -14,6 +14,7 @@ import {
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
+  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
@@ -1752,6 +1753,7 @@ export class DataCaptureService implements OnModuleInit {
     userId: string | number,
     id: number | string,
     captureRequestId?: string,
+    dto?: CreateLeadFromPlaceDto,
   ): Promise<{
     success: boolean;
     statusCode?: number;
@@ -1762,7 +1764,7 @@ export class DataCaptureService implements OnModuleInit {
     message: string;
     isDuplicate: boolean;
   }> {
-    const numCustomerId = Number(customerId);
+    let numCustomerId = Number(customerId);
     const numId = Number(id);
 
     let place = !isNaN(numId)
@@ -1782,6 +1784,44 @@ export class DataCaptureService implements OnModuleInit {
           ],
         },
       });
+    }
+
+    if (!place && !isNaN(numId)) {
+      const anyPlace = await this.prisma.dataCapturePlace.findFirst({
+        where: { id: numId, deletedAt: null },
+      });
+      if (anyPlace) {
+        place = anyPlace;
+        if (isNaN(numCustomerId) || numCustomerId <= 0) {
+          numCustomerId = anyPlace.customerId;
+        }
+      }
+    }
+
+    if (!place && (dto?.businessName || dto?.companyName)) {
+      const biz = (dto.businessName || dto.companyName || '').trim();
+      place = {
+        id: !isNaN(numId) ? numId : undefined,
+        customerId: numCustomerId,
+        googlePlaceId: dto.googlePlaceId || (typeof id === 'string' && !id.startsWith('custom_') ? id : undefined),
+        sourceRecordId: dto.sourceRecordId || String(id),
+        businessName: biz,
+        category: dto.category || 'General',
+        address: dto.address,
+        phone: dto.phone,
+        email: dto.email,
+        website: dto.website,
+        rating: dto.rating ? Number(dto.rating) : undefined,
+        reviewCount: dto.reviewCount ? Number(dto.reviewCount) : undefined,
+        latitude: dto.latitude ? Number(dto.latitude) : undefined,
+        longitude: dto.longitude ? Number(dto.longitude) : undefined,
+        source: dto.source || 'GOOGLE_PLACES',
+        status: 'CAPTURED',
+        photos: dto.photos || dto.googlePhotos,
+        socialMedia: dto.socialMedia,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any;
     }
 
     if (!place) {
@@ -1858,10 +1898,30 @@ export class DataCaptureService implements OnModuleInit {
       }
     }
 
+    const importPlace = {
+      ...(place || {}),
+      id: place?.id || (!isNaN(numId) ? numId : undefined),
+      businessName: place?.businessName || dto?.businessName || dto?.companyName,
+      phone: place?.phone || dto?.phone,
+      email: place?.email || dto?.email,
+      website: place?.website || dto?.website,
+      address: place?.address || dto?.address,
+      googlePlaceId: place?.googlePlaceId || dto?.googlePlaceId,
+      sourceRecordId: place?.sourceRecordId || dto?.sourceRecordId || String(id),
+      category: place?.category || dto?.category,
+      rating: place?.rating ?? dto?.rating,
+      reviewCount: place?.reviewCount ?? dto?.reviewCount,
+      latitude: place?.latitude ?? dto?.latitude,
+      longitude: place?.longitude ?? dto?.longitude,
+      photos: place?.photos || dto?.photos,
+      googlePhotos: (place as any)?.rawData?.googlePhotos || dto?.googlePhotos,
+      socialMedia: place?.socialMedia || dto?.socialMedia,
+    };
+
     const importRes = await this.importToLeads(customerId, userId, {
-      placeIds: [String(place.id)],
-      places: [place],
-      captureRequestId: captureRequestId || place.jobId,
+      placeIds: [String(place?.id || id)],
+      places: [importPlace],
+      captureRequestId: captureRequestId || dto?.captureRequestId || place.jobId,
     });
 
     const lead = importRes.lead || importRes.leads?.[0] || null;
@@ -2045,16 +2105,6 @@ export class DataCaptureService implements OnModuleInit {
       }
     }
 
-    // Resolve authenticated Employee context (Section 15)
-    let employeeId: number | null = null;
-    try {
-      const emp = await this.prisma.employee.findFirst({
-        where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
-        select: { id: true },
-      });
-      if (emp) employeeId = emp.id;
-    } catch (_) {}
-
     // Resolve valid createdById user safely (Section 15)
     let validCreatedById: number = numUserId;
     try {
@@ -2081,17 +2131,46 @@ export class DataCaptureService implements OnModuleInit {
       }
     } catch (_) {}
 
+    // Resolve authenticated Employee context & Assignment (Section 6 & 15)
+    let employeeId: number | null = null;
+    let assignedToUserId: number | null = validCreatedById || numUserId;
+    try {
+      let emp = await this.prisma.employee.findFirst({
+        where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
+        select: { id: true, userId: true, customerId: true },
+      });
+      if (!emp) {
+        emp = await this.prisma.employee.findFirst({
+          where: { userId: numUserId, customerId: numCustomerId },
+          select: { id: true, userId: true, customerId: true },
+        });
+      }
+      if (!emp) {
+        emp = await this.prisma.employee.findFirst({
+          where: { userId: numUserId },
+          select: { id: true, userId: true, customerId: true },
+        });
+      }
+      if (emp) {
+        employeeId = emp.id;
+        if (emp.userId) assignedToUserId = emp.userId;
+        if (isNaN(numCustomerId) || numCustomerId <= 0) {
+          numCustomerId = emp.customerId;
+        }
+      }
+    } catch (_) {}
+
     // Gather candidate descriptors from DTO (Section 3)
     let rawCandidates: any[] = [];
     if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
       rawCandidates = dto.places;
     } else if (dto.placeIds && Array.isArray(dto.placeIds) && dto.placeIds.length > 0) {
-      rawCandidates = dto.placeIds.map((id) => ({ id, googlePlaceId: id, sourceRecordId: id }));
+      rawCandidates = dto.placeIds.map((id) => ({ ...dto, id, googlePlaceId: id, sourceRecordId: id }));
     } else if (dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id) {
       const singleId = dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id;
-      rawCandidates = [{ id: singleId, sourceRecordId: singleId }];
+      rawCandidates = [{ ...dto, id: singleId, sourceRecordId: dto.sourceRecordId || singleId }];
     } else if (dto.googlePlaceId) {
-      rawCandidates = [{ googlePlaceId: dto.googlePlaceId, sourceRecordId: dto.googlePlaceId }];
+      rawCandidates = [{ ...dto, googlePlaceId: dto.googlePlaceId, sourceRecordId: dto.sourceRecordId || dto.googlePlaceId }];
     } else if (dto.jobId) {
       const jobPlaces = await this.prisma.dataCapturePlace.findMany({
         where: { jobId: dto.jobId, customerId: numCustomerId, deletedAt: null },
@@ -2436,6 +2515,7 @@ export class DataCaptureService implements OnModuleInit {
                   value: 0,
                   createdById: validCreatedById,
                   employeeId: employeeId || null,
+                  assignedToId: assignedToUserId || validCreatedById || null,
                   googlePlaceId,
                   latitude: resolvedLatitude,
                   longitude: resolvedLongitude,
@@ -2446,24 +2526,27 @@ export class DataCaptureService implements OnModuleInit {
                   socialMedia: placeSocialMedia || null,
                 },
               });
-            } catch (_) {}
+            } catch (createErr: any) {
+              this.logger.error(`[IMPORT ERROR] tx.lead.create failed for "${businessName}": ${createErr?.message || createErr}`);
+              throw createErr;
+            }
           }
 
           if (!created && this.leadService && typeof this.leadService.createLead === 'function') {
-            try {
-              created = await this.leadService.createLead(numCustomerId, validCreatedById, {
-                companyName: businessName,
-                phone: normalizedPhone || undefined,
-                email: normalizedEmail || undefined,
-                captureRequestId: placeCaptureRequestId,
-                sourceRecordId,
-                googlePlaceId: googlePlaceId || undefined,
-              });
-            } catch (_) {}
+            created = await this.leadService.createLead(numCustomerId, validCreatedById, {
+              companyName: businessName,
+              title: businessName,
+              phone: normalizedPhone || undefined,
+              email: normalizedEmail || undefined,
+              captureRequestId: placeCaptureRequestId,
+              sourceRecordId,
+              googlePlaceId: googlePlaceId || undefined,
+              assignedToId: assignedToUserId || validCreatedById || undefined,
+            });
           }
 
           if (!created) {
-            created = { id: 999 };
+            throw new BadRequestException(`Failed to create Lead for "${businessName}"`);
           }
 
           // Attach Google Photos to LeadImage (Section 9)

@@ -213,7 +213,9 @@ export class LeadRepository {
       pincode: resolvedPincode,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
-      assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
+      assignedToId: dto.assignedToId
+        ? Number(dto.assignedToId)
+        : (employeeId && numCreatedById ? numCreatedById : (numCreatedById || undefined)),
       status,
       stageId,
       customerId: numCustomerId,

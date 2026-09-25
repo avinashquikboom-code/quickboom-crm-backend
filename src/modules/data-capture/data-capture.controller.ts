@@ -204,7 +204,7 @@ export class DataCaptureController {
     @Param('id') id: string,
     @Body() dto?: CreateLeadFromPlaceDto,
   ) {
-    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId);
+    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId, dto);
   }
 
   /**

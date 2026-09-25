@@ -480,5 +480,67 @@ export class CreateLeadFromPlaceDto {
   @IsOptional()
   @IsString()
   captureRequestId?: string;
+
+  @IsOptional()
+  @IsString()
+  businessName?: string;
+
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  website?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  googlePlaceId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceRecordId?: string;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  rating?: number;
+
+  @IsOptional()
+  reviewCount?: number;
+
+  @IsOptional()
+  latitude?: number;
+
+  @IsOptional()
+  longitude?: number;
+
+  @IsOptional()
+  photos?: any;
+
+  @IsOptional()
+  googlePhotos?: any;
+
+  @IsOptional()
+  socialMedia?: any;
 }
+
 
