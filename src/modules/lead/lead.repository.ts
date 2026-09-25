@@ -837,10 +837,17 @@ export class LeadRepository {
 
   public enrichLeadRecord(lead: any): any {
     if (!lead) return lead;
-    const resolvedBiz =
-      (lead.companyName && lead.companyName !== 'Business Lead' && lead.companyName !== 'Direct Lead' && lead.companyName !== 'New Lead' ? lead.companyName : null) ||
-      (lead.title && lead.title !== 'Business Lead' && lead.title !== 'Direct Lead' && lead.title !== 'New Lead' ? lead.title : null) ||
-      '';
+    const isFake = (s: any) =>
+      !s ||
+      typeof s !== 'string' ||
+      ['business lead', 'direct lead', 'new lead', 'unnamed business', 'unknown business', 'placeholder lead', 'test lead', 'placeholder customer', 'test customer', '.'].includes(s.trim().toLowerCase());
+
+    const cleanCompany = !isFake(lead.companyName) ? lead.companyName.trim() : null;
+    const cleanBiz = !isFake(lead.businessName) ? lead.businessName.trim() : null;
+    const cleanTitle = !isFake(lead.title) ? lead.title.trim() : null;
+
+    const resolvedBiz = cleanCompany || cleanBiz || cleanTitle || '';
+    const safeFallbackBiz = resolvedBiz || 'Unnamed Business';
 
     let upcomingCommission: number | null = null;
     if (Array.isArray(lead.commissions) && lead.commissions.length > 0) {
@@ -855,13 +862,19 @@ export class LeadRepository {
       }
     }
 
-    const cleanCompany = (lead.companyName && lead.companyName !== 'Business Lead' && lead.companyName !== 'Direct Lead' && lead.companyName !== 'New Lead') ? lead.companyName : null;
-    const cleanTitle = (lead.title && lead.title !== 'Business Lead' && lead.title !== 'Direct Lead' && lead.title !== 'New Lead') ? lead.title : null;
-    const safeFallbackBiz = resolvedBiz || cleanCompany || cleanTitle || 'Unnamed Business';
+    const isFakeContact = (s: any) =>
+      !s ||
+      typeof s !== 'string' ||
+      ['business', 'lead', 'owner', 'unknown', 'direct', 'prospect', 'customer', '.'].includes(s.trim().toLowerCase());
+
+    const resolvedFirstName = isFakeContact(lead.firstName) ? '' : lead.firstName;
+    const resolvedLastName = isFakeContact(lead.lastName) ? '' : lead.lastName;
 
     return {
       ...lead,
-      companyName: resolvedBiz || cleanCompany || safeFallbackBiz,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      companyName: resolvedBiz || safeFallbackBiz,
       businessName: safeFallbackBiz,
       name: safeFallbackBiz,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,

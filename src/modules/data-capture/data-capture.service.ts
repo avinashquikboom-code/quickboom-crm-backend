@@ -258,6 +258,8 @@ export class DataCaptureService implements OnModuleInit {
           { companyName: 'Business Lead' },
           { title: 'Direct Lead' },
           { companyName: 'Direct Lead' },
+          { title: 'Unnamed Business' },
+          { companyName: 'Unnamed Business' },
           { AND: [{ firstName: 'Business' }, { lastName: 'Lead' }] },
         ],
       };
@@ -308,7 +310,7 @@ export class DataCaptureService implements OnModuleInit {
           }
         }
 
-        if (matchingPlace && matchingPlace.businessName && matchingPlace.businessName !== 'Business Lead' && matchingPlace.businessName !== 'Direct Lead') {
+        if (matchingPlace && matchingPlace.businessName && matchingPlace.businessName !== 'Business Lead' && matchingPlace.businessName !== 'Direct Lead' && matchingPlace.businessName !== 'Unnamed Business') {
           const repairedName = matchingPlace.businessName.trim();
           await this.prisma.lead.update({
             where: { id: lead.id },
