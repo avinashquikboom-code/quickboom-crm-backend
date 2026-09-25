@@ -11,8 +11,11 @@ import {
   ValidationPipe,
   UsePipes,
   ForbiddenException,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -293,6 +296,38 @@ export class DataCaptureController {
     @Param('id') id: string,
   ) {
     return this.dataCaptureService.deletePlace(customerId, id);
+  }
+
+  /**
+   * GET /api/v1/data-capture/photo
+   * Public photo proxy endpoint resolving Google Places photos or CDN links safely without exposing credentials
+   */
+  @Public()
+  @Get('photo')
+  @ApiOperation({ summary: 'Proxy and resolve Google Places photo safely without exposing API keys' })
+  async proxyPhoto(
+    @Query('ref') ref: string,
+    @Query('url') url: string,
+    @Query('maxHeight') maxHeight: number,
+    @Query('maxWidth') maxWidth: number,
+    @Res() res: Response,
+  ) {
+    return this.dataCaptureService.proxyPhoto(ref || url, maxHeight, maxWidth, res);
+  }
+
+  /**
+   * GET /api/v1/data-capture/places/:id/photo
+   * Public endpoint resolving photo by place ID and index
+   */
+  @Public()
+  @Get('places/:id/photo')
+  @ApiOperation({ summary: 'Get primary or indexed photo for a captured place' })
+  async getPlacePhoto(
+    @Param('id') id: string,
+    @Query('index') index: number,
+    @Res() res: Response,
+  ) {
+    return this.dataCaptureService.proxyPlacePhoto(id, index, res);
   }
 
   /**

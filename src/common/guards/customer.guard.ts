@@ -1,4 +1,5 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, NotFoundException, Logger, Optional } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../utils/role.util';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -6,9 +7,22 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class CustomerGuard implements CanActivate {
   private readonly logger = new Logger(CustomerGuard.name);
 
-  constructor(private prisma?: PrismaService) {}
+  constructor(
+    private prisma?: PrismaService,
+    @Optional() private reflector?: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (this.reflector) {
+      const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (isPublic) {
+        return true;
+      }
+    }
+
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
