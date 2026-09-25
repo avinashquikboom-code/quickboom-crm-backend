@@ -21,6 +21,8 @@ import {
   ExtractionJob,
   ExtractionUsageSummary,
   DuplicateMatch,
+  GooglePlacePhoto,
+  SocialMediaHandles,
 } from './interfaces/captured-place.interface';
 
 @Injectable()
@@ -47,28 +49,129 @@ export class DataCaptureService {
   ].join(',');
 
   /**
-   * Resolve Google Places photo references to backend-proxied photo URLs.
+   * Resolve Google Places photo references to structured GooglePlacePhoto objects and displayable URLs.
    * Uses the Google Places API (New) Photos endpoint.
-   * Returns up to 5 public photo URLs for the given place.
+   * Returns up to 10 structured photos with resource name, media URL, width, and height.
    * Never throws — returns an empty array on any failure.
    */
-  private resolveGooglePhotoUrls(rawPlace: any, apiKey: string, maxPhotos = 5): string[] {
+  private resolveGooglePhotos(
+    rawPlace: any,
+    apiKey: string,
+    maxPhotos = 10,
+  ): GooglePlacePhoto[] {
     if (!rawPlace?.photos || !Array.isArray(rawPlace.photos) || rawPlace.photos.length === 0) {
       return [];
     }
-    const urls: string[] = [];
+    const googlePhotos: GooglePlacePhoto[] = [];
     for (const photo of rawPlace.photos.slice(0, maxPhotos)) {
-      // photo.name is the full resource name e.g. "places/ChI.../photos/Adri..."
       const ref = photo?.name || photo?.photoReference || photo?.photo_reference;
       if (!ref) continue;
       try {
-        // Google Places API (New) photo URL format — no server-side request needed, browser-resolvable
         const photoName = String(ref).startsWith('places/') ? ref : `places/${rawPlace.id}/photos/${ref}`;
         const url = `https://places.googleapis.com/v1/${photoName}/media?key=${apiKey}&maxHeightPx=800&maxWidthPx=800`;
-        urls.push(url);
+        const width = photo.widthPx || photo.width || undefined;
+        const height = photo.heightPx || photo.height || undefined;
+        googlePhotos.push({
+          name: photoName,
+          url,
+          width: typeof width === 'number' ? width : undefined,
+          height: typeof height === 'number' ? height : undefined,
+        });
       } catch (_) {}
     }
-    return urls;
+    return googlePhotos;
+  }
+
+  /**
+   * Helper to normalize raw or stored photos into structured GooglePlacePhoto objects and URL array.
+   */
+  private normalizeStoredPhotos(photosField: any): { googlePhotos: GooglePlacePhoto[]; photos: string[] } {
+    if (!photosField) {
+      return { googlePhotos: [], photos: [] };
+    }
+    let list: any[] = [];
+    if (Array.isArray(photosField)) {
+      list = photosField;
+    } else if (typeof photosField === 'string') {
+      try {
+        const parsed = JSON.parse(photosField);
+        if (Array.isArray(parsed)) list = parsed;
+        else if (typeof parsed === 'string') list = [parsed];
+      } catch {
+        list = [photosField];
+      }
+    }
+
+    const googlePhotos: GooglePlacePhoto[] = [];
+    const photos: string[] = [];
+
+    for (const item of list) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed.length > 0) {
+          photos.push(trimmed);
+          const match = trimmed.match(/(places\/[^/]+\/photos\/[^?&/]+)/);
+          const name = match ? match[1] : `places/photo/${googlePhotos.length + 1}`;
+          googlePhotos.push({
+            name,
+            url: trimmed,
+          });
+        }
+      } else if (typeof item === 'object') {
+        const url = item.url ? String(item.url).trim() : '';
+        if (url) {
+          photos.push(url);
+          googlePhotos.push({
+            name: item.name ? String(item.name) : `places/photo/${googlePhotos.length + 1}`,
+            url,
+            width: typeof item.width === 'number' ? item.width : undefined,
+            height: typeof item.height === 'number' ? item.height : undefined,
+          });
+        }
+      }
+    }
+
+    return { googlePhotos, photos };
+  }
+
+  /**
+   * Backwards-compatible string URLs resolver
+   */
+  private resolveGooglePhotoUrls(rawPlace: any, apiKey: string, maxPhotos = 5): string[] {
+    return this.resolveGooglePhotos(rawPlace, apiKey, maxPhotos).map((p) => p.url);
+  }
+
+  /**
+   * Extract and normalize discovered social media handles from a place record or its rawData.
+   */
+  private extractSocialMediaFromPlace(place: any): SocialMediaHandles | undefined {
+    if (!place) return undefined;
+    const raw = place.rawData;
+    let sm: any = undefined;
+    if (raw && typeof raw === 'object') {
+      sm = raw.socialMedia || raw.social_media || raw.social;
+    }
+    if (!sm && place.socialMedia && typeof place.socialMedia === 'object') {
+      sm = place.socialMedia;
+    }
+    const result: SocialMediaHandles = {};
+    if (sm && typeof sm === 'object') {
+      if (sm.facebook) result.facebook = String(sm.facebook).trim();
+      if (sm.instagram) result.instagram = String(sm.instagram).trim();
+      if (sm.linkedin) result.linkedin = String(sm.linkedin).trim();
+      if (sm.twitter) result.twitter = String(sm.twitter).trim();
+      if (sm.youtube) result.youtube = String(sm.youtube).trim();
+      if (sm.website) result.website = String(sm.website).trim();
+    }
+    if (place.website && !result.website) result.website = String(place.website).trim();
+    if ((place as any).facebook && !result.facebook) result.facebook = String((place as any).facebook).trim();
+    if ((place as any).instagram && !result.instagram) result.instagram = String((place as any).instagram).trim();
+    if ((place as any).linkedin && !result.linkedin) result.linkedin = String((place as any).linkedin).trim();
+    if ((place as any).twitter && !result.twitter) result.twitter = String((place as any).twitter).trim();
+    if ((place as any).youtube && !result.youtube) result.youtube = String((place as any).youtube).trim();
+
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   constructor(
@@ -240,14 +343,21 @@ export class DataCaptureService {
 
             let extractedEmail: string | undefined = undefined;
             let finalPhone = normalizedPhone || undefined;
+            let discoveredSocialMedia: SocialMediaHandles | undefined = undefined;
 
             if (normalizedWebsite) {
               const webContact = await ContactExtractor.extractContactFromWebsite(normalizedWebsite);
               if (webContact.email) extractedEmail = webContact.email;
               if (!finalPhone && webContact.phone) finalPhone = webContact.phone;
+              if (webContact.socialMedia) {
+                discoveredSocialMedia = { ...webContact.socialMedia, website: normalizedWebsite };
+              } else {
+                discoveredSocialMedia = { website: normalizedWebsite };
+              }
             }
 
-            const resolvedPhotos = apiKey ? this.resolveGooglePhotoUrls(p, apiKey) : [];
+            const resolvedGooglePhotos = apiKey ? this.resolveGooglePhotos(p, apiKey) : [];
+            const resolvedPhotoUrls = resolvedGooglePhotos.map((gp) => gp.url);
 
             const placeRecord: CapturedPlace = {
               provider: 'GOOGLE_PLACES',
@@ -270,8 +380,10 @@ export class DataCaptureService {
               customerId: String(effectiveCustomerId),
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
-              rawData: p,
-              photos: resolvedPhotos.length > 0 ? resolvedPhotos : undefined,
+              rawData: { ...(p || {}), socialMedia: discoveredSocialMedia },
+              googlePhotos: resolvedGooglePhotos,
+              photos: resolvedPhotoUrls.length > 0 ? resolvedPhotoUrls : undefined,
+              socialMedia: discoveredSocialMedia,
             };
 
             allPlaces.push(placeRecord);
@@ -361,8 +473,12 @@ export class DataCaptureService {
         source: p.source || 'GOOGLE_PLACES',
         status: isDuplicate ? 'DUPLICATE' : 'CAPTURED',
         notes: isDuplicate ? 'Identified as duplicate of existing business prospect or lead' : undefined,
-        rawData: p.rawData ? JSON.parse(JSON.stringify(p.rawData)) : undefined,
-        photos: p.photos && p.photos.length > 0 ? p.photos : undefined,
+        rawData: p.rawData
+          ? JSON.parse(JSON.stringify(p.rawData))
+          : (p.socialMedia ? { socialMedia: p.socialMedia } : undefined),
+        photos: p.googlePhotos && p.googlePhotos.length > 0
+          ? p.googlePhotos
+          : (p.photos && p.photos.length > 0 ? p.photos.map((url) => ({ name: `places/photo/${Math.random()}`, url })) : undefined),
       };
     });
 
@@ -443,34 +559,37 @@ export class DataCaptureService {
       this.logger.warn(`Failed to record DataCaptureSearch event: ${searchErr?.message}`);
     }
 
-    const mappedPlaces: CapturedPlace[] = createdJob.places.map((p) => ({
-      id: p.id,
-      provider: p.source || 'GOOGLE_PLACES',
-      googlePlaceId: p.googlePlaceId || undefined,
-      businessName: p.businessName,
-      category: p.category || undefined,
-      address: p.address || undefined,
-      phone: p.phone || undefined,
-      email: p.email || undefined,
-      website: p.website || undefined,
-      rating: p.rating || undefined,
-      reviewCount: p.reviewCount || undefined,
-      latitude: p.latitude || undefined,
-      longitude: p.longitude || undefined,
-      googleMapsUrl: p.googleMapsUrl || undefined,
-      businessStatus: p.businessStatus || 'OPERATIONAL',
-      source: p.source || 'GOOGLE_PLACES',
-      status: p.status || 'CAPTURED',
-      isImported: p.isImported,
-      capturedAt: p.createdAt,
-      customerId: String(p.customerId),
-      capturedBy: String(effectiveUserId),
-      extractionJobId: p.jobId || undefined,
-      notes: p.notes || undefined,
-      photos: Array.isArray((p as any).photos) && (p as any).photos.length > 0
-        ? (p as any).photos as string[]
-        : undefined,
-    }));
+    const mappedPlaces: CapturedPlace[] = createdJob.places.map((p) => {
+      const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos((p as any).photos);
+      return {
+        id: p.id,
+        provider: p.source || 'GOOGLE_PLACES',
+        googlePlaceId: p.googlePlaceId || undefined,
+        businessName: p.businessName,
+        category: p.category || undefined,
+        address: p.address || undefined,
+        phone: p.phone || undefined,
+        email: p.email || undefined,
+        website: p.website || undefined,
+        rating: p.rating || undefined,
+        reviewCount: p.reviewCount || undefined,
+        latitude: p.latitude || undefined,
+        longitude: p.longitude || undefined,
+        googleMapsUrl: p.googleMapsUrl || undefined,
+        businessStatus: p.businessStatus || 'OPERATIONAL',
+        source: p.source || 'GOOGLE_PLACES',
+        status: p.status || 'CAPTURED',
+        isImported: p.isImported,
+        capturedAt: p.createdAt,
+        customerId: String(p.customerId),
+        capturedBy: String(effectiveUserId),
+        extractionJobId: p.jobId || undefined,
+        notes: p.notes || undefined,
+        googlePhotos: normGP.length > 0 ? normGP : [],
+        photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
+        socialMedia: this.extractSocialMediaFromPlace(p),
+      };
+    });
 
     return {
       jobId,
@@ -591,33 +710,39 @@ export class DataCaptureService {
         }),
       ]);
 
-      const data: CapturedPlace[] = records.map((p) => ({
-        id: p.id,
-        provider: p.source || 'GOOGLE_PLACES',
-        googlePlaceId: p.googlePlaceId || undefined,
-        businessName: p.businessName,
-        category: p.category || undefined,
-        address: p.address || undefined,
-        phone: p.phone || undefined,
-        email: p.email || undefined,
-        website: p.website || undefined,
-        rating: p.rating || undefined,
-        reviewCount: p.reviewCount || undefined,
-        latitude: p.latitude || undefined,
-        longitude: p.longitude || undefined,
-        googleMapsUrl: p.googleMapsUrl || undefined,
-        businessStatus: p.businessStatus || 'OPERATIONAL',
-        source: p.source || 'GOOGLE_PLACES',
-        status: p.status || 'CAPTURED',
-        notes: p.notes || undefined,
-        rawData: p.rawData || undefined,
-        isImported: p.isImported,
-        importedLeadId: p.importedLeadId || undefined,
-        capturedAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        customerId: String(p.customerId),
-        extractionJobId: p.jobId || undefined,
-      }));
+      const data: CapturedPlace[] = records.map((p) => {
+        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos((p as any).photos);
+        return {
+          id: p.id,
+          provider: p.source || 'GOOGLE_PLACES',
+          googlePlaceId: p.googlePlaceId || undefined,
+          businessName: p.businessName,
+          category: p.category || undefined,
+          address: p.address || undefined,
+          phone: p.phone || undefined,
+          email: p.email || undefined,
+          website: p.website || undefined,
+          rating: p.rating || undefined,
+          reviewCount: p.reviewCount || undefined,
+          latitude: p.latitude || undefined,
+          longitude: p.longitude || undefined,
+          googleMapsUrl: p.googleMapsUrl || undefined,
+          businessStatus: p.businessStatus || 'OPERATIONAL',
+          source: p.source || 'GOOGLE_PLACES',
+          status: p.status || 'CAPTURED',
+          notes: p.notes || undefined,
+          rawData: p.rawData || undefined,
+          isImported: p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
+          capturedAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          customerId: String(p.customerId),
+          extractionJobId: p.jobId || undefined,
+          googlePhotos: normGP.length > 0 ? normGP : [],
+          photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
+          socialMedia: this.extractSocialMediaFromPlace(p),
+        };
+      });
 
       const totalPages = Math.ceil(total / limit) || 1;
 
@@ -675,6 +800,8 @@ export class DataCaptureService {
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
 
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos((place as any).photos);
+
     return {
       id: place.id,
       provider: place.source || 'GOOGLE_PLACES',
@@ -702,6 +829,9 @@ export class DataCaptureService {
       customerId: String(place.customerId),
       extractionJobId: place.jobId || undefined,
       duplicateMatches,
+      googlePhotos: placeGP.length > 0 ? placeGP : [],
+      photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
+      socialMedia: this.extractSocialMediaFromPlace(place),
     };
   }
 
@@ -1246,6 +1376,8 @@ export class DataCaptureService {
         });
       }
 
+      const placeSocialMedia = this.extractSocialMediaFromPlace(place);
+
       createdLead = await this.prisma.lead.create({
         data: {
           customerId: numCustomerId,
@@ -1271,8 +1403,28 @@ export class DataCaptureService {
           createdById: numUserId,
           captureRequestId: activeCaptureRequestId,
           sourceRecordId: String(place.id),
+          socialMedia: placeSocialMedia || undefined,
         },
       });
+    }
+
+    // Import photos into LeadImage records
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos((place as any).photos);
+    if (placePhotoUrls.length > 0 && this.prisma.leadImage && createdLead?.id) {
+      for (let pIdx = 0; pIdx < placePhotoUrls.length; pIdx++) {
+        try {
+          await this.prisma.leadImage.create({
+            data: {
+              leadId: createdLead.id,
+              url: placePhotoUrls[pIdx],
+              isPrimary: pIdx === 0,
+              caption: pIdx === 0 ? `${place.businessName} (Primary Photo)` : `${place.businessName} Photo ${pIdx + 1}`,
+            },
+          });
+        } catch (imgErr: any) {
+          this.logger.warn(`Failed to attach image to lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+        }
+      }
     }
 
     // Create note with metadata
@@ -1312,6 +1464,8 @@ export class DataCaptureService {
       },
     });
 
+    const leadPlaceSocial = this.extractSocialMediaFromPlace(updatedPlace) || this.extractSocialMediaFromPlace(place);
+
     return {
       lead: createdLead,
       place: {
@@ -1334,6 +1488,9 @@ export class DataCaptureService {
         updatedAt: updatedPlace.updatedAt,
         customerId: String(updatedPlace.customerId),
         duplicateMatches,
+        googlePhotos: placeGP.length > 0 ? placeGP : [],
+        photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
+        socialMedia: leadPlaceSocial,
       },
       message: `Lead "${createdLead.title}" created successfully in CRM!`,
       isDuplicate: hasLeadDuplicate,
@@ -1858,17 +2015,15 @@ export class DataCaptureService {
       }
 
       // Import captured Google photos into LeadImage records
-      let photosToImport: string[] = [];
-      if (Array.isArray(place.photos) && place.photos.length > 0) {
-        photosToImport = place.photos.filter((u: any) => typeof u === 'string' && u.trim().length > 0);
-      } else if (place.id && typeof place.id === 'number') {
+      let photosToImport: string[] = this.normalizeStoredPhotos(place.photos || (place as any).googlePhotos).photos;
+      if (photosToImport.length === 0 && place.id && typeof place.id === 'number') {
         try {
           const dbPlace = await this.prisma.dataCapturePlace.findUnique({
             where: { id: place.id },
             select: { photos: true },
           });
-          if (dbPlace?.photos && Array.isArray(dbPlace.photos)) {
-            photosToImport = (dbPlace.photos as string[]).filter((u: any) => typeof u === 'string' && u.trim().length > 0);
+          if (dbPlace?.photos) {
+            photosToImport = this.normalizeStoredPhotos(dbPlace.photos).photos;
           }
         } catch (_) {}
       }
@@ -1995,32 +2150,38 @@ export class DataCaptureService {
       capturedResults: j.capturedResults,
       googleApiRequests: j.googleApiRequests,
       createdAt: j.createdAt,
-      places: j.places.map((p) => ({
-        id: p.id,
-        provider: p.source || 'GOOGLE_PLACES',
-        googlePlaceId: p.googlePlaceId || undefined,
-        businessName: p.businessName,
-        category: p.category || undefined,
-        address: p.address || undefined,
-        phone: p.phone || undefined,
-        email: p.email || undefined,
-        website: p.website || undefined,
-        rating: p.rating || undefined,
-        reviewCount: p.reviewCount || undefined,
-        latitude: p.latitude || undefined,
-        longitude: p.longitude || undefined,
-        googleMapsUrl: p.googleMapsUrl || undefined,
-        businessStatus: p.businessStatus || 'OPERATIONAL',
-        source: p.source || 'GOOGLE_PLACES',
-        status: p.status || 'CAPTURED',
-        isImported: p.isImported,
-        importedLeadId: p.importedLeadId || undefined,
-        capturedAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        customerId: String(p.customerId),
-        capturedBy: String(j.userId),
-        extractionJobId: j.jobId,
-      })),
+      places: j.places.map((p) => {
+        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos((p as any).photos);
+        return {
+          id: p.id,
+          provider: p.source || 'GOOGLE_PLACES',
+          googlePlaceId: p.googlePlaceId || undefined,
+          businessName: p.businessName,
+          category: p.category || undefined,
+          address: p.address || undefined,
+          phone: p.phone || undefined,
+          email: p.email || undefined,
+          website: p.website || undefined,
+          rating: p.rating || undefined,
+          reviewCount: p.reviewCount || undefined,
+          latitude: p.latitude || undefined,
+          longitude: p.longitude || undefined,
+          googleMapsUrl: p.googleMapsUrl || undefined,
+          businessStatus: p.businessStatus || 'OPERATIONAL',
+          source: p.source || 'GOOGLE_PLACES',
+          status: p.status || 'CAPTURED',
+          isImported: p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
+          capturedAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          customerId: String(p.customerId),
+          capturedBy: String(j.userId),
+          extractionJobId: j.jobId,
+          googlePhotos: normGP.length > 0 ? normGP : [],
+          photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
+          socialMedia: this.extractSocialMediaFromPlace(p),
+        };
+      }),
     }));
   }
 
@@ -2057,32 +2218,38 @@ export class DataCaptureService {
       capturedResults: job.capturedResults,
       googleApiRequests: job.googleApiRequests,
       createdAt: job.createdAt,
-      places: job.places.map((p) => ({
-        id: p.id,
-        provider: p.source || 'GOOGLE_PLACES',
-        googlePlaceId: p.googlePlaceId || undefined,
-        businessName: p.businessName,
-        category: p.category || undefined,
-        address: p.address || undefined,
-        phone: p.phone || undefined,
-        email: p.email || undefined,
-        website: p.website || undefined,
-        rating: p.rating || undefined,
-        reviewCount: p.reviewCount || undefined,
-        latitude: p.latitude || undefined,
-        longitude: p.longitude || undefined,
-        googleMapsUrl: p.googleMapsUrl || undefined,
-        businessStatus: p.businessStatus || 'OPERATIONAL',
-        source: p.source || 'GOOGLE_PLACES',
-        status: p.status || 'CAPTURED',
-        isImported: p.isImported,
-        importedLeadId: p.importedLeadId || undefined,
-        capturedAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        customerId: String(p.customerId),
-        capturedBy: String(job.userId),
-        extractionJobId: job.jobId,
-      })),
+      places: job.places.map((p) => {
+        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos((p as any).photos);
+        return {
+          id: p.id,
+          provider: p.source || 'GOOGLE_PLACES',
+          googlePlaceId: p.googlePlaceId || undefined,
+          businessName: p.businessName,
+          category: p.category || undefined,
+          address: p.address || undefined,
+          phone: p.phone || undefined,
+          email: p.email || undefined,
+          website: p.website || undefined,
+          rating: p.rating || undefined,
+          reviewCount: p.reviewCount || undefined,
+          latitude: p.latitude || undefined,
+          longitude: p.longitude || undefined,
+          googleMapsUrl: p.googleMapsUrl || undefined,
+          businessStatus: p.businessStatus || 'OPERATIONAL',
+          source: p.source || 'GOOGLE_PLACES',
+          status: p.status || 'CAPTURED',
+          isImported: p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
+          capturedAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          customerId: String(p.customerId),
+          capturedBy: String(job.userId),
+          extractionJobId: job.jobId,
+          googlePhotos: normGP.length > 0 ? normGP : [],
+          photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
+          socialMedia: this.extractSocialMediaFromPlace(p),
+        };
+      }),
     };
   }
 

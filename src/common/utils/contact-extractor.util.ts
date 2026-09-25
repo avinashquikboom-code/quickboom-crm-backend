@@ -214,11 +214,101 @@ export class ContactExtractor {
   }
 
   /**
-   * Safely attempt to extract contact email and phone from a business website with timeout and content caps.
+   * Extract social media profile links (Facebook, Instagram, LinkedIn, Twitter/X, YouTube) from website HTML.
+   */
+  static extractSocialMediaFromHtml(html: string): {
+    facebook?: string;
+    instagram?: string;
+    linkedin?: string;
+    twitter?: string;
+    youtube?: string;
+  } {
+    if (!html || typeof html !== 'string') return {};
+
+    const social: {
+      facebook?: string;
+      instagram?: string;
+      linkedin?: string;
+      twitter?: string;
+      youtube?: string;
+    } = {};
+
+    // 1. Facebook
+    const fbMatch = html.match(
+      /https?:\/\/(?:www\.)?(?:facebook\.com|fb\.com)\/(?:pages\/[a-zA-Z0-9_.-]+\/\d+|profile\.php\?id=\d+|[a-zA-Z0-9._-]+)(?=[?"'\s>])/i,
+    );
+    if (fbMatch && fbMatch[0]) {
+      const url = fbMatch[0].replace(/\/+$/, '');
+      const lower = url.toLowerCase();
+      if (!/(sharer|share\.php|dialog|login|plugins|events|help|policies|home\.php)/.test(lower)) {
+        social.facebook = url;
+      }
+    }
+
+    // 2. Instagram
+    const igMatch = html.match(
+      /https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,30})(?=[/?"'\s>])/i,
+    );
+    if (igMatch && igMatch[1]) {
+      const handle = igMatch[1].toLowerCase();
+      if (!['p', 'explore', 'stories', 'reels', 'reel', 'about', 'legal', 'accounts', 'developer'].includes(handle)) {
+        social.instagram = `https://www.instagram.com/${igMatch[1]}`;
+      }
+    }
+
+    // 3. LinkedIn
+    const liMatch = html.match(
+      /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in|school)\/([a-zA-Z0-9\-_%]+)(?=[/?"'\s>])/i,
+    );
+    if (liMatch && liMatch[0]) {
+      const url = liMatch[0].replace(/\/+$/, '');
+      if (!url.toLowerCase().includes('/share') && !url.toLowerCase().includes('/sharing')) {
+        social.linkedin = url;
+      }
+    }
+
+    // 4. Twitter / X
+    const twMatch = html.match(
+      /https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]{1,20})(?=[/?"'\s>])/i,
+    );
+    if (twMatch && twMatch[1]) {
+      const handle = twMatch[1].toLowerCase();
+      if (!['intent', 'share', 'home', 'explore', 'search', 'hashtag', 'tos', 'privacy', 'login', 'signup'].includes(handle)) {
+        social.twitter = `https://x.com/${twMatch[1]}`;
+      }
+    }
+
+    // 5. YouTube
+    const ytMatch = html.match(
+      /https?:\/\/(?:www\.)?youtube\.com\/(?:@|c\/|channel\/|user\/)?([a-zA-Z0-9\-_]+)(?=[/?"'\s>])/i,
+    );
+    if (ytMatch && ytMatch[0]) {
+      const url = ytMatch[0].replace(/\/+$/, '');
+      const lower = url.toLowerCase();
+      if (!/(watch|embed|results|shorts|feed|playlist|live)/.test(lower)) {
+        social.youtube = url;
+      }
+    }
+
+    return social;
+  }
+
+  /**
+   * Safely attempt to extract contact email, phone, and social media from a business website with timeout and content caps.
    */
   static async extractContactFromWebsite(
     websiteUrl: string,
-  ): Promise<{ email: string | null; phone: string | null }> {
+  ): Promise<{
+    email: string | null;
+    phone: string | null;
+    socialMedia?: {
+      facebook?: string;
+      instagram?: string;
+      linkedin?: string;
+      twitter?: string;
+      youtube?: string;
+    };
+  }> {
     if (!websiteUrl || typeof websiteUrl !== 'string') {
       return { email: null, phone: null };
     }
@@ -244,8 +334,9 @@ export class ContactExtractor {
 
       const email = this.extractEmailFromText(html);
       const phone = this.extractPhoneFromText(html);
+      const socialMedia = this.extractSocialMediaFromHtml(html);
 
-      return { email, phone };
+      return { email, phone, socialMedia: Object.keys(socialMedia).length > 0 ? socialMedia : undefined };
     } catch {
       // Graceful fallback on network timeout, blocked crawler, or invalid SSL
       return { email: null, phone: null };

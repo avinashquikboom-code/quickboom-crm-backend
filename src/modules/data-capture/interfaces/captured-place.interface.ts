@@ -1,3 +1,10 @@
+export interface GooglePlacePhoto {
+  name: string;
+  url: string;
+  width?: number;
+  height?: number;
+}
+
 export interface CapturedPlace {
   id?: number;
   provider: 'GOOGLE_PLACES' | 'MANUAL' | 'CSV_IMPORT' | string;
@@ -26,8 +33,22 @@ export interface CapturedPlace {
   capturedBy?: string;
   extractionJobId?: string;
   duplicateMatches?: DuplicateMatch[];
+  /** Array of structured Google Places photos with photo resource name and URL */
+  googlePhotos?: GooglePlacePhoto[];
   /** Array of resolved Google photo URLs for this business (from Google Places API) */
   photos?: string[];
+  /** Discovered social media handles & website */
+  socialMedia?: SocialMediaHandles;
+}
+
+export interface SocialMediaHandles {
+  website?: string;
+  facebook?: string;
+  instagram?: string;
+  linkedin?: string;
+  twitter?: string;
+  youtube?: string;
+  [key: string]: string | undefined;
 }
 
 
