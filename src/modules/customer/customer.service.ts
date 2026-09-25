@@ -1802,7 +1802,7 @@ export class CustomerService {
     });
 
     if (!customer || customer.deletedAt) {
-      throw new NotFoundException(`Customer #${id} no longer exists.`);
+      throw new NotFoundException(`Customer #${id} not found.`);
     }
 
     // Tenant / Role Authorization Check
@@ -1841,7 +1841,7 @@ export class CustomerService {
     const employeeId = user?.employeeId || user?.employee?.id;
     let effectiveEmployeeId = employeeId;
     if (!effectiveEmployeeId && user?.id && !isUserSuperAdmin(user) && !isUserAdmin(user)) {
-      const emp = await this.prisma.employee.findFirst({
+      const emp = await this.prisma.employee?.findFirst?.({
         where: { userId: user.id },
         select: { id: true },
       });
@@ -2574,8 +2574,8 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
-    // Tenant Isolation Check
-    if (user && !isUserSuperAdmin(user) && !isUserAdmin(user)) {
+    // Tenant Isolation Check: only Super Admin can delete cross-tenant records
+    if (user && !isUserSuperAdmin(user)) {
       const callerCustomerId = Number(user.customerId);
       if (!callerCustomerId || callerCustomerId !== numericId) {
         throw new ForbiddenException('You do not have permission to delete this customer.');
