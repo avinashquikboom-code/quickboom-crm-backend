@@ -152,7 +152,11 @@ authorization: ALLOWED (ADMIN)`);
       }
       if (resolvedHeaderPk === undefined || resolvedHeaderPk !== authCustomerPk) {
         const path = (request.originalUrl || request.url || '').toLowerCase();
-        if (path.includes('/employees/me') || path.includes('/employees/permissions/me')) {
+        if (
+          path.includes('/employees/me') ||
+          path.includes('/employees/permissions/me') ||
+          path.includes('/lead-generation-limits/me')
+        ) {
           this.logger.warn(
             `[CustomerGuard] Ignoring mismatched header customerId (${headerStr}) for self employee route: ${path}`,
           );
@@ -173,7 +177,11 @@ authorization: ALLOWED (ADMIN)`);
       }
       if (resolvedQueryPk === undefined || resolvedQueryPk !== authCustomerPk) {
         const path = (request.originalUrl || request.url || '').toLowerCase();
-        if (path.includes('/employees/me') || path.includes('/employees/permissions/me')) {
+        if (
+          path.includes('/employees/me') ||
+          path.includes('/employees/permissions/me') ||
+          path.includes('/lead-generation-limits/me')
+        ) {
           this.logger.warn(
             `[CustomerGuard] Ignoring mismatched query customerId (${queryStr}) for self employee route: ${path}`,
           );

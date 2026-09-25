@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkPermissionService } from '../work/work-permission.service';
+import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 import { SetRoleLeadLimitDto, SetEmployeeLeadLimitDto } from './dto/lead-limit.dto';
 import {
   BUSINESS_TIMEZONE,
@@ -65,14 +66,46 @@ export class LeadLimitService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workPermissionService: WorkPermissionService,
+    private readonly planScheduleGateway: PlanScheduleGateway,
   ) {}
+
+  /**
+   * Helper to reliably resolve a valid customer/tenant ID.
+   * Handles cases where customerId is undefined, string, NaN, or from Super Admin contexts.
+   */
+  async resolveCustomerId(customerId?: number | string | null, user?: any): Promise<number> {
+    const numeric = Number(customerId);
+    if (!isNaN(numeric) && numeric > 0) {
+      return numeric;
+    }
+    if (user?.customerId && Number(user.customerId) > 0) {
+      return Number(user.customerId);
+    }
+    if (user?.employee?.customerId && Number(user.employee.customerId) > 0) {
+      return Number(user.employee.customerId);
+    }
+    if (user?.id) {
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: Number(user.id) },
+        select: { customerId: true },
+      });
+      if (emp?.customerId) return emp.customerId;
+    }
+    const firstCust = await this.prisma.customer.findFirst({
+      where: { deletedAt: null, isActive: true },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    if (firstCust) return firstCust.id;
+    throw new BadRequestException('No valid customer/tenant found');
+  }
 
   // ===========================================================================
   // 1. ROLE-WISE LIMITS (ADMIN CONFIGURATION)
   // ===========================================================================
 
-  async getRoleLimits(customerId: number) {
-    const custId = Number(customerId);
+  async getRoleLimits(customerId?: number | string | null, user?: any) {
+    const custId = await this.resolveCustomerId(customerId, user);
 
     const [designations, customRoles, dbRoleLimits] = await Promise.all([
       this.prisma.designation.findMany({
@@ -133,30 +166,50 @@ export class LeadLimitService {
     });
   }
 
-  async upsertRoleLimit(customerId: number, dto: SetRoleLeadLimitDto) {
-    const custId = Number(customerId);
+  async upsertRoleLimit(customerId?: number | string | null, dto?: SetRoleLeadLimitDto, user?: any) {
+    const custId = await this.resolveCustomerId(customerId, user);
+    if (!dto) throw new BadRequestException('Missing limit data');
     const roleName = dto.roleName.trim();
 
-    return this.prisma.roleLeadLimit.upsert({
+    // Check if an existing record exists (case-insensitive) to prevent duplicate casing rows
+    const existing = await this.prisma.roleLeadLimit.findFirst({
       where: {
-        customerId_roleName: {
-          customerId: custId,
-          roleName,
-        },
-      },
-      update: {
-        dailyLimit: Number(dto.dailyLimit),
-        monthlyLimit: Number(dto.monthlyLimit),
-        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
-      },
-      create: {
         customerId: custId,
-        roleName,
-        dailyLimit: Number(dto.dailyLimit),
-        monthlyLimit: Number(dto.monthlyLimit),
-        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+        roleName: { equals: roleName, mode: 'insensitive' },
       },
     });
+
+    let savedRecord;
+    if (existing) {
+      savedRecord = await this.prisma.roleLeadLimit.update({
+        where: { id: existing.id },
+        data: {
+          roleName: existing.roleName,
+          dailyLimit: Number(dto.dailyLimit),
+          monthlyLimit: Number(dto.monthlyLimit),
+          isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+        },
+      });
+    } else {
+      savedRecord = await this.prisma.roleLeadLimit.create({
+        data: {
+          customerId: custId,
+          roleName,
+          dailyLimit: Number(dto.dailyLimit),
+          monthlyLimit: Number(dto.monthlyLimit),
+          isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
+        },
+      });
+    }
+
+    // Real-time emit to connected mobile employees
+    try {
+      this.planScheduleGateway.notifyLeadLimitUpdated(custId, { roleName });
+    } catch (e) {
+      this.logger.warn(`Failed to emit real-time lead limit update: ${e}`);
+    }
+
+    return savedRecord;
   }
 
   // ===========================================================================
@@ -195,12 +248,26 @@ export class LeadLimitService {
 
     const normalizedRole = this.workPermissionService.normalizeRoleKey(roleCandidate);
 
-    const candidateVariants = [
-      normalizedRole,
-      roleCandidate,
-      normalizedRole.replace(/_/g, ' '),
-      normalizedRole.replace(/\s+/g, '_'),
-    ];
+    const candidateVariants = Array.from(
+      new Set(
+        [
+          roleCandidate,
+          normalizedRole,
+          roleCandidate.toUpperCase(),
+          roleCandidate.toLowerCase(),
+          normalizedRole.toUpperCase(),
+          normalizedRole.toLowerCase(),
+          roleCandidate.replace(/_/g, ' '),
+          roleCandidate.replace(/\s+/g, '_'),
+          normalizedRole.replace(/_/g, ' '),
+          normalizedRole.replace(/\s+/g, '_'),
+          employee.designation?.name,
+          employee.designation?.code,
+          employee.user?.designation,
+          ...(employee.user?.userRoles || []).map((ur: any) => ur.role?.name),
+        ].filter(Boolean),
+      ),
+    );
 
     // 1. Fetch role configuration from DB if present
     const roleConfig = await this.prisma.roleLeadLimit.findFirst({
@@ -305,8 +372,8 @@ export class LeadLimitService {
   // 3. EMPLOYEE "MY LIMIT" API (MOBILE CLIENT)
   // ===========================================================================
 
-  async getMyLeadLimit(customerId: number, user: any): Promise<EmployeeLeadLimitResponse> {
-    const custId = Number(customerId);
+  async getMyLeadLimit(customerId?: number | string | null, user?: any): Promise<EmployeeLeadLimitResponse> {
+    const custId = await this.resolveCustomerId(customerId, user);
 
     // Find employee record
     let employeeId =
@@ -349,6 +416,19 @@ export class LeadLimitService {
     const remainingDaily = Math.max(0, limitInfo.effectiveDailyLimit - usage.usedToday);
     const remainingMonthly = Math.max(0, limitInfo.effectiveMonthlyLimit - usage.usedThisMonth);
 
+    // Development log for safe tracing as required by specification
+    this.logger.log(`[LEAD QUOTA DEBUG]
+employeeId: ${employeeId}
+designationId: ${limitInfo.employee?.designationId ?? 'none'}
+customerId: ${custId}
+dailyLimit: ${limitInfo.effectiveDailyLimit}
+monthlyLimit: ${limitInfo.effectiveMonthlyLimit}
+dailyUsed: ${usage.usedToday}
+monthlyUsed: ${usage.usedThisMonth}
+dailyRemaining: ${remainingDaily}
+monthlyRemaining: ${remainingMonthly}
+updatedAt: ${new Date().toISOString()}`);
+
     return {
       daily: {
         limit: limitInfo.effectiveDailyLimit,
@@ -373,8 +453,8 @@ export class LeadLimitService {
   // 4. ADMIN EMPLOYEE LIST WITH USAGE & LIMITS
   // ===========================================================================
 
-  async getEmployeeLimits(customerId: number) {
-    const custId = Number(customerId);
+  async getEmployeeLimits(customerId?: number | string | null, user?: any) {
+    const custId = await this.resolveCustomerId(customerId, user);
 
     const employees = await this.prisma.employee.findMany({
       where: { customerId: custId, status: 'ACTIVE' },
@@ -481,8 +561,8 @@ export class LeadLimitService {
     );
   }
 
-  async getEmployeeLimitById(customerId: number, employeeId: number) {
-    const custId = Number(customerId);
+  async getEmployeeLimitById(customerId?: number | string | null, employeeId?: number, user?: any) {
+    const custId = await this.resolveCustomerId(customerId, user);
     const empId = Number(employeeId);
 
     const limitInfo = await this.getEffectiveLimitForEmployee(custId, empId);
@@ -507,11 +587,12 @@ export class LeadLimitService {
   }
 
   async upsertEmployeeLimit(
-    customerId: number,
-    employeeId: number,
-    dto: SetEmployeeLeadLimitDto,
+    customerId?: number | string | null,
+    employeeId?: number,
+    dto?: SetEmployeeLeadLimitDto,
+    user?: any,
   ) {
-    const custId = Number(customerId);
+    const custId = await this.resolveCustomerId(customerId, user);
     const empId = Number(employeeId);
 
     const employee = await this.prisma.employee.findFirst({
@@ -521,10 +602,10 @@ export class LeadLimitService {
       throw new NotFoundException(`Employee #${empId} not found in this company`);
     }
 
-    const daily = dto.dailyLimit !== undefined && dto.dailyLimit !== null ? Number(dto.dailyLimit) : null;
-    const monthly = dto.monthlyLimit !== undefined && dto.monthlyLimit !== null ? Number(dto.monthlyLimit) : null;
+    const daily = dto?.dailyLimit !== undefined && dto?.dailyLimit !== null ? Number(dto.dailyLimit) : null;
+    const monthly = dto?.monthlyLimit !== undefined && dto?.monthlyLimit !== null ? Number(dto.monthlyLimit) : null;
 
-    return this.prisma.employeeLeadLimit.upsert({
+    const saved = await this.prisma.employeeLeadLimit.upsert({
       where: { employeeId: empId },
       update: {
         customerId: custId,
@@ -538,15 +619,41 @@ export class LeadLimitService {
         monthlyLimit: monthly,
       },
     });
+
+    // Real-time emit to connected employee
+    try {
+      this.planScheduleGateway.notifyLeadLimitUpdated(custId, {
+        employeeId: empId,
+        designationId: employee.designationId,
+      });
+    } catch (e) {
+      this.logger.warn(`Failed to emit real-time lead limit update: ${e}`);
+    }
+
+    return saved;
   }
 
-  async clearEmployeeLimit(customerId: number, employeeId: number) {
-    const custId = Number(customerId);
+  async clearEmployeeLimit(customerId?: number | string | null, employeeId?: number, user?: any) {
+    const custId = await this.resolveCustomerId(customerId, user);
     const empId = Number(employeeId);
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: empId, customerId: custId },
+    });
 
     await this.prisma.employeeLeadLimit.deleteMany({
       where: { customerId: custId, employeeId: empId },
     });
+
+    // Real-time emit to connected employee
+    try {
+      this.planScheduleGateway.notifyLeadLimitUpdated(custId, {
+        employeeId: empId,
+        designationId: employee?.designationId,
+      });
+    } catch (e) {
+      this.logger.warn(`Failed to emit real-time lead limit update: ${e}`);
+    }
 
     return { success: true, message: `Custom limits cleared for employee #${empId}` };
   }

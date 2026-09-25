@@ -36,25 +36,26 @@ export class LeadLimitController {
 
   @Get('roles')
   @ApiOperation({ summary: 'List role-wise lead generation limits' })
-  async getRoleLimits(@CurrentCustomer() customerId: number) {
-    return this.leadLimitService.getRoleLimits(customerId);
+  async getRoleLimits(@CurrentCustomer() customerId: number, @CurrentUser() user: any) {
+    return this.leadLimitService.getRoleLimits(customerId, user);
   }
 
   @Post('roles')
   @ApiOperation({ summary: 'Create or update role-wise lead generation limit' })
   async setRoleLimit(
     @CurrentCustomer() customerId: number,
+    @CurrentUser() user: any,
     @Body() dto: SetRoleLeadLimitDto,
   ) {
-    return this.leadLimitService.upsertRoleLimit(customerId, dto);
+    return this.leadLimitService.upsertRoleLimit(customerId, dto, user);
   }
 
   // ── EMPLOYEE-WISE LIMITS & USAGE (ADMIN) ───────────────────────────────────
 
   @Get('employees')
   @ApiOperation({ summary: 'List all employees with their lead generation limits and real-time usage' })
-  async getEmployeeLimits(@CurrentCustomer() customerId: number) {
-    return this.leadLimitService.getEmployeeLimits(customerId);
+  async getEmployeeLimits(@CurrentCustomer() customerId: number, @CurrentUser() user: any) {
+    return this.leadLimitService.getEmployeeLimits(customerId, user);
   }
 
   @Get('employees/:employeeId')
@@ -62,8 +63,9 @@ export class LeadLimitController {
   async getEmployeeLimit(
     @CurrentCustomer() customerId: number,
     @Param('employeeId', ParseIntPipe) employeeId: number,
+    @CurrentUser() user: any,
   ) {
-    return this.leadLimitService.getEmployeeLimitById(customerId, employeeId);
+    return this.leadLimitService.getEmployeeLimitById(customerId, employeeId, user);
   }
 
   @Put('employees/:employeeId')
@@ -71,9 +73,10 @@ export class LeadLimitController {
   async setEmployeeLimit(
     @CurrentCustomer() customerId: number,
     @Param('employeeId', ParseIntPipe) employeeId: number,
+    @CurrentUser() user: any,
     @Body() dto: SetEmployeeLeadLimitDto,
   ) {
-    return this.leadLimitService.upsertEmployeeLimit(customerId, employeeId, dto);
+    return this.leadLimitService.upsertEmployeeLimit(customerId, employeeId, dto, user);
   }
 
   @Post('employees/:employeeId')
@@ -81,9 +84,10 @@ export class LeadLimitController {
   async postEmployeeLimit(
     @CurrentCustomer() customerId: number,
     @Param('employeeId', ParseIntPipe) employeeId: number,
+    @CurrentUser() user: any,
     @Body() dto: SetEmployeeLeadLimitDto,
   ) {
-    return this.leadLimitService.upsertEmployeeLimit(customerId, employeeId, dto);
+    return this.leadLimitService.upsertEmployeeLimit(customerId, employeeId, dto, user);
   }
 
   @Delete('employees/:employeeId')
@@ -91,7 +95,8 @@ export class LeadLimitController {
   async clearEmployeeLimit(
     @CurrentCustomer() customerId: number,
     @Param('employeeId', ParseIntPipe) employeeId: number,
+    @CurrentUser() user: any,
   ) {
-    return this.leadLimitService.clearEmployeeLimit(customerId, employeeId);
+    return this.leadLimitService.clearEmployeeLimit(customerId, employeeId, user);
   }
 }

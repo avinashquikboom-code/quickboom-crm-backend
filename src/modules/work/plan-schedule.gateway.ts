@@ -301,4 +301,29 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
       `[RBAC_REALTIME] Emitted employee_permissions_updated for designation-${designationId} (${affectedEmployeeIds.length} employees)`,
     );
   }
+
+  notifyLeadLimitUpdated(
+    customerId: number,
+    data?: { roleName?: string; employeeId?: number; designationId?: number | null },
+  ) {
+    const payload = {
+      event: 'lead_limit_updated',
+      customerId,
+      ...data,
+      timestamp: new Date().toISOString(),
+    };
+    if (this.server) {
+      if (data?.employeeId) {
+        this.server.to(`employee-${data.employeeId}`).emit('lead_limit_updated', payload);
+      }
+      if (data?.designationId) {
+        this.server.to(`designation-${data.designationId}`).emit('lead_limit_updated', payload);
+      }
+      this.server.to(`customer-${customerId}`).emit('lead_limit_updated', payload);
+      this.server.emit('lead_limit_updated', payload);
+    }
+    this.logger.log(
+      `[LEAD_LIMIT_REALTIME] Emitted lead_limit_updated for customer-${customerId} ${data?.employeeId ? `employee-${data.employeeId}` : ''} ${data?.roleName ? `role-${data.roleName}` : ''}`,
+    );
+  }
 }
