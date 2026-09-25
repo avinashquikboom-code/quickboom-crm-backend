@@ -603,6 +603,31 @@ export class LeadService {
   async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
     this.logger.log('[NewLeadAutomation] 1. Create Lead request received');
 
+    // Safe debug trace for Google Discovery import debugging
+    if (String((dto as any).source || '').toUpperCase().includes('GOOGLE') || String((dto as any).source || '').toUpperCase().includes('DISCOVERY')) {
+      this.logger.log(
+        `[LEAD IMPORT TRACE]\n` +
+        `captureRequestId: ${(dto as any).captureRequestId || 'N/A'}\n` +
+        `source: ${(dto as any).source || 'N/A'}\n` +
+        `sourceRecordId: ${(dto as any).sourceRecordId || 'N/A'}\n` +
+        `googlePlaceId: ${(dto as any).googlePlaceId || 'N/A'}\n` +
+        `businessName: ${(dto as any).businessName || 'N/A'}\n` +
+        `companyName: ${dto.companyName || 'N/A'}\n` +
+        `title: ${dto.title || 'N/A'}\n` +
+        `name: ${(dto as any).name || 'N/A'}\n` +
+        `phone: ${dto.phone || 'N/A'}\n` +
+        `email: ${dto.email || 'N/A'}\n` +
+        `website: ${dto.website || 'N/A'}\n` +
+        `address: ${dto.address || 'N/A'}\n` +
+        `rating: ${(dto as any).rating ?? 'N/A'}\n` +
+        `reviewCount: ${(dto as any).reviewCount ?? 'N/A'}\n` +
+        `latitude: ${(dto as any).latitude ?? 'N/A'}\n` +
+        `longitude: ${(dto as any).longitude ?? 'N/A'}\n` +
+        `socialMedia: ${(dto as any).socialMedia ? 'present' : 'N/A'}\n` +
+        `imageCount: ${((dto as any).photos || (dto as any).googlePhotos || []).length}`,
+      );
+    }
+
     const rawInputEmail = dto.email || (dto as any).emailAddress || (dto as any).user_email || (dto as any).email_address;
     const hasRawEmail = Boolean(rawInputEmail && String(rawInputEmail).trim().length > 0 && !['contact@company.com', 'placeholder@company.com', 'example@company.com'].includes(String(rawInputEmail).trim().toLowerCase()));
     this.logger.log(`[NewLeadAutomation] 2. Email received:\n${hasRawEmail}`);

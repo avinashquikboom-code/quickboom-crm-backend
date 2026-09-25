@@ -238,6 +238,24 @@ export class LeadRepository {
     delete createData.googlePhotos;
     delete createData.images;
 
+    // Safe trace logging for Google Discovery import debugging
+    if (createData.source && (String(createData.source).toUpperCase().includes('GOOGLE') || String(createData.source).toUpperCase().includes('DISCOVERY'))) {
+      this.logger.log(
+        `[LEAD REPOSITORY TRACE] prisma.lead.create() data:\n` +
+        `title: ${createData.title}\n` +
+        `companyName: ${createData.companyName}\n` +
+        `firstName: ${createData.firstName}\n` +
+        `lastName: ${createData.lastName}\n` +
+        `phone: ${createData.phone || 'N/A'}\n` +
+        `email: ${createData.email || 'N/A'}\n` +
+        `googlePlaceId: ${createData.googlePlaceId || 'N/A'}\n` +
+        `sourceRecordId: ${createData.sourceRecordId || 'N/A'}\n` +
+        `captureRequestId: ${createData.captureRequestId || 'N/A'}\n` +
+        `rating: ${createData.rating ?? 'N/A'}\n` +
+        `reviewCount: ${createData.reviewCount ?? 'N/A'}`,
+      );
+    }
+
     const lead = await client.lead.create({
       data: createData,
       include: {
