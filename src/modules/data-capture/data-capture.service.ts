@@ -1330,6 +1330,11 @@ export class DataCaptureService {
       `normalizedEmail: ${email || 'none'}`
     );
 
+    const placeSocialMedia = this.extractSocialMediaFromPlace(place);
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+      (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos
+    );
+
     let createdLead: any;
     if (this.leadService) {
       createdLead = await this.leadService.createLead(
@@ -1356,6 +1361,9 @@ export class DataCaptureService {
           value: 0,
           captureRequestId: activeCaptureRequestId,
           sourceRecordId: place.sourceRecordId || place.googlePlaceId || String(place.id),
+          photos: placePhotoUrls,
+          googlePhotos: placeGP,
+          socialMedia: placeSocialMedia,
         } as any,
       );
     } else {
@@ -1408,21 +1416,23 @@ export class DataCaptureService {
       });
     }
 
-    // Import photos into LeadImage records
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos((place as any).photos);
+    // Import photos into LeadImage records if not already created
     if (placePhotoUrls.length > 0 && this.prisma.leadImage && createdLead?.id) {
-      for (let pIdx = 0; pIdx < placePhotoUrls.length; pIdx++) {
-        try {
-          await this.prisma.leadImage.create({
-            data: {
-              leadId: createdLead.id,
-              url: placePhotoUrls[pIdx],
-              isPrimary: pIdx === 0,
-              caption: pIdx === 0 ? `${place.businessName} (Primary Photo)` : `${place.businessName} Photo ${pIdx + 1}`,
-            },
-          });
-        } catch (imgErr: any) {
-          this.logger.warn(`Failed to attach image to lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+      const existingImages = await this.prisma.leadImage.count({ where: { leadId: createdLead.id } });
+      if (existingImages === 0) {
+        for (let pIdx = 0; pIdx < placePhotoUrls.length; pIdx++) {
+          try {
+            await this.prisma.leadImage.create({
+              data: {
+                leadId: createdLead.id,
+                url: placePhotoUrls[pIdx],
+                isPrimary: pIdx === 0,
+                caption: pIdx === 0 ? `${place.businessName} (Primary Photo)` : `${place.businessName} Photo ${pIdx + 1}`,
+              },
+            });
+          } catch (imgErr: any) {
+            this.logger.warn(`Failed to attach image to lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+          }
         }
       }
     }
@@ -1649,6 +1659,9 @@ export class DataCaptureService {
           sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
           captureRequestId: p.captureRequestId || dto.captureRequestId || dto.jobId,
           jobId: p.jobId || dto.jobId,
+          photos: p.photos || p.googlePhotos,
+          googlePhotos: p.googlePhotos || p.photos,
+          socialMedia: p.socialMedia,
         };
       });
     } else if (dto.companyName || dto.businessName || (dto as any).displayName) {
@@ -1673,6 +1686,9 @@ export class DataCaptureService {
         sourceUrl: dto.sourceUrl || dto.website,
         captureRequestId: dto.captureRequestId || dto.jobId,
         jobId: dto.jobId,
+        photos: (dto as any).photos || (dto as any).googlePhotos,
+        googlePhotos: (dto as any).googlePhotos || (dto as any).photos,
+        socialMedia: (dto as any).socialMedia,
       }];
     }
 
@@ -1936,6 +1952,10 @@ export class DataCaptureService {
         };
       }
 
+      const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+        place.photos || (place as any).googlePhotos || place.rawData?.photos || place.rawData?.googlePhotos
+      );
+
       let createdLead: any;
       if (this.leadService) {
         createdLead = await this.leadService.createLead(
@@ -1964,6 +1984,8 @@ export class DataCaptureService {
             value: 0,
             captureRequestId: placeCaptureRequestId,
             socialMedia: placeSocialMedia,
+            photos: placePhotoUrls,
+            googlePhotos: placeGP,
           } as any,
         );
       } else {
@@ -2014,33 +2036,36 @@ export class DataCaptureService {
         });
       }
 
-      // Import captured Google photos into LeadImage records
-      let photosToImport: string[] = this.normalizeStoredPhotos(place.photos || (place as any).googlePhotos).photos;
-      if (photosToImport.length === 0 && place.id && typeof place.id === 'number') {
+      // Import captured Google photos into LeadImage records if not already created
+      let photosToImport: string[] = this.normalizeStoredPhotos(place.photos || (place as any).googlePhotos || place.rawData?.photos || place.rawData?.googlePhotos).photos;
+      if (photosToImport.length === 0 && place.id && (typeof place.id === 'number' || !isNaN(Number(place.id)))) {
         try {
           const dbPlace = await this.prisma.dataCapturePlace.findUnique({
-            where: { id: place.id },
-            select: { photos: true },
+            where: { id: Number(place.id) },
+            select: { photos: true, rawData: true },
           });
-          if (dbPlace?.photos) {
-            photosToImport = this.normalizeStoredPhotos(dbPlace.photos).photos;
+          if (dbPlace?.photos || (dbPlace?.rawData as any)?.photos || (dbPlace?.rawData as any)?.googlePhotos) {
+            photosToImport = this.normalizeStoredPhotos(dbPlace.photos || (dbPlace.rawData as any)?.photos || (dbPlace.rawData as any)?.googlePhotos).photos;
           }
         } catch (_) {}
       }
 
       if (photosToImport.length > 0 && this.prisma.leadImage && createdLead?.id) {
-        for (let pIdx = 0; pIdx < photosToImport.length; pIdx++) {
-          try {
-            await this.prisma.leadImage.create({
-              data: {
-                leadId: createdLead.id,
-                url: photosToImport[pIdx],
-                isPrimary: pIdx === 0,
-                caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
-              },
-            });
-          } catch (imgErr: any) {
-            this.logger.warn(`Failed to attach image to imported lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+        const existingImages = await this.prisma.leadImage.count({ where: { leadId: createdLead.id } });
+        if (existingImages === 0) {
+          for (let pIdx = 0; pIdx < photosToImport.length; pIdx++) {
+            try {
+              await this.prisma.leadImage.create({
+                data: {
+                  leadId: createdLead.id,
+                  url: photosToImport[pIdx],
+                  isPrimary: pIdx === 0,
+                  caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
+                },
+              });
+            } catch (imgErr: any) {
+              this.logger.warn(`Failed to attach image to imported lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
+            }
           }
         }
       }

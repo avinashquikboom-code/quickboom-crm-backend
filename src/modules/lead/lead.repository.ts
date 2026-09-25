@@ -216,6 +216,9 @@ export class LeadRepository {
     delete createData.linkedin;
     delete createData.youtube;
     delete createData.twitter;
+    delete createData.photos;
+    delete createData.googlePhotos;
+    delete createData.images;
 
     const lead = await client.lead.create({
       data: createData,
@@ -229,6 +232,42 @@ export class LeadRepository {
         },
       },
     });
+
+    // Attach lead images / googlePhotos if provided in DTO
+    const incomingPhotos = (dto as any).googlePhotos || (dto as any).photos || (dto as any).images;
+    if (incomingPhotos && client.leadImage) {
+      const photoList: Array<{ url: string; key?: string; caption?: string }> = [];
+      if (Array.isArray(incomingPhotos)) {
+        for (let i = 0; i < incomingPhotos.length; i++) {
+          const item = incomingPhotos[i];
+          if (typeof item === 'string' && item.trim()) {
+            photoList.push({
+              url: item.trim(),
+              caption: i === 0 ? `${lead.companyName || lead.title} (Primary Photo)` : `${lead.companyName || lead.title} Photo ${i + 1}`,
+            });
+          } else if (item && typeof item === 'object' && item.url) {
+            photoList.push({
+              url: String(item.url).trim(),
+              key: item.name ? String(item.name) : undefined,
+              caption: item.caption || (i === 0 ? `${lead.companyName || lead.title} (Primary Photo)` : `${lead.companyName || lead.title} Photo ${i + 1}`),
+            });
+          }
+        }
+      }
+      for (let idx = 0; idx < photoList.length; idx++) {
+        try {
+          await client.leadImage.create({
+            data: {
+              leadId: lead.id,
+              url: photoList[idx].url,
+              key: photoList[idx].key || undefined,
+              caption: photoList[idx].caption,
+              isPrimary: idx === 0,
+            },
+          });
+        } catch (_) {}
+      }
+    }
 
     if (notes) {
       await client.leadNote.create({
