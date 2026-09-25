@@ -62,28 +62,28 @@ export class CreateLeadDto {
   @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub' })
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
-    if (direct && direct !== 'Business Lead' && direct !== 'Direct Lead') return direct;
+    if (direct && direct !== 'Business Lead' && direct !== 'Direct Lead' && direct !== 'New Lead') return direct;
 
     // 1. Real business / display / company name
     const comp = cleanOptionalField({ value: obj?.companyName }) || cleanOptionalField({ value: obj?.businessName });
-    if (comp && comp !== 'Business Lead') return comp;
+    if (comp && comp !== 'Business Lead' && comp !== 'Direct Lead' && comp !== 'New Lead') return comp;
 
     if (obj?.displayName) {
       const dn = typeof obj.displayName === 'object' ? obj.displayName?.text : obj.displayName;
       const cleanDn = cleanOptionalField({ value: dn });
-      if (cleanDn && cleanDn !== 'Business Lead') return cleanDn;
+      if (cleanDn && cleanDn !== 'Business Lead' && cleanDn !== 'Direct Lead' && cleanDn !== 'New Lead') return cleanDn;
     }
 
     const place = cleanOptionalField({ value: obj?.placeName }) ||
       cleanOptionalField({ value: obj?.establishmentName }) ||
       cleanOptionalField({ value: obj?.organizationName }) ||
       cleanOptionalField({ value: obj?.formattedName });
-    if (place && place !== 'Business Lead') return place;
+    if (place && place !== 'Business Lead' && place !== 'Direct Lead' && place !== 'New Lead') return place;
 
     // 2. Real name if not resource ID or placeholder
     if (obj?.name && typeof obj.name === 'string' && obj.name.trim() && !obj.name.startsWith('places/')) {
       const cleanN = obj.name.trim();
-      if (cleanN !== 'Business Lead') return cleanN;
+      if (cleanN !== 'Business Lead' && cleanN !== 'Direct Lead' && cleanN !== 'New Lead') return cleanN;
     }
 
     // 3. Contact person name
@@ -91,12 +91,16 @@ export class CreateLeadDto {
       obj?.firstName || obj?.first_name,
       obj?.lastName || obj?.last_name,
     ].filter(Boolean).join(' ').trim();
-    if (contactName && contactName !== 'Business Owner' && contactName !== 'Unknown Business') return contactName;
+    if (
+      contactName &&
+      contactName !== 'Business Owner' &&
+      contactName !== 'Unknown Business' &&
+      contactName !== 'Business Lead' &&
+      contactName !== 'Direct Lead' &&
+      contactName !== 'New Lead'
+    ) return contactName;
 
-    // 4. Existing direct title if available
-    if (direct) return direct;
-
-    // 5. Fallback
+    // 4. Fallback
     if (obj?.email || obj?.emailAddress) return (obj.email || obj.emailAddress).trim();
     if (obj?.phone || obj?.mobile) return (obj.phone || obj.mobile).trim();
     return 'Unnamed Business';
@@ -108,13 +112,26 @@ export class CreateLeadDto {
   @ApiPropertyOptional({ example: 'Alice' })
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
-    if (direct) return direct;
+    if (direct && direct !== 'Business Lead' && direct !== 'Business Owner' && direct !== 'Unknown Business' && direct !== 'Business' && direct !== 'Lead') return direct;
     const fn = cleanOptionalField({ value: obj?.first_name });
-    if (fn) return fn;
-    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) {
+    if (fn && fn !== 'Business Lead' && fn !== 'Business Owner' && fn !== 'Unknown Business' && fn !== 'Business' && fn !== 'Lead') return fn;
+    if (
+      obj?.name &&
+      typeof obj.name === 'string' &&
+      obj.name.trim() &&
+      obj.name.trim() !== 'Business Lead' &&
+      obj.name.trim() !== 'Direct Lead' &&
+      obj.name.trim() !== 'New Lead' &&
+      obj.name.trim() !== 'Business' &&
+      obj.name.trim() !== 'Lead' &&
+      obj.name.trim() !== obj?.companyName &&
+      obj.name.trim() !== obj?.title &&
+      obj.name.trim() !== obj?.businessName &&
+      !obj.name.startsWith('places/')
+    ) {
       return obj.name.trim().split(/\s+/)[0];
     }
-    return null;
+    return '';
   })
   @IsString()
   @IsOptional()
@@ -128,14 +145,27 @@ export class CreateLeadDto {
   @ApiPropertyOptional({ example: 'Smith' })
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
-    if (direct) return direct;
+    if (direct && direct !== 'Business Lead' && direct !== 'Business Owner' && direct !== 'Unknown Business' && direct !== 'Business' && direct !== 'Lead') return direct;
     const ln = cleanOptionalField({ value: obj?.last_name });
-    if (ln) return ln;
-    if (obj?.name && typeof obj.name === 'string' && obj.name.trim()) {
+    if (ln && ln !== 'Business Lead' && ln !== 'Business Owner' && ln !== 'Unknown Business' && ln !== 'Business' && ln !== 'Lead') return ln;
+    if (
+      obj?.name &&
+      typeof obj.name === 'string' &&
+      obj.name.trim() &&
+      obj.name.trim() !== 'Business Lead' &&
+      obj.name.trim() !== 'Direct Lead' &&
+      obj.name.trim() !== 'New Lead' &&
+      obj.name.trim() !== 'Business' &&
+      obj.name.trim() !== 'Lead' &&
+      obj.name.trim() !== obj?.companyName &&
+      obj.name.trim() !== obj?.title &&
+      obj.name.trim() !== obj?.businessName &&
+      !obj.name.startsWith('places/')
+    ) {
       const parts = obj.name.trim().split(/\s+/);
       return parts.slice(1).join(' ') || '';
     }
-    return null;
+    return '';
   })
   @IsString()
   @IsOptional()
@@ -286,24 +316,26 @@ export class CreateLeadDto {
   @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub' })
   @Transform(({ value, obj }) => {
     const direct = cleanOptionalField({ value });
-    if (direct && direct !== 'Business Lead') return direct;
+    if (direct && direct !== 'Business Lead' && direct !== 'Direct Lead' && direct !== 'New Lead') return direct;
     const bName = cleanOptionalField({ value: obj?.businessName });
-    if (bName && bName !== 'Business Lead') return bName;
+    if (bName && bName !== 'Business Lead' && bName !== 'Direct Lead' && bName !== 'New Lead') return bName;
     if (obj?.displayName) {
       const dn = typeof obj.displayName === 'object' ? obj.displayName?.text : obj.displayName;
       const cleanDn = cleanOptionalField({ value: dn });
-      if (cleanDn && cleanDn !== 'Business Lead') return cleanDn;
+      if (cleanDn && cleanDn !== 'Business Lead' && cleanDn !== 'Direct Lead' && cleanDn !== 'New Lead') return cleanDn;
     }
     const place = cleanOptionalField({ value: obj?.placeName }) ||
       cleanOptionalField({ value: obj?.establishmentName }) ||
       cleanOptionalField({ value: obj?.organizationName }) ||
       cleanOptionalField({ value: obj?.formattedName });
-    if (place && place !== 'Business Lead') return place;
+    if (place && place !== 'Business Lead' && place !== 'Direct Lead' && place !== 'New Lead') return place;
     if (obj?.name && typeof obj.name === 'string' && obj.name.trim() && !obj.name.startsWith('places/')) {
       const cleanN = obj.name.trim();
-      if (cleanN !== 'Business Lead') return cleanN;
+      if (cleanN !== 'Business Lead' && cleanN !== 'Direct Lead' && cleanN !== 'New Lead') return cleanN;
     }
-    return direct || null;
+    const t = cleanOptionalField({ value: obj?.title });
+    if (t && t !== 'Business Lead' && t !== 'Direct Lead' && t !== 'New Lead') return t;
+    return null;
   })
   @IsString()
   @IsOptional()

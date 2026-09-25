@@ -231,16 +231,45 @@ export class LeadService {
       nested.googlePlaceId ||
       nested.lead_id;
 
-    if (!result.firstName && directFirstName) result.firstName = String(directFirstName).trim();
-    if (!result.lastName && directLastName) result.lastName = String(directLastName).trim();
-    if (!result.firstName && !result.lastName && directFullName) {
+    const isGenericContact = (s: any) => {
+      if (!s || typeof s !== 'string') return true;
+      const t = s.trim();
+      return (
+        !t ||
+        t === 'Business Lead' ||
+        t === 'Direct Lead' ||
+        t === 'New Lead' ||
+        t === 'Business Owner' ||
+        t === 'Unknown Business' ||
+        t === 'Business' ||
+        t === 'Lead' ||
+        t.startsWith('places/')
+      );
+    };
+
+    if (!result.firstName && directFirstName && !isGenericContact(directFirstName)) result.firstName = String(directFirstName).trim();
+    if (!result.lastName && directLastName && !isGenericContact(directLastName)) result.lastName = String(directLastName).trim();
+    if (
+      !result.firstName &&
+      !result.lastName &&
+      directFullName &&
+      !isGenericContact(directFullName) &&
+      directFullName !== directCompany &&
+      directFullName !== payload.companyName &&
+      directFullName !== payload.businessName &&
+      directFullName !== payload.title
+    ) {
       const parts = String(directFullName).trim().split(/\s+/);
       result.firstName = parts[0];
       result.lastName = parts.slice(1).join(' ') || parts[0];
     }
+    if (result.firstName === 'Business' && (result.lastName === 'Lead' || result.lastName === 'Owner' || result.lastName === 'Prospect')) {
+      result.firstName = undefined;
+      result.lastName = undefined;
+    }
     if (!result.email && directEmail) result.email = ContactExtractor.normalizeEmail(directEmail) || undefined;
     if (!result.phone && directPhone) result.phone = ContactExtractor.normalizePhoneNumber(directPhone) || undefined;
-    if (!result.companyName && directCompany && directCompany !== 'Business Lead') result.companyName = String(directCompany).trim();
+    if (!result.companyName && directCompany && directCompany !== 'Business Lead' && directCompany !== 'Direct Lead' && directCompany !== 'New Lead') result.companyName = String(directCompany).trim();
     if (!result.googlePlaceId && directPlaceId) result.googlePlaceId = String(directPlaceId).trim();
 
     return result;
@@ -271,8 +300,10 @@ export class LeadService {
       cleaned.establishmentName ||
       cleaned.organizationName ||
       cleaned.formattedName;
-    if (directResolvedCompany && directResolvedCompany !== 'Business Lead' && !isInvalid(directResolvedCompany)) {
+    if (directResolvedCompany && directResolvedCompany !== 'Business Lead' && directResolvedCompany !== 'Direct Lead' && directResolvedCompany !== 'New Lead' && !isInvalid(directResolvedCompany)) {
       cleaned.companyName = String(directResolvedCompany).trim();
+    } else if (cleaned.name && typeof cleaned.name === 'string' && cleaned.name.trim() !== 'Business Lead' && cleaned.name.trim() !== 'Direct Lead' && cleaned.name.trim() !== 'New Lead' && !cleaned.name.startsWith('places/')) {
+      cleaned.companyName = cleaned.name.trim();
     }
 
     // 0. Extract from Google Discovery / Google Lead payload if present
@@ -363,7 +394,12 @@ export class LeadService {
     if (
       (!rawFirstName || isInvalid(rawFirstName)) &&
       (!rawLastName || isInvalid(rawLastName)) &&
-      (cleaned.name || cleaned.full_name)
+      (cleaned.name || cleaned.full_name) &&
+      cleaned.name !== cleaned.companyName &&
+      cleaned.name !== cleaned.title &&
+      cleaned.name !== 'Business Lead' &&
+      cleaned.name !== 'Direct Lead' &&
+      cleaned.name !== 'New Lead'
     ) {
       const parts = String(cleaned.name || cleaned.full_name).trim().split(/\s+/);
       if (parts.length > 0 && parts[0]) {
@@ -380,8 +416,18 @@ export class LeadService {
     }
 
     // If firstName is still empty, only derive from explicit human name fields (not business title or companyName)
-    const rawContactName = cleaned.contactName || cleaned.contact_name || cleaned.fullName || cleaned.full_name || cleaned.name;
-    if (!cleaned.firstName && rawContactName && typeof rawContactName === 'string' && !rawContactName.startsWith('places/') && rawContactName.trim() !== 'Business Lead') {
+    const rawContactName = cleaned.contactName || cleaned.contact_name || cleaned.fullName || cleaned.full_name;
+    if (
+      !cleaned.firstName &&
+      rawContactName &&
+      typeof rawContactName === 'string' &&
+      !rawContactName.startsWith('places/') &&
+      rawContactName.trim() !== 'Business Lead' &&
+      rawContactName.trim() !== 'Direct Lead' &&
+      rawContactName.trim() !== 'New Lead' &&
+      rawContactName.trim() !== cleaned.companyName &&
+      rawContactName.trim() !== cleaned.title
+    ) {
       const parts = rawContactName.trim().split(/\s+/);
       cleaned.firstName = parts[0] || '';
       if (!cleaned.lastName) {
@@ -397,11 +443,14 @@ export class LeadService {
       cleaned.title === 'Direct Lead' ||
       cleaned.title === 'New Lead'
     ) {
-      if (cleaned.companyName && cleaned.companyName !== 'Business Lead' && cleaned.companyName !== 'Direct Lead') {
+      if (cleaned.companyName && cleaned.companyName !== 'Business Lead' && cleaned.companyName !== 'Direct Lead' && cleaned.companyName !== 'New Lead') {
         cleaned.title = cleaned.companyName;
+      } else if (cleaned.name && typeof cleaned.name === 'string' && cleaned.name.trim() !== 'Business Lead' && cleaned.name.trim() !== 'Direct Lead' && cleaned.name.trim() !== 'New Lead' && !cleaned.name.startsWith('places/')) {
+        cleaned.title = cleaned.name.trim();
+        cleaned.companyName = cleaned.name.trim();
       } else {
         const fullName = [cleaned.firstName, cleaned.lastName].filter(Boolean).join(' ').trim();
-        if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business' && fullName !== 'Business Lead') {
+        if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business' && fullName !== 'Business Lead' && fullName !== 'Direct Lead' && fullName !== 'New Lead') {
           cleaned.title = fullName;
         } else {
           cleaned.title = 'Unnamed Business';
@@ -410,9 +459,13 @@ export class LeadService {
     }
 
     // Also ensure companyName is populated from title if companyName was missing or generic
-    if (!cleaned.companyName || cleaned.companyName === 'Business Lead' || cleaned.companyName === 'Direct Lead') {
-      if (cleaned.title && cleaned.title !== 'Business Lead' && cleaned.title !== 'Direct Lead' && cleaned.title !== 'New Lead') {
+    if (!cleaned.companyName || cleaned.companyName === 'Business Lead' || cleaned.companyName === 'Direct Lead' || cleaned.companyName === 'New Lead') {
+      if (cleaned.title && cleaned.title !== 'Business Lead' && cleaned.title !== 'Direct Lead' && cleaned.title !== 'New Lead' && cleaned.title !== 'Unnamed Business') {
         cleaned.companyName = cleaned.title;
+      } else if (cleaned.name && typeof cleaned.name === 'string' && cleaned.name.trim() !== 'Business Lead' && cleaned.name.trim() !== 'Direct Lead' && cleaned.name.trim() !== 'New Lead' && !cleaned.name.startsWith('places/')) {
+        cleaned.companyName = cleaned.name.trim();
+      } else {
+        cleaned.companyName = cleaned.title || 'Unnamed Business';
       }
     }
 

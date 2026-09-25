@@ -117,8 +117,11 @@ export class LeadRepository {
     const resolvedCity = (leadData.city || location || '').trim() || null;
     const rawPin = leadData.pincode ?? postalCode ?? zipCode ?? pinCode ?? pin_code;
     const resolvedPincode = rawPin && String(rawPin).trim() !== 'N/A' && String(rawPin).trim() !== 'null' ? String(rawPin).trim() : null;
-    const resolvedFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
-    const resolvedLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
+    const rawFirstName = leadData.firstName !== undefined && leadData.firstName !== null ? String(leadData.firstName).trim() : '';
+    const rawLastName = leadData.lastName !== undefined && leadData.lastName !== null ? String(leadData.lastName).trim() : '';
+    const isFakeName = (s: string) => ['business', 'lead', 'owner', 'unknown', 'direct', 'prospect'].includes(s.toLowerCase());
+    const resolvedFirstName = isFakeName(rawFirstName) ? '' : rawFirstName;
+    const resolvedLastName = isFakeName(rawLastName) ? '' : rawLastName;
     const resolvedPhone = leadData.phone ? String(leadData.phone).trim() : undefined;
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
@@ -126,20 +129,26 @@ export class LeadRepository {
       (leadData.companyName && leadData.companyName !== 'Business Lead' && leadData.companyName !== 'Direct Lead' && leadData.companyName !== 'New Lead' ? leadData.companyName : null) ||
       (leadData.businessName && leadData.businessName !== 'Business Lead' && leadData.businessName !== 'Direct Lead' && leadData.businessName !== 'New Lead' ? leadData.businessName : null) ||
       (typeof leadData.displayName === 'object' ? leadData.displayName?.text : leadData.displayName) ||
-      (dto as any).businessName ||
-      (dto as any).companyName ||
+      ((dto as any).businessName && (dto as any).businessName !== 'Business Lead' && (dto as any).businessName !== 'Direct Lead' && (dto as any).businessName !== 'New Lead' ? (dto as any).businessName : null) ||
+      ((dto as any).companyName && (dto as any).companyName !== 'Business Lead' && (dto as any).companyName !== 'Direct Lead' && (dto as any).companyName !== 'New Lead' ? (dto as any).companyName : null) ||
       (typeof (dto as any).displayName === 'object' ? (dto as any).displayName?.text : (dto as any).displayName) ||
       (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
-      (name && !String(name).startsWith('places/') && name !== 'Business Lead' ? name : null) ||
-      (full_name && !String(full_name).startsWith('places/') && full_name !== 'Business Lead' ? full_name : null);
+      (name && !String(name).startsWith('places/') && name !== 'Business Lead' && name !== 'Direct Lead' && name !== 'New Lead' ? name : null) ||
+      (full_name && !String(full_name).startsWith('places/') && full_name !== 'Business Lead' && full_name !== 'Direct Lead' && full_name !== 'New Lead' ? full_name : null);
+
+    const contactPerson = (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null);
+    const validContact = contactPerson && contactPerson !== 'Business Lead' && contactPerson !== 'Business Owner' && contactPerson !== 'Unknown Business' ? contactPerson : null;
 
     const resolvedTitle =
       (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
       resolvedBusinessName ||
-      (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null) ||
+      validContact ||
       'Unnamed Business';
 
-    const finalCompanyName = resolvedBusinessName || leadData.companyName || resolvedTitle;
+    const finalCompanyName =
+      resolvedBusinessName ||
+      (leadData.companyName && leadData.companyName !== 'Business Lead' && leadData.companyName !== 'Direct Lead' && leadData.companyName !== 'New Lead' ? leadData.companyName : null) ||
+      (resolvedTitle && resolvedTitle !== 'Business Lead' && resolvedTitle !== 'Direct Lead' && resolvedTitle !== 'New Lead' ? resolvedTitle : 'Unnamed Business');
 
     const createData: any = {
       ...leadData,
@@ -828,11 +837,15 @@ export class LeadRepository {
       }
     }
 
+    const cleanCompany = (lead.companyName && lead.companyName !== 'Business Lead' && lead.companyName !== 'Direct Lead' && lead.companyName !== 'New Lead') ? lead.companyName : null;
+    const cleanTitle = (lead.title && lead.title !== 'Business Lead' && lead.title !== 'Direct Lead' && lead.title !== 'New Lead') ? lead.title : null;
+    const safeFallbackBiz = resolvedBiz || cleanCompany || cleanTitle || 'Unnamed Business';
+
     return {
       ...lead,
-      companyName: resolvedBiz || lead.companyName,
-      businessName: resolvedBiz || lead.companyName || lead.title,
-      name: resolvedBiz || lead.companyName || lead.title,
+      companyName: resolvedBiz || cleanCompany || safeFallbackBiz,
+      businessName: safeFallbackBiz,
+      name: safeFallbackBiz,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
     };
   }
@@ -902,6 +915,12 @@ export class LeadRepository {
           quotations: {
             include: { items: true },
             orderBy: { createdAt: 'desc' },
+          },
+          convertedCustomer: {
+            select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
+          },
+          commissions: {
+            select: { id: true, commissionAmount: true, status: true, commissionType: true, paidAt: true, createdAt: true },
           },
         },
       });
