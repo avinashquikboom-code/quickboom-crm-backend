@@ -198,12 +198,12 @@ export class LeadRepository {
       (leadData.title && leadData.title !== 'Business Lead' && leadData.title !== 'Direct Lead' && leadData.title !== 'New Lead' ? leadData.title : null) ||
       resolvedBusinessName ||
       validContact ||
-      'Unnamed Business';
+      '';
 
     const finalCompanyName =
       resolvedBusinessName ||
       (leadData.companyName && leadData.companyName !== 'Business Lead' && leadData.companyName !== 'Direct Lead' && leadData.companyName !== 'New Lead' ? leadData.companyName : null) ||
-      (resolvedTitle && resolvedTitle !== 'Business Lead' && resolvedTitle !== 'Direct Lead' && resolvedTitle !== 'New Lead' ? resolvedTitle : 'Unnamed Business');
+      null;
 
     const createData: any = {
       ...leadData,
@@ -1010,8 +1010,7 @@ export class LeadRepository {
     const cleanBiz = !isFake(lead.businessName) ? lead.businessName.trim() : null;
     const cleanTitle = !isFake(lead.title) ? lead.title.trim() : null;
 
-    const resolvedBiz = cleanCompany || cleanBiz || cleanTitle || '';
-    const safeFallbackBiz = resolvedBiz || 'Unnamed Business';
+    const resolvedBiz = cleanCompany || cleanBiz || cleanTitle || null;
 
     let upcomingCommission: number | null = null;
     if (Array.isArray(lead.commissions) && lead.commissions.length > 0) {
@@ -1038,10 +1037,10 @@ export class LeadRepository {
       ...lead,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
-      companyName: resolvedBiz || safeFallbackBiz,
-      businessName: safeFallbackBiz,
-      title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : safeFallbackBiz),
-      name: safeFallbackBiz,
+      companyName: resolvedBiz,
+      businessName: resolvedBiz,
+      title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : (lead.title || '')),
+      name: resolvedBiz,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
     };
   }

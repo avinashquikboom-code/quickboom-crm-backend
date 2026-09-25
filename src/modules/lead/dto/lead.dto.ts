@@ -103,7 +103,7 @@ export class CreateLeadDto {
     // 4. Fallback
     if (obj?.email || obj?.emailAddress) return (obj.email || obj.emailAddress).trim();
     if (obj?.phone || obj?.mobile) return (obj.phone || obj.mobile).trim();
-    return 'Unnamed Business';
+    return undefined;
   })
   @IsString()
   @IsOptional()

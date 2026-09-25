@@ -453,7 +453,7 @@ export class LeadService {
         if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business' && fullName !== 'Business Lead' && fullName !== 'Direct Lead' && fullName !== 'New Lead') {
           cleaned.title = fullName;
         } else {
-          cleaned.title = 'Unnamed Business';
+          cleaned.title = '';
         }
       }
     }
@@ -465,7 +465,7 @@ export class LeadService {
       } else if (cleaned.name && typeof cleaned.name === 'string' && cleaned.name.trim() !== 'Business Lead' && cleaned.name.trim() !== 'Direct Lead' && cleaned.name.trim() !== 'New Lead' && !cleaned.name.startsWith('places/')) {
         cleaned.companyName = cleaned.name.trim();
       } else {
-        cleaned.companyName = cleaned.title || 'Unnamed Business';
+        cleaned.companyName = null;
       }
     }
 
