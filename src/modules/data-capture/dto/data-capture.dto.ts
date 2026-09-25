@@ -264,6 +264,15 @@ export class CreateDataCaptureDto {
 
   @IsOptional()
   rawData?: any;
+
+  @IsOptional()
+  photos?: any;
+
+  @IsOptional()
+  googlePhotos?: any;
+
+  @IsOptional()
+  socialMedia?: any;
 }
 
 export class UpdateDataCaptureDto {
@@ -381,6 +390,15 @@ export class UpdateDataCaptureDto {
 
   @IsOptional()
   rawData?: any;
+
+  @IsOptional()
+  photos?: any;
+
+  @IsOptional()
+  googlePhotos?: any;
+
+  @IsOptional()
+  socialMedia?: any;
 }
 
 export class DataCaptureQueryDto {

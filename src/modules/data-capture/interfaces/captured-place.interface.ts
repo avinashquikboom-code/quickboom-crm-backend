@@ -48,6 +48,8 @@ export interface SocialMediaHandles {
   linkedin?: string;
   twitter?: string;
   youtube?: string;
+  tiktok?: string;
+  pinterest?: string;
   [key: string]: string | undefined;
 }
 

@@ -1924,6 +1924,7 @@ model DataCapturePlace {
   status         String?         @default("CAPTURED")
   rawData        Json?
   photos         Json?             // Array of Google photo URLs for this business
+  socialMedia    Json?             // Discovered social media handles & website
   notes          String?
   isImported       Boolean         @default(false)
   importedLeadId   Int?

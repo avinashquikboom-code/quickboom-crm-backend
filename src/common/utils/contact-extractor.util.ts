@@ -214,7 +214,7 @@ export class ContactExtractor {
   }
 
   /**
-   * Extract social media profile links (Facebook, Instagram, LinkedIn, Twitter/X, YouTube) from website HTML.
+   * Extract social media profile links (Facebook, Instagram, LinkedIn, Twitter/X, YouTube, TikTok, Pinterest) from website HTML.
    */
   static extractSocialMediaFromHtml(html: string): {
     facebook?: string;
@@ -222,6 +222,8 @@ export class ContactExtractor {
     linkedin?: string;
     twitter?: string;
     youtube?: string;
+    tiktok?: string;
+    pinterest?: string;
   } {
     if (!html || typeof html !== 'string') return {};
 
@@ -231,6 +233,8 @@ export class ContactExtractor {
       linkedin?: string;
       twitter?: string;
       youtube?: string;
+      tiktok?: string;
+      pinterest?: string;
     } = {};
 
     // 1. Facebook
@@ -290,6 +294,28 @@ export class ContactExtractor {
       }
     }
 
+    // 6. TikTok
+    const ttMatch = html.match(
+      /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9_.-]{2,50})(?=[/?"'\s>])/i,
+    );
+    if (ttMatch && ttMatch[1]) {
+      const handle = ttMatch[1].toLowerCase();
+      if (!['discover', 'about', 'legal', 'trending', 'tag', 'explore', 'login'].includes(handle)) {
+        social.tiktok = `https://www.tiktok.com/@${ttMatch[1]}`;
+      }
+    }
+
+    // 7. Pinterest
+    const pinMatch = html.match(
+      /https?:\/\/(?:www\.)?pinterest\.(?:com|[a-z]{2,3})\/([a-zA-Z0-9_.-]{2,50})(?=[/?"'\s>])/i,
+    );
+    if (pinMatch && pinMatch[1]) {
+      const handle = pinMatch[1].toLowerCase();
+      if (!['pin', 'search', 'explore', 'about', 'business', 'ideas'].includes(handle)) {
+        social.pinterest = `https://www.pinterest.com/${pinMatch[1]}`;
+      }
+    }
+
     return social;
   }
 
@@ -307,6 +333,8 @@ export class ContactExtractor {
       linkedin?: string;
       twitter?: string;
       youtube?: string;
+      tiktok?: string;
+      pinterest?: string;
     };
   }> {
     if (!websiteUrl || typeof websiteUrl !== 'string') {

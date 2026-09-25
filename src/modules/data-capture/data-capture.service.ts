@@ -64,6 +64,26 @@ export class DataCaptureService {
     }
     const googlePhotos: GooglePlacePhoto[] = [];
     for (const photo of rawPlace.photos.slice(0, maxPhotos)) {
+      if (!photo) continue;
+      // Pre-resolved full URL string
+      if (typeof photo === 'string' && photo.trim().startsWith('http')) {
+        googlePhotos.push({
+          name: `places/${rawPlace?.id || 'photo'}/photos/${googlePhotos.length + 1}`,
+          url: photo.trim(),
+        });
+        continue;
+      }
+      // Pre-resolved object with URL
+      if (photo.url && typeof photo.url === 'string' && photo.url.trim().startsWith('http')) {
+        googlePhotos.push({
+          name: photo.name ? String(photo.name) : `places/${rawPlace?.id || 'photo'}/photos/${googlePhotos.length + 1}`,
+          url: photo.url.trim(),
+          width: typeof photo.width === 'number' ? photo.width : (typeof photo.widthPx === 'number' ? photo.widthPx : undefined),
+          height: typeof photo.height === 'number' ? photo.height : (typeof photo.heightPx === 'number' ? photo.heightPx : undefined),
+        });
+        continue;
+      }
+
       const ref = photo?.name || photo?.photoReference || photo?.photo_reference;
       if (!ref) continue;
       try {
@@ -97,8 +117,19 @@ export class DataCaptureService {
         const parsed = JSON.parse(photosField);
         if (Array.isArray(parsed)) list = parsed;
         else if (typeof parsed === 'string') list = [parsed];
+        else if (parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed.googlePhotos)) list = parsed.googlePhotos;
+          else if (Array.isArray(parsed.photos)) list = parsed.photos;
+          else list = [parsed];
+        }
       } catch {
         list = [photosField];
+      }
+    } else if (typeof photosField === 'object') {
+      if (Array.isArray(photosField.googlePhotos)) {
+        list = photosField.googlePhotos;
+      } else if (Array.isArray(photosField.photos)) {
+        list = photosField.photos;
       }
     }
 
@@ -147,29 +178,51 @@ export class DataCaptureService {
    */
   private extractSocialMediaFromPlace(place: any): SocialMediaHandles | undefined {
     if (!place) return undefined;
+    let sm: any = place.socialMedia;
     const raw = place.rawData;
-    let sm: any = undefined;
-    if (raw && typeof raw === 'object') {
+    if (!sm && raw && typeof raw === 'object') {
       sm = raw.socialMedia || raw.social_media || raw.social;
     }
-    if (!sm && place.socialMedia && typeof place.socialMedia === 'object') {
-      sm = place.socialMedia;
-    }
     const result: SocialMediaHandles = {};
-    if (sm && typeof sm === 'object') {
-      if (sm.facebook) result.facebook = String(sm.facebook).trim();
-      if (sm.instagram) result.instagram = String(sm.instagram).trim();
-      if (sm.linkedin) result.linkedin = String(sm.linkedin).trim();
-      if (sm.twitter) result.twitter = String(sm.twitter).trim();
-      if (sm.youtube) result.youtube = String(sm.youtube).trim();
-      if (sm.website) result.website = String(sm.website).trim();
+
+    if (sm) {
+      if (Array.isArray(sm)) {
+        for (const item of sm) {
+          if (!item) continue;
+          const plat = String(item.platform || item.name || '').toLowerCase();
+          const url = String(item.url || item.handle || '').trim();
+          if (plat && url) {
+            if (plat.includes('instagram')) result.instagram = url;
+            else if (plat.includes('facebook')) result.facebook = url;
+            else if (plat.includes('youtube')) result.youtube = url;
+            else if (plat.includes('linkedin')) result.linkedin = url;
+            else if (plat.includes('twitter') || plat === 'x') result.twitter = url;
+            else if (plat.includes('tiktok')) result.tiktok = url;
+            else if (plat.includes('pinterest')) result.pinterest = url;
+            else result[plat] = url;
+          }
+        }
+      } else if (typeof sm === 'object') {
+        if (sm.facebook) result.facebook = String(sm.facebook).trim();
+        if (sm.instagram) result.instagram = String(sm.instagram).trim();
+        if (sm.linkedin) result.linkedin = String(sm.linkedin).trim();
+        if (sm.twitter) result.twitter = String(sm.twitter).trim();
+        if (sm.x && !result.twitter) result.twitter = String(sm.x).trim();
+        if (sm.youtube) result.youtube = String(sm.youtube).trim();
+        if (sm.tiktok) result.tiktok = String(sm.tiktok).trim();
+        if (sm.pinterest) result.pinterest = String(sm.pinterest).trim();
+        if (sm.website) result.website = String(sm.website).trim();
+      }
     }
+
     if (place.website && !result.website) result.website = String(place.website).trim();
     if ((place as any).facebook && !result.facebook) result.facebook = String((place as any).facebook).trim();
     if ((place as any).instagram && !result.instagram) result.instagram = String((place as any).instagram).trim();
     if ((place as any).linkedin && !result.linkedin) result.linkedin = String((place as any).linkedin).trim();
     if ((place as any).twitter && !result.twitter) result.twitter = String((place as any).twitter).trim();
     if ((place as any).youtube && !result.youtube) result.youtube = String((place as any).youtube).trim();
+    if ((place as any).tiktok && !result.tiktok) result.tiktok = String((place as any).tiktok).trim();
+    if ((place as any).pinterest && !result.pinterest) result.pinterest = String((place as any).pinterest).trim();
 
     return Object.keys(result).length > 0 ? result : undefined;
   }
@@ -476,9 +529,10 @@ export class DataCaptureService {
         rawData: p.rawData
           ? JSON.parse(JSON.stringify(p.rawData))
           : (p.socialMedia ? { socialMedia: p.socialMedia } : undefined),
-        photos: p.googlePhotos && p.googlePhotos.length > 0
+        photos: (p.googlePhotos && p.googlePhotos.length > 0
           ? p.googlePhotos
-          : (p.photos && p.photos.length > 0 ? p.photos.map((url) => ({ name: `places/photo/${Math.random()}`, url })) : undefined),
+          : (p.photos && p.photos.length > 0 ? p.photos.map((url, idx) => ({ name: `places/photo/${idx + 1}`, url })) : undefined)) as any,
+        socialMedia: (p.socialMedia || (p.rawData?.socialMedia ? p.rawData.socialMedia : undefined)) as any,
       };
     });
 
@@ -869,6 +923,10 @@ export class DataCaptureService {
       ...(resolvedEmail ? { email: resolvedEmail } : {}),
     };
 
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+      dto.photos || dto.googlePhotos || mergedRawData.photos || mergedRawData.googlePhotos
+    );
+
     const place = await this.prisma.dataCapturePlace.create({
       data: {
         customerId: numCustomerId,
@@ -889,6 +947,8 @@ export class DataCaptureService {
         status: dto.status || 'CAPTURED',
         notes: dto.notes,
         rawData: Object.keys(mergedRawData).length > 0 ? mergedRawData : dto.rawData,
+        photos: (placeGP.length > 0 ? placeGP : (placePhotoUrls.length > 0 ? placePhotoUrls : undefined)) as any,
+        socialMedia: (dto.socialMedia || undefined) as any,
       },
     });
 
@@ -920,8 +980,8 @@ export class DataCaptureService {
       updatedAt: place.updatedAt,
       customerId: String(place.customerId),
       duplicateMatches,
-      googlePhotos: [],
-      photos: undefined,
+      googlePhotos: placeGP.length > 0 ? placeGP : [],
+      photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
       socialMedia: this.extractSocialMediaFromPlace(place),
     };
   }
@@ -950,6 +1010,12 @@ export class DataCaptureService {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
+    let updatedPhotosField: any = undefined;
+    if (dto.photos !== undefined || dto.googlePhotos !== undefined) {
+      const { googlePhotos: inGP, photos: inUrls } = this.normalizeStoredPhotos(dto.photos || dto.googlePhotos);
+      updatedPhotosField = inGP.length > 0 ? inGP : (inUrls.length > 0 ? inUrls : null);
+    }
+
     const updated = await this.prisma.dataCapturePlace.update({
       where: { id: numId },
       data: {
@@ -971,10 +1037,13 @@ export class DataCaptureService {
         notes: dto.notes !== undefined ? dto.notes : undefined,
         isImported: dto.isImported !== undefined ? dto.isImported : undefined,
         rawData: dto.rawData !== undefined ? dto.rawData : undefined,
+        photos: updatedPhotosField as any,
+        socialMedia: (dto.socialMedia !== undefined ? dto.socialMedia : undefined) as any,
       },
     });
 
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || updated.customerId, updated);
+    const { googlePhotos: updatedGP, photos: updatedPhotoUrls } = this.normalizeStoredPhotos(updated.photos);
 
     return {
       id: updated.id,
@@ -1003,6 +1072,9 @@ export class DataCaptureService {
       customerId: String(updated.customerId),
       extractionJobId: updated.jobId || undefined,
       duplicateMatches,
+      googlePhotos: updatedGP.length > 0 ? updatedGP : [],
+      photos: updatedPhotoUrls.length > 0 ? updatedPhotoUrls : undefined,
+      socialMedia: this.extractSocialMediaFromPlace(updated),
     };
   }
 
@@ -1437,6 +1509,40 @@ export class DataCaptureService {
             this.logger.warn(`Failed to attach image to lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
           }
         }
+      }
+    }
+
+    // Import social media handles into LeadSocialProfile records if not already created
+    if (placeSocialMedia && this.prisma.leadSocialProfile && createdLead?.id) {
+      const spList: Array<{ platform: string; url: string }> = [];
+      if (placeSocialMedia.instagram) spList.push({ platform: 'INSTAGRAM', url: placeSocialMedia.instagram });
+      if (placeSocialMedia.facebook) spList.push({ platform: 'FACEBOOK', url: placeSocialMedia.facebook });
+      if (placeSocialMedia.youtube) spList.push({ platform: 'YOUTUBE', url: placeSocialMedia.youtube });
+      if (placeSocialMedia.linkedin) spList.push({ platform: 'LINKEDIN', url: placeSocialMedia.linkedin });
+      if (placeSocialMedia.twitter) spList.push({ platform: 'TWITTER', url: placeSocialMedia.twitter });
+      if (placeSocialMedia.tiktok) spList.push({ platform: 'TIKTOK', url: placeSocialMedia.tiktok });
+      if (placeSocialMedia.pinterest) spList.push({ platform: 'PINTEREST', url: placeSocialMedia.pinterest });
+      if (placeSocialMedia.website) spList.push({ platform: 'WEBSITE', url: placeSocialMedia.website });
+
+      for (const sp of spList) {
+        try {
+          await this.prisma.leadSocialProfile.upsert({
+            where: {
+              leadId_platform: {
+                leadId: createdLead.id,
+                platform: sp.platform,
+              },
+            },
+            create: {
+              leadId: createdLead.id,
+              platform: sp.platform,
+              url: sp.url,
+            },
+            update: {
+              url: sp.url,
+            },
+          });
+        } catch (_) {}
       }
     }
 
@@ -2070,6 +2176,40 @@ export class DataCaptureService {
               this.logger.warn(`Failed to attach image to imported lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
             }
           }
+        }
+      }
+
+      // Sync social profiles into lead_social_profiles if present
+      if (placeSocialMedia && this.prisma.leadSocialProfile && createdLead?.id) {
+        const spList: Array<{ platform: string; url: string }> = [];
+        if (placeSocialMedia.instagram) spList.push({ platform: 'INSTAGRAM', url: placeSocialMedia.instagram });
+        if (placeSocialMedia.facebook) spList.push({ platform: 'FACEBOOK', url: placeSocialMedia.facebook });
+        if (placeSocialMedia.youtube) spList.push({ platform: 'YOUTUBE', url: placeSocialMedia.youtube });
+        if (placeSocialMedia.linkedin) spList.push({ platform: 'LINKEDIN', url: placeSocialMedia.linkedin });
+        if (placeSocialMedia.twitter) spList.push({ platform: 'TWITTER', url: placeSocialMedia.twitter });
+        if (placeSocialMedia.tiktok) spList.push({ platform: 'TIKTOK', url: placeSocialMedia.tiktok });
+        if (placeSocialMedia.pinterest) spList.push({ platform: 'PINTEREST', url: placeSocialMedia.pinterest });
+        if (placeSocialMedia.website) spList.push({ platform: 'WEBSITE', url: placeSocialMedia.website });
+
+        for (const sp of spList) {
+          try {
+            await this.prisma.leadSocialProfile.upsert({
+              where: {
+                leadId_platform: {
+                  leadId: createdLead.id,
+                  platform: sp.platform,
+                },
+              },
+              create: {
+                leadId: createdLead.id,
+                platform: sp.platform,
+                url: sp.url,
+              },
+              update: {
+                url: sp.url,
+              },
+            });
+          } catch (_) {}
         }
       }
 

@@ -190,6 +190,10 @@ export class LeadRepository {
       ...(leadData.linkedin ? { linkedin: String(leadData.linkedin).trim() } : {}),
       ...(leadData.youtube ? { youtube: String(leadData.youtube).trim() } : {}),
       ...(leadData.twitter ? { twitter: String(leadData.twitter).trim() } : {}),
+      ...(leadData.x ? { twitter: String(leadData.x).trim() } : {}),
+      ...(leadData.tiktok ? { tiktok: String(leadData.tiktok).trim() } : {}),
+      ...(leadData.pinterest ? { pinterest: String(leadData.pinterest).trim() } : {}),
+      ...(leadData.website ? { website: String(leadData.website).trim() } : {}),
     };
     if (typeof resolvedSocialMedia === 'string' && resolvedSocialMedia.trim().length > 0 && !resolvedSocialMedia.trim().startsWith('{')) {
       const trimmed = resolvedSocialMedia.trim();
@@ -198,6 +202,8 @@ export class LeadRepository {
       else if (trimmed.includes('linkedin.com')) mergedSocial.linkedin = trimmed;
       else if (trimmed.includes('youtube.com')) mergedSocial.youtube = trimmed;
       else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) mergedSocial.twitter = trimmed;
+      else if (trimmed.includes('tiktok.com')) mergedSocial.tiktok = trimmed;
+      else if (trimmed.includes('pinterest.com')) mergedSocial.pinterest = trimmed;
       else mergedSocial.website = trimmed;
     }
     Object.keys(mergedSocial).forEach((k) => {
@@ -216,6 +222,9 @@ export class LeadRepository {
     delete createData.linkedin;
     delete createData.youtube;
     delete createData.twitter;
+    delete createData.x;
+    delete createData.tiktok;
+    delete createData.pinterest;
     delete createData.photos;
     delete createData.googlePhotos;
     delete createData.images;
@@ -263,6 +272,40 @@ export class LeadRepository {
               key: photoList[idx].key || undefined,
               caption: photoList[idx].caption,
               isPrimary: idx === 0,
+            },
+          });
+        } catch (_) {}
+      }
+    }
+
+    // Sync social profiles into lead_social_profiles table if present
+    if (Object.keys(mergedSocial).length > 0 && client.leadSocialProfile) {
+      const spPlatforms: Array<{ platform: string; url: string }> = [];
+      if (mergedSocial.instagram) spPlatforms.push({ platform: 'INSTAGRAM', url: mergedSocial.instagram });
+      if (mergedSocial.facebook) spPlatforms.push({ platform: 'FACEBOOK', url: mergedSocial.facebook });
+      if (mergedSocial.youtube) spPlatforms.push({ platform: 'YOUTUBE', url: mergedSocial.youtube });
+      if (mergedSocial.linkedin) spPlatforms.push({ platform: 'LINKEDIN', url: mergedSocial.linkedin });
+      if (mergedSocial.twitter) spPlatforms.push({ platform: 'TWITTER', url: mergedSocial.twitter });
+      if (mergedSocial.tiktok) spPlatforms.push({ platform: 'TIKTOK', url: mergedSocial.tiktok });
+      if (mergedSocial.pinterest) spPlatforms.push({ platform: 'PINTEREST', url: mergedSocial.pinterest });
+      if (mergedSocial.website) spPlatforms.push({ platform: 'WEBSITE', url: mergedSocial.website });
+
+      for (const sp of spPlatforms) {
+        try {
+          await client.leadSocialProfile.upsert({
+            where: {
+              leadId_platform: {
+                leadId: lead.id,
+                platform: sp.platform,
+              },
+            },
+            create: {
+              leadId: lead.id,
+              platform: sp.platform,
+              url: sp.url,
+            },
+            update: {
+              url: sp.url,
             },
           });
         } catch (_) {}
@@ -755,11 +798,26 @@ export class LeadRepository {
       (lead.companyName && lead.companyName !== 'Business Lead' && lead.companyName !== 'Direct Lead' && lead.companyName !== 'New Lead' ? lead.companyName : null) ||
       (lead.title && lead.title !== 'Business Lead' && lead.title !== 'Direct Lead' && lead.title !== 'New Lead' ? lead.title : null) ||
       '';
+
+    let upcomingCommission: number | null = null;
+    if (Array.isArray(lead.commissions) && lead.commissions.length > 0) {
+      const eligible = lead.commissions.filter(
+        (c: any) => c.status === 'PENDING' || c.status === 'APPROVED',
+      );
+      if (eligible.length > 0) {
+        upcomingCommission = eligible.reduce(
+          (sum: number, c: any) => sum + Number(c.commissionAmount || 0),
+          0,
+        );
+      }
+    }
+
     return {
       ...lead,
       companyName: resolvedBiz || lead.companyName,
       businessName: resolvedBiz || lead.companyName || lead.title,
       name: resolvedBiz || lead.companyName || lead.title,
+      upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
     };
   }
 
@@ -798,6 +856,12 @@ export class LeadRepository {
           },
           images: {
             orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+          },
+          convertedCustomer: {
+            select: { id: true, companyName: true, plan: true, email: true, phone: true, status: true },
+          },
+          commissions: {
+            select: { id: true, commissionAmount: true, status: true, calculationType: true, eligibleAt: true },
           },
         },
       });
@@ -909,7 +973,10 @@ export class LeadRepository {
       leadData.facebook !== undefined ||
       leadData.linkedin !== undefined ||
       leadData.youtube !== undefined ||
-      leadData.twitter !== undefined
+      leadData.twitter !== undefined ||
+      leadData.x !== undefined ||
+      leadData.tiktok !== undefined ||
+      leadData.pinterest !== undefined
     ) {
       const existing = await this.prisma.lead.findUnique({
         where: { id: numId },
@@ -930,6 +997,9 @@ export class LeadRepository {
         ...(leadData.linkedin !== undefined ? { linkedin: leadData.linkedin ? String(leadData.linkedin).trim() : '' } : {}),
         ...(leadData.youtube !== undefined ? { youtube: leadData.youtube ? String(leadData.youtube).trim() : '' } : {}),
         ...(leadData.twitter !== undefined ? { twitter: leadData.twitter ? String(leadData.twitter).trim() : '' } : {}),
+        ...(leadData.x !== undefined ? { twitter: leadData.x ? String(leadData.x).trim() : '' } : {}),
+        ...(leadData.tiktok !== undefined ? { tiktok: leadData.tiktok ? String(leadData.tiktok).trim() : '' } : {}),
+        ...(leadData.pinterest !== undefined ? { pinterest: leadData.pinterest ? String(leadData.pinterest).trim() : '' } : {}),
         ...(leadData.website !== undefined ? { website: leadData.website ? String(leadData.website).trim() : '' } : {}),
       };
       if (typeof leadData.socialMedia === 'string' && leadData.socialMedia.trim().length > 0 && !leadData.socialMedia.trim().startsWith('{')) {
@@ -939,6 +1009,8 @@ export class LeadRepository {
         else if (trimmed.includes('linkedin.com')) merged.linkedin = trimmed;
         else if (trimmed.includes('youtube.com')) merged.youtube = trimmed;
         else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) merged.twitter = trimmed;
+        else if (trimmed.includes('tiktok.com')) merged.tiktok = trimmed;
+        else if (trimmed.includes('pinterest.com')) merged.pinterest = trimmed;
         else merged.website = trimmed;
       }
       Object.keys(merged).forEach((k) => {
@@ -947,6 +1019,40 @@ export class LeadRepository {
         }
       });
       updateData.socialMedia = Object.keys(merged).length > 0 ? merged : null;
+
+      // Sync updated social profiles to lead_social_profiles
+      if (this.prisma.leadSocialProfile) {
+        const spPlatforms: Array<{ platform: string; url: string }> = [];
+        if (merged.instagram) spPlatforms.push({ platform: 'INSTAGRAM', url: merged.instagram });
+        if (merged.facebook) spPlatforms.push({ platform: 'FACEBOOK', url: merged.facebook });
+        if (merged.youtube) spPlatforms.push({ platform: 'YOUTUBE', url: merged.youtube });
+        if (merged.linkedin) spPlatforms.push({ platform: 'LINKEDIN', url: merged.linkedin });
+        if (merged.twitter) spPlatforms.push({ platform: 'TWITTER', url: merged.twitter });
+        if (merged.tiktok) spPlatforms.push({ platform: 'TIKTOK', url: merged.tiktok });
+        if (merged.pinterest) spPlatforms.push({ platform: 'PINTEREST', url: merged.pinterest });
+        if (merged.website) spPlatforms.push({ platform: 'WEBSITE', url: merged.website });
+
+        for (const sp of spPlatforms) {
+          try {
+            await this.prisma.leadSocialProfile.upsert({
+              where: {
+                leadId_platform: {
+                  leadId: numId,
+                  platform: sp.platform,
+                },
+              },
+              create: {
+                leadId: numId,
+                platform: sp.platform,
+                url: sp.url,
+              },
+              update: {
+                url: sp.url,
+              },
+            });
+          } catch (_) {}
+        }
+      }
     }
 
     if (leadData.latitude !== undefined) {
