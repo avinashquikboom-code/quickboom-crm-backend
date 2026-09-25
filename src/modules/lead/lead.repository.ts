@@ -692,7 +692,23 @@ export class LeadRepository {
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
     if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
-      where.stageId = Number(options.stageId);
+      const sId = Number(options.stageId);
+      const stageRecord = await this.prisma.leadStage.findFirst({
+        where: { id: sId, deletedAt: null },
+      });
+      if (stageRecord?.key) {
+        const normKey = normalizeLeadStatus(stageRecord.key);
+        if (ALL_LEAD_STATUSES.includes(normKey)) {
+          where.OR = [
+            { stageId: sId },
+            { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
+          ];
+        } else {
+          where.stageId = sId;
+        }
+      } else {
+        where.stageId = sId;
+      }
     } else if (options.status && options.status.toUpperCase() !== 'ALL') {
       const statusStr = String(options.status).trim();
       if (!isNaN(Number(statusStr))) {
@@ -858,10 +874,10 @@ export class LeadRepository {
             orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
           },
           convertedCustomer: {
-            select: { id: true, companyName: true, plan: true, email: true, phone: true, status: true },
+            select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
           },
           commissions: {
-            select: { id: true, commissionAmount: true, status: true, calculationType: true, eligibleAt: true },
+            select: { id: true, commissionAmount: true, status: true, commissionType: true, paidAt: true, createdAt: true },
           },
         },
       });
