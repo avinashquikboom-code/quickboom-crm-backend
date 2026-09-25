@@ -312,26 +312,57 @@ export class DataCaptureService implements OnModuleInit {
 
         if (matchingPlace && matchingPlace.businessName && matchingPlace.businessName !== 'Business Lead' && matchingPlace.businessName !== 'Direct Lead' && matchingPlace.businessName !== 'Unnamed Business') {
           const repairedName = matchingPlace.businessName.trim();
+          const parsedAddr = this.parseAddressComponents(matchingPlace.address);
           await this.prisma.lead.update({
             where: { id: lead.id },
             data: {
               title: repairedName,
               companyName: repairedName,
-              firstName: lead.firstName === 'Business' && lead.lastName === 'Lead' ? '' : lead.firstName,
-              lastName: lead.firstName === 'Business' && lead.lastName === 'Lead' ? '' : lead.lastName,
-              googlePlaceId: lead.googlePlaceId || matchingPlace.googlePlaceId || undefined,
+              firstName: (lead.firstName === 'Business' && lead.lastName === 'Lead') || lead.firstName === 'Business' ? '' : lead.firstName,
+              lastName: (lead.firstName === 'Business' && lead.lastName === 'Lead') || lead.lastName === 'Lead' ? '' : lead.lastName,
+              googlePlaceId: (lead.googlePlaceId && !lead.googlePlaceId.startsWith('custom_')) ? lead.googlePlaceId : (matchingPlace.googlePlaceId || undefined),
               sourceRecordId: lead.sourceRecordId || String(matchingPlace.id),
               phone: lead.phone || matchingPlace.phone || undefined,
               email: lead.email || matchingPlace.email || undefined,
               website: lead.website || matchingPlace.website || undefined,
               address: lead.address || matchingPlace.address || undefined,
+              city: lead.city || parsedAddr.city || undefined,
+              state: lead.state || parsedAddr.state || undefined,
+              pincode: lead.pincode || parsedAddr.pincode || undefined,
               category: (lead.category === 'General' || !lead.category) && matchingPlace.category ? matchingPlace.category : lead.category,
               rating: lead.rating ?? matchingPlace.rating,
               reviewCount: lead.reviewCount ?? matchingPlace.reviewCount,
               latitude: lead.latitude ?? matchingPlace.latitude,
               longitude: lead.longitude ?? matchingPlace.longitude,
+              socialMedia: lead.socialMedia || matchingPlace.socialMedia || undefined,
             },
           });
+
+          // Attach photos if missing
+          const pUrls = this.normalizePhotosArray(matchingPlace.photos || (matchingPlace.rawData as any)?.photos || (matchingPlace.rawData as any)?.googlePhotos);
+          if (pUrls.length > 0 && this.prisma.leadImage) {
+            const imgCount = await this.prisma.leadImage.count({ where: { leadId: lead.id } });
+            if (imgCount === 0) {
+              for (let pIdx = 0; pIdx < pUrls.length; pIdx++) {
+                try {
+                  await this.prisma.leadImage.create({
+                    data: {
+                      leadId: lead.id,
+                      url: pUrls[pIdx],
+                      isPrimary: pIdx === 0,
+                      caption: pIdx === 0 ? `${repairedName} (Primary Photo)` : `${repairedName} Photo ${pIdx + 1}`,
+                    },
+                  });
+                } catch (_) {}
+              }
+            }
+          }
+
+          // Update matchingPlace as imported
+          await this.prisma.dataCapturePlace.update({
+            where: { id: matchingPlace.id },
+            data: { isImported: true, importedLeadId: lead.id, status: 'LEAD_CREATED', sourceRecordId: String(matchingPlace.id) },
+          }).catch(() => {});
           repairedCount++;
         }
       }
@@ -1357,13 +1388,23 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     // Do NOT split businessName into contact person. If no contact person, use clean empty strings.
-    if (!firstName && !lastName) {
-      firstName = '';
-      lastName = '';
-    } else {
-      firstName = firstName || '';
-      lastName = lastName || firstName;
-    }
+    const isGenericContact = (s: string) => {
+      const lower = s.trim().toLowerCase();
+      return (
+        !lower ||
+        lower === 'business' ||
+        lower === 'lead' ||
+        lower === 'owner' ||
+        lower === 'unknown' ||
+        lower === 'prospect' ||
+        lower === 'direct' ||
+        lower === 'customer' ||
+        lower.startsWith('places/')
+      );
+    };
+
+    if (isGenericContact(firstName)) firstName = '';
+    if (isGenericContact(lastName)) lastName = '';
 
     if (!phone) {
       const rawCandidatePhone =
@@ -1399,39 +1440,157 @@ export class DataCaptureService implements OnModuleInit {
     return { firstName, lastName, phone, email };
   }
 
+  private parseAddressComponents(address?: string | null): { city: string | null; state: string | null; pincode: string | null } {
+    if (!address || address === 'N/A' || !address.trim()) {
+      return { city: null, state: null, pincode: null };
+    }
+    const clean = address.trim();
+    const pinMatch = clean.match(/\b\d{6}\b/) || clean.match(/\b\d{5}(-\d{4})?\b/);
+    const pincode = pinMatch ? pinMatch[0] : null;
+
+    const parts = clean.split(',').map((p) => p.trim()).filter(Boolean);
+    let city: string | null = null;
+    let state: string | null = null;
+
+    if (parts.length >= 3) {
+      const secondLast = parts[parts.length - 2];
+      const lastPart = parts[parts.length - 1];
+      city = secondLast.replace(/\b\d{6}\b/, '').trim() || null;
+      state = lastPart.replace(/\b\d{6}\b/, '').trim() || null;
+    } else if (parts.length === 2) {
+      city = parts[0].trim() || null;
+      state = parts[1].replace(/\b\d{6}\b/, '').trim() || null;
+    } else if (parts.length === 1 && !pincode) {
+      city = parts[0].trim() || null;
+    }
+    return { city, state, pincode };
+  }
+
+  private normalizePhotosArray(raw: any): string[] {
+    const urls: string[] = [];
+    if (!raw) return urls;
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (typeof item === 'string' && item.startsWith('http')) {
+          urls.push(item);
+        } else if (item && typeof item === 'object') {
+          const u = item.url || item.photoUri || item.uri;
+          if (typeof u === 'string' && u.startsWith('http')) {
+            urls.push(u);
+          }
+        }
+      }
+    } else if (typeof raw === 'string' && raw.startsWith('http')) {
+      urls.push(raw);
+    }
+    return urls;
+  }
+
+  private extractSocialProfileList(socialMedia: any): Array<{ platform: string; url: string }> {
+    const list: Array<{ platform: string; url: string }> = [];
+    if (!socialMedia || typeof socialMedia !== 'object') return list;
+    const mapping: Record<string, string> = {
+      instagram: 'INSTAGRAM',
+      facebook: 'FACEBOOK',
+      youtube: 'YOUTUBE',
+      linkedin: 'LINKEDIN',
+      twitter: 'TWITTER',
+      x: 'TWITTER',
+      tiktok: 'TIKTOK',
+      pinterest: 'PINTEREST',
+      website: 'WEBSITE',
+    };
+    for (const [key, platform] of Object.entries(mapping)) {
+      const val = (socialMedia as any)[key];
+      if (typeof val === 'string' && val.trim().startsWith('http')) {
+        list.push({ platform, url: val.trim() });
+      }
+    }
+    return list;
+  }
+
   async createLeadFromPlace(
     customerId: string | number,
     userId: string | number,
     id: number | string,
     captureRequestId?: string,
   ): Promise<{
+    success: boolean;
+    statusCode?: number;
+    leadId?: number;
     lead: any;
+    data: any;
     place: CapturedPlace;
     message: string;
     isDuplicate: boolean;
   }> {
     const numCustomerId = Number(customerId);
-    const numUserId = Number(userId) || 1;
     const numId = Number(id);
 
-    const place = await this.prisma.dataCapturePlace.findFirst({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
-    });
+    let place = !isNaN(numId)
+      ? await this.prisma.dataCapturePlace.findFirst({
+          where: { id: numId, customerId: numCustomerId, deletedAt: null },
+        })
+      : null;
 
-    if (!place) {
-      throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
+    if (!place && typeof id === 'string') {
+      place = await this.prisma.dataCapturePlace.findFirst({
+        where: {
+          customerId: numCustomerId,
+          deletedAt: null,
+          OR: [
+            { googlePlaceId: id },
+            { jobId: id },
+          ],
+        },
+      });
     }
 
-    const activeCaptureRequestId = captureRequestId?.trim() || randomUUID();
+    if (!place) {
+      throw new NotFoundException(`Data Capture record with ID "${id}" not found.`);
+    }
 
-    // 1. Idempotency Check: Already converted place
+    // [CREATE LEAD FROM DATA CAPTURE] safe debug logging (Section 21)
+    this.logger.log(
+      `[CREATE LEAD FROM DATA CAPTURE]\n` +
+      `dataCaptureId: ${place.id}\n` +
+      `customerId: ${place.customerId}\n` +
+      `employeeId: ${(place.rawData as any)?.capturedBy || (place.rawData as any)?.employeeId || userId || 'N/A'}\n` +
+      `businessName: ${place.businessName}\n` +
+      `googlePlaceId: ${place.googlePlaceId || 'N/A'}\n` +
+      `sourceRecordId: ${place.id}\n` +
+      `phone: ${place.phone || 'none'}\n` +
+      `website: ${place.website || 'none'}\n` +
+      `isImported: ${place.isImported}`
+    );
+
+    // If already imported with an active lead, verify and return existing lead
     if (place.isImported && place.importedLeadId) {
       const existingLead = await this.prisma.lead.findFirst({
         where: { id: place.importedLeadId, customerId: numCustomerId, deletedAt: null },
+        include: { images: true, socialProfiles: true },
       });
       if (existingLead) {
+        this.logger.log(
+          `[CREATE LEAD ALREADY IMPORTED]\n` +
+          `leadId: ${existingLead.id}\n` +
+          `companyName: ${existingLead.companyName}\n` +
+          `googlePlaceId: ${existingLead.googlePlaceId || 'N/A'}`
+        );
+        const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+          (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos,
+        );
         return {
+          success: true,
+          statusCode: 200,
+          leadId: existingLead.id,
           lead: existingLead,
+          data: {
+            leadId: existingLead.id,
+            companyName: existingLead.companyName,
+            lead: existingLead,
+            place,
+          },
           place: {
             id: place.id,
             provider: place.source || 'GOOGLE_PLACES',
@@ -1445,311 +1604,86 @@ export class DataCaptureService implements OnModuleInit {
             rating: place.rating || undefined,
             reviewCount: place.reviewCount || undefined,
             source: place.source || 'GOOGLE_PLACES',
-            status: 'LEAD_CREATED',
+            status: 'DUPLICATE',
             isImported: true,
             importedLeadId: existingLead.id,
             capturedAt: place.createdAt,
             updatedAt: place.updatedAt,
             customerId: String(place.customerId),
+            googlePhotos: placeGP.length > 0 ? placeGP : [],
+            photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
+            socialMedia: this.extractSocialMediaFromPlace(place),
           },
-          message: `Lead "${existingLead.title}" is already converted.`,
+          message: `Record was already imported into Lead #${existingLead.id}`,
           isDuplicate: true,
         };
       }
     }
 
-    // 2. Idempotency Check: Request ID already processed
-    if (activeCaptureRequestId) {
-      const existingByRequestId = await this.prisma.lead.findFirst({
-        where: {
-          customerId: numCustomerId,
-          captureRequestId: activeCaptureRequestId,
-          deletedAt: null,
-        },
-      });
-      if (existingByRequestId) {
-        return {
-          lead: existingByRequestId,
-          place: {
-            id: place.id,
-            provider: place.source || 'GOOGLE_PLACES',
-            googlePlaceId: place.googlePlaceId || undefined,
-            businessName: place.businessName,
-            category: place.category || undefined,
-            address: place.address || undefined,
-            phone: place.phone || undefined,
-            email: place.email || undefined,
-            website: place.website || undefined,
-            rating: place.rating || undefined,
-            reviewCount: place.reviewCount || undefined,
-            source: place.source || 'GOOGLE_PLACES',
-            status: 'LEAD_CREATED',
-            isImported: true,
-            importedLeadId: existingByRequestId.id,
-            capturedAt: place.createdAt,
-            updatedAt: place.updatedAt,
-            customerId: String(place.customerId),
-          },
-          message: `Lead "${existingByRequestId.title}" was already captured for this request.`,
-          isDuplicate: true,
-        };
-      }
-    }
+    const importRes = await this.importToLeads(customerId, userId, {
+      placeIds: [String(place.id)],
+      places: [place],
+      captureRequestId: captureRequestId || place.jobId,
+    });
 
-    // Duplicate check
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId, place);
-    const hasLeadDuplicate = duplicateMatches.some((d) => d.type === 'LEAD');
+    const lead = importRes.lead || importRes.leads?.[0] || null;
+    const isDup = importRes.skippedDuplicates > 0;
 
-    // Resolve Contact details from place / rawData independently
-    const { firstName, lastName, phone, email } = this.extractContactFromPlace(place);
-
-    this.logger.log(
-      `[DATA CAPTURE DEBUG]\n` +
-      `captureRequestId: ${activeCaptureRequestId}\n` +
-      `source: ${place.source || 'GOOGLE_PLACES'}\n` +
-      `sourceRecordId: ${place.id}\n` +
-      `sourceUrl: ${place.website || place.googleMapsUrl || 'N/A'}\n` +
-      `companyName: ${place.businessName}\n` +
-      `rawPhoneFound: ${place.phone || 'none'}\n` +
-      `rawEmailFound: ${place.email || 'none'}\n` +
-      `normalizedPhone: ${phone || 'none'}\n` +
-      `normalizedEmail: ${email || 'none'}`
-    );
-
-    const placeSocialMedia = this.extractSocialMediaFromPlace(place);
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-      (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos
-    );
-
-    this.logger.log(
-      `[DATA CAPTURE → LEAD IMPORT]\n` +
-      `captureId: ${place.id}\n` +
-      `googlePlaceId: ${place.googlePlaceId || 'N/A'}\n` +
-      `businessName: ${place.businessName}\n` +
-      `phone: ${phone || 'N/A'}\n` +
-      `website: ${place.website || 'N/A'}\n` +
-      `sourceRecordId: ${place.id}\n\n` +
-      `payload:\n` +
-      JSON.stringify(
-        {
-          companyName: place.businessName,
-          phone: phone || undefined,
-          email: email || undefined,
-          website: place.website || undefined,
-          address: place.address && place.address !== 'N/A' ? place.address : undefined,
-          category: place.category || undefined,
-          googlePlaceId: place.googlePlaceId || undefined,
-          sourceRecordId: String(place.id),
-        },
-        null,
-        2,
-      ),
-    );
-
-    let createdLead: any;
-    if (this.leadService) {
-      createdLead = await this.leadService.createLead(
-        numCustomerId,
-        numUserId,
-        {
-          name: place.businessName,
-          title: place.businessName,
-          firstName,
-          lastName,
-          companyName: place.businessName,
-          phone,
-          email,
-          website: place.website || undefined,
-          address: place.address && place.address !== 'N/A' ? place.address : undefined,
-          category: place.category || undefined,
-          googlePlaceId: place.googlePlaceId || undefined,
-          latitude: place.latitude || undefined,
-          longitude: place.longitude || undefined,
-          rating: place.rating || undefined,
-          reviewCount: place.reviewCount || undefined,
-          source: place.source || 'GOOGLE_PLACES',
-          status: 'NEW',
-          priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
-          value: 0,
-          captureRequestId: activeCaptureRequestId,
-          sourceRecordId: String(place.id),
-          photos: placePhotoUrls,
-          googlePhotos: placeGP,
-          socialMedia: placeSocialMedia,
-        } as any,
+    // [LEAD CREATED] safe debug logging (Section 21)
+    if (lead) {
+      this.logger.log(
+        `[LEAD CREATED]\n` +
+        `leadId: ${lead.id}\n` +
+        `companyName: ${lead.companyName}\n` +
+        `googlePlaceId: ${lead.googlePlaceId || 'N/A'}\n` +
+        `sourceRecordId: ${lead.sourceRecordId || place.id}`
       );
-    } else {
-      let newStage = await this.prisma.leadStage.findFirst({
-        where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
-        orderBy: { sortOrder: 'asc' },
-      });
-      if (!newStage) {
-        newStage = await this.prisma.leadStage.findFirst({
-          where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
-          orderBy: { sortOrder: 'asc' },
-        });
-      }
-      if (!newStage) {
-        newStage = await this.prisma.leadStage.findFirst({
-          where: { key: 'NEW', deletedAt: null },
-          orderBy: { id: 'asc' },
-        });
-      }
-
-      const placeSocialMedia = this.extractSocialMediaFromPlace(place);
-
-      createdLead = await this.prisma.lead.create({
-        data: {
-          customerId: numCustomerId,
-          title: place.businessName,
-          firstName,
-          lastName,
-          companyName: place.businessName,
-          phone,
-          email,
-          website: place.website || undefined,
-          address: place.address && place.address !== 'N/A' ? place.address : undefined,
-          category: place.category || undefined,
-          googlePlaceId: place.googlePlaceId || undefined,
-          latitude: place.latitude || undefined,
-          longitude: place.longitude || undefined,
-          rating: place.rating || undefined,
-          reviewCount: place.reviewCount || undefined,
-          source: place.source || 'GOOGLE_PLACES',
-          status: 'NEW',
-          stageId: newStage?.id || undefined,
-          priority: place.rating && place.rating >= 4.5 ? 'HIGH' : 'MEDIUM',
-          value: 0,
-          createdById: numUserId,
-          captureRequestId: activeCaptureRequestId,
-          sourceRecordId: String(place.id),
-          socialMedia: placeSocialMedia || undefined,
-        },
-      });
     }
 
-    // Import photos into LeadImage records if not already created
-    if (placePhotoUrls.length > 0 && this.prisma.leadImage && createdLead?.id) {
-      const existingImages = await this.prisma.leadImage.count({ where: { leadId: createdLead.id } });
-      if (existingImages === 0) {
-        for (let pIdx = 0; pIdx < placePhotoUrls.length; pIdx++) {
-          try {
-            await this.prisma.leadImage.create({
-              data: {
-                leadId: createdLead.id,
-                url: placePhotoUrls[pIdx],
-                isPrimary: pIdx === 0,
-                caption: pIdx === 0 ? `${place.businessName} (Primary Photo)` : `${place.businessName} Photo ${pIdx + 1}`,
-              },
-            });
-          } catch (imgErr: any) {
-            this.logger.warn(`Failed to attach image to lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
-          }
-        }
-      }
-    }
-
-    // Import social media handles into LeadSocialProfile records if not already created
-    if (placeSocialMedia && this.prisma.leadSocialProfile && createdLead?.id) {
-      const spList: Array<{ platform: string; url: string }> = [];
-      if (placeSocialMedia.instagram) spList.push({ platform: 'INSTAGRAM', url: placeSocialMedia.instagram });
-      if (placeSocialMedia.facebook) spList.push({ platform: 'FACEBOOK', url: placeSocialMedia.facebook });
-      if (placeSocialMedia.youtube) spList.push({ platform: 'YOUTUBE', url: placeSocialMedia.youtube });
-      if (placeSocialMedia.linkedin) spList.push({ platform: 'LINKEDIN', url: placeSocialMedia.linkedin });
-      if (placeSocialMedia.twitter) spList.push({ platform: 'TWITTER', url: placeSocialMedia.twitter });
-      if (placeSocialMedia.tiktok) spList.push({ platform: 'TIKTOK', url: placeSocialMedia.tiktok });
-      if (placeSocialMedia.pinterest) spList.push({ platform: 'PINTEREST', url: placeSocialMedia.pinterest });
-      if (placeSocialMedia.website) spList.push({ platform: 'WEBSITE', url: placeSocialMedia.website });
-
-      for (const sp of spList) {
-        try {
-          await this.prisma.leadSocialProfile.upsert({
-            where: {
-              leadId_platform: {
-                leadId: createdLead.id,
-                platform: sp.platform,
-              },
-            },
-            create: {
-              leadId: createdLead.id,
-              platform: sp.platform,
-              url: sp.url,
-            },
-            update: {
-              url: sp.url,
-            },
-          });
-        } catch (_) {}
-      }
-    }
-
-    // Create note with metadata
-    await this.prisma.leadNote.create({
-      data: {
-        leadId: createdLead.id,
-        userId: numUserId,
-        content: `[DATA_CAPTURE_METADATA]\nRecord ID: #${place.id}\nCapture Request ID: ${activeCaptureRequestId}\nGoogle Place ID: ${place.googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}\nSource: ${place.source || 'GOOGLE_PLACES'}`,
-      },
-    });
-
-    // Log activity timeline
-    await this.prisma.leadActivityTimeline.create({
-      data: {
-        leadId: createdLead.id,
-        action: 'LEAD_CREATED_FROM_DATA_CAPTURE',
-        description: `Lead converted from Data Capture record "${place.businessName}"`,
-        metadata: {
-          dataCapturePlaceId: place.id,
-          googlePlaceId: place.googlePlaceId,
-          jobId: place.jobId,
-          source: place.source,
-          captureRequestId: activeCaptureRequestId,
-        },
-      },
-    });
-
-    // Update place status
-    const updatedPlace = await this.prisma.dataCapturePlace.update({
+    const freshPlace = (await this.prisma.dataCapturePlace.findFirst({
       where: { id: place.id },
-      data: {
-        isImported: true,
-        importedLeadId: createdLead.id,
-        status: 'LEAD_CREATED',
-        captureRequestId: activeCaptureRequestId,
-        sourceRecordId: String(place.id),
-      },
-    });
+    })) || place;
 
-    const leadPlaceSocial = this.extractSocialMediaFromPlace(updatedPlace) || this.extractSocialMediaFromPlace(place);
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+      (freshPlace as any).photos || (freshPlace as any).rawData?.photos || (freshPlace as any).rawData?.googlePhotos,
+    );
 
     return {
-      lead: createdLead,
+      success: true,
+      statusCode: isDup ? 200 : 201,
+      leadId: lead?.id,
+      lead,
+      data: {
+        leadId: lead?.id,
+        companyName: lead?.companyName,
+        lead,
+        place: freshPlace,
+      },
       place: {
-        id: updatedPlace.id,
-        provider: updatedPlace.source || 'GOOGLE_PLACES',
-        googlePlaceId: updatedPlace.googlePlaceId || undefined,
-        businessName: updatedPlace.businessName,
-        category: updatedPlace.category || undefined,
-        address: updatedPlace.address || undefined,
-        phone: updatedPlace.phone || undefined,
-        email: updatedPlace.email || undefined,
-        website: updatedPlace.website || undefined,
-        rating: updatedPlace.rating || undefined,
-        reviewCount: updatedPlace.reviewCount || undefined,
-        source: updatedPlace.source || 'GOOGLE_PLACES',
-        status: 'LEAD_CREATED',
+        id: freshPlace.id,
+        provider: freshPlace.source || 'GOOGLE_PLACES',
+        googlePlaceId: freshPlace.googlePlaceId || undefined,
+        businessName: freshPlace.businessName,
+        category: freshPlace.category || undefined,
+        address: freshPlace.address || undefined,
+        phone: freshPlace.phone || undefined,
+        email: freshPlace.email || undefined,
+        website: freshPlace.website || undefined,
+        rating: freshPlace.rating || undefined,
+        reviewCount: freshPlace.reviewCount || undefined,
+        source: freshPlace.source || 'GOOGLE_PLACES',
+        status: isDup ? 'DUPLICATE' : 'LEAD_CREATED',
         isImported: true,
-        importedLeadId: createdLead.id,
-        capturedAt: updatedPlace.createdAt,
-        updatedAt: updatedPlace.updatedAt,
-        customerId: String(updatedPlace.customerId),
-        duplicateMatches,
+        importedLeadId: lead?.id || freshPlace.importedLeadId,
+        capturedAt: freshPlace.createdAt,
+        updatedAt: freshPlace.updatedAt,
+        customerId: String(freshPlace.customerId),
         googlePhotos: placeGP.length > 0 ? placeGP : [],
         photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
-        socialMedia: leadPlaceSocial,
+        socialMedia: this.extractSocialMediaFromPlace(freshPlace),
       },
-      message: `Lead "${createdLead.title}" created successfully in CRM!`,
-      isDuplicate: hasLeadDuplicate,
+      message: isDup ? `Lead already exists in CRM.` : `Lead created successfully`,
+      isDuplicate: isDup,
     };
   }
 
@@ -1830,7 +1764,7 @@ export class DataCaptureService implements OnModuleInit {
   }
 
   /**
-   * Import captured prospects into CRM Leads (Batch)
+   * Import captured prospects into CRM Leads (Batch & Single)
    */
   async importToLeads(
     customerId: string | number,
@@ -1843,6 +1777,7 @@ export class DataCaptureService implements OnModuleInit {
     skippedDuplicates: number;
     duplicateNames: string[];
     records?: any[];
+    data?: any;
     lead?: any;
     leads?: any[];
     capture?: { id: string; status: string };
@@ -1851,7 +1786,7 @@ export class DataCaptureService implements OnModuleInit {
     let numCustomerId = Number(customerId);
     const numUserId = Number(userId) || 1;
 
-    // Resolve tenant customerId safely if missing or NaN
+    // Resolve tenant customerId safely if missing or NaN (Section 14)
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
       if (dto.jobId) {
         const job = await this.prisma.dataCaptureJob.findFirst({
@@ -1872,121 +1807,64 @@ export class DataCaptureService implements OnModuleInit {
       }
     }
 
-    let placesToImport: any[] = [];
-
-    // 1. Direct places array provided by frontend
-    if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
-      placesToImport = dto.places.map((p, idx) => {
-        const candidateName =
-          (p.businessName && p.businessName !== 'Business Lead' && p.businessName !== 'Direct Lead' && p.businessName !== 'New Lead' ? p.businessName : null) ||
-          (p.companyName && p.companyName !== 'Business Lead' && p.companyName !== 'Direct Lead' && p.companyName !== 'New Lead' ? p.companyName : null) ||
-          (typeof p.displayName === 'object' && p.displayName?.text && p.displayName.text !== 'Business Lead' ? p.displayName.text : (typeof p.displayName === 'string' && p.displayName !== 'Business Lead' ? p.displayName : null)) ||
-          (p.placeName && p.placeName !== 'Business Lead' ? p.placeName : null) ||
-          p.establishmentName ||
-          p.organizationName ||
-          (p.title && p.title !== 'Business Lead' && p.title !== 'Direct Lead' && p.title !== 'New Lead' ? p.title : null) ||
-          (p.name && !String(p.name).startsWith('places/') && p.name !== 'Business Lead' && p.name !== 'Direct Lead' && p.name !== 'New Lead' ? p.name : null) ||
-          '';
-        const resolvedName = candidateName.trim() || 'Unnamed Business';
-        return {
-          id: p.id || `custom_${idx}`,
-          googlePlaceId: p.googlePlaceId || p.sourceRecordId || p.id,
-          businessName: resolvedName,
-          category: p.category || 'General',
-          address: p.address,
-          phone: p.phone,
-          email: p.email,
-          website: p.website,
-          rating: p.rating,
-          reviewCount: p.reviewCount,
-          latitude: p.latitude,
-          longitude: p.longitude,
-          source: p.source || p.sourceType || 'GOOGLE_DISCOVERY',
-          sourceRecordId: p.sourceRecordId || p.googlePlaceId,
-          sourceUrl: p.sourceUrl || p.website || p.googleMapsUrl,
-          captureRequestId: p.captureRequestId || dto.captureRequestId || dto.jobId,
-          jobId: p.jobId || dto.jobId,
-          photos: p.photos || p.googlePhotos,
-          googlePhotos: p.googlePhotos || p.photos,
-          socialMedia: p.socialMedia,
-        };
+    // Resolve authenticated Employee context (Section 15)
+    let employeeId: number | null = null;
+    try {
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
+        select: { id: true },
       });
-    } else if (dto.companyName || dto.businessName || (dto as any).displayName) {
-      const candidateSingle =
-        (dto.companyName && dto.companyName !== 'Business Lead' && dto.companyName !== 'Direct Lead' ? dto.companyName : null) ||
-        (dto.businessName && dto.businessName !== 'Business Lead' && dto.businessName !== 'Direct Lead' ? dto.businessName : null) ||
-        (typeof (dto as any).displayName === 'object' ? (dto as any).displayName?.text : (dto as any).displayName) ||
-        (dto as any).placeName ||
-        ((dto as any).title && (dto as any).title !== 'Business Lead' ? (dto as any).title : null) ||
-        '';
-      const singleName = candidateSingle.trim() || 'Unnamed Business';
-      placesToImport = [{
-        googlePlaceId: dto.googlePlaceId || dto.sourceRecordId,
-        businessName: singleName,
-        category: dto.category || 'General',
-        address: dto.address,
-        phone: dto.phone,
-        email: dto.email,
-        website: dto.website,
-        source: dto.sourceType || 'GOOGLE_DISCOVERY',
-        sourceRecordId: dto.sourceRecordId || dto.googlePlaceId,
-        sourceUrl: dto.sourceUrl || dto.website,
-        captureRequestId: dto.captureRequestId || dto.jobId,
-        jobId: dto.jobId,
-        photos: (dto as any).photos || (dto as any).googlePhotos,
-        googlePhotos: (dto as any).googlePhotos || (dto as any).photos,
-        socialMedia: (dto as any).socialMedia,
-      }];
-    }
+      if (emp) employeeId = emp.id;
+    } catch (_) {}
 
-    // 2. Job-based lookup
-    if (placesToImport.length === 0 && dto.jobId) {
-      const whereJob: any = { jobId: dto.jobId };
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        whereJob.customerId = numCustomerId;
-      }
-      let job = await this.prisma.dataCaptureJob.findFirst({
-        where: whereJob,
-        include: { places: { where: { deletedAt: null } } },
+    // Resolve valid createdById user safely (Section 15)
+    let validCreatedById: number = numUserId;
+    try {
+      const userExists = await this.prisma.user.findFirst({
+        where: { id: numUserId },
+        select: { id: true },
       });
-
-      if (!job && (!isNaN(numCustomerId) && numCustomerId > 0)) {
-        job = await this.prisma.dataCaptureJob.findFirst({
-          where: { jobId: dto.jobId },
-          include: { places: { where: { deletedAt: null } } },
+      if (!userExists) {
+        const fallbackUser = await this.prisma.user.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
+          select: { id: true },
+          orderBy: { id: 'asc' },
         });
-      }
-
-      if (job) {
-        if (isNaN(numCustomerId) || numCustomerId <= 0) {
-          numCustomerId = job.customerId;
-        }
-        placesToImport = job.places;
-        if (dto.placeIds && dto.placeIds.length > 0) {
-          const selectedSet = new Set(dto.placeIds);
-          placesToImport = job.places.filter(
-            (p) => selectedSet.has(p.googlePlaceId || '') || selectedSet.has(String(p.id)),
-          );
+        if (fallbackUser) {
+          validCreatedById = fallbackUser.id;
+        } else {
+          const anyUser = await this.prisma.user.findFirst({
+            where: { deletedAt: null },
+            select: { id: true },
+            orderBy: { id: 'asc' },
+          });
+          if (anyUser) validCreatedById = anyUser.id;
         }
       }
-    }
+    } catch (_) {}
 
-    // 3. Fallback: placeIds lookup directly in DataCapturePlace
-    if (placesToImport.length === 0 && dto.placeIds && dto.placeIds.length > 0) {
-      const numericIds = dto.placeIds.map((id) => Number(id)).filter((id) => !isNaN(id));
-      placesToImport = await this.prisma.dataCapturePlace.findMany({
-        where: {
-          customerId: numCustomerId,
-          deletedAt: null,
-          OR: [
-            ...(numericIds.length > 0 ? [{ id: { in: numericIds } }] : []),
-            { googlePlaceId: { in: dto.placeIds } },
-          ],
-        },
+    // Gather candidate descriptors from DTO (Section 3)
+    let rawCandidates: any[] = [];
+    if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
+      rawCandidates = dto.places;
+    } else if (dto.placeIds && Array.isArray(dto.placeIds) && dto.placeIds.length > 0) {
+      rawCandidates = dto.placeIds.map((id) => ({ id, googlePlaceId: id, sourceRecordId: id }));
+    } else if (dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id) {
+      const singleId = dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id;
+      rawCandidates = [{ id: singleId, sourceRecordId: singleId }];
+    } else if (dto.googlePlaceId) {
+      rawCandidates = [{ googlePlaceId: dto.googlePlaceId, sourceRecordId: dto.googlePlaceId }];
+    } else if (dto.jobId) {
+      const jobPlaces = await this.prisma.dataCapturePlace.findMany({
+        where: { jobId: dto.jobId, customerId: numCustomerId, deletedAt: null },
+        orderBy: { id: 'asc' },
       });
+      rawCandidates = jobPlaces;
+    } else if (dto.companyName || dto.businessName) {
+      rawCandidates = [dto];
     }
 
-    if (placesToImport.length === 0) {
+    if (rawCandidates.length === 0) {
       throw new BadRequestException('No valid prospects selected for import.');
     }
 
@@ -1996,170 +1874,183 @@ export class DataCaptureService implements OnModuleInit {
     const createdLeads: any[] = [];
     const perRecordResults: any[] = [];
 
-    for (let idx = 0; idx < placesToImport.length; idx++) {
-      const place = placesToImport[idx];
+    for (let idx = 0; idx < rawCandidates.length; idx++) {
+      const candidate = rawCandidates[idx];
 
-      // 1. Authoritative tenant-scoped lookup in DataCapturePlace (Section 13 & 14)
+      // 1. Authoritative resolution of DataCapturePlace from database (Sections 2, 3, 4, 14)
       let dbPlace: any = null;
-      const candidateNumericId = Number(place.id || place.sourceRecordId);
-      const candidateGooglePlaceId =
-        place.googlePlaceId &&
-        String(place.googlePlaceId).trim().length > 0 &&
-        String(place.googlePlaceId).trim() !== 'N/A' &&
-        !String(place.googlePlaceId).startsWith('custom_')
-          ? String(place.googlePlaceId).trim()
-          : undefined;
-      const candidateSourceRecordId =
-        place.sourceRecordId &&
-        String(place.sourceRecordId).trim().length > 0 &&
-        String(place.sourceRecordId).trim() !== 'N/A' &&
-        !String(place.sourceRecordId).startsWith('custom_')
-          ? String(place.sourceRecordId).trim()
-          : undefined;
+      const candidateNumId = Number(candidate.id || candidate.dataCaptureId || candidate.dataCapturePlaceId || candidate.sourceRecordId);
+      const candGoogleId =
+        candidate.googlePlaceId &&
+        String(candidate.googlePlaceId).trim().length > 0 &&
+        String(candidate.googlePlaceId).trim() !== 'N/A' &&
+        !String(candidate.googlePlaceId).startsWith('custom_')
+          ? String(candidate.googlePlaceId).trim()
+          : null;
+      const candSourceId =
+        candidate.sourceRecordId &&
+        String(candidate.sourceRecordId).trim().length > 0 &&
+        String(candidate.sourceRecordId).trim() !== 'N/A' &&
+        !String(candidate.sourceRecordId).startsWith('custom_')
+          ? String(candidate.sourceRecordId).trim()
+          : null;
 
-      const placeOrConditions: any[] = [];
-      if (!isNaN(candidateNumericId) && candidateNumericId > 0) {
-        placeOrConditions.push({ id: candidateNumericId });
-      }
-      if (candidateGooglePlaceId) {
-        placeOrConditions.push({ googlePlaceId: candidateGooglePlaceId });
-      }
-      if (candidateSourceRecordId && candidateSourceRecordId !== candidateGooglePlaceId) {
-        const numCandidateSrc = Number(candidateSourceRecordId);
-        if (!isNaN(numCandidateSrc) && numCandidateSrc > 0) {
-          placeOrConditions.push({ id: numCandidateSrc });
-        }
-        placeOrConditions.push({ sourceRecordId: candidateSourceRecordId });
+      // Priority A: Match by primary key id
+      if (!isNaN(candidateNumId) && candidateNumId > 0) {
+        dbPlace = await this.prisma.dataCapturePlace.findFirst({
+          where: { id: candidateNumId, customerId: numCustomerId, deletedAt: null },
+        });
       }
 
-      if (placeOrConditions.length > 0) {
+      // Priority B: Match by googlePlaceId
+      if (!dbPlace && candGoogleId) {
+        dbPlace = await this.prisma.dataCapturePlace.findFirst({
+          where: { googlePlaceId: candGoogleId, customerId: numCustomerId, deletedAt: null },
+        });
+      }
+
+      // Priority C: Match by sourceRecordId
+      if (!dbPlace && candSourceId) {
+        const numCandidateSrc = Number(candSourceId);
         dbPlace = await this.prisma.dataCapturePlace.findFirst({
           where: {
             customerId: numCustomerId,
             deletedAt: null,
-            OR: placeOrConditions,
+            OR: [
+              ...(!isNaN(numCandidateSrc) && numCandidateSrc > 0 ? [{ id: numCandidateSrc }] : []),
+              { sourceRecordId: candSourceId },
+              { googlePlaceId: candSourceId },
+            ],
           },
         });
       }
 
-      // If still not found by ID/PlaceID, and we have jobId and a business name, match within the job
-      const activeJobId = dto.jobId || place.jobId;
+      // Priority D: Match within extraction job
+      const activeJobId = dto.jobId || candidate.jobId;
       if (!dbPlace && activeJobId) {
-        const candidateName =
-          (place.businessName && place.businessName !== 'Business Lead' && place.businessName !== 'Direct Lead' && place.businessName !== 'New Lead' ? place.businessName : null) ||
-          (place.companyName && place.companyName !== 'Business Lead' && place.companyName !== 'Direct Lead' && place.companyName !== 'New Lead' ? place.companyName : null) ||
-          (place.title && place.title !== 'Business Lead' && place.title !== 'Direct Lead' && place.title !== 'New Lead' ? place.title : null);
-
-        if (candidateName) {
-          dbPlace = await this.prisma.dataCapturePlace.findFirst({
-            where: {
-              customerId: numCustomerId,
-              jobId: activeJobId,
-              deletedAt: null,
-              businessName: { equals: candidateName.trim(), mode: 'insensitive' },
-            },
-          });
+        const jobPlaces = await this.prisma.dataCapturePlace.findMany({
+          where: { customerId: numCustomerId, jobId: activeJobId, deletedAt: null },
+          orderBy: { id: 'asc' },
+        });
+        const customMatch = String(candidate.id || candidate.googlePlaceId || candidate.captureRequestId || '').match(/custom_(\d+)/);
+        if (customMatch) {
+          const targetIdx = parseInt(customMatch[1], 10);
+          if (jobPlaces[targetIdx]) dbPlace = jobPlaces[targetIdx];
+        }
+        if (!dbPlace && jobPlaces.length > 0) {
+          const candName = (candidate.businessName || candidate.companyName || candidate.title || '').trim().toLowerCase();
+          if (candName && candName !== 'business lead' && candName !== 'direct lead' && candName !== 'new lead') {
+            dbPlace = jobPlaces.find((p) => p.businessName.trim().toLowerCase() === candName);
+          }
+          if (!dbPlace && rawCandidates.length === 1 && jobPlaces.length === 1) {
+            dbPlace = jobPlaces[0];
+          }
         }
       }
 
-      // 2. Resolve authoritative businessName (Sections 2 & 6)
-      const rawBusinessName =
-        (dbPlace?.businessName && dbPlace.businessName !== 'Business Lead' && dbPlace.businessName !== 'Direct Lead' && dbPlace.businessName !== 'New Lead' ? dbPlace.businessName : null) ||
-        (place.businessName && place.businessName !== 'Business Lead' && place.businessName !== 'Direct Lead' && place.businessName !== 'New Lead' ? place.businessName : null) ||
-        (place.companyName && place.companyName !== 'Business Lead' && place.companyName !== 'Direct Lead' && place.companyName !== 'New Lead' ? place.companyName : null) ||
-        (typeof place.displayName === 'object' ? place.displayName?.text : place.displayName) ||
-        place.placeName ||
-        place.establishmentName ||
-        place.organizationName ||
-        place.formattedName ||
-        (place.title && place.title !== 'Business Lead' && place.title !== 'Direct Lead' && place.title !== 'New Lead' ? place.title : null) ||
-        (place.name && !String(place.name).startsWith('places/') && place.name !== 'Business Lead' && place.name !== 'Direct Lead' && place.name !== 'New Lead' ? place.name : null) ||
-        '';
-      const businessName =
-        ContactExtractor.normalizeCompanyName(rawBusinessName) || rawBusinessName.trim() || 'Unnamed Business';
+      // Priority E: If not found in DB but candidate has real prospect data, persist to data_capture_places first (Section 2 & 4)
+      if (!dbPlace) {
+        const rawBizCandidate = (
+          (candidate.businessName && candidate.businessName !== 'Business Lead' && candidate.businessName !== 'Direct Lead' && candidate.businessName !== 'New Lead' ? candidate.businessName : null) ||
+          (candidate.companyName && candidate.companyName !== 'Business Lead' && candidate.companyName !== 'Direct Lead' && candidate.companyName !== 'New Lead' ? candidate.companyName : null) ||
+          (typeof candidate.displayName === 'object' && candidate.displayName?.text && candidate.displayName.text !== 'Business Lead' ? candidate.displayName.text : (typeof candidate.displayName === 'string' && candidate.displayName !== 'Business Lead' ? candidate.displayName : null)) ||
+          (candidate.placeName && candidate.placeName !== 'Business Lead' ? candidate.placeName : null) ||
+          candidate.establishmentName ||
+          candidate.organizationName ||
+          (candidate.title && candidate.title !== 'Business Lead' && candidate.title !== 'Direct Lead' && candidate.title !== 'New Lead' ? candidate.title : null) ||
+          ''
+        ).trim();
 
-      // 3. Resolve googlePlaceId (Section 5)
-      const googlePlaceId =
-        (dbPlace?.googlePlaceId && !dbPlace.googlePlaceId.startsWith('custom_') ? dbPlace.googlePlaceId : null) ||
-        candidateGooglePlaceId ||
-        undefined;
+        if (rawBizCandidate && rawBizCandidate.toLowerCase() !== 'unnamed business') {
+          try {
+            dbPlace = await this.prisma.dataCapturePlace.create({
+              data: {
+                customerId: numCustomerId,
+                jobId: activeJobId || undefined,
+                googlePlaceId: candGoogleId || undefined,
+                sourceRecordId: candSourceId || candGoogleId || undefined,
+                businessName: ContactExtractor.normalizeCompanyName(rawBizCandidate) || rawBizCandidate,
+                category: candidate.category || 'General',
+                address: candidate.address && candidate.address !== 'N/A' ? candidate.address : undefined,
+                phone: ContactExtractor.normalizePhoneNumber(candidate.phone) || undefined,
+                email: ContactExtractor.normalizeEmail(candidate.email) || undefined,
+                website: ContactExtractor.normalizeWebsiteUrl(candidate.website) || undefined,
+                rating: candidate.rating ? Number(candidate.rating) : undefined,
+                reviewCount: candidate.reviewCount ? Number(candidate.reviewCount) : undefined,
+                latitude: candidate.latitude ? Number(candidate.latitude) : undefined,
+                longitude: candidate.longitude ? Number(candidate.longitude) : undefined,
+                googleMapsUrl: candidate.googleMapsUrl || candidate.website || undefined,
+                source: candidate.source || 'GOOGLE_PLACES',
+                status: 'CAPTURED',
+                photos: (candidate.photos || candidate.googlePhotos || undefined) as any,
+                socialMedia: (candidate.socialMedia || undefined) as any,
+              },
+            });
+          } catch (_) {}
+        }
+      }
 
-      const resolvedPhone = dbPlace?.phone || place.phone;
+      if (!dbPlace) {
+        this.logger.warn(`Could not resolve DataCapturePlace record for candidate idx=${idx}: ${JSON.stringify(candidate)}`);
+        continue;
+      }
+
+      // 2. Authoritative field mapping from dbPlace (Sections 4, 5, 6, 7, 8)
+      const rawBusinessName = (dbPlace.businessName || '').trim();
+      const businessName = ContactExtractor.normalizeCompanyName(rawBusinessName) || rawBusinessName;
+      if (!businessName || businessName === 'Business Lead' || businessName === 'Direct Lead' || businessName === 'New Lead') {
+        this.logger.warn(`Invalid or placeholder business name for DataCapturePlace #${dbPlace.id}: "${businessName}". Skipping.`);
+        continue;
+      }
+
+      const googlePlaceId = (dbPlace.googlePlaceId && !dbPlace.googlePlaceId.startsWith('custom_') && dbPlace.googlePlaceId !== 'N/A') ? dbPlace.googlePlaceId : null;
+      const sourceRecordId = String(dbPlace.id);
+      const placeCaptureRequestId = `${activeJobId || 'job'}_${googlePlaceId || dbPlace.id}`;
+
+      const resolvedPhone = dbPlace.phone || candidate.phone;
       const normalizedPhone = ContactExtractor.normalizePhoneNumber(resolvedPhone);
       const phoneDigits = resolvedPhone ? String(resolvedPhone).replace(/\D/g, '') : '';
 
-      const resolvedEmail = dbPlace?.email || place.email;
+      const resolvedEmail = dbPlace.email || candidate.email;
       const normalizedEmail = ContactExtractor.normalizeEmail(resolvedEmail);
 
-      const resolvedWebsite = dbPlace?.website || place.website;
+      const resolvedWebsite = dbPlace.website || candidate.website;
       const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(resolvedWebsite);
 
-      const resolvedAddress = (dbPlace?.address && dbPlace.address !== 'N/A' ? dbPlace.address : null) || (place.address && place.address !== 'N/A' ? place.address : undefined);
-      const resolvedCategory = dbPlace?.category || place.category || 'General';
-      const resolvedRating = dbPlace?.rating ?? (place.rating ? Number(place.rating) : undefined);
-      const resolvedReviewCount = dbPlace?.reviewCount ?? (place.reviewCount ? Number(place.reviewCount) : undefined);
-      const resolvedLatitude = dbPlace?.latitude ?? (place.latitude ? Number(place.latitude) : undefined);
-      const resolvedLongitude = dbPlace?.longitude ?? (place.longitude ? Number(place.longitude) : undefined);
+      const resolvedAddress = (dbPlace.address && dbPlace.address !== 'N/A' ? dbPlace.address : null) || (candidate.address && candidate.address !== 'N/A' ? candidate.address : null);
+      const resolvedCategory = dbPlace.category || candidate.category || 'General';
+      const resolvedRating = dbPlace.rating ?? (candidate.rating ? Number(candidate.rating) : null);
+      const resolvedReviewCount = dbPlace.reviewCount ?? (candidate.reviewCount ? Number(candidate.reviewCount) : null);
+      const resolvedLatitude = dbPlace.latitude ?? (candidate.latitude ? Number(candidate.latitude) : null);
+      const resolvedLongitude = dbPlace.longitude ?? (candidate.longitude ? Number(candidate.longitude) : null);
 
-      // If no DataCapturePlace record existed in DB yet, persist one for this tenant to ensure the
-      // DataCapturePlace -> sourceRecordId -> Lead relationship is established (Section 4 & 13)
-      if (!dbPlace) {
-        try {
-          dbPlace = await this.prisma.dataCapturePlace.create({
-            data: {
-              customerId: numCustomerId,
-              jobId: activeJobId || undefined,
-              googlePlaceId: googlePlaceId || undefined,
-              sourceRecordId: googlePlaceId || undefined,
-              businessName,
-              category: resolvedCategory,
-              address: resolvedAddress,
-              phone: normalizedPhone || undefined,
-              email: normalizedEmail || undefined,
-              website: normalizedWebsite || undefined,
-              rating: resolvedRating,
-              reviewCount: resolvedReviewCount,
-              latitude: resolvedLatitude,
-              longitude: resolvedLongitude,
-              source: place.source || 'GOOGLE_PLACES',
-              status: 'CAPTURED',
-              photos: (place.photos || (place as any).googlePhotos || undefined) as any,
-              socialMedia: (place.socialMedia || undefined) as any,
-            },
-          });
-        } catch (_) {}
-      }
+      // Parse Address Components (city, state, pincode)
+      const parsedAddress = this.parseAddressComponents(resolvedAddress);
 
-      // 4. Authoritative sourceRecordId: Data Capture Record ID (Primary Key) -> sourceRecordId -> Lead (Section 4)
-      const sourceRecordId = dbPlace?.id ? String(dbPlace.id) : (candidateSourceRecordId || googlePlaceId || undefined);
+      // Contact Person details (Section 7)
+      const { firstName: genuineFirstName, lastName: genuineLastName } = this.extractContactFromPlace(dbPlace);
 
-      // 5. Build duplicate query conditions against existing CRM Leads for the authenticated tenant
-      let websiteHost = '';
-      if (normalizedWebsite) {
-        try {
-          websiteHost = new URL(normalizedWebsite).hostname.replace(/^www\./i, '').toLowerCase();
-        } catch (_) {}
-      }
+      // Social Media (Section 10)
+      const placeSocialMedia = dbPlace.socialMedia || (dbPlace.rawData as any)?.socialMedia || candidate.socialMedia || null;
 
+      // Photos (Section 9)
+      const photoUrls = this.normalizePhotosArray(
+        dbPlace.photos || (dbPlace.rawData as any)?.photos || (dbPlace.rawData as any)?.googlePhotos || candidate.photos || candidate.googlePhotos,
+      );
+
+      // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
       if (googlePlaceId) {
         leadOrConditions.push({ googlePlaceId });
         leadOrConditions.push({ sourceRecordId: googlePlaceId });
       }
-      if (sourceRecordId) {
-        leadOrConditions.push({ sourceRecordId });
-      }
-      if (normalizedPhone) {
+      leadOrConditions.push({ sourceRecordId });
+      if (normalizedPhone && phoneDigits.length >= 10) {
         leadOrConditions.push({ phone: normalizedPhone });
-      }
-      if (phoneDigits.length >= 10) {
         leadOrConditions.push({ phone: { contains: phoneDigits.slice(-10) } });
       }
       if (normalizedEmail) {
         leadOrConditions.push({ email: { equals: normalizedEmail, mode: 'insensitive' } });
-      }
-      if (websiteHost.length >= 4 && !websiteHost.includes('google.') && !websiteHost.includes('maps.')) {
-        leadOrConditions.push({ website: { contains: websiteHost, mode: 'insensitive' } });
       }
 
       let matchedLead: any = null;
@@ -2182,100 +2073,44 @@ export class DataCaptureService implements OnModuleInit {
             googlePlaceId: true,
             sourceRecordId: true,
           },
-          take: 10,
+          take: 5,
         });
 
         for (const cl of candidateLeads) {
-          // Priority 1: Google Place ID / source record identity match
-          if (
-            (googlePlaceId && (cl.googlePlaceId === googlePlaceId || cl.sourceRecordId === googlePlaceId)) ||
-            (sourceRecordId && (cl.sourceRecordId === sourceRecordId || cl.googlePlaceId === sourceRecordId))
-          ) {
+          if (googlePlaceId && (cl.googlePlaceId === googlePlaceId || cl.sourceRecordId === googlePlaceId)) {
             matchedLead = cl;
-            duplicateMatchReason = `Google Place ID / source record match (${googlePlaceId || sourceRecordId})`;
+            duplicateMatchReason = `Google Place ID match (${googlePlaceId})`;
             break;
           }
-
-          // Priority 2: Phone number match (normalized digits)
-          if (phoneDigits.length >= 10 && cl.phone) {
-            const clDigits = cl.phone.replace(/\D/g, '');
-            if (
-              clDigits.length >= 10 &&
-              (clDigits.slice(-10) === phoneDigits.slice(-10) || cl.phone === normalizedPhone)
-            ) {
-              matchedLead = cl;
-              duplicateMatchReason = `Phone number match (${cl.phone})`;
-              break;
-            }
+          if (cl.sourceRecordId === sourceRecordId) {
+            matchedLead = cl;
+            duplicateMatchReason = `Data Capture source record ID match (${sourceRecordId})`;
+            break;
           }
-
-          // Priority 3: Email address match
-          if (normalizedEmail && cl.email) {
-            const clNormEmail = ContactExtractor.normalizeEmail(cl.email);
-            if (clNormEmail && clNormEmail === normalizedEmail) {
-              matchedLead = cl;
-              duplicateMatchReason = `Email address match (${clNormEmail})`;
-              break;
-            }
+          if (phoneDigits.length >= 10 && cl.phone && cl.phone.replace(/\D/g, '').slice(-10) === phoneDigits.slice(-10)) {
+            matchedLead = cl;
+            duplicateMatchReason = `Phone match (${cl.phone})`;
+            break;
           }
-
-          // Priority 4: Website domain match
-          if (websiteHost.length >= 4 && cl.website) {
-            try {
-              const clNormWeb = ContactExtractor.normalizeWebsiteUrl(cl.website);
-              if (clNormWeb) {
-                const clHost = new URL(clNormWeb).hostname.replace(/^www\./i, '').toLowerCase();
-                if (clHost && clHost === websiteHost) {
-                  matchedLead = cl;
-                  duplicateMatchReason = `Website match (${websiteHost})`;
-                  break;
-                }
-              }
-            } catch (_) {}
+          if (normalizedEmail && cl.email && cl.email.toLowerCase() === normalizedEmail.toLowerCase()) {
+            matchedLead = cl;
+            duplicateMatchReason = `Email match (${cl.email})`;
+            break;
           }
         }
       }
 
-      // 6. Safe development logging immediately before Lead creation (Section 9)
-      this.logger.log(
-        `[DATA CAPTURE → LEAD IMPORT]\n` +
-        `captureId: ${dbPlace?.id || place.id || 'N/A'}\n` +
-        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
-        `businessName: ${businessName}\n` +
-        `phone: ${normalizedPhone || 'N/A'}\n` +
-        `website: ${normalizedWebsite || 'N/A'}\n` +
-        `sourceRecordId: ${sourceRecordId || 'N/A'}\n\n` +
-        `payload:\n` +
-        JSON.stringify(
-          {
-            companyName: businessName,
-            phone: normalizedPhone || undefined,
-            email: normalizedEmail || undefined,
-            website: normalizedWebsite || undefined,
-            address: resolvedAddress,
-            category: resolvedCategory,
-            googlePlaceId: googlePlaceId || undefined,
-            sourceRecordId: sourceRecordId || undefined,
-          },
-          null,
-          2,
-        ),
-      );
-
-      // If a genuine Lead duplicate exists in CRM, skip and record duplicate details
       if (matchedLead) {
         skippedDuplicates++;
         duplicateNames.push(businessName);
-        if (dbPlace?.id) {
-          try {
-            await this.prisma.dataCapturePlace.update({
-              where: { id: dbPlace.id },
-              data: { status: 'DUPLICATE', isImported: true, importedLeadId: matchedLead.id },
-            });
-          } catch (_) {}
-        }
+        try {
+          await this.prisma.dataCapturePlace.update({
+            where: { id: dbPlace.id },
+            data: { status: 'DUPLICATE', isImported: true, importedLeadId: matchedLead.id },
+          });
+        } catch (_) {}
         perRecordResults.push({
-          sourceRecordId: sourceRecordId || String(place.id || ''),
+          sourceRecordId,
           googlePlaceId: googlePlaceId || undefined,
           businessName,
           imported: false,
@@ -2286,278 +2121,188 @@ export class DataCaptureService implements OnModuleInit {
         continue;
       }
 
-      // 7. Contact extraction (Section 7)
-      // Extract genuine human contact details if provided on the place/prospect.
-      // Do NOT use "Business Lead" or split businessName into fake contact names.
-      let firstName = '';
-      let lastName = '';
-      const isFakeContactName = (val: string) => {
-        const lower = val.trim().toLowerCase();
-        return (
-          !lower ||
-          lower === 'business' ||
-          lower === 'lead' ||
-          lower === 'owner' ||
-          lower === 'prospect' ||
-          lower === 'unknown' ||
-          lower === 'direct' ||
-          lower.startsWith('places/')
-        );
-      };
-
-      if (place.firstName && !isFakeContactName(place.firstName)) {
-        firstName = String(place.firstName).trim();
-        lastName = place.lastName && !isFakeContactName(place.lastName) ? String(place.lastName).trim() : '';
-      } else if (place.contactName && !isFakeContactName(place.contactName)) {
-        const parts = String(place.contactName).trim().split(/\s+/);
-        if (parts.length > 0 && !isFakeContactName(parts[0])) {
-          firstName = parts[0];
-          lastName = parts.slice(1).join(' ') || '';
-          if (isFakeContactName(lastName)) lastName = '';
-        }
-      }
-
-      // 8. Generate unique per-place idempotency key (Section 3)
-      const placeCaptureRequestId = `${activeJobId || 'job'}_${googlePlaceId || dbPlace?.id || place.id || idx}`;
-
-      // 9. Preserve socialMedia from Data Capture if available (Section 17)
-      let placeSocialMedia: any = dbPlace?.socialMedia || (dbPlace?.rawData as any)?.socialMedia || place.socialMedia;
-      if (!placeSocialMedia && (place.instagram || place.facebook || place.linkedin || place.youtube || place.twitter)) {
-        placeSocialMedia = {
-          ...(place.instagram ? { instagram: String(place.instagram).trim() } : {}),
-          ...(place.facebook ? { facebook: String(place.facebook).trim() } : {}),
-          ...(place.linkedin ? { linkedin: String(place.linkedin).trim() } : {}),
-          ...(place.youtube ? { youtube: String(place.youtube).trim() } : {}),
-          ...(place.twitter ? { twitter: String(place.twitter).trim() } : {}),
-        };
-      }
-
-      // 10. Normalize photos (Section 16)
-      const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-        dbPlace?.photos || (dbPlace?.rawData as any)?.photos || (dbPlace?.rawData as any)?.googlePhotos || place.photos || (place as any).googlePhotos || place.rawData?.photos || place.rawData?.googlePhotos,
-      );
-
-      // 11. Create new Lead via LeadService (or fallback) (Sections 6, 8, 12, 15)
-      let createdLead: any;
-      const leadPayload = {
-        name: businessName,
-        title: businessName,
-        firstName,
-        lastName,
-        companyName: businessName,
-        phone: normalizedPhone || undefined,
-        email: normalizedEmail || undefined,
-        website: normalizedWebsite || undefined,
-        address: resolvedAddress,
-        category: resolvedCategory,
-        googlePlaceId: googlePlaceId || undefined,
-        sourceRecordId: sourceRecordId || undefined,
-        latitude: resolvedLatitude,
-        longitude: resolvedLongitude,
-        rating: resolvedRating,
-        reviewCount: resolvedReviewCount,
-        source: 'GOOGLE_DISCOVERY',
-        status: 'NEW',
-        priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
-        value: 0,
-        captureRequestId: placeCaptureRequestId,
-        socialMedia: placeSocialMedia,
-        photos: placePhotoUrls,
-        googlePhotos: placeGP,
-      };
-
-      if (this.leadService) {
-        createdLead = await this.leadService.createLead(
-          numCustomerId,
-          numUserId,
-          leadPayload as any,
-        );
-      } else {
-        let newStage = await this.prisma.leadStage.findFirst({
-          where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
-          orderBy: { sortOrder: 'asc' },
-        });
-        if (!newStage) {
-          newStage = await this.prisma.leadStage.findFirst({
-            where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
+      // 4. Transactional Lead Creation & State Update (Sections 12, 14, 15)
+      const leadResult = await this.prisma.$transaction(
+        async (tx) => {
+          // Resolve initial stage: 'NEW'
+          let newStage = await tx.leadStage.findFirst({
+            where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
             orderBy: { sortOrder: 'asc' },
           });
-        }
-        if (!newStage) {
-          newStage = await this.prisma.leadStage.findFirst({
-            where: { key: 'NEW', deletedAt: null },
-            orderBy: { id: 'asc' },
-          });
-        }
-
-        createdLead = await this.prisma.lead.create({
-          data: {
-            customerId: numCustomerId,
-            title: businessName,
-            firstName,
-            lastName,
-            companyName: businessName,
-            phone: normalizedPhone || undefined,
-            email: normalizedEmail || undefined,
-            website: normalizedWebsite || undefined,
-            address: resolvedAddress,
-            category: resolvedCategory,
-            googlePlaceId: googlePlaceId || undefined,
-            sourceRecordId: sourceRecordId || undefined,
-            latitude: resolvedLatitude,
-            longitude: resolvedLongitude,
-            rating: resolvedRating,
-            reviewCount: resolvedReviewCount,
-            source: 'GOOGLE_DISCOVERY',
-            status: 'NEW',
-            stageId: newStage?.id || undefined,
-            priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
-            value: 0,
-            createdById: numUserId,
-            captureRequestId: placeCaptureRequestId,
-            socialMedia: placeSocialMedia || undefined,
-          },
-        });
-      }
-
-      // Import captured Google photos into LeadImage records if not already created
-      let photosToImport: string[] = this.normalizeStoredPhotos(place.photos || (place as any).googlePhotos || place.rawData?.photos || place.rawData?.googlePhotos).photos;
-      if (photosToImport.length === 0 && place.id && (typeof place.id === 'number' || !isNaN(Number(place.id)))) {
-        try {
-          const dbPlace = await this.prisma.dataCapturePlace.findUnique({
-            where: { id: Number(place.id) },
-            select: { photos: true, rawData: true },
-          });
-          if (dbPlace?.photos || (dbPlace?.rawData as any)?.photos || (dbPlace?.rawData as any)?.googlePhotos) {
-            photosToImport = this.normalizeStoredPhotos(dbPlace.photos || (dbPlace.rawData as any)?.photos || (dbPlace.rawData as any)?.googlePhotos).photos;
+          if (!newStage) {
+            newStage = await tx.leadStage.findFirst({
+              where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
+              orderBy: { sortOrder: 'asc' },
+            });
           }
-        } catch (_) {}
-      }
+          if (!newStage) {
+            newStage = await tx.leadStage.findFirst({
+              where: { key: 'NEW', deletedAt: null },
+              orderBy: { id: 'asc' },
+            });
+          }
 
-      if (photosToImport.length > 0 && this.prisma.leadImage && createdLead?.id) {
-        const existingImages = await this.prisma.leadImage.count({ where: { leadId: createdLead.id } });
-        if (existingImages === 0) {
-          for (let pIdx = 0; pIdx < photosToImport.length; pIdx++) {
-            try {
-              await this.prisma.leadImage.create({
+          // Create Lead with exact Data Capture fields (Section 5 & 6)
+          const created = await tx.lead.create({
+            data: {
+              customerId: numCustomerId,
+              title: businessName,
+              companyName: businessName,
+              firstName: genuineFirstName,
+              lastName: genuineLastName,
+              phone: normalizedPhone || null,
+              email: normalizedEmail || null,
+              website: normalizedWebsite || null,
+              address: resolvedAddress,
+              city: parsedAddress.city,
+              state: parsedAddress.state,
+              pincode: parsedAddress.pincode,
+              category: resolvedCategory,
+              source: 'GOOGLE_DISCOVERY',
+              status: 'NEW',
+              stageId: newStage?.id || null,
+              priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
+              value: 0,
+              createdById: validCreatedById,
+              employeeId: employeeId || null,
+              googlePlaceId,
+              latitude: resolvedLatitude,
+              longitude: resolvedLongitude,
+              rating: resolvedRating,
+              reviewCount: resolvedReviewCount,
+              captureRequestId: placeCaptureRequestId,
+              sourceRecordId,
+              socialMedia: placeSocialMedia || null,
+            },
+          });
+
+          // Attach Google Photos to LeadImage (Section 9)
+          if (photoUrls.length > 0) {
+            for (let pIdx = 0; pIdx < photoUrls.length; pIdx++) {
+              await tx.leadImage.create({
                 data: {
-                  leadId: createdLead.id,
-                  url: photosToImport[pIdx],
+                  leadId: created.id,
+                  url: photoUrls[pIdx],
                   isPrimary: pIdx === 0,
                   caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
                 },
               });
-            } catch (imgErr: any) {
-              this.logger.warn(`Failed to attach image to imported lead ${createdLead.id}: ${imgErr?.message || imgErr}`);
             }
           }
-        }
-      }
 
-      // Sync social profiles into lead_social_profiles if present
-      if (placeSocialMedia && this.prisma.leadSocialProfile && createdLead?.id) {
-        const spList: Array<{ platform: string; url: string }> = [];
-        if (placeSocialMedia.instagram) spList.push({ platform: 'INSTAGRAM', url: placeSocialMedia.instagram });
-        if (placeSocialMedia.facebook) spList.push({ platform: 'FACEBOOK', url: placeSocialMedia.facebook });
-        if (placeSocialMedia.youtube) spList.push({ platform: 'YOUTUBE', url: placeSocialMedia.youtube });
-        if (placeSocialMedia.linkedin) spList.push({ platform: 'LINKEDIN', url: placeSocialMedia.linkedin });
-        if (placeSocialMedia.twitter) spList.push({ platform: 'TWITTER', url: placeSocialMedia.twitter });
-        if (placeSocialMedia.tiktok) spList.push({ platform: 'TIKTOK', url: placeSocialMedia.tiktok });
-        if (placeSocialMedia.pinterest) spList.push({ platform: 'PINTEREST', url: placeSocialMedia.pinterest });
-        if (placeSocialMedia.website) spList.push({ platform: 'WEBSITE', url: placeSocialMedia.website });
-
-        for (const sp of spList) {
-          try {
-            await this.prisma.leadSocialProfile.upsert({
-              where: {
-                leadId_platform: {
-                  leadId: createdLead.id,
-                  platform: sp.platform,
-                },
-              },
-              create: {
-                leadId: createdLead.id,
+          // Attach Social Profiles to LeadSocialProfile (Section 10)
+          const spProfiles = this.extractSocialProfileList(placeSocialMedia);
+          for (const sp of spProfiles) {
+            await tx.leadSocialProfile.create({
+              data: {
+                leadId: created.id,
                 platform: sp.platform,
                 url: sp.url,
               },
-              update: {
-                url: sp.url,
-              },
             });
-          } catch (_) {}
-        }
-      }
+          }
 
-      // Attach note with metadata
-      try {
-        await this.prisma.leadNote.create({
-          data: {
-            leadId: createdLead.id,
-            userId: numUserId,
-            content: `[DATA_CAPTURE_METADATA]\nGoogle Place ID: ${googlePlaceId || 'N/A'}\nCategory: ${place.category || 'N/A'}\nAddress: ${place.address || 'N/A'}\nRating: ${place.rating || 'N/A'} (${place.reviewCount || 0} reviews)\nWebsite: ${place.website || 'N/A'}\nGoogle Maps: ${place.googleMapsUrl || 'N/A'}`,
-          },
-        });
-      } catch (_) {}
-
-      // Log timeline
-      try {
-        await this.prisma.leadActivityTimeline.create({
-          data: {
-            leadId: createdLead.id,
-            action: 'PROSPECT_IMPORTED_FROM_DATA_CAPTURE',
-            description: `Imported prospect "${businessName}" into CRM Leads`,
-            metadata: {
-              googlePlaceId,
-              dataCapturePlaceId: place.id && typeof place.id === 'number' ? place.id : undefined,
-              jobId: dto.jobId || place.jobId,
-            },
-          },
-        });
-      } catch (_) {}
-
-      // Update DataCapturePlace record ONLY after Lead creation succeeds (Requirement 22)
-      try {
-        if (dbPlace?.id) {
-          await this.prisma.dataCapturePlace.update({
+          // Mark DataCapturePlace as imported with importedLeadId (Section 12)
+          await tx.dataCapturePlace.update({
             where: { id: dbPlace.id },
-            data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
+            data: {
+              isImported: true,
+              importedLeadId: created.id,
+              status: 'LEAD_CREATED',
+              captureRequestId: placeCaptureRequestId,
+              sourceRecordId,
+            },
           });
-        } else if (place.id && typeof place.id === 'number') {
-          await this.prisma.dataCapturePlace.update({
-            where: { id: place.id },
-            data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
+
+          // Create lead activity timeline and metadata note
+          await tx.leadActivityTimeline.create({
+            data: {
+              leadId: created.id,
+              action: 'PROSPECT_IMPORTED_FROM_DATA_CAPTURE',
+              description: `Imported prospect "${businessName}" into CRM Leads`,
+              metadata: {
+                dataCapturePlaceId: dbPlace.id,
+                googlePlaceId,
+                jobId: activeJobId,
+                source: 'GOOGLE_DISCOVERY',
+                captureRequestId: placeCaptureRequestId,
+              },
+            },
           });
-        } else if (googlePlaceId) {
-          await this.prisma.dataCapturePlace.updateMany({
-            where: { customerId: numCustomerId, googlePlaceId, deletedAt: null },
-            data: { isImported: true, importedLeadId: createdLead.id, status: 'LEAD_CREATED' },
-          });
-        }
-      } catch (_) {}
+
+          return created;
+        },
+        { timeout: 15000 },
+      );
+
+      // 5. REQUIRED DEBUG LOGS (Section 25)
+      this.logger.log(
+        `[DATA CAPTURE SOURCE]\n` +
+        `dataCaptureId: ${dbPlace.id}\n` +
+        `businessName: ${dbPlace.businessName}\n` +
+        `googlePlaceId: ${dbPlace.googlePlaceId || 'N/A'}\n` +
+        `phone: ${dbPlace.phone || 'N/A'}\n` +
+        `email: ${dbPlace.email || 'N/A'}\n` +
+        `website: ${dbPlace.website || 'N/A'}\n` +
+        `address: ${dbPlace.address || 'N/A'}\n\n` +
+        `[IMPORT REQUEST]\n` +
+        `endpoint: POST /api/v1/data-capture/import-to-leads\n` +
+        `payload: ${JSON.stringify({ jobId: dto.jobId, placeIds: dto.placeIds, placeCount: rawCandidates.length })}\n` +
+        `sourceRecordId: ${sourceRecordId}\n` +
+        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
+        `captureRequestId: ${placeCaptureRequestId}\n\n` +
+        `[IMPORT SERVICE]\n` +
+        `resolvedDataCaptureId: ${dbPlace.id}\n` +
+        `resolvedBusinessName: ${businessName}\n` +
+        `resolvedGooglePlaceId: ${googlePlaceId || 'N/A'}\n\n` +
+        `[LEAD CREATE]\n` +
+        `companyName: ${businessName}\n` +
+        `phone: ${normalizedPhone || 'N/A'}\n` +
+        `website: ${normalizedWebsite || 'N/A'}\n` +
+        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
+        `sourceRecordId: ${sourceRecordId}\n` +
+        `captureRequestId: ${placeCaptureRequestId}\n\n` +
+        `[DATABASE]\n` +
+        `leadId: ${leadResult.id}\n` +
+        `companyName: ${leadResult.companyName}\n` +
+        `googlePlaceId: ${leadResult.googlePlaceId || 'N/A'}\n` +
+        `sourceRecordId: ${leadResult.sourceRecordId || 'N/A'}\n\n` +
+        `[GET LEAD]\n` +
+        `leadId: ${leadResult.id}\n` +
+        `companyName: ${leadResult.companyName}\n` +
+        `googlePlaceId: ${leadResult.googlePlaceId || 'N/A'}`
+      );
+
+      // Query complete lead with images and relations
+      const freshLead = this.leadService
+        ? await this.leadService.getLeadById(numCustomerId, leadResult.id).catch(() => leadResult)
+        : leadResult;
 
       perRecordResults.push({
-        sourceRecordId: sourceRecordId || String(dbPlace?.id || place.id || ''),
+        sourceRecordId,
         googlePlaceId: googlePlaceId || undefined,
         businessName,
         imported: true,
-        leadId: createdLead.id,
+        leadId: leadResult.id,
         duplicate: false,
         duplicateMatchReason: null,
       });
 
-      createdLeads.push(createdLead);
+      createdLeads.push(freshLead || leadResult);
       importedCount++;
     }
 
-    // Update place records was done per-record above
-
     return {
       success: true,
-      totalRequested: placesToImport.length,
+      totalRequested: rawCandidates.length,
       imported: importedCount,
       skippedDuplicates,
       duplicateNames,
       records: perRecordResults,
+      data: {
+        leadId: createdLeads[0]?.id,
+        leads: createdLeads,
+      },
       lead: createdLeads[0] || null,
       leads: createdLeads,
       capture: {

@@ -97,6 +97,18 @@ export class ImportToLeadsDto {
   places?: any[];
 
   @IsOptional()
+  dataCaptureId?: any;
+
+  @IsOptional()
+  dataCapturePlaceId?: any;
+
+  @IsOptional()
+  placeId?: any;
+
+  @IsOptional()
+  id?: any;
+
+  @IsOptional()
   @IsString()
   companyName?: string;
 
