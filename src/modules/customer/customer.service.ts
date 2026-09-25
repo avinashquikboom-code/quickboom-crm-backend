@@ -1694,7 +1694,14 @@ export class CustomerService {
    * Helper to validate and convert raw customer ID to positive integer
    */
   private parseCustomerId(id: number | string): number {
-    const numericId = Number(id);
+    let cleanId = id;
+    if (typeof id === 'string') {
+      const match = id.match(/\d+/);
+      if (match) {
+        cleanId = match[0];
+      }
+    }
+    const numericId = Number(cleanId);
     if (!Number.isInteger(numericId) || numericId <= 0) {
       throw new BadRequestException('Invalid customer ID');
     }
@@ -1795,7 +1802,7 @@ export class CustomerService {
     });
 
     if (!customer || customer.deletedAt) {
-      throw new NotFoundException(`Customer #${id} not found.`);
+      throw new NotFoundException(`Customer #${id} no longer exists.`);
     }
 
     // Tenant / Role Authorization Check
@@ -2568,7 +2575,7 @@ export class CustomerService {
     }
 
     // Tenant Isolation Check
-    if (user && !isUserSuperAdmin(user)) {
+    if (user && !isUserSuperAdmin(user) && !isUserAdmin(user)) {
       const callerCustomerId = Number(user.customerId);
       if (!callerCustomerId || callerCustomerId !== numericId) {
         throw new ForbiddenException('You do not have permission to delete this customer.');
@@ -2584,6 +2591,13 @@ export class CustomerService {
       });
 
       // 1. Delete FK-restricted application records before customer-owned parents
+      if (existing.leadId) {
+        await tx.leadActivityTimeline?.deleteMany?.({ where: { leadId: existing.leadId } });
+        await tx.leadNote?.deleteMany?.({ where: { leadId: existing.leadId } });
+        await tx.leadReminder?.deleteMany?.({ where: { leadId: existing.leadId } });
+        await tx.leadStatusHistory?.deleteMany?.({ where: { leadId: existing.leadId } });
+        await tx.lead?.deleteMany?.({ where: { id: existing.leadId } });
+      }
       await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numericId } } });
