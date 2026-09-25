@@ -309,16 +309,6 @@ export class CreateLeadDto {
   @IsOptional()
   companyName?: string;
 
-  @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Alias for companyName' })
-  @Transform(({ value, obj }) => {
-    const direct = cleanOptionalField({ value });
-    if (direct && direct !== 'Business Lead') return direct;
-    return cleanOptionalField({ value: obj?.companyName }) || undefined;
-  })
-  @IsString()
-  @IsOptional()
-  businessName?: string;
-
   @ApiPropertyOptional({ example: 'Gold\'s Gym & Fitness Hub', description: 'Google Discovery display name' })
   @Transform(({ value }) => {
     if (!value) return undefined;
