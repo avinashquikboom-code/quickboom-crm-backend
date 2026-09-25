@@ -379,18 +379,13 @@ export class LeadService {
       cleaned.lastName = isInvalid(rawLastName) ? '' : String(rawLastName).trim();
     }
 
-    // If firstName is still empty, derive fallback from title, companyName, email, or phone
-    if (!cleaned.firstName && cleaned.title) {
-      const parts = String(cleaned.title).trim().split(/\s+/);
-      cleaned.firstName = parts[0] || 'Lead';
+    // If firstName is still empty, only derive from explicit human name fields (not business title or companyName)
+    const rawContactName = cleaned.contactName || cleaned.contact_name || cleaned.fullName || cleaned.full_name || cleaned.name;
+    if (!cleaned.firstName && rawContactName && typeof rawContactName === 'string' && !rawContactName.startsWith('places/') && rawContactName.trim() !== 'Business Lead') {
+      const parts = rawContactName.trim().split(/\s+/);
+      cleaned.firstName = parts[0] || '';
       if (!cleaned.lastName) {
-        cleaned.lastName = parts.slice(1).join(' ') || cleaned.firstName;
-      }
-    } else if (!cleaned.firstName && cleaned.companyName) {
-      const parts = String(cleaned.companyName).trim().split(/\s+/);
-      cleaned.firstName = parts[0] || 'Lead';
-      if (!cleaned.lastName) {
-        cleaned.lastName = parts.slice(1).join(' ') || cleaned.firstName;
+        cleaned.lastName = parts.slice(1).join(' ') || '';
       }
     }
 
@@ -402,15 +397,22 @@ export class LeadService {
       cleaned.title === 'Direct Lead' ||
       cleaned.title === 'New Lead'
     ) {
-      if (cleaned.companyName && cleaned.companyName !== 'Business Lead') {
+      if (cleaned.companyName && cleaned.companyName !== 'Business Lead' && cleaned.companyName !== 'Direct Lead') {
         cleaned.title = cleaned.companyName;
       } else {
         const fullName = [cleaned.firstName, cleaned.lastName].filter(Boolean).join(' ').trim();
-        if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business') {
+        if (fullName && fullName !== 'Business Owner' && fullName !== 'Unknown Business' && fullName !== 'Business Lead') {
           cleaned.title = fullName;
         } else {
-          cleaned.title = cleaned.companyName || cleaned.email || cleaned.phone || 'Unnamed Business';
+          cleaned.title = 'Unnamed Business';
         }
+      }
+    }
+
+    // Also ensure companyName is populated from title if companyName was missing or generic
+    if (!cleaned.companyName || cleaned.companyName === 'Business Lead' || cleaned.companyName === 'Direct Lead') {
+      if (cleaned.title && cleaned.title !== 'Business Lead' && cleaned.title !== 'Direct Lead' && cleaned.title !== 'New Lead') {
+        cleaned.companyName = cleaned.title;
       }
     }
 

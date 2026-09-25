@@ -123,8 +123,8 @@ export class LeadRepository {
     const resolvedEmail = leadData.email ? String(leadData.email).trim().toLowerCase() : undefined;
 
     const resolvedBusinessName =
-      (leadData.companyName && leadData.companyName !== 'Business Lead' ? leadData.companyName : null) ||
-      (leadData.businessName && leadData.businessName !== 'Business Lead' ? leadData.businessName : null) ||
+      (leadData.companyName && leadData.companyName !== 'Business Lead' && leadData.companyName !== 'Direct Lead' && leadData.companyName !== 'New Lead' ? leadData.companyName : null) ||
+      (leadData.businessName && leadData.businessName !== 'Business Lead' && leadData.businessName !== 'Direct Lead' && leadData.businessName !== 'New Lead' ? leadData.businessName : null) ||
       (typeof leadData.displayName === 'object' ? leadData.displayName?.text : leadData.displayName) ||
       (dto as any).businessName ||
       (dto as any).companyName ||
@@ -139,10 +139,12 @@ export class LeadRepository {
       (resolvedFirstName || resolvedLastName ? `${resolvedFirstName} ${resolvedLastName}`.trim() : null) ||
       'Unnamed Business';
 
+    const finalCompanyName = resolvedBusinessName || leadData.companyName || resolvedTitle;
+
     const createData: any = {
       ...leadData,
       title: resolvedTitle,
-      companyName: resolvedBusinessName || leadData.companyName || null,
+      companyName: finalCompanyName,
       city: resolvedCity,
       pincode: resolvedPincode,
       firstName: resolvedFirstName,
@@ -698,13 +700,27 @@ export class LeadRepository {
     }
 
     return {
-      data: Array.isArray(data) ? data : [],
+      data: Array.isArray(data) ? data.map((l) => this.enrichLeadRecord(l)) : [],
       meta: {
         total: Number(total) || 0,
         page,
         limit,
         totalPages: Math.max(Math.ceil((Number(total) || 0) / limit), 1),
       },
+    };
+  }
+
+  public enrichLeadRecord(lead: any): any {
+    if (!lead) return lead;
+    const resolvedBiz =
+      (lead.companyName && lead.companyName !== 'Business Lead' && lead.companyName !== 'Direct Lead' && lead.companyName !== 'New Lead' ? lead.companyName : null) ||
+      (lead.title && lead.title !== 'Business Lead' && lead.title !== 'Direct Lead' && lead.title !== 'New Lead' ? lead.title : null) ||
+      '';
+    return {
+      ...lead,
+      companyName: resolvedBiz || lead.companyName,
+      businessName: resolvedBiz || lead.companyName || lead.title,
+      name: resolvedBiz || lead.companyName || lead.title,
     };
   }
 
@@ -722,7 +738,7 @@ export class LeadRepository {
     }
 
     try {
-      return await this.prisma.lead.findFirst({
+      const result = await this.prisma.lead.findFirst({
         where,
         include: {
           customer: true,
@@ -746,9 +762,10 @@ export class LeadRepository {
           },
         },
       });
+      return this.enrichLeadRecord(result);
     } catch (err: any) {
       this.logger.warn(`findOne with images failed: ${err?.message || err}. Attempting fallback without images...`);
-      return this.prisma.lead.findFirst({
+      const fallbackResult = await this.prisma.lead.findFirst({
         where,
         include: {
           customer: true,
@@ -769,6 +786,7 @@ export class LeadRepository {
           },
         },
       });
+      return this.enrichLeadRecord(fallbackResult);
     }
   }
 

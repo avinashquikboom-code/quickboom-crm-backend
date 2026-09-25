@@ -1033,19 +1033,19 @@ export class DataCaptureService {
 
     if (!firstName && !lastName) {
       const name = place.contactName || rawData.name || rawData.full_name || nested.name || nested.full_name;
-      if (name) {
-        const parts = String(name).trim().split(/\s+/);
+      if (name && typeof name === 'string' && !name.startsWith('places/') && name.trim() !== 'Business Lead') {
+        const parts = name.trim().split(/\s+/);
         firstName = parts[0];
         lastName = parts.slice(1).join(' ') || parts[0];
       }
     }
 
+    // Do NOT split businessName into contact person. If no contact person, use clean empty strings.
     if (!firstName && !lastName) {
-      const nameParts = (place.businessName || place.name || 'Business Prospect').trim().split(/\s+/);
-      firstName = nameParts[0] || 'Business';
-      lastName = nameParts.slice(1).join(' ') || 'Prospect';
+      firstName = '';
+      lastName = '';
     } else {
-      firstName = firstName || 'Contact';
+      firstName = firstName || '';
       lastName = lastName || firstName;
     }
 
@@ -1751,21 +1751,17 @@ export class DataCaptureService {
       }
 
       // Contact extraction (First Name / Last Name)
-      // Priority: explicit contact fields on place → split from businessName → placeholder
-      // Note: Lead.firstName and Lead.lastName are required (non-nullable) in the schema.
-      let firstName: string;
-      let lastName: string;
+      // Extract genuine human contact details if provided on the place/prospect.
+      // Do NOT split businessName into fake contact names.
+      let firstName = '';
+      let lastName = '';
       if (place.firstName && String(place.firstName).trim()) {
         firstName = String(place.firstName).trim();
-        lastName = String(place.lastName || '').trim() || '.';
-      } else if (businessName && businessName !== 'Unnamed Business') {
-        const parts = businessName.trim().split(/\s+/);
-        firstName = parts[0];
-        lastName = parts.length > 1 ? parts.slice(1).join(' ') : '.';
-      } else {
-        // Last resort: use 'Unknown' / 'Business' rather than a misleading name
-        firstName = 'Unknown';
-        lastName = 'Business';
+        lastName = String(place.lastName || '').trim();
+      } else if (place.contactName && String(place.contactName).trim() && !String(place.contactName).startsWith('places/')) {
+        const parts = String(place.contactName).trim().split(/\s+/);
+        firstName = parts[0] || '';
+        lastName = parts.slice(1).join(' ') || '';
       }
 
       // Generate a unique per-place idempotency key so multiple records in the same job don't collide
