@@ -920,6 +920,9 @@ export class DataCaptureService {
       updatedAt: place.updatedAt,
       customerId: String(place.customerId),
       duplicateMatches,
+      googlePhotos: [],
+      photos: undefined,
+      socialMedia: this.extractSocialMediaFromPlace(place),
     };
   }
 
