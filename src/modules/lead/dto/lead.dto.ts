@@ -602,28 +602,6 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   notes?: string;
-
-  @ApiPropertyOptional({ description: 'Google Photos array (resolved URLs or photo references)' })
-  @IsOptional()
-  photos?: any[];
-
-  @ApiPropertyOptional({ description: 'Google Photos with metadata (name, url, widthPx, heightPx)' })
-  @IsOptional()
-  googlePhotos?: any[];
-
-  @ApiPropertyOptional({ description: 'Generic images array' })
-  @IsOptional()
-  images?: any[];
-
-  @ApiPropertyOptional({ description: 'Google Discovery business name alias for companyName' })
-  @IsString()
-  @IsOptional()
-  businessName?: string;
-
-  @ApiPropertyOptional({ description: 'Google Discovery business name alias for companyName' })
-  @IsString()
-  @IsOptional()
-  business_name?: string;
 }
 
 export class AddLeadImageDto {
