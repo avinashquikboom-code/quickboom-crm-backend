@@ -47,7 +47,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @ApiTags('Leads')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-@Controller('leads')
+@Controller(['leads', 'admin/leads'])
 export class LeadController {
   constructor(private readonly leadService: LeadService) {}
 
@@ -228,13 +228,50 @@ export class LeadController {
 
   @Delete('bulk')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Bulk soft delete leads' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk' })
   async bulkRemove(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteLeadsDto,
   ) {
-    return this.leadService.bulkDeleteLeads(customerId, user, dto.ids);
+    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Post('bulk-delete')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk-delete' })
+  async bulkRemovePost(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteLeadsDto,
+  ) {
+    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Post('bulk')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk' })
+  async bulkRemovePostBulk(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteLeadsDto,
+  ) {
+    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Delete('bulk-delete')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk-delete' })
+  async bulkRemoveDeleteBulk(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteLeadsDto,
+  ) {
+    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
   @Delete(':id')

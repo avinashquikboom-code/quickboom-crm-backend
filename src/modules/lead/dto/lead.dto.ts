@@ -1126,19 +1126,39 @@ export class ReorderLeadStagesDto {
 }
 
 export class BulkDeleteLeadsDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Array of numeric Lead IDs to delete',
     type: [Number],
     example: [101, 102, 103],
   })
   @IsArray()
-  @IsNotEmpty()
+  @IsOptional()
   @Transform(({ value }) => {
     if (Array.isArray(value)) {
-      return value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0);
+      return Array.from(new Set(value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0)));
     }
     return value;
   })
-  ids: number[];
+  ids?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Alternative alias array for Lead IDs to delete',
+    type: [Number],
+    example: [101, 102, 103],
+  })
+  @IsArray()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) {
+      return Array.from(new Set(value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0)));
+    }
+    return value;
+  })
+  leadIds?: number[];
+
+  get resolvedIds(): number[] {
+    const list = this.ids || this.leadIds || [];
+    return Array.from(new Set(list.map(Number).filter((n) => !isNaN(n) && n > 0)));
+  }
 }
 
