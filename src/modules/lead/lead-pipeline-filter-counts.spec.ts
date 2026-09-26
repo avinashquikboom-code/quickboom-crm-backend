@@ -113,27 +113,29 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
 
     await repository.getSummaryMetrics(1, employeeA);
 
-    // Verify all count queries contained employee conditions
+    // Verify all count queries used strict employeeId-only filter (not OR)
     expect(mockPrisma.lead.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          OR: [
-            { assignedToId: employeeA.id },
-            { createdById: employeeA.id },
-            { employeeId: employeeA.employee.id },
-          ],
+          employeeId: employeeA.employee.id,
         }),
+      }),
+    );
+    // Verify the old broad OR filter is NOT used
+    expect(mockPrisma.lead.count).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ OR: expect.anything() }),
       }),
     );
 
     mockPrisma.lead.count.mockClear();
     await repository.getSummaryMetrics(1, adminUser);
 
-    // Verify admin query did NOT have employee OR filter
+    // Verify admin query did NOT have employee filter
     expect(mockPrisma.lead.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.not.objectContaining({
-          OR: expect.anything(),
+          employeeId: expect.anything(),
         }),
       }),
     );

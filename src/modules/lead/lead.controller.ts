@@ -166,6 +166,90 @@ export class LeadController {
     );
   }
 
+  @Delete('bulk')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk' })
+  async bulkRemove(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto?: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string | string[],
+  ) {
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
+      ids = raw
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Post('bulk-delete')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk-delete' })
+  async bulkRemovePost(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto?: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string | string[],
+  ) {
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
+      ids = raw
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Post('bulk')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk' })
+  async bulkRemovePostBulk(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto?: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string | string[],
+  ) {
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
+      ids = raw
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
+  @Delete('bulk-delete')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk-delete' })
+  async bulkRemoveDeleteBulk(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto?: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string | string[],
+  ) {
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
+      ids = raw
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    return this.leadService.bulkDeleteLeads(customerId, user, ids);
+  }
+
   @Post(':id/convert')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Convert lead to customer account' })
@@ -202,8 +286,12 @@ export class LeadController {
   @Get(':id')
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
-  async findOne(@CurrentCustomer() customerId: string, @Param('id', ParseIntPipe) id: number) {
-    return this.leadService.getLeadById(customerId, id);
+  async findOne(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.leadService.getLeadById(customerId, id, user);
   }
 
   @Patch(':id')
@@ -212,10 +300,10 @@ export class LeadController {
   async update(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Body() dto: UpdateLeadDto,
   ) {
-    return this.leadService.updateLead(customerId, id, dto, userId);
+    return this.leadService.updateLead(customerId, id, dto, user?.id, user);
   }
 
   @Patch(':id/status')
@@ -228,86 +316,6 @@ export class LeadController {
     @Body() dto: UpdateLeadStatusDto,
   ) {
     return this.leadService.updateStatus(customerId, id, userId, dto);
-  }
-
-  @Delete('bulk')
-  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk' })
-  async bulkRemove(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Body() dto: BulkDeleteLeadsDto,
-    @Query('ids') queryIds?: string,
-  ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      ids = queryIds
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
-    return this.leadService.bulkDeleteLeads(customerId, user, ids);
-  }
-
-  @Post('bulk-delete')
-  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk-delete' })
-  async bulkRemovePost(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Body() dto: BulkDeleteLeadsDto,
-    @Query('ids') queryIds?: string,
-  ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      ids = queryIds
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
-    return this.leadService.bulkDeleteLeads(customerId, user, ids);
-  }
-
-  @Post('bulk')
-  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk' })
-  async bulkRemovePostBulk(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Body() dto: BulkDeleteLeadsDto,
-    @Query('ids') queryIds?: string,
-  ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      ids = queryIds
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
-    return this.leadService.bulkDeleteLeads(customerId, user, ids);
-  }
-
-  @Delete('bulk-delete')
-  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk-delete' })
-  async bulkRemoveDeleteBulk(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Body() dto: BulkDeleteLeadsDto,
-    @Query('ids') queryIds?: string,
-  ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      ids = queryIds
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
-    return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
   @Delete(':id')

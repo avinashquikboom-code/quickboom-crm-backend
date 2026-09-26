@@ -537,7 +537,7 @@ export class LeadService {
     return cleaned;
   }
 
-  private async validateBpoEmployeeAssignment(
+  private async validateEmployeeAssignment(
     customerId: number | string,
     assignedToId?: number | string | null,
   ): Promise<{ assignedToId: number | null; employeeId: number | null } | undefined> {
@@ -554,6 +554,7 @@ export class LeadService {
       throw new BadRequestException('Invalid employee ID provided for lead assignment');
     }
 
+    // Look up by userId (User table PK) OR by employee record id
     const employee = await this.prisma.employee.findFirst({
       where: {
         OR: [
@@ -561,13 +562,6 @@ export class LeadService {
           { id: targetId },
         ],
         customerId: Number(customerId),
-      },
-      include: {
-        department: true,
-        designation: true,
-        teamMembers: {
-          include: { team: true },
-        },
       },
     });
 
@@ -579,21 +573,9 @@ export class LeadService {
       throw new BadRequestException('Cannot assign lead to an inactive employee');
     }
 
-    const deptStr = `${employee.department?.name || ''} ${employee.department?.code || ''}`.toLowerCase();
-    const desigStr = `${employee.designation?.name || ''} ${employee.designation?.code || ''}`.toLowerCase();
-    const teamStr = (employee.teamMembers || [])
-      .map((tm) => tm.team?.name || '')
-      .join(' ')
-      .toLowerCase();
-
-    const isBpo =
-      deptStr.includes('bpo') ||
-      desigStr.includes('bpo') ||
-      teamStr.includes('bpo');
-
-    if (!isBpo) {
-      throw new BadRequestException('Only BPO employees/representatives can be assigned to leads');
-    }
+    this.logger.log(
+      `[LEAD_ASSIGNMENT] Assigning lead to employee: employeeId=${employee.id} userId=${employee.userId || targetId} customerId=${customerId}`,
+    );
 
     return {
       assignedToId: employee.userId || targetId,
@@ -980,7 +962,7 @@ export class LeadService {
       }
     }
 
-    const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
+    const assignment = await this.validateEmployeeAssignment(customerId, cleaned.assignedToId);
     const resolvedCreatedFrom = resolveCreatedFrom(req, userOrId, cleaned.createdFrom);
 
     const sanitizedDto = {
@@ -1235,16 +1217,34 @@ export class LeadService {
     return this.leadRepository.findAll(customerId, query, user);
   }
 
-  async getLeadById(customerId: number | string, id: number | string) {
-    if (String(id).toLowerCase() === 'bulk') {
-      throw new BadRequestException(
-        'Invalid lead ID: "bulk" is not a valid lead identifier. Use /leads/bulk for bulk operations.',
-      );
+  async getLeadById(customerId: number | string, id: number | string, user?: any) {
+    const numId = Number(id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException(`Invalid lead ID: "${id}" is not a valid numeric identifier.`);
     }
-    const lead = await this.leadRepository.findOne(customerId, id);
+    const lead = await this.leadRepository.findOne(customerId, numId);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
+
+    // Employee ownership enforcement: non-admin employees can only access leads assigned to them
+    if (user && !isUserAdmin(user)) {
+      const empId = user.employee?.id;
+      const isOwner =
+        (empId && (lead as any).employeeId === empId) ||
+        lead.assignedToId === user.id;
+
+      this.logger.log(
+        `[LEAD_VISIBILITY_DEBUG] getLeadById leadId=${numId} authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
+        `lead.employeeId=${(lead as any).employeeId ?? 'none'} lead.assignedToId=${lead.assignedToId ?? 'none'} ` +
+        `companyId=${customerId} isOwner=${isOwner}`,
+      );
+
+      if (!isOwner) {
+        throw new ForbiddenException('You do not have permission to access this lead.');
+      }
+    }
+
     return lead;
   }
 
@@ -1271,8 +1271,20 @@ export class LeadService {
     };
   }
 
-  async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto, userId?: number | string) {
+  async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto, userId?: number | string, user?: any) {
     const lead = await this.getLeadById(customerId, id);
+
+    // Employee ownership: non-admin employees can only update their assigned leads
+    if (user && !isUserAdmin(user)) {
+      const empId = user.employee?.id;
+      const isOwner =
+        (empId && (lead as any).employeeId === empId) ||
+        lead.assignedToId === user.id;
+      if (!isOwner) {
+        throw new ForbiddenException('You do not have permission to update this lead as it is not assigned to you.');
+      }
+    }
+
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
     let resolvedStageId: number | undefined = dto.stageId !== undefined ? (dto.stageId ? Number(dto.stageId) : undefined) : undefined;
@@ -1301,7 +1313,7 @@ export class LeadService {
     }
 
     const cleaned = this.sanitizeLeadFields(dto);
-    const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
+    const assignment = await this.validateEmployeeAssignment(customerId, cleaned.assignedToId);
 
     const sanitizedDto = {
       ...cleaned,
@@ -2777,19 +2789,12 @@ export class LeadService {
   }
 
   async deleteLead(customerId: number | string | undefined, id: number | string, user?: any) {
-    // Safety guard: 'bulk' should NEVER reach here. If it does, the DELETE /leads/bulk route
-    // was not matched correctly by the router (stale build / proxy misconfiguration).
-    if (String(id).toLowerCase() === 'bulk') {
-      this.logger.error(
-        `[SINGLE_DELETE_ERROR] id="bulk" reached deleteLead — the @Delete('bulk') route was not matched. ` +
-        `Check that the backend is rebuilt and redeployed with the correct route order.`,
-      );
-      throw new BadRequestException(
-        'Invalid lead ID: "bulk" is not a valid lead identifier. Use DELETE /leads/bulk with a JSON body { "ids": [...] } for bulk deletion.',
-      );
+    const numId = Number(id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException(`Invalid lead ID: "${id}" is not a valid numeric identifier.`);
     }
-    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${id}`);
-    const lead = await this.getLeadById(customerId, id);
+    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${numId}`);
+    const lead = await this.getLeadById(customerId, numId);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }

@@ -527,17 +527,16 @@ export class LeadRepository {
       baseWhere.customerId = numCustomerId;
     }
 
-    // Employee RBAC Isolation: scope counts to assigned/created leads
+    // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
       const empId = user.employee?.id;
-      const userConditions: any[] = [
-        { assignedToId: user.id },
-        { createdById: user.id },
-      ];
       if (empId) {
-        userConditions.push({ employeeId: empId });
+        // Strict: only leads where employeeId = this employee's record ID
+        baseWhere.employeeId = empId;
+      } else {
+        // Employee user but no employee record found — return nothing (safety net)
+        baseWhere.id = -1;
       }
-      baseWhere.OR = userConditions;
     }
 
     const [total, newCount, contacted, qualified, converted, lost] = await Promise.all([
@@ -754,17 +753,20 @@ export class LeadRepository {
 
     const andConditions: any[] = [];
 
-    // Employee RBAC Isolation: Non-admin employees only see leads assigned to them or created by them
+    // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
       const empId = user.employee?.id;
-      const userConditions: any[] = [
-        { assignedToId: user.id },
-        { createdById: user.id },
-      ];
+      this.logger.log(
+        `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
+        `companyId=${numCustomerId} filter=employeeId_only`,
+      );
       if (empId) {
-        userConditions.push({ employeeId: empId });
+        // Strict: only leads where employeeId = this employee's record ID
+        andConditions.push({ employeeId: empId });
+      } else {
+        // Employee user but no employee record — return nothing
+        andConditions.push({ id: -1 });
       }
-      andConditions.push({ OR: userConditions });
     }
 
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
@@ -1961,17 +1963,15 @@ export class LeadRepository {
       ...(hasCustomer ? { customerId: numCustomerId } : {}),
     };
 
-    // Employee RBAC Isolation: When user is an employee, scope lead count strictly to assigned/created leads
+    // Employee RBAC Isolation: When user is an employee, scope lead count strictly to assigned leads (employeeId only)
     if (user && !isAdmin) {
       const empId = user.employee?.id;
-      const userConditions: any[] = [
-        { assignedToId: user.id },
-        { createdById: user.id },
-      ];
       if (empId) {
-        userConditions.push({ employeeId: empId });
+        leadWhere.employeeId = empId;
+      } else {
+        // Employee user but no employee record — show 0 leads per stage
+        leadWhere.id = -1;
       }
-      leadWhere.OR = userConditions;
     }
 
     return this.prisma.leadStage.findMany({
