@@ -42,9 +42,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       tokenVal.length > 0,
     );
 
-    this.logger.debug?.(
-      `[AUTH DEBUG]\nAuthorization header exists: ${hasHeader}\nToken exists: ${hasValidToken}`,
-    );
+    const isBulkLeadEndpoint = typeof request.url === 'string' && request.url.includes('/leads/bulk');
+    if (isBulkLeadEndpoint || !hasValidToken) {
+      this.logger.log(
+        `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} hasBearer=${hasBearer} tokenPresent=${hasValidToken} tokenLength=${tokenVal ? tokenVal.length : 0}`,
+      );
+    }
 
     if (!hasBearer && hasHeader) {
       this.logger.warn(
@@ -79,16 +82,23 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         );
 
         this.logger.warn(
-          `[AUTH DEBUG]\nAuthorization header exists: ${hasHeader}\nToken exists: ${hasValidToken}\n[JWT_AUTH_FAILURE] ${request.method} ${request.url} - Reason: ${failureReason}`,
+          `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} tokenPresent=${hasValidToken} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
         );
       }
       throw err || new UnauthorizedException('Invalid or expired authentication token');
     }
 
     if (request) {
-      this.logger.debug?.(
-        `[JWT_AUTH_SUCCESS] ${request.method} ${request.url} - User: ${user.id}, Role: ${user.role}`,
-      );
+      const isBulkLeadEndpoint = typeof request.url === 'string' && request.url.includes('/leads/bulk');
+      if (isBulkLeadEndpoint) {
+        this.logger.log(
+          `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.customerId || user.companyId || 'NONE'}`,
+        );
+      } else {
+        this.logger.debug?.(
+          `[JWT_AUTH_SUCCESS] ${request.method} ${request.url} - User: ${user.id}, Role: ${user.role}`,
+        );
+      }
     }
 
     return user;
