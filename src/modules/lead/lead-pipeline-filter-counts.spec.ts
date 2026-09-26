@@ -44,13 +44,10 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
 
   it('1. Empty Employee: Employee B with zero assigned leads receives 0 counts across all stages', async () => {
     mockPrisma.leadStage.findMany.mockImplementation((args: any) => {
-      // leadWhere inside _count.select.leads.where must have employee isolation
+      // leadWhere inside _count.select.leads.where must have strict employeeId isolation
       const leadWhere = args.include._count.select.leads.where;
-      expect(leadWhere.OR).toEqual([
-        { assignedToId: employeeB.id },
-        { createdById: employeeB.id },
-        { employeeId: employeeB.employee.id },
-      ]);
+      expect(leadWhere.employeeId).toBe(employeeB.employee.id);
+      expect(leadWhere.OR).toBeUndefined();
 
       return [
         { id: 16, key: 'NEW', name: 'New', sortOrder: 1, isActive: true, _count: { leads: 0 } },
@@ -69,11 +66,8 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
   it('2. Employee with Leads: Employee A receives exactly their assigned counts (All 23, New 17)', async () => {
     mockPrisma.leadStage.findMany.mockImplementation((args: any) => {
       const leadWhere = args.include._count.select.leads.where;
-      expect(leadWhere.OR).toEqual([
-        { assignedToId: employeeA.id },
-        { createdById: employeeA.id },
-        { employeeId: employeeA.employee.id },
-      ]);
+      expect(leadWhere.employeeId).toBe(employeeA.employee.id);
+      expect(leadWhere.OR).toBeUndefined();
 
       return [
         { id: 16, key: 'NEW', name: 'New', sortOrder: 1, isActive: true, _count: { leads: 17 } },
