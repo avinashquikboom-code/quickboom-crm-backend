@@ -34,7 +34,11 @@ export interface CapturedPlace {
   capturedBy?: string;
   extractionJobId?: string;
   duplicateMatches?: DuplicateMatch[];
-  /** Array of structured Google Places photos with photo resource name and URL */
+  /**
+   * Renderable Data Capture photos. `name` is the Google Places photo resource;
+   * `url` is a direct HTTPS image URL or the backend photo resolver URL. No API key is returned.
+   * An empty array means no usable source photo was available.
+   */
   googlePhotos?: GooglePlacePhoto[];
   /** Array of resolved Google photo URLs for this business (from Google Places API) */
   photos?: string[];

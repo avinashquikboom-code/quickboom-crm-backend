@@ -170,6 +170,37 @@ describe('DataCaptureService', () => {
       expect(result.pagination.total).toBe(1);
     });
 
+    it('resolves Google Places photo resources stored in rawData when photos has no URL', async () => {
+      const photoName = 'places/ChIJexample/photos/ATKogpeExample';
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(1);
+      mockPrisma.dataCapturePlace.findMany.mockResolvedValue([
+        {
+          id: 11,
+          customerId: 5,
+          googlePlaceId: 'ChIJexample',
+          businessName: 'Reference-only photo fixture',
+          photos: null,
+          rawData: { photos: [{ name: photoName, widthPx: 800, heightPx: 600 }] },
+          source: 'GOOGLE_PLACES',
+          status: 'CAPTURED',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isImported: false,
+        },
+      ]);
+
+      const result = await service.listPlaces('5', { page: 1, limit: 20 });
+
+      expect(result.data[0].googlePhotos).toEqual([
+        {
+          name: photoName,
+          url: `/api/v1/data-capture/photo?ref=${encodeURIComponent(photoName)}`,
+          width: undefined,
+          height: undefined,
+        },
+      ]);
+    });
+
     it('correctly applies valid status and source filters', async () => {
       mockPrisma.dataCapturePlace.count.mockResolvedValue(1);
       mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);

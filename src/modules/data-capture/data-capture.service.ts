@@ -210,11 +210,19 @@ export class DataCaptureService implements OnModuleInit {
         }
       } else if (typeof item === 'object') {
         let url = item.url ? String(item.url).trim() : '';
-        let name = item.name ? String(item.name) : undefined;
+        let name = item.name || item.photoReference || item.photo_reference
+          ? String(item.name || item.photoReference || item.photo_reference).trim()
+          : undefined;
         if (url.includes('places.googleapis.com')) {
           const match = url.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
           name = match ? match[1] : (name || `places/photo/${googlePhotos.length + 1}`);
           url = `/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`;
+        } else if (!url && name) {
+          const resourceName = name.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/)?.[1];
+          if (resourceName) {
+            name = resourceName;
+            url = `/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`;
+          }
         }
         if (url) {
           photos.push(url);
@@ -767,14 +775,17 @@ export class DataCaptureService implements OnModuleInit {
 
             const resolvedGooglePhotos = apiKey ? this.resolveGooglePhotos(p, apiKey) : [];
             const resolvedPhotoUrls = resolvedGooglePhotos.map((gp) => gp.url);
+            const rawPhotos = Array.isArray(p.photos) ? p.photos : [];
+            const firstRawPhoto = rawPhotos[0];
 
             this.logger.log(
-              `[DATA_CAPTURE_IMAGE_DEBUG]\n` +
-              `recordId: ${p.id || 'N/A'}\n` +
+              `[DATA_CAPTURE_PHOTO_DEBUG]\n` +
+              `businessName: ${p.displayName.text}\n` +
               `googlePlaceId: ${p.id || 'N/A'}\n` +
-              `photoCount: ${resolvedGooglePhotos.length}\n` +
-              `hasPhotoReference: ${resolvedGooglePhotos.some((gp) => Boolean(gp.name))}\n` +
-              `hasPhotoUrl: ${resolvedGooglePhotos.some((gp) => Boolean(gp.url))}`
+              `photoFieldPresent: ${Object.prototype.hasOwnProperty.call(p, 'photos')}\n` +
+              `photoCount: ${rawPhotos.length}\n` +
+              `firstPhotoReferencePresent: ${Boolean(firstRawPhoto && (firstRawPhoto.name || firstRawPhoto.photoReference || firstRawPhoto.photo_reference))}\n` +
+              `firstPhotoUrlPresent: ${Boolean(typeof firstRawPhoto === 'string' ? firstRawPhoto.startsWith('http') : firstRawPhoto?.url)}`
             );
 
             const placeRecord: CapturedPlace = {
