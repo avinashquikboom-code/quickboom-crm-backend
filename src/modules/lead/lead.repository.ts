@@ -1421,6 +1421,23 @@ export class LeadRepository {
     });
   }
 
+  async bulkSoftDelete(ids: number[], customerId?: number | string) {
+    if (!ids || ids.length === 0) return { count: 0 };
+    const numCustomerId = Number(customerId);
+    const where: any = {
+      id: { in: ids },
+      deletedAt: null,
+    };
+    if (!isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+    return this.prisma.lead.updateMany({
+      where,
+      data: { deletedAt: new Date() },
+    });
+  }
+
+
   async addNote(leadId: number | string, userId: number | string, content: string) {
     const numLeadId = Number(leadId);
     const numUserId = Number(userId);

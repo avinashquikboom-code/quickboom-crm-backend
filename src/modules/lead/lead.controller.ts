@@ -34,6 +34,7 @@ import {
   UpdateLeadStatusDto,
   SendLeadWhatsAppDto,
   SendLeadEmailDto,
+  BulkDeleteLeadsDto,
 } from './dto/lead.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -224,12 +225,28 @@ export class LeadController {
     return this.leadService.updateStatus(customerId, id, userId, dto);
   }
 
+  @Delete('bulk')
+  @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk soft delete leads' })
+  async bulkRemove(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteLeadsDto,
+  ) {
+    return this.leadService.bulkDeleteLeads(customerId, user, dto.ids);
+  }
+
   @Delete(':id')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete lead' })
-  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.leadService.deleteLead(customerId, id);
+  async remove(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.deleteLead(customerId, id, user);
   }
+
 
   @Post(':id/images')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })

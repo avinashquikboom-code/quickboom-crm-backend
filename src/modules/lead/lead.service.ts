@@ -42,7 +42,7 @@ import {
   friendlyWhatsAppErrorMessage,
   WHATSAPP_ERROR_CODES,
 } from '../whatsapp/whatsapp.service';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { S3Service } from '../s3/s3.service';
 
@@ -2761,10 +2761,218 @@ export class LeadService {
     }
   }
 
-  async deleteLead(customerId: number | string, id: number | string) {
-    await this.getLeadById(customerId, id);
-    return this.leadRepository.softDelete(customerId, id);
+  async deleteLead(customerId: number | string | undefined, id: number | string, user?: any) {
+    const lead = await this.getLeadById(customerId, id);
+    if (!lead) {
+      throw new NotFoundException(`Lead with ID ${id} not found`);
+    }
+
+    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user) || isSuperAdmin;
+
+    if (!isSuperAdmin && numCustomerId && lead.customerId !== numCustomerId) {
+      throw new ForbiddenException('Lead does not belong to your company/tenant.');
+    }
+
+    const isConverted =
+      lead.convertedAt != null ||
+      lead.status === 'CONVERTED' ||
+      (lead as any).convertedCustomer != null ||
+      lead.convertedToCompanyId != null ||
+      lead.convertedToContactId != null ||
+      lead.convertedToDealId != null;
+
+    if (isConverted) {
+      throw new BadRequestException('Lead cannot be deleted because it has been converted to a Customer.');
+    }
+
+    if (user && !isAdmin) {
+      const isAssigned =
+        lead.assignedToId === user?.id ||
+        (user?.employee?.id && (lead as any).employeeId === user.employee.id) ||
+        lead.createdById === user?.id;
+
+      if (!isAssigned) {
+        throw new ForbiddenException('You do not have permission to delete this lead as it is not assigned to you.');
+      }
+    }
+
+    const res = await this.leadRepository.softDelete(customerId, id);
+    await this.leadRepository
+      .logTimeline(
+        lead.id,
+        'DELETED',
+        `Lead deleted by ${user?.firstName || user?.email || 'User'}`,
+        {
+          deletedBy: user?.id,
+          employeeId: user?.employee?.id,
+          timestamp: new Date(),
+        },
+      )
+      .catch(() => {});
+
+    return res;
   }
+
+  async bulkDeleteLeads(customerId: number | string | undefined, user: any, ids: number[]) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Lead IDs array must not be empty.');
+    }
+
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid lead IDs provided.');
+    }
+
+    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user) || isSuperAdmin;
+
+    const where: any = {
+      id: { in: uniqueIds },
+      deletedAt: null,
+    };
+    if (!isSuperAdmin && numCustomerId !== undefined && !isNaN(numCustomerId) && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
+
+    const existingLeads = await this.prisma.lead.findMany({
+      where,
+      include: {
+        convertedCustomer: { select: { id: true } },
+      },
+    });
+
+    const leadMap = new Map<number, any>();
+    existingLeads.forEach((l) => leadMap.set(l.id, l));
+
+    const results: Array<{ id: number; success: boolean; message?: string }> = [];
+    const eligibleIdsToDelete: number[] = [];
+
+    for (const id of uniqueIds) {
+      const lead = leadMap.get(id);
+
+      if (!lead) {
+        results.push({
+          id,
+          success: false,
+          message: 'Lead not found or does not belong to your company/tenant.',
+        });
+        continue;
+      }
+
+      if (!isSuperAdmin && numCustomerId && lead.customerId !== numCustomerId) {
+        results.push({
+          id,
+          success: false,
+          message: 'Lead does not belong to your company/tenant.',
+        });
+        continue;
+      }
+
+      const isConverted =
+        lead.convertedAt != null ||
+        lead.status === 'CONVERTED' ||
+        lead.convertedCustomer != null ||
+        lead.convertedToCompanyId != null ||
+        lead.convertedToContactId != null ||
+        lead.convertedToDealId != null;
+
+      if (isConverted) {
+        results.push({
+          id,
+          success: false,
+          message: 'Lead cannot be deleted because it has been converted to a Customer.',
+        });
+        continue;
+      }
+
+      if (!isAdmin) {
+        const isAssigned =
+          lead.assignedToId === user?.id ||
+          (user?.employee?.id && lead.employeeId === user.employee.id) ||
+          lead.createdById === user?.id;
+
+        if (!isAssigned) {
+          results.push({
+            id,
+            success: false,
+            message: 'You do not have permission to delete this lead as it is not assigned to you.',
+          });
+          continue;
+        }
+      }
+
+      eligibleIdsToDelete.push(id);
+    }
+
+    if (eligibleIdsToDelete.length > 0) {
+      await this.leadRepository.bulkSoftDelete(eligibleIdsToDelete, isSuperAdmin ? undefined : numCustomerId);
+
+      const deleteTimestamp = new Date();
+      for (const id of eligibleIdsToDelete) {
+        results.push({
+          id,
+          success: true,
+        });
+        await this.leadRepository
+          .logTimeline(
+            id,
+            'BULK_DELETE',
+            `Lead deleted by ${user?.firstName || user?.email || 'User'}`,
+            {
+              deletedBy: user?.id,
+              employeeId: user?.employee?.id,
+              timestamp: deleteTimestamp,
+            },
+          )
+          .catch(() => {});
+      }
+
+      if (this.prisma && this.prisma.auditLog) {
+        await this.prisma.auditLog
+          .create({
+            data: {
+              customerId: (!isSuperAdmin && numCustomerId) ? numCustomerId : (user?.customerId || null),
+              userId: user?.id ? Number(user.id) : null,
+              userName: [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || 'User',
+              userRole: user?.role || 'USER',
+              source: user?.employee ? 'MOBILE_APP' : 'ADMIN_PANEL',
+              action: 'BULK_DELETE',
+              module: 'CRM',
+              entityType: 'Lead',
+              description: `Bulk soft-deleted ${eligibleIdsToDelete.length} leads`,
+              endpoint: '/api/v1/leads/bulk',
+              method: 'DELETE',
+              status: 'SUCCESS',
+              details: {
+                requestedCount: uniqueIds.length,
+                deletedCount: eligibleIdsToDelete.length,
+                failedCount: uniqueIds.length - eligibleIdsToDelete.length,
+                leadIds: eligibleIdsToDelete,
+                deletedBy: user?.id,
+                employeeId: user?.employee?.id,
+                timestamp: deleteTimestamp.toISOString(),
+              },
+            },
+          })
+          .catch(() => {});
+      }
+    }
+
+    const deletedCount = eligibleIdsToDelete.length;
+    const failedCount = results.filter((r) => !r.success).length;
+
+    return {
+      success: deletedCount > 0 || uniqueIds.length === 0,
+      requested: uniqueIds.length,
+      deleted: deletedCount,
+      failed: failedCount,
+      results,
+    };
+  }
+
 
   async addNote(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateLeadNoteDto) {
     await this.getLeadById(customerId, leadId);

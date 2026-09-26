@@ -1124,3 +1124,21 @@ export class ReorderLeadStagesDto {
   @Type(() => ReorderLeadStagesItemDto)
   stages: ReorderLeadStagesItemDto[];
 }
+
+export class BulkDeleteLeadsDto {
+  @ApiProperty({
+    description: 'Array of numeric Lead IDs to delete',
+    type: [Number],
+    example: [101, 102, 103],
+  })
+  @IsArray()
+  @IsNotEmpty()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) {
+      return value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0);
+    }
+    return value;
+  })
+  ids: number[];
+}
+
