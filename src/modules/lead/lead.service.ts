@@ -2003,13 +2003,20 @@ export class LeadService {
         }
       }
 
-      // 5. Update Lead convertedAt & status
+      // 5. Update Lead convertedAt, status, and convertedByEmployeeId — preserve assignedToId & employeeId
+      const wonUpdateData: any = {
+        convertedAt: updatedLead.convertedAt || new Date(),
+        status: LeadStatus.WON,
+      };
+      // Record which employee converted this lead (for Admin Panel & Mobile display)
+      if (convertingEmpId && !updatedLead.convertedByEmployeeId) {
+        wonUpdateData.convertedByEmployeeId = convertingEmpId;
+      }
+      // Ensure assignedToId is preserved from the lead (never cleared on WON transition)
+      // employeeId is also preserved — only convertedByEmployeeId is newly set here
       await this.prisma.lead.update({
         where: { id: leadId },
-        data: {
-          convertedAt: updatedLead.convertedAt || new Date(),
-          status: LeadStatus.WON,
-        },
+        data: wonUpdateData,
       });
 
       this.logger.log(
@@ -2762,6 +2769,18 @@ export class LeadService {
   }
 
   async deleteLead(customerId: number | string | undefined, id: number | string, user?: any) {
+    // Safety guard: 'bulk' should NEVER reach here. If it does, the DELETE /leads/bulk route
+    // was not matched correctly by the router (stale build / proxy misconfiguration).
+    if (String(id).toLowerCase() === 'bulk') {
+      this.logger.error(
+        `[SINGLE_DELETE_ERROR] id="bulk" reached deleteLead — the @Delete('bulk') route was not matched. ` +
+        `Check that the backend is rebuilt and redeployed with the correct route order.`,
+      );
+      throw new BadRequestException(
+        'Invalid lead ID: "bulk" is not a valid lead identifier. Use DELETE /leads/bulk with a JSON body { "ids": [...] } for bulk deletion.',
+      );
+    }
+    this.logger.log(`[SINGLE LEAD DELETE] id=${id}`);
     const lead = await this.getLeadById(customerId, id);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
@@ -2816,6 +2835,7 @@ export class LeadService {
   }
 
   async bulkDeleteLeads(customerId: number | string | undefined, user: any, ids: number[]) {
+    this.logger.log(`[BULK LEAD DELETE] route=/leads/bulk method=DELETE count=${Array.isArray(ids) ? ids.length : 0} ids=${JSON.stringify(ids)}`);
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new BadRequestException('Lead IDs array must not be empty.');
     }

@@ -128,6 +128,27 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       expect(unassignedResult?.message).toContain('You do not have permission to delete this lead as it is not assigned to you.');
       expect(mockLeadRepository.bulkSoftDelete).toHaveBeenCalledWith([101], 10);
     });
+
+    it('should safely soft-delete only requested leads [101, 102] leaving lead 103 untouched', async () => {
+      const mockLeads = [
+        { id: 101, customerId: 10, status: 'NEW', convertedCustomer: null },
+        { id: 102, customerId: 10, status: 'CONTACTED', convertedCustomer: null },
+      ];
+      mockPrisma.lead.findMany.mockResolvedValue(mockLeads);
+
+      // Only delete 101 and 102 (lead 103 is not in the request)
+      const result = await service.bulkDeleteLeads(10, adminUser, [101, 102]);
+
+      expect(result.success).toBe(true);
+      expect(result.requested).toBe(2);
+      expect(result.deleted).toBe(2);
+      expect(mockLeadRepository.bulkSoftDelete).toHaveBeenCalledWith([101, 102], 10);
+      // Verify lead 103 is completely excluded from bulkSoftDelete
+      const deletedIds = mockLeadRepository.bulkSoftDelete.mock.calls[0][0];
+      expect(deletedIds).toContain(101);
+      expect(deletedIds).toContain(102);
+      expect(deletedIds).not.toContain(103);
+    });
   });
 
   describe('deleteLead (single delete)', () => {
@@ -156,6 +177,15 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       await expect(
         service.deleteLead(10, 101, { id: 5, role: 'EMPLOYEE', employee: { id: 20 } }),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw BadRequestException if id is the literal string "bulk"', async () => {
+      await expect(service.deleteLead(10, 'bulk', { id: 1, role: 'COMPANY_ADMIN' })).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.deleteLead(10, 'BULK', { id: 1, role: 'COMPANY_ADMIN' })).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

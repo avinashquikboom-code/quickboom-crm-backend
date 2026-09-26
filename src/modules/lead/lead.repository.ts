@@ -853,6 +853,8 @@ export class LeadRepository {
             stage: true,
             assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
             createdBy: { select: { id: true, firstName: true, lastName: true } },
+            employee: { select: { id: true, firstName: true, lastName: true } },
+            convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
           },
         }),
@@ -871,6 +873,8 @@ export class LeadRepository {
               stage: true,
               assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
               createdBy: { select: { id: true, firstName: true, lastName: true } },
+              employee: { select: { id: true, firstName: true, lastName: true } },
+              convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             },
           }),
           this.prisma.lead.count({ where }),
@@ -1044,6 +1048,19 @@ export class LeadRepository {
       title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : (lead.title || '')),
       name: resolvedBiz,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
+      // Normalized ownership fields for easy frontend consumption
+      assignedToName: lead.assignedTo
+        ? `${lead.assignedTo.firstName || ''} ${lead.assignedTo.lastName || ''}`.trim() || null
+        : null,
+      createdByName: lead.createdBy
+        ? `${lead.createdBy.firstName || ''} ${lead.createdBy.lastName || ''}`.trim() || null
+        : null,
+      employeeName: lead.employee
+        ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
+        : null,
+      convertedByEmployeeName: lead.convertedByEmployee
+        ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
+        : null,
     };
   }
 
@@ -1068,6 +1085,8 @@ export class LeadRepository {
           stage: true,
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
+          employee: { select: { id: true, firstName: true, lastName: true } },
+          convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
           notes: {
             include: { user: { select: { id: true, firstName: true, lastName: true } } },
             orderBy: { createdAt: 'desc' },
@@ -1104,6 +1123,8 @@ export class LeadRepository {
           stage: true,
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
+          employee: { select: { id: true, firstName: true, lastName: true } },
+          convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
           notes: {
             include: { user: { select: { id: true, firstName: true, lastName: true } } },
             orderBy: { createdAt: 'desc' },

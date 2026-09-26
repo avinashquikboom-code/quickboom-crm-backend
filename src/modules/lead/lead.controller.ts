@@ -11,6 +11,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -242,7 +243,7 @@ export class LeadController {
   async remove(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
   ) {
     return this.leadService.deleteLead(customerId, id, user);
   }
