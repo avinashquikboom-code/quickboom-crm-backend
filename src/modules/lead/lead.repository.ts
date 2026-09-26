@@ -326,42 +326,6 @@ export class LeadRepository {
       },
     });
 
-    // Attach lead images / googlePhotos if provided in DTO
-    const incomingPhotos = (dto as any).googlePhotos || (dto as any).photos || (dto as any).images;
-    if (incomingPhotos && client.leadImage) {
-      const photoList: Array<{ url: string; key?: string; caption?: string }> = [];
-      if (Array.isArray(incomingPhotos)) {
-        for (let i = 0; i < incomingPhotos.length; i++) {
-          const item = incomingPhotos[i];
-          if (typeof item === 'string' && item.trim()) {
-            photoList.push({
-              url: item.trim(),
-              caption: i === 0 ? `${lead.companyName || lead.title} (Primary Photo)` : `${lead.companyName || lead.title} Photo ${i + 1}`,
-            });
-          } else if (item && typeof item === 'object' && item.url) {
-            photoList.push({
-              url: String(item.url).trim(),
-              key: item.name ? String(item.name) : undefined,
-              caption: item.caption || (i === 0 ? `${lead.companyName || lead.title} (Primary Photo)` : `${lead.companyName || lead.title} Photo ${i + 1}`),
-            });
-          }
-        }
-      }
-      for (let idx = 0; idx < photoList.length; idx++) {
-        try {
-          await client.leadImage.create({
-            data: {
-              leadId: lead.id,
-              url: photoList[idx].url,
-              key: photoList[idx].key || undefined,
-              caption: photoList[idx].caption,
-              isPrimary: idx === 0,
-            },
-          });
-        } catch (_) {}
-      }
-    }
-
     // Sync social profiles into lead_social_profiles table if present
     if (Object.keys(mergedSocial).length > 0 && client.leadSocialProfile) {
       const spPlatforms: Array<{ platform: string; url: string }> = [];
@@ -897,14 +861,13 @@ export class LeadRepository {
             createdBy: { select: { id: true, firstName: true, lastName: true } },
             employee: { select: { id: true, firstName: true, lastName: true } },
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
-            images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
             socialProfiles: true,
           },
         }),
         this.prisma.lead.count({ where }),
       ]);
     } catch (queryErr: any) {
-      this.logger.warn(`findAll with full include failed: ${queryErr?.message || queryErr}. Attempting fallback without images...`);
+      this.logger.warn(`findAll with full include failed: ${queryErr?.message || queryErr}. Attempting fallback...`);
       try {
         [data, total] = await Promise.all([
           this.prisma.lead.findMany({
@@ -1209,9 +1172,6 @@ export class LeadRepository {
             include: { items: true },
             orderBy: { createdAt: 'desc' },
           },
-          images: {
-            orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
-          },
           socialProfiles: true,
           convertedCustomer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
@@ -1226,7 +1186,7 @@ export class LeadRepository {
       }
       return this.enrichLeadRecord(result);
     } catch (err: any) {
-      this.logger.warn(`findOne with images failed: ${err?.message || err}. Attempting fallback without images...`);
+      this.logger.warn(`findOne with full include failed: ${err?.message || err}. Attempting fallback...`);
       const fallbackResult = await this.prisma.lead.findFirst({
         where,
         include: {

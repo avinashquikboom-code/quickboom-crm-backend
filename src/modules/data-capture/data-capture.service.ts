@@ -560,26 +560,6 @@ export class DataCaptureService implements OnModuleInit {
             },
           });
 
-          // Attach photos if missing
-          const pUrls = this.normalizePhotosArray(matchingPlace.photos || (matchingPlace.rawData as any)?.photos || (matchingPlace.rawData as any)?.googlePhotos);
-          if (pUrls.length > 0 && this.prisma.leadImage) {
-            const imgCount = await this.prisma.leadImage.count({ where: { leadId: lead.id } });
-            if (imgCount === 0) {
-              for (let pIdx = 0; pIdx < pUrls.length; pIdx++) {
-                try {
-                  await this.prisma.leadImage.create({
-                    data: {
-                      leadId: lead.id,
-                      url: pUrls[pIdx],
-                      isPrimary: pIdx === 0,
-                      caption: pIdx === 0 ? `${repairedName} (Primary Photo)` : `${repairedName} Photo ${pIdx + 1}`,
-                    },
-                  });
-                } catch (_) {}
-              }
-            }
-          }
-
           // Update matchingPlace as imported
           await this.prisma.dataCapturePlace.update({
             where: { id: matchingPlace.id },
@@ -2413,11 +2393,6 @@ export class DataCaptureService implements OnModuleInit {
       // Social Media (Section 10)
       const placeSocialMedia = dbPlace.socialMedia || (dbPlace.rawData as any)?.socialMedia || candidate.socialMedia || null;
 
-      // Photos (Section 9)
-      const photoUrls = this.normalizePhotosArray(
-        dbPlace.photos || (dbPlace.rawData as any)?.photos || (dbPlace.rawData as any)?.googlePhotos || candidate.photos || candidate.googlePhotos,
-      );
-
       // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
       if (googlePlaceId) {
@@ -2630,28 +2605,6 @@ export class DataCaptureService implements OnModuleInit {
 
           if (!created) {
             throw new BadRequestException(`Failed to create Lead for "${businessName}"`);
-          }
-
-          // Attach genuine Google Photos to LeadImage (Section 9) — filter out dummy/placeholder images
-          const realPhotoUrls = photoUrls.filter(
-            (u) =>
-              u &&
-              typeof u === 'string' &&
-              !u.includes('unsplash.com') &&
-              !u.includes('placeholder') &&
-              !u.includes('dummy'),
-          );
-          if (realPhotoUrls.length > 0 && tx.leadImage && typeof tx.leadImage.create === 'function') {
-            for (let pIdx = 0; pIdx < realPhotoUrls.length; pIdx++) {
-              await tx.leadImage.create({
-                data: {
-                  leadId: created.id,
-                  url: realPhotoUrls[pIdx],
-                  isPrimary: pIdx === 0,
-                  caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
-                },
-              });
-            }
           }
 
           // Attach Social Profiles to LeadSocialProfile (Section 10)

@@ -8,17 +8,13 @@ import {
   Post,
   Put,
   Query,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
   ParseIntPipe,
   Req,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
 import {
-  AddLeadImageDto,
   CheckDuplicateDto,
   ConvertLeadDto,
   CreateLeadDto,
@@ -290,51 +286,6 @@ export class LeadController {
     return this.leadService.deleteLead(customerId, id, user);
   }
 
-
-  @Post(':id/images')
-  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiOperation({ summary: 'Upload an image or attach image URL to a lead' })
-  async addImage(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @UploadedFile() file?: Express.Multer.File,
-    @Body() dto?: AddLeadImageDto,
-  ) {
-    return this.leadService.addImage(customerId, id, file, dto);
-  }
-
-  @Delete(':id/images/:imageId')
-  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
-  @ApiOperation({ summary: 'Delete a lead image' })
-  async deleteImage(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @Param('imageId') imageId: string,
-  ) {
-    return this.leadService.deleteImage(customerId, id, imageId);
-  }
-
-  @Get(':id/images')
-  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get all images for a lead' })
-  async getImages(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-  ) {
-    return this.leadService.getLeadImages(customerId, id);
-  }
-
-  @Put(':id/images/:imageId/primary')
-  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
-  @ApiOperation({ summary: 'Set an image as the primary image for a lead' })
-  async setPrimaryImage(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @Param('imageId') imageId: string,
-  ) {
-    return this.leadService.setPrimaryImage(customerId, id, imageId);
-  }
 
   @Post(':id/notes')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
