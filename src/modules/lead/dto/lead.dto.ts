@@ -1141,6 +1141,12 @@ export class BulkDeleteLeadsDto {
     if (Array.isArray(value)) {
       return Array.from(new Set(value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0)));
     }
+    if (typeof value === 'string') {
+      return Array.from(new Set(value.split(',').map((v) => Number(v.trim())).filter((n) => !isNaN(n) && n > 0)));
+    }
+    if (typeof value === 'number' && !isNaN(value) && value > 0) {
+      return [value];
+    }
     return value;
   })
   ids?: number[];
@@ -1155,6 +1161,12 @@ export class BulkDeleteLeadsDto {
   @Transform(({ value }) => {
     if (Array.isArray(value)) {
       return Array.from(new Set(value.map((v) => Number(v)).filter((n) => !isNaN(n) && n > 0)));
+    }
+    if (typeof value === 'string') {
+      return Array.from(new Set(value.split(',').map((v) => Number(v.trim())).filter((n) => !isNaN(n) && n > 0)));
+    }
+    if (typeof value === 'number' && !isNaN(value) && value > 0) {
+      return [value];
     }
     return value;
   })

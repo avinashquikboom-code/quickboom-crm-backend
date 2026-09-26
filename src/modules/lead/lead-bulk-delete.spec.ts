@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, RequestMethod } from '@nestjs/common';
 import { LeadService } from './lead.service';
+import { LeadController } from './lead.controller';
 import { LeadRepository } from './lead.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
@@ -186,6 +187,87 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       await expect(service.deleteLead(10, 'BULK', { id: 1, role: 'COMPANY_ADMIN' })).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('getLeadById safety guard', () => {
+    it('should reject id="bulk" with BadRequestException and not query database', async () => {
+      await expect(service.getLeadById(10, 'bulk')).rejects.toThrow(BadRequestException);
+      await expect(service.getLeadById(10, 'BULK')).rejects.toThrow(BadRequestException);
+      expect(mockLeadRepository.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('LeadController - Route Matching & Handler Verification', () => {
+    let controller: LeadController;
+    let mockLeadService: any;
+
+    beforeEach(() => {
+      mockLeadService = {
+        bulkDeleteLeads: jest.fn().mockResolvedValue({
+          success: true,
+          requested: 2,
+          deleted: 2,
+          deletedCount: 2,
+          failed: 0,
+          ids: [101, 102],
+          results: [{ id: 101, success: true }, { id: 102, success: true }],
+        }),
+        deleteLead: jest.fn().mockResolvedValue({ success: true, message: 'Lead deleted successfully' }),
+        getLeadById: jest.fn().mockResolvedValue({ id: 101, title: 'Test Lead' }),
+      };
+      controller = new LeadController(mockLeadService);
+    });
+
+    it('should register DELETE /leads/bulk route on bulkRemove handler', () => {
+      const path = Reflect.getMetadata('path', controller.bulkRemove);
+      const method = Reflect.getMetadata('method', controller.bulkRemove);
+      expect(path).toBe('bulk');
+      expect(method).toBe(RequestMethod.DELETE);
+    });
+
+    it('should register POST /leads/bulk-delete route on bulkRemovePost handler', () => {
+      const path = Reflect.getMetadata('path', controller.bulkRemovePost);
+      const method = Reflect.getMetadata('method', controller.bulkRemovePost);
+      expect(path).toBe('bulk-delete');
+      expect(method).toBe(RequestMethod.POST);
+    });
+
+    it('should register DELETE /leads/:id route on remove handler', () => {
+      const path = Reflect.getMetadata('path', controller.remove);
+      const method = Reflect.getMetadata('method', controller.remove);
+      expect(path).toBe(':id');
+      expect(method).toBe(RequestMethod.DELETE);
+    });
+
+    it('should route bulkRemove to service.bulkDeleteLeads with resolved numeric IDs', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+      const dto = { ids: [101, 102], resolvedIds: [101, 102] } as any;
+
+      const result = await controller.bulkRemove('10', user, dto);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [101, 102]);
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(2);
+      expect(result.ids).toEqual([101, 102]);
+    });
+
+    it('should support fallback query parameter "ids" when body is empty (proxy compatibility)', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+      const emptyDto = {} as any;
+
+      await controller.bulkRemove('10', user, emptyDto, '201,202');
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [201, 202]);
+    });
+
+    it('should route remove to service.deleteLead for single numeric ID', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+
+      const result: any = await controller.remove('10', user, 101);
+
+      expect(mockLeadService.deleteLead).toHaveBeenCalledWith('10', 101, user);
+      expect(result.success).toBe(true);
     });
   });
 });

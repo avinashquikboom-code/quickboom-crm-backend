@@ -11,6 +11,7 @@ import {
   UseGuards,
   ParseIntPipe,
   Req,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
@@ -46,6 +47,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller(['leads', 'admin/leads'])
 export class LeadController {
+  private readonly logger = new Logger(LeadController.name);
+
   constructor(private readonly leadService: LeadService) {}
 
   @Post()
@@ -199,7 +202,7 @@ export class LeadController {
   @Get(':id')
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead details by ID with notes, timeline, status history, visits, proposals' })
-  async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+  async findOne(@CurrentCustomer() customerId: string, @Param('id', ParseIntPipe) id: number) {
     return this.leadService.getLeadById(customerId, id);
   }
 
@@ -234,8 +237,16 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string,
   ) {
-    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      ids = queryIds
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_DELETE] handler=bulk method=DELETE ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -246,8 +257,16 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string,
   ) {
-    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      ids = queryIds
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_DELETE] handler=bulk method=POST path=bulk-delete ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -258,8 +277,16 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string,
   ) {
-    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      ids = queryIds
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_DELETE] handler=bulk method=POST path=bulk ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -270,8 +297,16 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string,
   ) {
-    const ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
+    if (ids.length === 0 && queryIds) {
+      ids = queryIds
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter((n) => !isNaN(n) && n > 0);
+    }
+    this.logger.log(`[BULK_DELETE] handler=bulk method=DELETE path=bulk-delete ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -283,6 +318,7 @@ export class LeadController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    this.logger.log(`[DELETE_LEAD] handler=single method=DELETE id=${id} customerId=${customerId} userId=${user?.id}`);
     return this.leadService.deleteLead(customerId, id, user);
   }
 

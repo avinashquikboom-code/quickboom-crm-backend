@@ -1236,6 +1236,11 @@ export class LeadService {
   }
 
   async getLeadById(customerId: number | string, id: number | string) {
+    if (String(id).toLowerCase() === 'bulk') {
+      throw new BadRequestException(
+        'Invalid lead ID: "bulk" is not a valid lead identifier. Use /leads/bulk for bulk operations.',
+      );
+    }
     const lead = await this.leadRepository.findOne(customerId, id);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
@@ -2988,10 +2993,12 @@ export class LeadService {
     const failedCount = results.filter((r) => !r.success).length;
 
     return {
-      success: deletedCount > 0 || uniqueIds.length === 0,
+      success: deletedCount > 0,
       requested: uniqueIds.length,
       deleted: deletedCount,
+      deletedCount: deletedCount,
       failed: failedCount,
+      ids: eligibleIdsToDelete,
       results,
     };
   }
