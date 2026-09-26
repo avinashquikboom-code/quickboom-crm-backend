@@ -199,6 +199,47 @@ export class DataCaptureService implements OnModuleInit {
   }
 
   /**
+   * Authoritative resolution of Employee and User identity from employee code, ID, or user ID.
+   */
+  public async resolveTargetEmployee(
+    identifier: any,
+    customerId: number,
+  ): Promise<{ id: number; userId: number | null; employeeCode: string } | null> {
+    if (!identifier) return null;
+    const strVal = String(identifier).trim();
+    if (!strVal || strVal === 'N/A' || strVal === 'null') return null;
+    const numVal = Number(strVal);
+
+    try {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          ...(customerId > 0 ? { customerId } : {}),
+          status: 'ACTIVE',
+          OR: [
+            { employeeCode: { equals: strVal, mode: 'insensitive' } },
+            ...(!isNaN(numVal) && numVal > 0 ? [{ id: numVal }, { userId: numVal }] : []),
+          ],
+        },
+        select: { id: true, userId: true, employeeCode: true },
+      });
+      if (emp) return emp;
+
+      return await this.prisma.employee.findFirst({
+        where: {
+          ...(customerId > 0 ? { customerId } : {}),
+          OR: [
+            { employeeCode: { equals: strVal, mode: 'insensitive' } },
+            ...(!isNaN(numVal) && numVal > 0 ? [{ id: numVal }, { userId: numVal }] : []),
+          ],
+        },
+        select: { id: true, userId: true, employeeCode: true },
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
    * Helper to normalize raw or stored photos into structured GooglePlacePhoto objects and URL array.
    */
   private normalizeStoredPhotos(photosField: any): { googlePhotos: GooglePlacePhoto[]; photos: string[] } {
@@ -1895,10 +1936,17 @@ export class DataCaptureService implements OnModuleInit {
       placeIds: [String(place.id)],
       places: [importPlace],
       captureRequestId: captureRequestId || dto?.captureRequestId || place.jobId,
+      assignedToId: dto?.assignedToId,
+      employeeId: dto?.employeeId,
     });
 
-    const lead = importRes.lead || importRes.leads?.[0] || null;
+    let lead = importRes.lead || importRes.leads?.[0] || null;
     const isDup = importRes.skippedDuplicates > 0;
+    if (!lead && isDup && importRes.records?.[0]?.existingLeadId) {
+      lead = await this.prisma.lead.findFirst({
+        where: { id: importRes.records[0].existingLeadId, customerId: numCustomerId, deletedAt: null },
+      });
+    }
 
     // [LEAD CREATED] safe debug logging (Section 21)
     if (lead) {
@@ -2049,6 +2097,7 @@ export class DataCaptureService implements OnModuleInit {
     duplicateNames: string[];
     records?: any[];
     data?: any;
+    leadId?: number;
     lead?: any;
     leads?: any[];
     capture?: { id: string; status: string };
@@ -2133,6 +2182,16 @@ export class DataCaptureService implements OnModuleInit {
       }
     } catch (_) {}
 
+    // Check if dto passed explicit assignedToId or employeeId
+    const dtoAssignee = dto.assignedToId || dto.employeeId;
+    if (dtoAssignee) {
+      const explicitEmp = await this.resolveTargetEmployee(dtoAssignee, numCustomerId);
+      if (explicitEmp) {
+        employeeId = explicitEmp.id;
+        if (explicitEmp.userId) assignedToUserId = explicitEmp.userId;
+      }
+    }
+
     // Gather candidate descriptors from DTO (Section 3)
     let rawCandidates: any[] = [];
     if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
@@ -2163,6 +2222,7 @@ export class DataCaptureService implements OnModuleInit {
     const duplicateNames: string[] = [];
     const createdLeads: any[] = [];
     const perRecordResults: any[] = [];
+    let firstDuplicateLead: any = null;
 
     for (let idx = 0; idx < rawCandidates.length; idx++) {
       const candidate = rawCandidates[idx];
@@ -2372,6 +2432,26 @@ export class DataCaptureService implements OnModuleInit {
       let matchedLead: any = null;
       let duplicateMatchReason: string | null = null;
 
+      // 3.5 Per-candidate employee resolution (Sections 3 & 6)
+      let candEmployeeId = employeeId;
+      let candAssignedToUserId = assignedToUserId;
+
+      const candAssignee =
+        candidate.assignedToId ||
+        candidate.employeeId ||
+        (candidate.rawData as any)?.employeeId ||
+        (candidate.rawData as any)?.capturedBy ||
+        (dbPlace.rawData as any)?.employeeId ||
+        (dbPlace.rawData as any)?.capturedBy;
+
+      if (candAssignee) {
+        const resolved = await this.resolveTargetEmployee(candAssignee, numCustomerId);
+        if (resolved) {
+          candEmployeeId = resolved.id;
+          if (resolved.userId) candAssignedToUserId = resolved.userId;
+        }
+      }
+
       if (leadOrConditions.length > 0) {
         const candidateLeads = await this.prisma.lead.findMany({
           where: {
@@ -2388,6 +2468,8 @@ export class DataCaptureService implements OnModuleInit {
             website: true,
             googlePlaceId: true,
             sourceRecordId: true,
+            assignedToId: true,
+            employeeId: true,
           },
           take: 5,
         });
@@ -2419,6 +2501,24 @@ export class DataCaptureService implements OnModuleInit {
       if (matchedLead) {
         skippedDuplicates++;
         duplicateNames.push(businessName);
+
+        // If existing lead was unassigned, assign to importing employee
+        if (!matchedLead.assignedToId && candAssignedToUserId) {
+          try {
+            const updated = await this.prisma.lead.update({
+              where: { id: matchedLead.id },
+              data: {
+                assignedToId: candAssignedToUserId,
+                employeeId: candEmployeeId || undefined,
+              },
+            });
+            matchedLead = { ...matchedLead, ...updated };
+          } catch (_) {}
+        }
+
+        if (!firstDuplicateLead) {
+          firstDuplicateLead = matchedLead;
+        }
         try {
           await this.prisma.dataCapturePlace.update({
             where: { id: dbPlace.id },
@@ -2487,8 +2587,8 @@ export class DataCaptureService implements OnModuleInit {
                   priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
                   value: 0,
                   createdById: validCreatedById,
-                  employeeId: employeeId || null,
-                  assignedToId: assignedToUserId || validCreatedById || null,
+                  employeeId: candEmployeeId || null,
+                  assignedToId: candAssignedToUserId || validCreatedById || null,
                   googlePlaceId,
                   latitude: resolvedLatitude,
                   longitude: resolvedLongitude,
@@ -2653,6 +2753,8 @@ export class DataCaptureService implements OnModuleInit {
       importedCount++;
     }
 
+    const primaryLead = createdLeads[0] || firstDuplicateLead || null;
+
     return {
       success: true,
       totalRequested: rawCandidates.length,
@@ -2661,10 +2763,12 @@ export class DataCaptureService implements OnModuleInit {
       duplicateNames,
       records: perRecordResults,
       data: {
-        leadId: createdLeads[0]?.id,
+        leadId: primaryLead?.id,
+        lead: primaryLead,
         leads: createdLeads,
       },
-      lead: createdLeads[0] || null,
+      leadId: primaryLead?.id,
+      lead: primaryLead,
       leads: createdLeads,
       capture: {
         id: dto.jobId || 'captured',

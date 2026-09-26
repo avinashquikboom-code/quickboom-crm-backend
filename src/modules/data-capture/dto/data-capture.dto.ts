@@ -84,6 +84,12 @@ export class ExtractPlacesDto {
 
 export class ImportToLeadsDto {
   @IsOptional()
+  assignedToId?: number | string;
+
+  @IsOptional()
+  employeeId?: number | string;
+
+  @IsOptional()
   @IsString()
   jobId?: string;
 
@@ -480,6 +486,12 @@ export class CreateLeadFromPlaceDto {
   @IsOptional()
   @IsString()
   captureRequestId?: string;
+
+  @IsOptional()
+  assignedToId?: number | string;
+
+  @IsOptional()
+  employeeId?: number | string;
 }
 
 

@@ -14,7 +14,7 @@ import {
   normalizeLeadStatus,
 } from './dto/lead.dto';
 import { LeadStatus, Prisma } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class LeadRepository {
@@ -754,6 +754,7 @@ export class LeadRepository {
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
     const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
 
     const page = Math.max(Number(options.page) || 1, 1);
     const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
@@ -773,6 +774,21 @@ export class LeadRepository {
       where.customerId = numCustomerId;
     }
 
+    const andConditions: any[] = [];
+
+    // Employee RBAC Isolation: Non-admin employees only see leads assigned to them or created by them
+    if (user && !isAdmin) {
+      const empId = user.employee?.id;
+      const userConditions: any[] = [
+        { assignedToId: user.id },
+        { createdById: user.id },
+      ];
+      if (empId) {
+        userConditions.push({ employeeId: empId });
+      }
+      andConditions.push({ OR: userConditions });
+    }
+
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
     if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
@@ -783,10 +799,12 @@ export class LeadRepository {
       if (stageRecord?.key) {
         const normKey = normalizeLeadStatus(stageRecord.key);
         if (ALL_LEAD_STATUSES.includes(normKey)) {
-          where.OR = [
-            { stageId: sId },
-            { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
-          ];
+          andConditions.push({
+            OR: [
+              { stageId: sId },
+              { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
+            ],
+          });
         } else {
           where.stageId = sId;
         }
@@ -828,15 +846,21 @@ export class LeadRepository {
 
     if (options.search && options.search.trim()) {
       const s = options.search.trim();
-      where.OR = [
-        { title: { contains: s, mode: 'insensitive' } },
-        { firstName: { contains: s, mode: 'insensitive' } },
-        { lastName: { contains: s, mode: 'insensitive' } },
-        { email: { contains: s, mode: 'insensitive' } },
-        { phone: { contains: s, mode: 'insensitive' } },
-        { companyName: { contains: s, mode: 'insensitive' } },
-        { city: { contains: s, mode: 'insensitive' } },
-      ];
+      andConditions.push({
+        OR: [
+          { title: { contains: s, mode: 'insensitive' } },
+          { firstName: { contains: s, mode: 'insensitive' } },
+          { lastName: { contains: s, mode: 'insensitive' } },
+          { email: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+          { companyName: { contains: s, mode: 'insensitive' } },
+          { city: { contains: s, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     let data: any[] = [];
@@ -884,6 +908,11 @@ export class LeadRepository {
         throw fallbackErr;
       }
     }
+
+    // Safe diagnostic log (Section 9)
+    this.logger.log(
+      `[LEADS_FIND_ALL_DIAGNOSTIC] requestedEmployee=${user?.employee?.id ?? user?.employee?.employeeCode ?? user?.id ?? 'N/A'} companyId=${numCustomerId} role=${user?.role ?? 'N/A'} isAdmin=${isAdmin} totalResults=${total}`,
+    );
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
