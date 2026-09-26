@@ -192,9 +192,9 @@ export class DataCaptureService implements OnModuleInit {
       if (typeof item === 'string') {
         const trimmed = item.trim();
         if (trimmed.length > 0) {
-          if (trimmed.includes('places.googleapis.com')) {
-            const match = trimmed.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
-            const name = match ? match[1] : `places/photo/${googlePhotos.length + 1}`;
+          const resourceMatch = trimmed.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
+          if (trimmed.includes('places.googleapis.com') || resourceMatch) {
+            const name = resourceMatch ? resourceMatch[1] : `places/photo/${googlePhotos.length + 1}`;
             const safeUrl = `/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`;
             photos.push(safeUrl);
             googlePhotos.push({ name, url: safeUrl });
