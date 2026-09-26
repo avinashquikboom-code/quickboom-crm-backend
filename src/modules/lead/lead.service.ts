@@ -2788,7 +2788,7 @@ export class LeadService {
         'Invalid lead ID: "bulk" is not a valid lead identifier. Use DELETE /leads/bulk with a JSON body { "ids": [...] } for bulk deletion.',
       );
     }
-    this.logger.log(`[SINGLE LEAD DELETE] id=${id}`);
+    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${id}`);
     const lead = await this.getLeadById(customerId, id);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
@@ -2843,7 +2843,7 @@ export class LeadService {
   }
 
   async bulkDeleteLeads(customerId: number | string | undefined, user: any, ids: number[]) {
-    this.logger.log(`[BULK LEAD DELETE] route=/leads/bulk method=DELETE count=${Array.isArray(ids) ? ids.length : 0} ids=${JSON.stringify(ids)}`);
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new BadRequestException('Lead IDs array must not be empty.');
     }

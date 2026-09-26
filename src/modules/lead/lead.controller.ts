@@ -246,7 +246,7 @@ export class LeadController {
         .map((v) => Number(v.trim()))
         .filter((n) => !isNaN(n) && n > 0);
     }
-    this.logger.log(`[BULK_DELETE] handler=bulk method=DELETE ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -266,7 +266,7 @@ export class LeadController {
         .map((v) => Number(v.trim()))
         .filter((n) => !isNaN(n) && n > 0);
     }
-    this.logger.log(`[BULK_DELETE] handler=bulk method=POST path=bulk-delete ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -286,7 +286,7 @@ export class LeadController {
         .map((v) => Number(v.trim()))
         .filter((n) => !isNaN(n) && n > 0);
     }
-    this.logger.log(`[BULK_DELETE] handler=bulk method=POST path=bulk ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -306,7 +306,7 @@ export class LeadController {
         .map((v) => Number(v.trim()))
         .filter((n) => !isNaN(n) && n > 0);
     }
-    this.logger.log(`[BULK_DELETE] handler=bulk method=DELETE path=bulk-delete ids=${JSON.stringify(ids)} customerId=${customerId} userId=${user?.id}`);
+    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -318,7 +318,7 @@ export class LeadController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    this.logger.log(`[DELETE_LEAD] handler=single method=DELETE id=${id} customerId=${customerId} userId=${user?.id}`);
+    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${id}`);
     return this.leadService.deleteLead(customerId, id, user);
   }
 
