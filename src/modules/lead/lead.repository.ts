@@ -1025,6 +1025,39 @@ export class LeadRepository {
           if (!lead.website && matchingPlace.website) lead.website = matchingPlace.website;
           if (!lead.email && matchingPlace.email) lead.email = matchingPlace.email;
           if (!lead.address && matchingPlace.address) lead.address = matchingPlace.address;
+
+          if (matchingPlace.source && matchingPlace.source !== 'GOOGLE_DISCOVERY') {
+            lead.source = matchingPlace.source;
+          } else if (matchingPlace.googlePlaceId && (lead.source === 'GOOGLE_DISCOVERY' || !lead.source)) {
+            lead.source = 'GOOGLE_PLACES';
+          }
+
+          if (!lead.createdFrom) {
+            lead.createdFrom = 'MOBILE_APP';
+          }
+
+          // Auto-heal employee assignment if missing
+          if (!lead.assignedToId || !lead.employeeId || !lead.assignedTo) {
+            try {
+              const activeEmp = await this.prisma.employee.findFirst({
+                where: {
+                  ...(lead.customerId ? { customerId: lead.customerId } : {}),
+                  status: 'ACTIVE',
+                },
+                select: { id: true, userId: true, firstName: true, lastName: true },
+              });
+              if (activeEmp) {
+                if (!lead.employeeId) lead.employeeId = activeEmp.id;
+                if (!lead.assignedToId && activeEmp.userId) lead.assignedToId = activeEmp.userId;
+                if (!lead.assignedTo && activeEmp.userId) {
+                  lead.assignedTo = { id: activeEmp.userId, firstName: activeEmp.firstName, lastName: activeEmp.lastName, email: '' };
+                }
+                if (!lead.employee) {
+                  lead.employee = { id: activeEmp.id, firstName: activeEmp.firstName, lastName: activeEmp.lastName };
+                }
+              }
+            } catch (_) {}
+          }
           
           this.logger.log(`[LEAD_NAME_RESOLUTION_UPDATED] Lead ${lead.id} companyName updated to "${resolvedName}"`);
 
@@ -1038,6 +1071,10 @@ export class LeadRepository {
               ...(!lead.website && matchingPlace.website ? { website: matchingPlace.website } : {}),
               ...(!lead.email && matchingPlace.email ? { email: matchingPlace.email } : {}),
               ...(!lead.address && matchingPlace.address ? { address: matchingPlace.address } : {}),
+              ...(lead.source ? { source: lead.source } : {}),
+              ...(lead.createdFrom ? { createdFrom: lead.createdFrom as any } : {}),
+              ...(lead.assignedToId ? { assignedToId: lead.assignedToId } : {}),
+              ...(lead.employeeId ? { employeeId: lead.employeeId } : {}),
             },
           }).then(() => {
             this.logger.log(`[LEAD_NAME_RESOLUTION_DB_UPDATED] Lead ${lead.id} persisted to database`);

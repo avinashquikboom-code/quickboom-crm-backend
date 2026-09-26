@@ -512,6 +512,62 @@ export class CreateLeadFromPlaceDto {
   @IsOptional()
   @IsString()
   createdFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  businessName?: string;
+
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  website?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  googlePlaceId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceRecordId?: string;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  latitude?: number;
+
+  @IsOptional()
+  longitude?: number;
+
+  @IsOptional()
+  rating?: number;
+
+  @IsOptional()
+  reviewCount?: number;
+
+  @IsOptional()
+  socialMedia?: any;
 }
+
 
 

@@ -107,11 +107,11 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Import captured places into CRM Leads in batch' })
   async importToLeads(
     @CurrentCustomer() customerId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Body() dto: ImportToLeadsDto,
     @Req() req: any,
   ) {
-    return this.dataCaptureService.importToLeads(customerId, userId, dto, req);
+    return this.dataCaptureService.importToLeads(customerId, user, dto, req);
   }
 
   /**
@@ -204,12 +204,12 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Convert single captured record to CRM Lead' })
   async createLeadFromPlace(
     @CurrentCustomer() customerId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
     @Body() dto?: CreateLeadFromPlaceDto,
     @Req() req?: any,
   ) {
-    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId, dto, req);
+    return this.dataCaptureService.createLeadFromPlace(customerId, user, id, dto?.captureRequestId, dto, req);
   }
 
   /**
