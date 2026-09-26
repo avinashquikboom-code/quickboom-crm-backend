@@ -1414,14 +1414,24 @@ export class AuthService {
     userData.isCrmEligible = rbacData.isCrmEligible ?? false;
     userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
 
+    const customerPayload = user.customer ? {
+      id: user.customer.id,
+      name: user.customer.name,
+      companyName: user.customer.companyName,
+      email: user.customer.email,
+      phone: user.customer.phone,
+    } : (effectiveCustomerId ? { id: effectiveCustomerId, name: userData.customerName, email: user.email } : undefined);
+
     return {
       success: true,
       data: {
         user: userData,
         tokens,
+        ...(customerPayload ? { customer: customerPayload } : {}),
       },
       user: userData,
       tokens,
+      ...(customerPayload ? { customer: customerPayload } : {}),
     };
   }
 

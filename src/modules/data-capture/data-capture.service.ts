@@ -342,11 +342,8 @@ export class DataCaptureService implements OnModuleInit {
       }
     }
 
-    // Deterministic realistic verified business photo based on reference hash
-    const categoryPhotos = this.getCategoryPhotos('General', targetPhotoName, 1);
-    const fallbackPhoto = categoryPhotos[0]?.url || this.CATEGORY_PHOTOS['default'][0];
-    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
-    res.redirect(302, fallbackPhoto);
+    // When live resolution is unavailable, do NOT redirect to fake dummy/placeholder images
+    res.status(404).json({ success: false, message: 'Photo unavailable' });
   }
 
   /**
@@ -2525,13 +2522,21 @@ export class DataCaptureService implements OnModuleInit {
             throw new BadRequestException(`Failed to create Lead for "${businessName}"`);
           }
 
-          // Attach Google Photos to LeadImage (Section 9)
-          if (photoUrls.length > 0 && tx.leadImage && typeof tx.leadImage.create === 'function') {
-            for (let pIdx = 0; pIdx < photoUrls.length; pIdx++) {
+          // Attach genuine Google Photos to LeadImage (Section 9) — filter out dummy/placeholder images
+          const realPhotoUrls = photoUrls.filter(
+            (u) =>
+              u &&
+              typeof u === 'string' &&
+              !u.includes('unsplash.com') &&
+              !u.includes('placeholder') &&
+              !u.includes('dummy'),
+          );
+          if (realPhotoUrls.length > 0 && tx.leadImage && typeof tx.leadImage.create === 'function') {
+            for (let pIdx = 0; pIdx < realPhotoUrls.length; pIdx++) {
               await tx.leadImage.create({
                 data: {
                   leadId: created.id,
-                  url: photoUrls[pIdx],
+                  url: realPhotoUrls[pIdx],
                   isPrimary: pIdx === 0,
                   caption: pIdx === 0 ? `${businessName} (Primary Photo)` : `${businessName} Photo ${pIdx + 1}`,
                 },
@@ -3007,9 +3012,6 @@ export class DataCaptureService implements OnModuleInit {
       const normalizedPhone = `+9198${randDigits}`;
       const normalizedEmail = `info@${cleanName}.in`;
 
-      const categoryPhotos = this.getCategoryPhotos(keyword, name, 2);
-      const photoUrls = categoryPhotos.map((cp) => cp.url);
-
       places.push({
         provider: 'GOOGLE_PLACES',
         googlePlaceId: placeId,
@@ -3031,8 +3033,8 @@ export class DataCaptureService implements OnModuleInit {
         customerId,
         capturedBy: userId,
         extractionJobId: jobId,
-        googlePhotos: categoryPhotos,
-        photos: photoUrls,
+        googlePhotos: [],
+        photos: [],
       });
     }
 
@@ -3043,31 +3045,7 @@ export class DataCaptureService implements OnModuleInit {
    * Backfill historical places with realistic verified photos if missing or corrupted by previous test keys
    */
   async backfillHistoricalPlacePhotos(): Promise<void> {
-    try {
-      const places = await this.prisma.dataCapturePlace.findMany({
-        where: { deletedAt: null },
-        select: { id: true, businessName: true, category: true, photos: true, rawData: true },
-      });
-
-      for (const p of places) {
-        const photosVal = p.photos || (p.rawData as any)?.photos || (p.rawData as any)?.googlePhotos;
-        const isNullOrEmpty = !photosVal || (Array.isArray(photosVal) && photosVal.length === 0);
-        const hasFakeKey = typeof photosVal === 'string'
-          ? photosVal.includes('AIzaSyFakeKey')
-          : (Array.isArray(photosVal) && photosVal.some((x: any) => typeof x === 'string' ? x.includes('AIzaSyFakeKey') : x?.url?.includes('AIzaSyFakeKey')));
-
-        if (isNullOrEmpty || hasFakeKey) {
-          const generated = this.getCategoryPhotos(p.category || 'General', p.businessName, 2);
-          await this.prisma.dataCapturePlace.update({
-            where: { id: p.id },
-            data: {
-              photos: generated as any,
-            },
-          });
-        }
-      }
-    } catch (err: any) {
-      this.logger.warn(`Backfill historical place photos skipped: ${err?.message || err}`);
-    }
+    // Intentionally no-op to prevent injecting dummy/placeholder photos into production places
+    return;
   }
 }

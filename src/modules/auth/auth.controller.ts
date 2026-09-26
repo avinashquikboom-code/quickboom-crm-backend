@@ -150,6 +150,15 @@ export class AuthController {
   }
 
   @Public()
+  @Post(['customer/login', 'customer/auth/login', 'login/customer'])
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Customer mobile/web portal login with email and password' })
+  @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
+  async customerLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'CUSTOMER_MOBILE');
+  }
+
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh JWT Access Token using Refresh Token' })
