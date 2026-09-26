@@ -12,6 +12,7 @@ import {
   UsePipes,
   ForbiddenException,
   Res,
+  Req,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -92,8 +93,9 @@ export class DataCaptureController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: ExtractPlacesDto,
+    @Req() req: any,
   ) {
-    return this.dataCaptureService.extractPlaces(customerId, user, dto);
+    return this.dataCaptureService.extractPlaces(customerId, user, dto, req);
   }
 
   /**
@@ -107,8 +109,9 @@ export class DataCaptureController {
     @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ImportToLeadsDto,
+    @Req() req: any,
   ) {
-    return this.dataCaptureService.importToLeads(customerId, userId, dto);
+    return this.dataCaptureService.importToLeads(customerId, userId, dto, req);
   }
 
   /**
@@ -187,8 +190,9 @@ export class DataCaptureController {
     @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateDataCaptureDto,
+    @Req() req: any,
   ) {
-    return this.dataCaptureService.createPlace(customerId, userId, dto);
+    return this.dataCaptureService.createPlace(customerId, userId, dto, req);
   }
 
   /**
@@ -203,8 +207,9 @@ export class DataCaptureController {
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
     @Body() dto?: CreateLeadFromPlaceDto,
+    @Req() req?: any,
   ) {
-    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId, dto);
+    return this.dataCaptureService.createLeadFromPlace(customerId, userId, id, dto?.captureRequestId, dto, req);
   }
 
   /**

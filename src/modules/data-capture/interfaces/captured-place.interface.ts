@@ -22,6 +22,7 @@ export interface CapturedPlace {
   googleMapsUrl?: string;
   businessStatus?: string;
   source?: string;
+  createdFrom?: 'MOBILE_APP' | 'ADMIN_PANEL' | string;
   status?: string;
   notes?: string;
   rawData?: any;

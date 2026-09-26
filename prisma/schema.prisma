@@ -401,6 +401,7 @@ model Lead {
   reviewCount          Int?
   captureRequestId     String?
   sourceRecordId       String?
+  createdFrom          RecordCreatedFrom?
   assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
   createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -429,6 +430,7 @@ model Lead {
   @@index([convertedByEmployeeId])
   @@index([googlePlaceId])
   @@index([captureRequestId])
+  @@index([createdFrom])
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
   @@index([customerId, status, deletedAt])
@@ -1897,6 +1899,7 @@ model DataCaptureJob {
   requestedResults  Int                @default(20)
   capturedResults   Int                @default(0)
   googleApiRequests Int                @default(1)
+  createdFrom       RecordCreatedFrom?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -1905,6 +1908,7 @@ model DataCaptureJob {
 
   @@index([customerId])
   @@index([jobId])
+  @@index([createdFrom])
 }
 
 model DataCapturePlace {
@@ -1934,6 +1938,7 @@ model DataCapturePlace {
   importedLeadId   Int?
   captureRequestId String?
   sourceRecordId   String?
+  createdFrom      RecordCreatedFrom?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @default(now()) @updatedAt
   deletedAt        DateTime?
@@ -1945,6 +1950,7 @@ model DataCapturePlace {
   @@index([googlePlaceId])
   @@index([status])
   @@index([captureRequestId])
+  @@index([createdFrom])
   @@index([deletedAt])
   @@index([customerId, deletedAt, createdAt])
 }
@@ -2098,6 +2104,11 @@ enum SubscriptionStatus {
 enum SubscriptionBillingCycle {
   MONTHLY
   YEARLY
+}
+
+enum RecordCreatedFrom {
+  MOBILE_APP
+  ADMIN_PANEL
 }
 
 enum LeadStatus {

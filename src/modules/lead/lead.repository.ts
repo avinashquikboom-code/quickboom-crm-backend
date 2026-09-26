@@ -763,7 +763,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -856,6 +856,10 @@ export class LeadRepository {
 
     if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {
       where.assignedToId = Number(options.assignedToId);
+    }
+
+    if (options.createdFrom && options.createdFrom.trim() && options.createdFrom.toUpperCase() !== 'ALL') {
+      where.createdFrom = options.createdFrom.trim().toUpperCase();
     }
 
     if (options.search && options.search.trim()) {
@@ -1222,6 +1226,8 @@ export class LeadRepository {
         : undefined,
       ...(dto.employeeId !== undefined ? { employeeId: dto.employeeId } : {}),
     };
+    // createdFrom is strictly immutable after creation
+    delete updateData.createdFrom;
 
     if (leadData.city !== undefined || location !== undefined) {
       const c = (leadData.city || location || '').trim();

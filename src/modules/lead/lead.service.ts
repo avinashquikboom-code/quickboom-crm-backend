@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { ModuleRef } from '@nestjs/core';
 import { LeadStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { LeadRepository } from './lead.repository';
 import { NotificationService } from '../notification/notification.service';
 import {
@@ -600,7 +601,7 @@ export class LeadService {
     };
   }
 
-  async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto) {
+  async createLead(customerId: number | string, userOrId: any, dto: CreateLeadDto, req?: any) {
     this.logger.log('[NewLeadAutomation] 1. Create Lead request received');
 
     // Safe debug trace for Google Discovery import debugging
@@ -980,11 +981,13 @@ export class LeadService {
     }
 
     const assignment = await this.validateBpoEmployeeAssignment(customerId, cleaned.assignedToId);
+    const resolvedCreatedFrom = resolveCreatedFrom(req, userOrId, cleaned.createdFrom);
 
     const sanitizedDto = {
       ...cleaned,
       source: cleaned.source || (isGoogleDiscovery ? 'Google Discovery' : 'WEBSITE'),
       status: resolvedStatus,
+      createdFrom: resolvedCreatedFrom,
       ...(resolvedStageId ? { stageId: resolvedStageId } : {}),
       ...(assignment !== undefined ? { assignedToId: assignment.assignedToId, employeeId: assignment.employeeId } : {}),
     };
@@ -1228,7 +1231,7 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 

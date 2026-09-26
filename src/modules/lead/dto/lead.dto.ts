@@ -11,7 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { LeadPriority, LeadStatus } from '@prisma/client';
+import { LeadPriority, LeadStatus, RecordCreatedFrom } from '@prisma/client';
 
 export function normalizeLeadStatus(value: any): any {
   if (typeof value !== 'string') return value;
@@ -467,6 +467,10 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   source?: string;
+
+  @ApiPropertyOptional({ enum: RecordCreatedFrom, example: RecordCreatedFrom.ADMIN_PANEL, description: 'Creation platform origin (MOBILE_APP or ADMIN_PANEL)' })
+  @IsOptional()
+  createdFrom?: RecordCreatedFrom | string;
 
   @ApiPropertyOptional({ example: LeadStatus.NEW })
   @Transform(({ value }) => (value ? normalizeLeadStatus(value) : undefined))

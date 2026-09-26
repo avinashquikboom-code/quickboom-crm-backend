@@ -80,6 +80,10 @@ export class ExtractPlacesDto {
   @IsOptional()
   @IsString()
   requestId?: string;
+
+  @IsOptional()
+  @IsString()
+  createdFrom?: string;
 }
 
 export class ImportToLeadsDto {
@@ -169,6 +173,10 @@ export class ImportToLeadsDto {
   @IsOptional()
   @IsString()
   priority?: string;
+
+  @IsOptional()
+  @IsString()
+  createdFrom?: string;
 }
 
 export class CreateDataCaptureDto {
@@ -291,6 +299,10 @@ export class CreateDataCaptureDto {
 
   @IsOptional()
   socialMedia?: any;
+
+  @IsOptional()
+  @IsString()
+  createdFrom?: string;
 }
 
 export class UpdateDataCaptureDto {
@@ -455,6 +467,10 @@ export class DataCaptureQueryDto {
 
   @IsOptional()
   @IsString()
+  createdFrom?: string;
+
+  @IsOptional()
+  @IsString()
   sortBy?: string = 'createdAt';
 
   @IsOptional()
@@ -492,6 +508,10 @@ export class CreateLeadFromPlaceDto {
 
   @IsOptional()
   employeeId?: number | string;
+
+  @IsOptional()
+  @IsString()
+  createdFrom?: string;
 }
 
 

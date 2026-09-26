@@ -12,6 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
   ParseIntPipe,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -58,8 +59,9 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
     @Body() dto: CreateLeadDto,
+    @Req() req?: any,
   ) {
-    return this.leadService.createLead(customerId, user, dto);
+    return this.leadService.createLead(customerId, user, dto, req);
   }
 
   @Post('check-duplicate')
@@ -140,7 +142,7 @@ export class LeadController {
   @ApiQuery({ name: 'stageId', required: false })
   @ApiQuery({ name: 'dateFilter', required: false })
   @ApiQuery({ name: 'startDate', required: false })
-  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'createdFrom', required: false })
   async findAll(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
@@ -149,6 +151,7 @@ export class LeadController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('stageId') stageId?: string,
+    @Query('createdFrom') createdFrom?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
@@ -158,6 +161,7 @@ export class LeadController {
         search,
         status,
         stageId,
+        createdFrom,
       },
       user,
     );

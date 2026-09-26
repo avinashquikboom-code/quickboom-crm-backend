@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import { Response } from 'express';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
@@ -653,6 +654,7 @@ export class DataCaptureService implements OnModuleInit {
     customerId: string | number | undefined,
     userOrUserId: any,
     dto: ExtractPlacesDto,
+    req?: any,
   ): Promise<{
     jobId: string;
     keyword: string;
@@ -924,6 +926,8 @@ export class DataCaptureService implements OnModuleInit {
       }
     }
 
+    const resolvedCreatedFrom = resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom);
+
     const placesToCreate = allPlaces.map((p) => {
       const isDuplicate = Boolean(p.googlePlaceId && existingPlaceIds.has(p.googlePlaceId));
       return {
@@ -943,6 +947,7 @@ export class DataCaptureService implements OnModuleInit {
         googleMapsUrl: p.googleMapsUrl,
         businessStatus: p.businessStatus || 'OPERATIONAL',
         source: p.source || 'GOOGLE_PLACES',
+        createdFrom: resolvedCreatedFrom,
         status: isDuplicate ? 'DUPLICATE' : 'CAPTURED',
         notes: isDuplicate ? 'Identified as duplicate of existing business prospect or lead' : undefined,
         rawData: p.rawData
@@ -961,6 +966,7 @@ export class DataCaptureService implements OnModuleInit {
         jobId,
         customerId: effectiveCustomerId,
         userId: effectiveUserId,
+        createdFrom: resolvedCreatedFrom,
         keyword,
         location,
         requestedResults: maxAllowed,
@@ -1051,6 +1057,7 @@ export class DataCaptureService implements OnModuleInit {
         googleMapsUrl: p.googleMapsUrl || undefined,
         businessStatus: p.businessStatus || 'OPERATIONAL',
         source: p.source || 'GOOGLE_PLACES',
+        createdFrom: p.createdFrom || resolvedCreatedFrom,
         status: p.status || 'CAPTURED',
         isImported: p.isImported,
         capturedAt: p.createdAt,
@@ -1158,6 +1165,11 @@ export class DataCaptureService implements OnModuleInit {
         andConditions.push({ jobId: query.jobId.trim() });
       }
 
+      const createdFrom = query.createdFrom?.trim();
+      if (createdFrom && createdFrom.toUpperCase() !== 'ALL') {
+        andConditions.push({ createdFrom: createdFrom.toUpperCase() });
+      }
+
       const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
       const sortField = query.sortBy || 'createdAt';
@@ -1202,6 +1214,7 @@ export class DataCaptureService implements OnModuleInit {
           googleMapsUrl: p.googleMapsUrl || undefined,
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
+          createdFrom: p.createdFrom || undefined,
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
           rawData: p.rawData || undefined,
@@ -1292,6 +1305,7 @@ export class DataCaptureService implements OnModuleInit {
       googleMapsUrl: place.googleMapsUrl || undefined,
       businessStatus: place.businessStatus || 'OPERATIONAL',
       source: place.source || 'GOOGLE_PLACES',
+      createdFrom: place.createdFrom || undefined,
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
@@ -1315,12 +1329,15 @@ export class DataCaptureService implements OnModuleInit {
     customerId: string | number | undefined,
     userId: string | number,
     dto: CreateDataCaptureDto,
+    req?: any,
   ): Promise<CapturedPlace> {
     let numCustomerId = Number(customerId);
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
       const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true } });
       numCustomerId = defaultCustomer?.id || 1;
     }
+
+    const resolvedCreatedFrom = resolveCreatedFrom(req, { id: userId, customerId: numCustomerId }, (dto as any)?.createdFrom);
 
     const resolvedPhone = dto.phone?.trim()
       || dto.mobile?.trim()
@@ -1363,6 +1380,7 @@ export class DataCaptureService implements OnModuleInit {
         googleMapsUrl: dto.googleMapsUrl,
         businessStatus: dto.businessStatus || 'OPERATIONAL',
         source: dto.source || 'MANUAL',
+        createdFrom: resolvedCreatedFrom,
         status: dto.status || 'CAPTURED',
         notes: dto.notes,
         rawData: Object.keys(mergedRawData).length > 0 ? mergedRawData : dto.rawData,
@@ -1390,6 +1408,7 @@ export class DataCaptureService implements OnModuleInit {
       googleMapsUrl: place.googleMapsUrl || undefined,
       businessStatus: place.businessStatus || 'OPERATIONAL',
       source: place.source || 'MANUAL',
+      createdFrom: place.createdFrom || undefined,
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
@@ -1481,6 +1500,7 @@ export class DataCaptureService implements OnModuleInit {
       googleMapsUrl: updated.googleMapsUrl || undefined,
       businessStatus: updated.businessStatus || 'OPERATIONAL',
       source: updated.source || 'GOOGLE_PLACES',
+      createdFrom: updated.createdFrom || undefined,
       status: updated.status || 'CAPTURED',
       notes: updated.notes || undefined,
       rawData: updated.rawData || undefined,
@@ -1792,6 +1812,7 @@ export class DataCaptureService implements OnModuleInit {
     id: number | string,
     captureRequestId?: string,
     dto?: CreateLeadFromPlaceDto,
+    req?: any,
   ): Promise<{
     success: boolean;
     statusCode?: number;
@@ -1938,7 +1959,8 @@ export class DataCaptureService implements OnModuleInit {
       captureRequestId: captureRequestId || dto?.captureRequestId || place.jobId,
       assignedToId: dto?.assignedToId,
       employeeId: dto?.employeeId,
-    });
+      createdFrom: (place.createdFrom || dto?.createdFrom) as any,
+    }, req);
 
     let lead = importRes.lead || importRes.leads?.[0] || null;
     const isDup = importRes.skippedDuplicates > 0;
@@ -1991,6 +2013,7 @@ export class DataCaptureService implements OnModuleInit {
         rating: freshPlace.rating || undefined,
         reviewCount: freshPlace.reviewCount || undefined,
         source: freshPlace.source || 'GOOGLE_PLACES',
+        createdFrom: freshPlace.createdFrom || undefined,
         status: isDup ? 'DUPLICATE' : 'LEAD_CREATED',
         isImported: true,
         importedLeadId: lead?.id || freshPlace.importedLeadId,
@@ -2089,6 +2112,7 @@ export class DataCaptureService implements OnModuleInit {
     customerId: string | number,
     userId: string | number,
     dto: ImportToLeadsDto,
+    req?: any,
   ): Promise<{
     success: boolean;
     totalRequested: number;
@@ -2332,6 +2356,7 @@ export class DataCaptureService implements OnModuleInit {
                   longitude: candidate.longitude ? Number(candidate.longitude) : undefined,
                   googleMapsUrl: candidate.googleMapsUrl || candidate.website || undefined,
                   source: candidate.source || 'GOOGLE_PLACES',
+                  createdFrom: resolveCreatedFrom(req, { id: validCreatedById, customerId: numCustomerId }, (dto as any)?.createdFrom),
                   status: 'CAPTURED',
                   photos: (candidate.photos || candidate.googlePhotos || undefined) as any,
                   socialMedia: (candidate.socialMedia || undefined) as any,
@@ -2563,6 +2588,7 @@ export class DataCaptureService implements OnModuleInit {
           }
 
           // Create Lead with exact Data Capture fields (Section 5 & 6)
+          const leadCreatedFrom = dbPlace.createdFrom || resolveCreatedFrom(req, { id: validCreatedById, customerId: numCustomerId }, (dto as any)?.createdFrom);
           let created: any = null;
           if (tx.lead && typeof tx.lead.create === 'function') {
             try {
@@ -2582,6 +2608,7 @@ export class DataCaptureService implements OnModuleInit {
                   pincode: parsedAddress.pincode,
                   category: resolvedCategory,
                   source: candidate.source || dbPlace.source || (googlePlaceId ? 'GOOGLE_PLACES' : 'GOOGLE_DISCOVERY'),
+                  createdFrom: leadCreatedFrom,
                   status: 'NEW',
                   stageId: newStage?.id || null,
                   priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
@@ -2606,7 +2633,7 @@ export class DataCaptureService implements OnModuleInit {
           }
 
           if (!created && this.leadService && typeof this.leadService.createLead === 'function') {
-            created = await this.leadService.createLead(numCustomerId, validCreatedById, {
+            const leadPayload = {
               companyName: businessName,
               title: businessName,
               phone: normalizedPhone || undefined,
@@ -2615,7 +2642,11 @@ export class DataCaptureService implements OnModuleInit {
               sourceRecordId,
               googlePlaceId: googlePlaceId || undefined,
               assignedToId: assignedToUserId || validCreatedById || undefined,
-            });
+              createdFrom: leadCreatedFrom,
+            };
+            created = req
+              ? await this.leadService.createLead(numCustomerId, validCreatedById, leadPayload, req)
+              : await this.leadService.createLead(numCustomerId, validCreatedById, leadPayload);
           }
 
           if (!created) {

@@ -10,10 +10,10 @@ describe('CustomerService — Section 22 Tests (9 Verification Scenarios)', () =
   let service: CustomerService;
   let prisma: any;
 
-  const now = new Date('2026-09-24T10:00:00.000Z');
-  const yesterday = new Date('2026-09-23T10:00:00.000Z');
-  const tomorrow = new Date('2026-09-25T10:00:00.000Z');
-  const dayAfterTomorrow = new Date('2026-09-26T10:00:00.000Z');
+  const now = new Date();
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const dayAfterTomorrow = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
   // Employee contexts
   const employeeA = { id: 101, firstName: 'Employee', lastName: 'A', customerId: 1, userId: 201 };
