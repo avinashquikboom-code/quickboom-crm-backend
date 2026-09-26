@@ -898,6 +898,7 @@ export class LeadRepository {
             employee: { select: { id: true, firstName: true, lastName: true } },
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             images: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
+            socialProfiles: true,
           },
         }),
         this.prisma.lead.count({ where }),
@@ -1086,6 +1087,23 @@ export class LeadRepository {
     const resolvedFirstName = isFakeContact(lead.firstName) ? '' : lead.firstName;
     const resolvedLastName = isFakeContact(lead.lastName) ? '' : lead.lastName;
 
+    // Map social media / profiles strictly separating website (Part 11, 12, 18)
+    const mappedSocial: any = (lead.socialMedia && typeof lead.socialMedia === 'object') ? { ...lead.socialMedia } : {};
+    if (Array.isArray(lead.socialProfiles) && lead.socialProfiles.length > 0) {
+      for (const sp of lead.socialProfiles) {
+        const plat = String(sp.platform || '').toLowerCase();
+        if (plat.includes('instagram')) mappedSocial.instagram = sp.url;
+        else if (plat.includes('facebook')) mappedSocial.facebook = sp.url;
+        else if (plat.includes('youtube')) mappedSocial.youtube = sp.url;
+        else if (plat.includes('linkedin')) mappedSocial.linkedin = sp.url;
+        else if (plat.includes('twitter') || plat === 'x') mappedSocial.twitter = sp.url;
+        else if (plat.includes('tiktok')) mappedSocial.tiktok = sp.url;
+        else if (plat.includes('pinterest')) mappedSocial.pinterest = sp.url;
+      }
+    }
+    delete mappedSocial.website;
+    const finalSocialMedia = Object.keys(mappedSocial).length > 0 ? mappedSocial : null;
+
     return {
       ...lead,
       firstName: resolvedFirstName,
@@ -1094,6 +1112,7 @@ export class LeadRepository {
       businessName: resolvedBiz,
       title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : (lead.title || '')),
       name: resolvedBiz,
+      socialMedia: finalSocialMedia,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
       // Normalized ownership fields for easy frontend consumption
       assignedToName: lead.assignedTo
@@ -1149,6 +1168,7 @@ export class LeadRepository {
           images: {
             orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
           },
+          socialProfiles: true,
           convertedCustomer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
           },
@@ -1190,6 +1210,7 @@ export class LeadRepository {
           commissions: {
             select: { id: true, commissionAmount: true, status: true, commissionType: true, paidAt: true, createdAt: true },
           },
+          socialProfiles: true,
         },
       });
       if (fallbackResult) {

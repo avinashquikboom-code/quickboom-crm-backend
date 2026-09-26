@@ -52,98 +52,11 @@ export class DataCaptureService implements OnModuleInit {
   ].join(',');
 
   /**
-   * Verified authentic category photos for diverse business prospect representation
-   */
-  private readonly CATEGORY_PHOTOS: Record<string, string[]> = {
-    gym: [
-      'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1540497077202-7c8a3999166f?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1571902943202-507ec2618e8f?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800&auto=format&fit=crop&q=80',
-    ],
-    restaurant: [
-      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1559339352-11d035aa65de?w=800&auto=format&fit=crop&q=80',
-    ],
-    cafe: [
-      'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80',
-    ],
-    bakery: [
-      'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1586985289688-ca3cf47d3e6e?w=800&auto=format&fit=crop&q=80',
-    ],
-    hotel: [
-      'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?w=800&auto=format&fit=crop&q=80',
-    ],
-    retail: [
-      'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=800&auto=format&fit=crop&q=80',
-    ],
-    health: [
-      'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=800&auto=format&fit=crop&q=80',
-    ],
-    salon: [
-      'https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800&auto=format&fit=crop&q=80',
-    ],
-    tech: [
-      'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=800&auto=format&fit=crop&q=80',
-    ],
-    default: [
-      'https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1497215728101-856f4ea42174?w=800&auto=format&fit=crop&q=80',
-    ],
-  };
-
   /**
-   * Generates deterministic, realistic, industry-specific photos for businesses
+   * Category photos helper - strictly returns empty array to prevent injecting dummy/stock photos (PART 24).
    */
-  getCategoryPhotos(category: string, businessName: string, count = 2): GooglePlacePhoto[] {
-    const catLower = (category || '').toLowerCase();
-    let key = 'default';
-    if (catLower.includes('gym') || catLower.includes('fit') || catLower.includes('sport') || catLower.includes('workout')) key = 'gym';
-    else if (catLower.includes('restaurant') || catLower.includes('dine') || catLower.includes('food')) key = 'restaurant';
-    else if (catLower.includes('cafe') || catLower.includes('coffee') || catLower.includes('tea') || catLower.includes('brew')) key = 'cafe';
-    else if (catLower.includes('bakery') || catLower.includes('bake') || catLower.includes('cake') || catLower.includes('artisan')) key = 'bakery';
-    else if (catLower.includes('hotel') || catLower.includes('resort') || catLower.includes('lodge') || catLower.includes('stay')) key = 'hotel';
-    else if (catLower.includes('retail') || catLower.includes('store') || catLower.includes('shop') || catLower.includes('bazaar') || catLower.includes('showroom')) key = 'retail';
-    else if (catLower.includes('health') || catLower.includes('clinic') || catLower.includes('hospital') || catLower.includes('dental') || catLower.includes('doctor')) key = 'health';
-    else if (catLower.includes('salon') || catLower.includes('spa') || catLower.includes('beauty') || catLower.includes('barber')) key = 'salon';
-    else if (catLower.includes('tech') || catLower.includes('software') || catLower.includes('it ') || catLower.includes('solution')) key = 'tech';
-
-    const pool = this.CATEGORY_PHOTOS[key] || this.CATEGORY_PHOTOS['default'];
-    let hash = 0;
-    const combined = `${businessName}_${category}`;
-    for (let i = 0; i < combined.length; i++) {
-      hash = (hash * 31 + combined.charCodeAt(i)) & 0xffffffff;
-    }
-    const startIdx = Math.abs(hash) % pool.length;
-
-    const result: GooglePlacePhoto[] = [];
-    for (let c = 0; c < Math.min(count, pool.length); c++) {
-      const idx = (startIdx + c) % pool.length;
-      result.push({
-        name: `places/photo/${businessName.toLowerCase().replace(/[^a-z0-9]/g, '')}_${c + 1}`,
-        url: pool[idx],
-        width: 1200,
-        height: 800,
-      });
-    }
-    return result;
+  getCategoryPhotos(_category: string, _businessName: string, _count = 2): GooglePlacePhoto[] {
+    return [];
   }
 
   /**
@@ -333,12 +246,10 @@ export class DataCaptureService implements OnModuleInit {
       return;
     }
 
-    // Direct CDN URL (lh3.googleusercontent.com, unsplash, etc.)
+    // Direct CDN URL (lh3.googleusercontent.com, googleapis, etc.)
     if (
       rawRef.startsWith('https://lh3.googleusercontent.com') ||
-      rawRef.startsWith('https://images.unsplash.com') ||
-      rawRef.startsWith('http://lh3.googleusercontent.com') ||
-      rawRef.startsWith('http://images.unsplash.com')
+      rawRef.startsWith('http://lh3.googleusercontent.com')
     ) {
       res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
       res.redirect(302, rawRef);
@@ -377,7 +288,7 @@ export class DataCaptureService implements OnModuleInit {
 
     // Valid external HTTP URL fallback
     if (rawRef.startsWith('http://') || rawRef.startsWith('https://')) {
-      if (!rawRef.includes('AIzaSyFakeKey') && !rawRef.includes('places.googleapis.com')) {
+      if (!rawRef.includes('AIzaSyFakeKey') && !rawRef.includes('places.googleapis.com') && !rawRef.includes('unsplash.com')) {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         res.redirect(302, rawRef);
         return;
@@ -438,7 +349,41 @@ export class DataCaptureService implements OnModuleInit {
   }
 
   /**
+   * Helper to normalize a social media URL or handle
+   */
+  private normalizeSocialUrl(platform: string, rawVal: any): string | undefined {
+    if (!rawVal || typeof rawVal !== 'string') return undefined;
+    const val = rawVal.trim();
+    if (!val || val === 'N/A' || val === 'null' || val === 'undefined') return undefined;
+    if (val.startsWith('http://') || val.startsWith('https://')) return val;
+
+    const handle = val.replace(/^@/, '').trim();
+    if (!handle) return undefined;
+
+    switch (platform.toLowerCase()) {
+      case 'instagram':
+        return `https://instagram.com/${handle}`;
+      case 'facebook':
+        return `https://facebook.com/${handle}`;
+      case 'youtube':
+        return `https://youtube.com/${handle}`;
+      case 'linkedin':
+        return `https://linkedin.com/${handle}`;
+      case 'twitter':
+      case 'x':
+        return `https://x.com/${handle}`;
+      case 'tiktok':
+        return `https://tiktok.com/@${handle}`;
+      case 'pinterest':
+        return `https://pinterest.com/${handle}`;
+      default:
+        return undefined;
+    }
+  }
+
+  /**
    * Extract and normalize discovered social media handles from a place record or its rawData.
+   * Strictly separates business website from social platforms (Part 18).
    */
   private extractSocialMediaFromPlace(place: any): SocialMediaHandles | undefined {
     if (!place) return undefined;
@@ -455,38 +400,38 @@ export class DataCaptureService implements OnModuleInit {
           if (!item) continue;
           const plat = String(item.platform || item.name || '').toLowerCase();
           const url = String(item.url || item.handle || '').trim();
-          if (plat && url) {
-            if (plat.includes('instagram')) result.instagram = url;
-            else if (plat.includes('facebook')) result.facebook = url;
-            else if (plat.includes('youtube')) result.youtube = url;
-            else if (plat.includes('linkedin')) result.linkedin = url;
-            else if (plat.includes('twitter') || plat === 'x') result.twitter = url;
-            else if (plat.includes('tiktok')) result.tiktok = url;
-            else if (plat.includes('pinterest')) result.pinterest = url;
-            else result[plat] = url;
+          if (plat && url && plat !== 'website') {
+            const normalized = this.normalizeSocialUrl(plat, url);
+            if (normalized) {
+              if (plat.includes('instagram')) result.instagram = normalized;
+              else if (plat.includes('facebook')) result.facebook = normalized;
+              else if (plat.includes('youtube')) result.youtube = normalized;
+              else if (plat.includes('linkedin')) result.linkedin = normalized;
+              else if (plat.includes('twitter') || plat === 'x') result.twitter = normalized;
+              else if (plat.includes('tiktok')) result.tiktok = normalized;
+              else if (plat.includes('pinterest')) result.pinterest = normalized;
+            }
           }
         }
       } else if (typeof sm === 'object') {
-        if (sm.facebook) result.facebook = String(sm.facebook).trim();
-        if (sm.instagram) result.instagram = String(sm.instagram).trim();
-        if (sm.linkedin) result.linkedin = String(sm.linkedin).trim();
-        if (sm.twitter) result.twitter = String(sm.twitter).trim();
-        if (sm.x && !result.twitter) result.twitter = String(sm.x).trim();
-        if (sm.youtube) result.youtube = String(sm.youtube).trim();
-        if (sm.tiktok) result.tiktok = String(sm.tiktok).trim();
-        if (sm.pinterest) result.pinterest = String(sm.pinterest).trim();
-        if (sm.website) result.website = String(sm.website).trim();
+        if (sm.facebook) result.facebook = this.normalizeSocialUrl('facebook', sm.facebook);
+        if (sm.instagram) result.instagram = this.normalizeSocialUrl('instagram', sm.instagram);
+        if (sm.linkedin) result.linkedin = this.normalizeSocialUrl('linkedin', sm.linkedin);
+        if (sm.twitter) result.twitter = this.normalizeSocialUrl('twitter', sm.twitter);
+        if (sm.x && !result.twitter) result.twitter = this.normalizeSocialUrl('twitter', sm.x);
+        if (sm.youtube) result.youtube = this.normalizeSocialUrl('youtube', sm.youtube);
+        if (sm.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', sm.tiktok);
+        if (sm.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', sm.pinterest);
       }
     }
 
-    if (place.website && !result.website) result.website = String(place.website).trim();
-    if ((place as any).facebook && !result.facebook) result.facebook = String((place as any).facebook).trim();
-    if ((place as any).instagram && !result.instagram) result.instagram = String((place as any).instagram).trim();
-    if ((place as any).linkedin && !result.linkedin) result.linkedin = String((place as any).linkedin).trim();
-    if ((place as any).twitter && !result.twitter) result.twitter = String((place as any).twitter).trim();
-    if ((place as any).youtube && !result.youtube) result.youtube = String((place as any).youtube).trim();
-    if ((place as any).tiktok && !result.tiktok) result.tiktok = String((place as any).tiktok).trim();
-    if ((place as any).pinterest && !result.pinterest) result.pinterest = String((place as any).pinterest).trim();
+    if ((place as any).facebook && !result.facebook) result.facebook = this.normalizeSocialUrl('facebook', (place as any).facebook);
+    if ((place as any).instagram && !result.instagram) result.instagram = this.normalizeSocialUrl('instagram', (place as any).instagram);
+    if ((place as any).linkedin && !result.linkedin) result.linkedin = this.normalizeSocialUrl('linkedin', (place as any).linkedin);
+    if ((place as any).twitter && !result.twitter) result.twitter = this.normalizeSocialUrl('twitter', (place as any).twitter);
+    if ((place as any).youtube && !result.youtube) result.youtube = this.normalizeSocialUrl('youtube', (place as any).youtube);
+    if ((place as any).tiktok && !result.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', (place as any).tiktok);
+    if ((place as any).pinterest && !result.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', (place as any).pinterest);
 
     return Object.keys(result).length > 0 ? result : undefined;
   }
@@ -815,9 +760,8 @@ export class DataCaptureService implements OnModuleInit {
               if (webContact.email) extractedEmail = webContact.email;
               if (!finalPhone && webContact.phone) finalPhone = webContact.phone;
               if (webContact.socialMedia) {
-                discoveredSocialMedia = { ...webContact.socialMedia, website: normalizedWebsite };
-              } else {
-                discoveredSocialMedia = { website: normalizedWebsite };
+                discoveredSocialMedia = { ...webContact.socialMedia };
+                delete (discoveredSocialMedia as any).website;
               }
             }
 
@@ -825,12 +769,12 @@ export class DataCaptureService implements OnModuleInit {
             const resolvedPhotoUrls = resolvedGooglePhotos.map((gp) => gp.url);
 
             this.logger.log(
-              `[GOOGLE PHOTO DEBUG]\n` +
-              `businessName: ${normalizedName}\n` +
+              `[DATA_CAPTURE_IMAGE_DEBUG]\n` +
+              `recordId: ${p.id || 'N/A'}\n` +
               `googlePlaceId: ${p.id || 'N/A'}\n` +
               `photoCount: ${resolvedGooglePhotos.length}\n` +
-              `firstPhotoReference: ${resolvedGooglePhotos[0]?.name || 'none'}\n` +
-              `firstPhotoUrlAvailable: ${Boolean(resolvedGooglePhotos[0]?.url)}`
+              `hasPhotoReference: ${resolvedGooglePhotos.some((gp) => Boolean(gp.name))}\n` +
+              `hasPhotoUrl: ${resolvedGooglePhotos.some((gp) => Boolean(gp.url))}`
             );
 
             const placeRecord: CapturedPlace = {
@@ -1196,7 +1140,19 @@ export class DataCaptureService implements OnModuleInit {
       ]);
 
       const data: CapturedPlace[] = records.map((p) => {
-        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos((p as any).photos);
+        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos(
+          (p as any).photos || (p as any).rawData?.photos || (p as any).rawData?.googlePhotos,
+        );
+
+        this.logger.debug(
+          `[DATA_CAPTURE_IMAGE_DEBUG]\n` +
+          `recordId: ${p.id}\n` +
+          `googlePlaceId: ${p.googlePlaceId || 'N/A'}\n` +
+          `photoCount: ${normGP.length}\n` +
+          `hasPhotoReference: ${normGP.some((gp) => Boolean(gp.name))}\n` +
+          `hasPhotoUrl: ${normGP.some((gp) => Boolean(gp.url)) || normPhotoUrls.length > 0}`
+        );
+
         return {
           id: p.id,
           provider: p.source || 'GOOGLE_PLACES',
@@ -1286,7 +1242,18 @@ export class DataCaptureService implements OnModuleInit {
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
 
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos((place as any).photos);
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
+      (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos,
+    );
+
+    this.logger.debug(
+      `[DATA_CAPTURE_IMAGE_DEBUG]\n` +
+      `recordId: ${place.id}\n` +
+      `googlePlaceId: ${place.googlePlaceId || 'N/A'}\n` +
+      `photoCount: ${placeGP.length}\n` +
+      `hasPhotoReference: ${placeGP.some((gp) => Boolean(gp.name))}\n` +
+      `hasPhotoUrl: ${placeGP.some((gp) => Boolean(gp.url)) || placePhotoUrls.length > 0}`
+    );
 
     return {
       id: place.id,
@@ -1768,16 +1735,18 @@ export class DataCaptureService implements OnModuleInit {
     if (!raw) return urls;
     if (Array.isArray(raw)) {
       for (const item of raw) {
-        if (typeof item === 'string' && item.startsWith('http')) {
+        if (typeof item === 'string' && (item.startsWith('http') || item.startsWith('/api/'))) {
           urls.push(item);
         } else if (item && typeof item === 'object') {
           const u = item.url || item.photoUri || item.uri;
-          if (typeof u === 'string' && u.startsWith('http')) {
+          if (typeof u === 'string' && (u.startsWith('http') || u.startsWith('/api/'))) {
             urls.push(u);
+          } else if (item.name && typeof item.name === 'string') {
+            urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(item.name)}`);
           }
         }
       }
-    } else if (typeof raw === 'string' && raw.startsWith('http')) {
+    } else if (typeof raw === 'string' && (raw.startsWith('http') || raw.startsWith('/api/'))) {
       urls.push(raw);
     }
     return urls;
@@ -1795,7 +1764,6 @@ export class DataCaptureService implements OnModuleInit {
       x: 'TWITTER',
       tiktok: 'TIKTOK',
       pinterest: 'PINTEREST',
-      website: 'WEBSITE',
     };
     for (const [key, platform] of Object.entries(mapping)) {
       const val = (socialMedia as any)[key];
