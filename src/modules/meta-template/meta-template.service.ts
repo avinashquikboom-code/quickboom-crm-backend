@@ -124,16 +124,20 @@ export class MetaTemplateService {
       where.category = query.category.toUpperCase();
     }
 
-    if (query.status && query.status !== 'ALL') {
-      where.status = query.status.toUpperCase();
+    const effectiveStatus = query.status || query.metaStatus;
+    if (effectiveStatus && effectiveStatus !== 'ALL') {
+      where.status = effectiveStatus.toUpperCase();
     }
 
     if (query.language && query.language !== 'ALL') {
       where.language = query.language;
     }
 
-    if (query.isLocalActive && query.isLocalActive !== 'ALL') {
-      where.isLocalActive = query.isLocalActive === 'true';
+    const effectiveActive = query.isLocalActive !== undefined && query.isLocalActive !== null && query.isLocalActive !== ''
+      ? query.isLocalActive
+      : query.isActive;
+    if (effectiveActive && effectiveActive !== 'ALL') {
+      where.isLocalActive = String(effectiveActive) === 'true';
     }
 
     const page = Math.max(1, Number(query.page) || 1);
@@ -167,8 +171,17 @@ export class MetaTemplateService {
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'REJECTED' } }),
     ]);
 
+    const formattedItems = items.map((t) => ({
+      ...t,
+      displayName: t.name,
+      metaStatus: t.status,
+      bodyText: t.body,
+      footerText: t.footer,
+      isActive: t.isLocalActive,
+    }));
+
     return {
-      items,
+      items: formattedItems,
       meta: {
         total,
         page,
@@ -245,7 +258,14 @@ export class MetaTemplateService {
       throw new NotFoundException(`Meta template #${id} not found.`);
     }
 
-    return item;
+    return {
+      ...item,
+      displayName: item.name,
+      metaStatus: item.status,
+      bodyText: item.body,
+      footerText: item.footer,
+      isActive: item.isLocalActive,
+    };
   }
 
   /**
@@ -253,24 +273,34 @@ export class MetaTemplateService {
    */
   async create(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
-    const bodyVars = this.extractVariables(dto.body);
+    const effectiveName = (dto.name || dto.displayName || '').trim();
+    if (!effectiveName) {
+      throw new BadRequestException('Template display name is required.');
+    }
+
+    const rawBody = (dto.body || dto.bodyText || '').trim();
+    if (!rawBody) {
+      throw new BadRequestException('Template message body is required.');
+    }
+
+    const bodyVars = this.extractVariables(rawBody);
     const headerVars = dto.headerContent ? this.extractVariables(dto.headerContent) : [];
     const variables = Array.from(new Set([...(dto.variables || []), ...bodyVars, ...headerVars]));
 
-    const templateName = dto.templateName
+    let rawTemplateName = (dto.templateName || dto.name || dto.displayName || '')
       .trim()
       .toLowerCase()
       .replace(/[\s-]+/g, '_')
       .replace(/[^a-z0-9_]/g, '');
 
-    if (!templateName) {
+    if (!rawTemplateName) {
       throw new BadRequestException('Template name must contain valid alphanumeric characters or underscores.');
     }
 
     // Check duplicate
     const existing = await this.prisma.metaTemplate.findFirst({
       where: {
-        templateName,
+        templateName: rawTemplateName,
         language: dto.language || 'en_US',
         deletedAt: null,
         OR: [
@@ -281,14 +311,21 @@ export class MetaTemplateService {
     });
 
     if (existing) {
-      throw new BadRequestException(`A Meta template with name "${templateName}" already exists for language "${dto.language || 'en_US'}".`);
+      throw new BadRequestException(`A Meta template with name "${rawTemplateName}" already exists for language "${dto.language || 'en_US'}".`);
     }
+
+    const effectiveIsLocalActive =
+      dto.isLocalActive !== undefined
+        ? dto.isLocalActive
+        : dto.isActive !== undefined
+        ? dto.isActive
+        : true;
 
     return this.prisma.metaTemplate.create({
       data: {
         customerId: parsedCustId,
-        name: dto.name.trim(),
-        templateName,
+        name: effectiveName,
+        templateName: rawTemplateName,
         key: dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null,
         language: dto.language || 'en_US',
         category: (dto.category || 'UTILITY').toUpperCase(),
@@ -296,11 +333,11 @@ export class MetaTemplateService {
         metaTemplateId: dto.metaTemplateId || null,
         headerType: dto.headerType || 'NONE',
         headerContent: dto.headerContent || null,
-        body: dto.body.trim(),
-        footer: dto.footer?.trim() || null,
+        body: rawBody,
+        footer: (dto.footer || dto.footerText)?.trim() || null,
         buttons: dto.buttons || null,
         variables,
-        isLocalActive: dto.isLocalActive !== false,
+        isLocalActive: effectiveIsLocalActive,
         isSystem: false,
       },
     });
@@ -312,7 +349,8 @@ export class MetaTemplateService {
   async update(id: number, dto: UpdateMetaTemplateDto, customerId?: number | string | null) {
     const item = await this.findOne(id, customerId);
 
-    const bodyToUse = dto.body !== undefined ? dto.body : item.body;
+    const effectiveName = dto.name !== undefined ? dto.name.trim() : (dto.displayName !== undefined ? dto.displayName.trim() : item.name);
+    const bodyToUse = dto.body !== undefined ? dto.body : (dto.bodyText !== undefined ? dto.bodyText : item.body);
     const headerToUse = dto.headerContent !== undefined ? dto.headerContent : item.headerContent;
     const bodyVars = this.extractVariables(bodyToUse);
     const headerVars = headerToUse ? this.extractVariables(headerToUse) : [];
@@ -327,10 +365,24 @@ export class MetaTemplateService {
         .replace(/[^a-z0-9_]/g, '');
     }
 
+    const effectiveIsLocalActive =
+      dto.isLocalActive !== undefined
+        ? dto.isLocalActive
+        : dto.isActive !== undefined
+        ? dto.isActive
+        : item.isLocalActive;
+
+    const effectiveFooter =
+      dto.footer !== undefined
+        ? (dto.footer ? dto.footer.trim() : null)
+        : dto.footerText !== undefined
+        ? (dto.footerText ? dto.footerText.trim() : null)
+        : item.footer;
+
     return this.prisma.metaTemplate.update({
       where: { id: item.id },
       data: {
-        name: dto.name !== undefined ? dto.name.trim() : item.name,
+        name: effectiveName,
         templateName,
         key: dto.key !== undefined ? (dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null) : item.key,
         language: dto.language !== undefined ? dto.language : item.language,
@@ -339,11 +391,11 @@ export class MetaTemplateService {
         metaTemplateId: dto.metaTemplateId !== undefined ? dto.metaTemplateId : item.metaTemplateId,
         headerType: dto.headerType !== undefined ? dto.headerType : item.headerType,
         headerContent: dto.headerContent !== undefined ? dto.headerContent : item.headerContent,
-        body: dto.body !== undefined ? dto.body.trim() : item.body,
-        footer: dto.footer !== undefined ? dto.footer?.trim() || null : item.footer,
+        body: bodyToUse.trim(),
+        footer: effectiveFooter,
         buttons: dto.buttons !== undefined ? dto.buttons : (item.buttons as any),
         variables,
-        isLocalActive: dto.isLocalActive !== undefined ? dto.isLocalActive : item.isLocalActive,
+        isLocalActive: effectiveIsLocalActive,
       },
     });
   }

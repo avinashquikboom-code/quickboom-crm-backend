@@ -81,6 +81,22 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           tokenVal.length > 0,
         );
 
+        const isMetaTemplates = typeof request.url === 'string' && (request.url.includes('/templates/meta') || request.url.includes('/meta-templates'));
+        if (isMetaTemplates) {
+          const isTokenExpired = Boolean(
+            failureReason?.toLowerCase().includes('expired') ||
+            (info as any)?.name === 'TokenExpiredError' ||
+            err?.name === 'TokenExpiredError',
+          );
+          const isRefreshAttempted = Boolean(
+            request.headers?.['x-refresh-attempted'] === 'true' ||
+            request.query?.refreshAttempted === 'true',
+          );
+          this.logger.log(
+            `[META_TEMPLATES_AUTH]\ntokenPresent=${hasValidToken}\ntokenExpired=${isTokenExpired}\nrefreshAttempted=${isRefreshAttempted}`,
+          );
+        }
+
         this.logger.warn(
           `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} tokenPresent=${hasValidToken} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
         );
@@ -90,6 +106,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     if (request) {
       const isBulkLeadEndpoint = typeof request.url === 'string' && request.url.includes('/leads/bulk');
+      const isMetaTemplates = typeof request.url === 'string' && (request.url.includes('/templates/meta') || request.url.includes('/meta-templates'));
+
+      if (isMetaTemplates) {
+        this.logger.log(
+          `[META_TEMPLATES_AUTH]\ntokenPresent=true\ntokenExpired=false\nrefreshAttempted=false`,
+        );
+      }
+
       if (isBulkLeadEndpoint) {
         this.logger.log(
           `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.customerId || user.companyId || 'NONE'}`,

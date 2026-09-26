@@ -10,6 +10,8 @@ import {
   Query,
   UseGuards,
   ParseIntPipe,
+  Req,
+  Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -28,6 +30,8 @@ import {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MetaTemplateController {
+  private readonly logger = new Logger(MetaTemplateController.name);
+
   constructor(private readonly metaTemplateService: MetaTemplateService) {}
 
   @Get()
@@ -39,14 +43,39 @@ export class MetaTemplateController {
   @ApiQuery({ name: 'isLocalActive', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  async findAll(@CurrentUser() user: any, @Query() query: QueryMetaTemplateDto) {
-    return this.metaTemplateService.findAll(user?.customerId, query);
+  async findAll(
+    @CurrentUser() user: any,
+    @Query() query: QueryMetaTemplateDto,
+    @Req() req: any,
+  ) {
+    const effectiveStatus = query.status || query.metaStatus || 'ALL';
+    this.logger.log(
+      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${user?.customerId ?? 'NONE'}\ntenantId=${user?.customerId ?? 'NONE'}\npage=${query.page || 1}\nlimit=${query.limit || 50}\nstatus=${effectiveStatus}`,
+    );
+
+    const result = await this.metaTemplateService.findAll(user?.customerId, query);
+
+    this.logger.log(
+      `[META_TEMPLATES_RESULT]\nstatus=200\ncount=${result?.items?.length ?? 0}`,
+    );
+
+    return result;
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get aggregated statistics of Meta message templates' })
-  async getStats(@CurrentUser() user: any) {
-    return this.metaTemplateService.getStats(user?.customerId);
+  async getStats(@CurrentUser() user: any, @Req() req: any) {
+    this.logger.log(
+      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta/stats'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${user?.customerId ?? 'NONE'}\ntenantId=${user?.customerId ?? 'NONE'}\npage=1\nlimit=1\nstatus=ALL`,
+    );
+
+    const result = await this.metaTemplateService.getStats(user?.customerId);
+
+    this.logger.log(
+      `[META_TEMPLATES_RESULT]\nstatus=200\ncount=${result?.total ?? 0}`,
+    );
+
+    return result;
   }
 
   @Get('variables')

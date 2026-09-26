@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateMetaTemplateDto {
   @ApiProperty({ description: 'Display name for template', example: 'Lead Contacted Notice' })
@@ -9,9 +9,15 @@ export class CreateMetaTemplateDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name: string;
 
-  @ApiProperty({ description: 'Meta technical template name (lowercase_with_underscores)', example: 'lead_stage_contacted' })
+  @ApiPropertyOptional({ description: 'Display name alias for template' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  displayName?: string;
+
+  @ApiPropertyOptional({ description: 'Meta technical template name (lowercase_with_underscores)', example: 'lead_stage_contacted' })
+  @IsOptional()
+  @IsString()
   @Transform(({ value }) =>
     typeof value === 'string'
       ? value
@@ -21,7 +27,7 @@ export class CreateMetaTemplateDto {
           .replace(/[^a-z0-9_]/g, '')
       : value,
   )
-  templateName: string;
+  templateName?: string;
 
   @ApiPropertyOptional({ description: 'Identifier key for CRM stage mapping', example: 'CONTACTED' })
   @IsOptional()
@@ -62,15 +68,25 @@ export class CreateMetaTemplateDto {
   @IsString()
   headerContent?: string;
 
-  @ApiProperty({ description: 'Message body text with {{variables}}', example: 'Hi {{leadName}}, this is {{userName}} from {{companyName}}.' })
+  @ApiPropertyOptional({ description: 'Message body text with {{variables}}', example: 'Hi {{leadName}}, this is {{userName}} from {{companyName}}.' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  body: string;
+  body?: string;
+
+  @ApiPropertyOptional({ description: 'Body text alias' })
+  @IsOptional()
+  @IsString()
+  bodyText?: string;
 
   @ApiPropertyOptional({ description: 'Footer text' })
   @IsOptional()
   @IsString()
   footer?: string;
+
+  @ApiPropertyOptional({ description: 'Footer text alias' })
+  @IsOptional()
+  @IsString()
+  footerText?: string;
 
   @ApiPropertyOptional({ description: 'Interactive button configurations (JSON/Array)' })
   @IsOptional()
@@ -86,6 +102,11 @@ export class CreateMetaTemplateDto {
   @IsOptional()
   @IsBoolean()
   isLocalActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Local active status alias' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class UpdateMetaTemplateDto {
@@ -94,6 +115,12 @@ export class UpdateMetaTemplateDto {
   @IsString()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name?: string;
+
+  @ApiPropertyOptional({ description: 'Display name alias' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  displayName?: string;
 
   @ApiPropertyOptional({ description: 'Meta technical template name' })
   @IsOptional()
@@ -152,10 +179,20 @@ export class UpdateMetaTemplateDto {
   @IsString()
   body?: string;
 
+  @ApiPropertyOptional({ description: 'Body text alias' })
+  @IsOptional()
+  @IsString()
+  bodyText?: string;
+
   @ApiPropertyOptional({ description: 'Footer text' })
   @IsOptional()
   @IsString()
   footer?: string;
+
+  @ApiPropertyOptional({ description: 'Footer text alias' })
+  @IsOptional()
+  @IsString()
+  footerText?: string;
 
   @ApiPropertyOptional({ description: 'Interactive button configurations' })
   @IsOptional()
@@ -171,6 +208,11 @@ export class UpdateMetaTemplateDto {
   @IsOptional()
   @IsBoolean()
   isLocalActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Local active status alias' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class QueryMetaTemplateDto {
@@ -189,6 +231,11 @@ export class QueryMetaTemplateDto {
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by Meta status alias' })
+  @IsOptional()
+  @IsString()
+  metaStatus?: string;
+
   @ApiPropertyOptional({ description: 'Filter by language code (en_US, hi_IN, ALL)' })
   @IsOptional()
   @IsString()
@@ -196,14 +243,24 @@ export class QueryMetaTemplateDto {
 
   @ApiPropertyOptional({ description: 'Filter by local active status (true, false, ALL)' })
   @IsOptional()
+  @IsString()
   isLocalActive?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by local active status alias' })
+  @IsOptional()
+  @IsString()
+  isActive?: string;
 
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   page?: number;
 
   @ApiPropertyOptional({ description: 'Items per page', default: 50 })
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   limit?: number;
 }
 
