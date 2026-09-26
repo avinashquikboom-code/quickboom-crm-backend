@@ -82,10 +82,11 @@ export class LeadController {
   @ApiQuery({ name: 'includeInactive', required: false })
   async getStages(
     @CurrentCustomer() customerId?: string,
+    @CurrentUser() user?: any,
     @Query('includeInactive') includeInactive?: string,
   ) {
     const shouldInclude = includeInactive === undefined ? true : includeInactive === 'true';
-    return this.leadService.getStages(customerId, shouldInclude);
+    return this.leadService.getStages(customerId, shouldInclude, user);
   }
 
   @Post('stages')

@@ -552,6 +552,7 @@ export class LeadRepository {
       customerId === undefined;
 
     const baseWhere: any = { deletedAt: null };
+    const isAdmin = isUserAdmin(user);
     if (!isSuperAdmin) {
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
         baseWhere.customerId = numCustomerId;
@@ -560,6 +561,19 @@ export class LeadRepository {
       }
     } else if (!isNaN(numCustomerId) && numCustomerId > 0) {
       baseWhere.customerId = numCustomerId;
+    }
+
+    // Employee RBAC Isolation: scope counts to assigned/created leads
+    if (user && !isAdmin) {
+      const empId = user.employee?.id;
+      const userConditions: any[] = [
+        { assignedToId: user.id },
+        { createdById: user.id },
+      ];
+      if (empId) {
+        userConditions.push({ employeeId: empId });
+      }
+      baseWhere.OR = userConditions;
     }
 
     const [total, newCount, contacted, qualified, converted, lost] = await Promise.all([
@@ -1850,9 +1864,11 @@ export class LeadRepository {
     return fallback.id;
   }
 
-  async findStages(customerId?: number | string, includeInactive = true) {
-    const numCustomerId = Number(customerId);
+  async findStages(customerId?: number | string, includeInactive = true, user?: any) {
+    const numCustomerId = Number(customerId ?? user?.customerId);
     const hasCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin = isUserAdmin(user);
 
     let targetCustomerId: number | null = null;
     if (hasCustomer) {
@@ -1872,6 +1888,24 @@ export class LeadRepository {
       ...(includeInactive ? {} : { isActive: true }),
     };
 
+    const leadWhere: any = {
+      deletedAt: null,
+      ...(hasCustomer ? { customerId: numCustomerId } : {}),
+    };
+
+    // Employee RBAC Isolation: When user is an employee, scope lead count strictly to assigned/created leads
+    if (user && !isAdmin) {
+      const empId = user.employee?.id;
+      const userConditions: any[] = [
+        { assignedToId: user.id },
+        { createdById: user.id },
+      ];
+      if (empId) {
+        userConditions.push({ employeeId: empId });
+      }
+      leadWhere.OR = userConditions;
+    }
+
     return this.prisma.leadStage.findMany({
       where,
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
@@ -1885,10 +1919,7 @@ export class LeadRepository {
         _count: {
           select: {
             leads: {
-              where: {
-                deletedAt: null,
-                ...(hasCustomer ? { customerId: numCustomerId } : {}),
-              },
+              where: leadWhere,
             },
           },
         },

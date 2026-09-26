@@ -1154,7 +1154,7 @@ export class LeadService {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
-  async getStages(customerId?: number | string, includeInactive = true) {
+  async getStages(customerId?: number | string, includeInactive = true, user?: any) {
     // Stage Management is the SINGLE SOURCE OF TRUTH.
     // Auto-seed default stages for a new workspace on first call.
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
@@ -1166,7 +1166,7 @@ export class LeadService {
 
     let dbStages: any[] = [];
     try {
-      dbStages = await this.leadRepository.findStages(customerId, includeInactive) ?? [];
+      dbStages = await this.leadRepository.findStages(customerId, includeInactive, user) ?? [];
     } catch (err) {
       console.error('[LeadService] getStages DB query failed:', err);
       return [];
