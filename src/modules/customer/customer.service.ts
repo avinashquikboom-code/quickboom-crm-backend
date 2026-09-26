@@ -262,12 +262,13 @@ export function extractUpcomingCall(
       }
     }
 
-    // 1c. Lead in Final Call stage without explicit follow-up date
-    // When a lead reaches Final Call stage, it automatically qualifies as an Upcoming Customer
+    // 1c. Lead in Final Call stage automatically qualifies as an Upcoming prospect unless explicitly overdue
+    const explicitDate = l.nextFollowUpDate || l.nextCallDate;
+    const isExplicitlyOverdue = explicitDate && parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime) < now;
+
     if (
       isFinalCallStage &&
-      !l.nextFollowUpDate &&
-      !l.nextCallDate &&
+      !isExplicitlyOverdue &&
       !isFinalCallCompleted &&
       !isFinalCallCancelled &&
       !isLeadCallCompleted &&
@@ -278,14 +279,19 @@ export function extractUpcomingCall(
       !l.convertedCustomer &&
       !l.convertedAt
     ) {
-      const scheduledAt = now;
-      candidates.push({
-        type: 'Final Call',
-        callType: 'FINAL_CALL',
-        scheduledAt,
-        originalTime: l.nextFollowUpTime || '11:00 AM',
-        notes: l.workNotes || 'Lead reached Final Call stage',
-      });
+      const alreadyHasFinalCall = candidates.some((c) => c.callType === 'FINAL_CALL');
+      if (!alreadyHasFinalCall) {
+        const scheduledAt = explicitDate
+          ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
+          : now;
+        candidates.push({
+          type: 'Final Call',
+          callType: 'FINAL_CALL',
+          scheduledAt,
+          originalTime: l.nextFollowUpTime || l.nextCallTime || '11:00 AM',
+          notes: l.workNotes || 'Lead reached Final Call stage',
+        });
+      }
     }
 
     // 2. Active uncompleted reminders on the lead
@@ -914,25 +920,22 @@ export class CustomerService {
 
     const andConditions: any[] = [];
 
-    // Strict Employee Scoping & Tenant Isolation (Requirements 1, 12, 13, 14)
+    // Strict Employee Scoping & Tenant Isolation (Requirements 1, 3, 4, 7, 8)
     // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see:
     // 1. customer.assignedEmployeeId == loggedInEmployeeId
-    // 2. customer.createdByEmployeeId == loggedInEmployeeId
-    // 3. Or linked lead assigned to or created by that employee
-    // Exclude unassigned, other employee's customers, and company-wide accounts.
-    if (employeeId && !isPrivilegedAdmin) {
+    // 2. Or linked originLead / leads assigned to that employee (assignedToId == userId OR employeeId == loggedInEmployeeId)
+    // Exclude unassigned, other employee's customers, and do NOT use createdById as replacement for assignedToId!
+    if (effectiveEmployeeId && !isPrivilegedAdmin) {
       andConditions.push({
         OR: [
-          { assignedEmployeeId: employeeId },
-          { createdByEmployeeId: employeeId },
+          { assignedEmployeeId: effectiveEmployeeId },
           {
             leads: {
               some: {
                 deletedAt: null,
                 OR: [
-                  { employeeId: employeeId },
-                  { createdById: user?.id },
-                  { assignedToId: user?.id },
+                  { employeeId: effectiveEmployeeId },
+                  ...(user?.id ? [{ assignedToId: user.id }] : []),
                 ],
               },
             },
@@ -941,9 +944,8 @@ export class CustomerService {
             originLead: {
               deletedAt: null,
               OR: [
-                { employeeId: employeeId },
-                { createdById: user?.id },
-                { assignedToId: user?.id },
+                { employeeId: effectiveEmployeeId },
+                ...(user?.id ? [{ assignedToId: user.id }] : []),
               ],
             },
           },
@@ -1181,12 +1183,12 @@ export class CustomerService {
         const leadAndConditions: any[] = [];
         const currentUserId = user?.id || user?.employee?.userId || user?.sub;
 
-        if (employeeId && !isPrivilegedAdmin) {
-          const empOrClauses: any[] = [{ employeeId: employeeId }];
+        if (effectiveEmployeeId && !isPrivilegedAdmin) {
+          const empOrClauses: any[] = [{ employeeId: effectiveEmployeeId }];
           if (currentUserId) {
-            empOrClauses.push({ createdById: currentUserId });
             empOrClauses.push({ assignedToId: currentUserId });
           }
+          // Strict: DO NOT include createdById as replacement for assignedToId!
           leadAndConditions.push({ OR: empOrClauses });
         }
 
@@ -1621,7 +1623,19 @@ export class CustomerService {
 
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
-    // Safe Diagnostic Logs
+    // Safe Diagnostic Logs (Requirement 26)
+    const employeeIdentifier =
+      user?.employee?.employeeCode ||
+      (effectiveEmployeeId ? `EMP-${effectiveEmployeeId}` : null) ||
+      (user?.id ? `USER-${user.id}` : 'none');
+
+    this.logger.log(
+      `[UPCOMING_QUERY]\nemployeeId=${employeeIdentifier}\nstage=FINAL_CALL\ncount=${totalUpcoming}`,
+    );
+    this.logger.log(
+      `[CUSTOMER_QUERY]\nemployeeId=${employeeIdentifier}\ncount=${finalItems.length}`,
+    );
+
     const safeFilter = query.status || 'ALL';
     const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
