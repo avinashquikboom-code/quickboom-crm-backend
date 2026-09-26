@@ -960,11 +960,25 @@ export class LeadRepository {
       return !hasValidCompany || !hasValidBiz || isFake(l.title);
     });
 
+    // [LEAD_NAME_RESOLUTION_DEBUG] Log processing summary
+    if (candidateLeads.length > 0) {
+      this.logger.log(
+        `[LEAD_NAME_RESOLUTION_DEBUG] Processing ${candidateLeads.length}/${leads.length} leads that need business name resolution. Sample:`,
+      );
+      for (let i = 0; i < Math.min(3, candidateLeads.length); i++) {
+        const l = candidateLeads[i];
+        this.logger.log(
+          `  Lead ${l.id}: companyName="${l.companyName}" businessName="${l.businessName}" title="${l.title}" googlePlaceId="${l.googlePlaceId}" sourceRecordId="${l.sourceRecordId}"`,
+        );
+      }
+    }
+
     if (candidateLeads.length === 0) return;
 
     for (const lead of candidateLeads) {
       try {
         let matchingPlace: any = null;
+        let matchMethod = '';
 
         // 1. By importedLeadId in DataCapturePlace
         matchingPlace = await this.prisma.dataCapturePlace.findFirst({
@@ -975,6 +989,7 @@ export class LeadRepository {
           },
           select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
         });
+        if (matchingPlace) matchMethod = 'importedLeadId';
 
         // 2. By googlePlaceId
         if (!matchingPlace && lead.googlePlaceId && !lead.googlePlaceId.startsWith('custom_')) {
@@ -986,6 +1001,7 @@ export class LeadRepository {
             },
             select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
           });
+          if (matchingPlace) matchMethod = 'googlePlaceId';
         }
 
         // 3. By sourceRecordId
@@ -1003,6 +1019,7 @@ export class LeadRepository {
             },
             select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
           });
+          if (matchingPlace) matchMethod = 'sourceRecordId';
         }
 
         // 4. By captureRequestId job ID
@@ -1018,7 +1035,19 @@ export class LeadRepository {
               },
               select: { businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true },
             });
+            if (matchingPlace) matchMethod = 'captureRequestId';
           }
+        }
+
+        // [LEAD_NAME_RESOLUTION_MATCH_DEBUG] Log match results
+        if (matchingPlace) {
+          this.logger.log(
+            `[LEAD_NAME_RESOLUTION_MATCH] Lead ${lead.id} matched via ${matchMethod}: place.businessName="${matchingPlace.businessName}"`,
+          );
+        } else {
+          this.logger.warn(
+            `[LEAD_NAME_RESOLUTION_NO_MATCH] Lead ${lead.id} (googlePlaceId="${lead.googlePlaceId}" sourceRecordId="${lead.sourceRecordId}") had no matching DataCapturePlace`,
+          );
         }
 
         if (matchingPlace && matchingPlace.businessName && !isFake(matchingPlace.businessName)) {
@@ -1033,6 +1062,8 @@ export class LeadRepository {
           if (!lead.website && matchingPlace.website) lead.website = matchingPlace.website;
           if (!lead.email && matchingPlace.email) lead.email = matchingPlace.email;
           if (!lead.address && matchingPlace.address) lead.address = matchingPlace.address;
+          
+          this.logger.log(`[LEAD_NAME_RESOLUTION_UPDATED] Lead ${lead.id} companyName updated to "${resolvedName}"`);
 
           // Asynchronously update in PostgreSQL so database has real companyName
           this.prisma.lead.update({
@@ -1045,7 +1076,13 @@ export class LeadRepository {
               ...(!lead.email && matchingPlace.email ? { email: matchingPlace.email } : {}),
               ...(!lead.address && matchingPlace.address ? { address: matchingPlace.address } : {}),
             },
-          }).catch(() => {});
+          }).then(() => {
+            this.logger.log(`[LEAD_NAME_RESOLUTION_DB_UPDATED] Lead ${lead.id} persisted to database`);
+          }).catch((err: any) => {
+            this.logger.error(`[LEAD_NAME_RESOLUTION_DB_ERROR] Failed to persist Lead ${lead.id}: ${err?.message || err}`);
+          });
+        } else if (matchingPlace && !matchingPlace.businessName) {
+          this.logger.warn(`[LEAD_NAME_RESOLUTION_EMPTY_PLACE] Lead ${lead.id} matched DataCapturePlace but it has empty businessName`);
         }
       } catch (err: any) {
         this.logger.warn(`Failed to resolve DataCapturePlace for lead #${lead.id}: ${err?.message || err}`);
@@ -1065,6 +1102,13 @@ export class LeadRepository {
     const cleanTitle = !isFake(lead.title) ? lead.title.trim() : null;
 
     const resolvedBiz = cleanCompany || cleanBiz || cleanTitle || null;
+    
+    // [LEAD_ENRICH_DEBUG] Log field resolution for diagnosis
+    if (!resolvedBiz || resolvedBiz.length === 0) {
+      this.logger.warn(
+        `[LEAD_ENRICH_DEBUG] Lead ${lead.id} has no resolved business name after enrichment. Raw: companyName="${lead.companyName}" title="${lead.title}" isFakeTitle=${isFake(lead.title)}`,
+      );
+    }
 
     let upcomingCommission: number | null = null;
     if (Array.isArray(lead.commissions) && lead.commissions.length > 0) {
