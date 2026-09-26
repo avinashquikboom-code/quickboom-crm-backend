@@ -142,7 +142,10 @@ export class MetaTemplateService {
 
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
-    const skip = (page - 1) * limit;
+    const skip =
+      query.offset !== undefined && !isNaN(Number(query.offset)) && Number(query.offset) >= 0
+        ? Number(query.offset)
+        : (page - 1) * limit;
 
     const [items, total] = await Promise.all([
       this.prisma.metaTemplate.findMany({

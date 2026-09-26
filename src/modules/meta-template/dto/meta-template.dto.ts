@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateMetaTemplateDto {
@@ -218,50 +218,160 @@ export class UpdateMetaTemplateDto {
 export class QueryMetaTemplateDto {
   @ApiPropertyOptional({ description: 'Search term for name, key, or body' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed === 'undefined' || trimmed === 'null' || trimmed === '' ? undefined : trimmed;
+  })
   @IsString()
   search?: string;
 
   @ApiPropertyOptional({ description: 'Filter by category (UTILITY, MARKETING, AUTHENTICATION, ALL)' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim().toUpperCase();
+    return trimmed === 'UNDEFINED' || trimmed === 'NULL' || trimmed === '' || trimmed === 'ALL' ? undefined : trimmed;
+  })
   @IsString()
   category?: string;
 
   @ApiPropertyOptional({ description: 'Filter by Meta status (APPROVED, PENDING, REJECTED, ALL)' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim().toUpperCase();
+    return trimmed === 'UNDEFINED' || trimmed === 'NULL' || trimmed === '' || trimmed === 'ALL' ? undefined : trimmed;
+  })
   @IsString()
   status?: string;
 
   @ApiPropertyOptional({ description: 'Filter by Meta status alias' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim().toUpperCase();
+    return trimmed === 'UNDEFINED' || trimmed === 'NULL' || trimmed === '' || trimmed === 'ALL' ? undefined : trimmed;
+  })
   @IsString()
   metaStatus?: string;
 
   @ApiPropertyOptional({ description: 'Filter by language code (en_US, hi_IN, ALL)' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed === 'undefined' || trimmed === 'null' || trimmed === '' || trimmed.toUpperCase() === 'ALL' ? undefined : trimmed;
+  })
   @IsString()
   language?: string;
 
   @ApiPropertyOptional({ description: 'Filter by local active status (true, false, ALL)' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'boolean') return String(value);
+    const s = String(value).trim().toLowerCase();
+    if (s === 'undefined' || s === 'null' || s === '' || s === 'all') return undefined;
+    return s === 'true' ? 'true' : s === 'false' ? 'false' : undefined;
+  })
   @IsString()
   isLocalActive?: string;
 
   @ApiPropertyOptional({ description: 'Filter by local active status alias' })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'boolean') return String(value);
+    const s = String(value).trim().toLowerCase();
+    if (s === 'undefined' || s === 'null' || s === '' || s === 'all') return undefined;
+    return s === 'true' ? 'true' : s === 'false' ? 'false' : undefined;
+  })
   @IsString()
   isActive?: string;
 
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === 'undefined' || value === 'null' || value === '' || value === null || value === undefined) return undefined;
+    const parsed = parseInt(value, 10);
+    return isNaN(parsed) || parsed < 1 ? 1 : parsed;
+  })
   @IsInt()
+  @Min(1)
   page?: number;
 
   @ApiPropertyOptional({ description: 'Items per page', default: 50 })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === 'undefined' || value === 'null' || value === '' || value === null || value === undefined) return undefined;
+    const parsed = parseInt(value, 10);
+    if (isNaN(parsed) || parsed < 1) return 50;
+    return Math.min(100, parsed);
+  })
   @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number;
+
+  @ApiPropertyOptional({ description: 'Pagination offset', default: 0 })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'undefined' || value === 'null' || value === '' || value === null || value === undefined) return undefined;
+    const parsed = parseInt(value, 10);
+    return isNaN(parsed) || parsed < 0 ? 0 : parsed;
+  })
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  @ApiPropertyOptional({ description: 'Template type (e.g. meta, WHATSAPP)' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  type?: string;
+
+  @ApiPropertyOptional({ description: 'Template type alias' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  templateType?: string;
+
+  @ApiPropertyOptional({ description: 'Channel alias (e.g. WHATSAPP)' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  channel?: string;
+
+  @ApiPropertyOptional({ description: 'Provider alias (e.g. META)' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  provider?: string;
+
+  @ApiPropertyOptional({ description: 'Sort field' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  sortBy?: string;
+
+  @ApiPropertyOptional({ description: 'Sort order' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim().toLowerCase() : undefined))
+  @IsString()
+  sortOrder?: string;
+
+  @ApiPropertyOptional({ description: 'Sort alias' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value.trim() !== 'undefined' ? value.trim() : undefined))
+  @IsString()
+  sort?: string;
+
+  @ApiPropertyOptional({ description: 'Cache buster' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : undefined))
+  @IsString()
+  _?: string;
 }
 
 export class PreviewMetaTemplateDto {

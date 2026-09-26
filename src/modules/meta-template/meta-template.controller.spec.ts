@@ -73,6 +73,59 @@ describe('MetaTemplateController & DTO Validation', () => {
       expect(dto.limit).toBe(50);
     });
 
+    it('safely handles undefined/null strings without failing validation or throwing 400', async () => {
+      const rawQuery = {
+        page: 'undefined',
+        limit: 'undefined',
+        status: 'undefined',
+        category: 'undefined',
+        search: 'undefined',
+      };
+
+      const dto = plainToInstance(QueryMetaTemplateDto, rawQuery);
+      const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.length).toBe(0);
+      expect(dto.page).toBeUndefined();
+      expect(dto.limit).toBeUndefined();
+      expect(dto.status).toBeUndefined();
+      expect(dto.category).toBeUndefined();
+      expect(dto.search).toBeUndefined();
+    });
+
+    it('whitelists type, channel, provider, offset, and sort parameters', async () => {
+      const rawQuery = {
+        type: 'meta',
+        channel: 'whatsapp',
+        provider: 'meta',
+        offset: '0',
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+      };
+
+      const dto = plainToInstance(QueryMetaTemplateDto, rawQuery);
+      const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.length).toBe(0);
+      expect(dto.type).toBe('meta');
+      expect(dto.channel).toBe('whatsapp');
+      expect(dto.provider).toBe('meta');
+      expect(dto.offset).toBe(0);
+      expect(dto.sortBy).toBe('createdAt');
+      expect(dto.sortOrder).toBe('desc');
+    });
+
+    it('safely handles boolean isLocalActive and isActive values', async () => {
+      const rawQuery = {
+        isLocalActive: true as any,
+        isActive: false as any,
+      };
+
+      const dto = plainToInstance(QueryMetaTemplateDto, rawQuery);
+      const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.length).toBe(0);
+      expect(dto.isLocalActive).toBe('true');
+      expect(dto.isActive).toBe('false');
+    });
+
     it('successfully validates CreateMetaTemplateDto with frontend payload (displayName, bodyText, etc.)', async () => {
       const rawBody = {
         name: 'test_lead_tpl',
