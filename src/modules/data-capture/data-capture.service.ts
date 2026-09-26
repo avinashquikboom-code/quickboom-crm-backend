@@ -1791,37 +1791,13 @@ export class DataCaptureService implements OnModuleInit {
         where: { id: numId, deletedAt: null },
       });
       if (anyPlace) {
-        place = anyPlace;
         if (isNaN(numCustomerId) || numCustomerId <= 0) {
           numCustomerId = anyPlace.customerId;
+          place = anyPlace;
+        } else if (anyPlace.customerId === numCustomerId) {
+          place = anyPlace;
         }
       }
-    }
-
-    if (!place && (dto?.businessName || dto?.companyName)) {
-      const biz = (dto.businessName || dto.companyName || '').trim();
-      place = {
-        id: !isNaN(numId) ? numId : undefined,
-        customerId: numCustomerId,
-        googlePlaceId: dto.googlePlaceId || (typeof id === 'string' && !id.startsWith('custom_') ? id : undefined),
-        sourceRecordId: dto.sourceRecordId || String(id),
-        businessName: biz,
-        category: dto.category || 'General',
-        address: dto.address,
-        phone: dto.phone,
-        email: dto.email,
-        website: dto.website,
-        rating: dto.rating ? Number(dto.rating) : undefined,
-        reviewCount: dto.reviewCount ? Number(dto.reviewCount) : undefined,
-        latitude: dto.latitude ? Number(dto.latitude) : undefined,
-        longitude: dto.longitude ? Number(dto.longitude) : undefined,
-        source: dto.source || 'GOOGLE_PLACES',
-        status: 'CAPTURED',
-        photos: dto.photos || dto.googlePhotos,
-        socialMedia: dto.socialMedia,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any;
     }
 
     if (!place) {
@@ -1899,27 +1875,27 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     const importPlace = {
-      ...(place || {}),
-      id: place?.id || (!isNaN(numId) ? numId : undefined),
-      businessName: place?.businessName || dto?.businessName || dto?.companyName,
-      phone: place?.phone || dto?.phone,
-      email: place?.email || dto?.email,
-      website: place?.website || dto?.website,
-      address: place?.address || dto?.address,
-      googlePlaceId: place?.googlePlaceId || dto?.googlePlaceId,
-      sourceRecordId: place?.sourceRecordId || dto?.sourceRecordId || String(id),
-      category: place?.category || dto?.category,
-      rating: place?.rating ?? dto?.rating,
-      reviewCount: place?.reviewCount ?? dto?.reviewCount,
-      latitude: place?.latitude ?? dto?.latitude,
-      longitude: place?.longitude ?? dto?.longitude,
-      photos: place?.photos || dto?.photos,
-      googlePhotos: (place as any)?.rawData?.googlePhotos || dto?.googlePhotos,
-      socialMedia: place?.socialMedia || dto?.socialMedia,
+      ...place,
+      id: place.id,
+      businessName: place.businessName,
+      phone: place.phone,
+      email: place.email,
+      website: place.website,
+      address: place.address,
+      googlePlaceId: place.googlePlaceId,
+      sourceRecordId: place.sourceRecordId || String(place.id),
+      category: place.category,
+      rating: place.rating,
+      reviewCount: place.reviewCount,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      photos: (place as any).photos,
+      googlePhotos: (place as any)?.rawData?.googlePhotos,
+      socialMedia: (place as any)?.socialMedia || (place as any)?.rawData?.socialMedia,
     };
 
-    const importRes = await this.importToLeads(customerId, userId, {
-      placeIds: [String(place?.id || id)],
+    const importRes = await this.importToLeads(numCustomerId, userId, {
+      placeIds: [String(place.id)],
       places: [importPlace],
       captureRequestId: captureRequestId || dto?.captureRequestId || place.jobId,
     });
@@ -2508,7 +2484,7 @@ export class DataCaptureService implements OnModuleInit {
                   state: parsedAddress.state,
                   pincode: parsedAddress.pincode,
                   category: resolvedCategory,
-                  source: 'GOOGLE_DISCOVERY',
+                  source: candidate.source || dbPlace.source || (googlePlaceId ? 'GOOGLE_PLACES' : 'GOOGLE_DISCOVERY'),
                   status: 'NEW',
                   stageId: newStage?.id || null,
                   priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
@@ -2602,7 +2578,7 @@ export class DataCaptureService implements OnModuleInit {
                   dataCapturePlaceId: dbPlace.id,
                   googlePlaceId,
                   jobId: activeJobId,
-                  source: 'GOOGLE_DISCOVERY',
+                  source: candidate.source || dbPlace.source || (googlePlaceId ? 'GOOGLE_PLACES' : 'GOOGLE_DISCOVERY'),
                   captureRequestId: placeCaptureRequestId,
                 },
               },
