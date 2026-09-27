@@ -1610,10 +1610,23 @@ export class LeadRepository {
 
     const nextDate = dto.nextFollowUpDate ? new Date(dto.nextFollowUpDate) : null;
 
+    const followUpStage = await this.prisma.leadStage.findFirst({
+      where: {
+        OR: [
+          { customerId: numCustomerId, key: 'FOLLOW_UP', deletedAt: null },
+          { customerId: null, key: 'FOLLOW_UP', deletedAt: null },
+          { customerId: numCustomerId, name: { contains: 'follow', mode: 'insensitive' }, deletedAt: null },
+          { customerId: null, name: { contains: 'follow', mode: 'insensitive' }, deletedAt: null },
+        ],
+      },
+      orderBy: { customerId: 'desc' },
+    });
+
     await this.prisma.lead.update({
       where: { id: numLeadId },
       data: {
         status: LeadStatus.FOLLOW_UP,
+        ...(followUpStage ? { stageId: followUpStage.id } : {}),
         nextFollowUpDate: nextDate,
         nextFollowUpTime: dto.nextFollowUpTime,
       },
@@ -1809,10 +1822,23 @@ export class LeadRepository {
     const isAccepted = dto.customerResponse.toLowerCase().includes('accept');
     const targetStatus = isAccepted ? LeadStatus.PAYMENT : LeadStatus.FINAL_CALL;
 
+    const finalCallStage = await this.prisma.leadStage.findFirst({
+      where: {
+        OR: [
+          { customerId: numCustomerId, key: 'FINAL_CALL', deletedAt: null },
+          { customerId: null, key: 'FINAL_CALL', deletedAt: null },
+          { customerId: numCustomerId, name: { contains: 'final', mode: 'insensitive' }, deletedAt: null },
+          { customerId: null, name: { contains: 'final', mode: 'insensitive' }, deletedAt: null },
+        ],
+      },
+      orderBy: { customerId: 'desc' },
+    });
+
     await this.prisma.lead.update({
       where: { id: numLeadId },
       data: {
         status: targetStatus,
+        ...(targetStatus === LeadStatus.FINAL_CALL && finalCallStage ? { stageId: finalCallStage.id } : {}),
         nextFollowUpDate: dto.expectedClosingDate ? new Date(dto.expectedClosingDate) : undefined,
       },
     });
