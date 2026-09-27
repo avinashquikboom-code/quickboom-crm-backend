@@ -259,6 +259,54 @@ export class VisitService {
       },
     });
 
+    // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
+    if (dto.leadId) {
+      try {
+        const numLeadId = Number(dto.leadId);
+        const visitScheduledStage = await this.prisma.leadStage.findFirst({
+          where: {
+            AND: [
+              {
+                OR: [
+                  { key: 'VISIT_SCHEDULED' },
+                  { key: 'VISIT' },
+                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                ],
+              },
+              {
+                OR: [
+                  ...(numCustomerId && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                  { customerId: null },
+                ],
+              },
+            ],
+            deletedAt: null,
+          },
+          orderBy: { customerId: 'desc' },
+        });
+
+        await this.prisma.lead.update({
+          where: { id: numLeadId },
+          data: {
+            status: 'VISIT_SCHEDULED',
+            ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
+            ...(employeeId ? { employeeId } : {}),
+          },
+        });
+
+        await this.prisma.leadActivityTimeline.create({
+          data: {
+            leadId: numLeadId,
+            action: 'VISIT_SCHEDULED',
+            description: `Field Visit Scheduled for ${dto.date ? String(dto.date).split('T')[0] : 'today'} at ${dto.time || '10:00 AM'} - ${dto.purpose || 'Client Visit'}`,
+            metadata: { visitId: visit.id, employeeId, location: dto.location },
+          },
+        }).catch(() => {});
+      } catch (leadSyncErr: any) {
+        this.logger.warn(`Could not sync lead stage on visit create: ${leadSyncErr?.message}`);
+      }
+    }
+
     // Dispatch Calendar Appointment Email & WhatsApp with PDF (non-blocking)
     try {
       await this.sendAppointmentCommunications(visit);

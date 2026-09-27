@@ -757,6 +757,10 @@ export class ManageVisitDto {
   @IsNotEmpty()
   action: 'SCHEDULE' | 'START' | 'COMPLETE';
 
+  @ApiPropertyOptional({ example: 12, description: 'Assigned employee/visitor ID' })
+  @IsOptional()
+  employeeId?: number | string;
+
   @ApiPropertyOptional({ example: 'Product Demo & Architecture Review' })
   @IsString()
   @IsOptional()

@@ -78,38 +78,62 @@ export class MobileVisitController {
 
     const visits = await this.prisma.visit.findMany({
       where,
-      orderBy: { date: 'asc' },
+      orderBy: tab === 'completed' ? { updatedAt: 'desc' } : { date: 'asc' },
       include: {
+        employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
         company: { select: { id: true, name: true, city: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
         deal: { select: { id: true, title: true } },
-        lead: { select: { id: true, title: true } },
+        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true } },
       },
     });
 
-    const mapped = visits.map((v) => ({
-      id: v.id,
-      customer: v.customerName || v.company?.name || 'Unknown Customer',
-      customerName: v.customerName,
-      location: v.location || v.company?.city || 'N/A',
-      purpose: v.purpose,
-      date: v.date ? new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '',
-      time: v.time || '',
-      status: v.status,
-      tab: v.status === VisitStatus.SCHEDULED
-        ? 'upcoming'
-        : v.status === VisitStatus.IN_PROGRESS
-          ? 'ongoing'
-          : 'completed',
-      notes: v.notes,
-      outcome: v.outcome,
-      visitType: v.visitType,
-      latitude: v.latitude,
-      longitude: v.longitude,
-      completedAt: v.completedAt,
-      company: v.company,
-      contact: v.contact,
-    }));
+    const mapped = visits.map((v) => {
+      const assignedEmpName = v.employee
+        ? `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim()
+        : null;
+      const leadName = v.lead
+        ? (v.lead.companyName || `${v.lead.firstName || ''} ${v.lead.lastName || ''}`.trim() || v.lead.title)
+        : null;
+
+      return {
+        id: v.id,
+        customer: v.customerName || leadName || v.company?.name || 'Unknown Customer',
+        customerName: v.customerName || leadName,
+        leadTitle: v.lead?.title,
+        leadId: v.leadId,
+        assignedEmployee: assignedEmpName,
+        employee: v.employee,
+        location: v.location || v.company?.city || 'N/A',
+        purpose: v.purpose,
+        date: v.date ? new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
+        scheduledDate: v.date,
+        time: v.time || '',
+        status: v.status,
+        tab: v.status === VisitStatus.SCHEDULED
+          ? 'upcoming'
+          : v.status === VisitStatus.IN_PROGRESS
+            ? 'ongoing'
+            : 'completed',
+        notes: v.notes,
+        outcome: v.outcome,
+        visitType: v.visitType,
+        latitude: v.latitude,
+        longitude: v.longitude,
+        completedAt: v.completedAt,
+        completedAtFormatted: v.completedAt
+          ? new Date(v.completedAt).toLocaleString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : null,
+        company: v.company,
+        contact: v.contact,
+      };
+    });
 
     return { items: mapped, data: mapped, total: mapped.length };
   }
@@ -176,11 +200,58 @@ export class MobileVisitController {
 
     const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
 
-    return this.visitService.update(numCustomerId, id, {
+    const updated = await this.visitService.update(numCustomerId, id, {
       status: VisitStatus.COMPLETED,
       notes: body?.notes,
       outcome: body?.outcome,
       nextFollowUpDate: body?.nextFollowUpDate,
     });
+
+    if (visit.leadId) {
+      try {
+        const visitDoneStage = await this.prisma.leadStage.findFirst({
+          where: {
+            AND: [
+              {
+                OR: [
+                  { key: 'VISIT_DONE' },
+                  { key: 'VISIT' },
+                  { name: { equals: 'Visit Done', mode: 'insensitive' } },
+                ],
+              },
+              {
+                OR: [
+                  ...(numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                  { customerId: null },
+                ],
+              },
+            ],
+            deletedAt: null,
+          },
+          orderBy: { customerId: 'desc' },
+        });
+
+        await this.prisma.lead.update({
+          where: { id: visit.leadId },
+          data: {
+            status: 'VISIT_DONE',
+            ...(visitDoneStage ? { stageId: visitDoneStage.id } : {}),
+          },
+        });
+
+        await this.prisma.leadActivityTimeline.create({
+          data: {
+            leadId: visit.leadId,
+            action: 'VISIT_COMPLETED',
+            description: `Field Visit Completed: ${body?.outcome || 'Visit Done'} - ${body?.notes || ''}`.trim(),
+            metadata: { visitId: visit.id, outcome: body?.outcome, notes: body?.notes },
+          },
+        }).catch(() => {});
+      } catch (leadSyncErr: any) {
+        // Non-blocking timeline / stage update log
+      }
+    }
+
+    return updated;
   }
 }

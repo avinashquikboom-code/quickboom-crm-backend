@@ -1271,10 +1271,16 @@ export class LeadService {
 
     // Employee ownership enforcement: non-admin employees can only access leads assigned to them
     if (user && !isUserAdmin(user)) {
-      const empId = user.employee?.id;
+      const empId = user.employee?.id ?? user.employeeId;
+      const isVisitor = await this.leadRepository.isVisitorUser(user);
+      const hasAssignedVisit = isVisitor && empId && Array.isArray((lead as any).visits)
+        ? (lead as any).visits.some((v: any) => v.employeeId === empId)
+        : false;
+
       const isOwner =
         (empId && (lead as any).employeeId === empId) ||
-        lead.assignedToId === user.id;
+        lead.assignedToId === user.id ||
+        hasAssignedVisit;
 
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] getLeadById leadId=${numId} authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
@@ -1286,7 +1292,7 @@ export class LeadService {
         throw new ForbiddenException('You do not have permission to access this lead.');
       }
 
-      if (await this.leadRepository.isVisitorUser(user)) {
+      if (isVisitor) {
         const stageKey = ((lead as any).stage?.key || '').toUpperCase();
         const stageName = ((lead as any).stage?.name || '').toUpperCase();
         const status = (lead.status || '').toUpperCase();
@@ -1632,6 +1638,22 @@ export class LeadService {
       }
     } else {
       throw new BadRequestException('Either stageId or status must be provided.');
+    }
+
+    // Visitor permission enforcement: Visitor can only transition to VISIT_DONE
+    if (await this.leadRepository.isVisitorUser(user)) {
+      const targetStatus = (resolvedStatus || '').toUpperCase();
+      const targetName = (stageName || '').toUpperCase();
+      const isTargetVisitDone =
+        targetStatus === 'VISIT_DONE' ||
+        targetStatus === 'VISIT' ||
+        targetName === 'VISIT DONE' ||
+        targetName === 'VISIT' ||
+        targetName.includes('VISIT DONE');
+
+      if (!isTargetVisitDone) {
+        throw new ForbiddenException('Visitor employee can only update leads to Visit Done stage.');
+      }
     }
 
     // Detect if stage or status actually changed

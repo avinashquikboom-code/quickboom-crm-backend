@@ -769,7 +769,12 @@ export class LeadRepository {
       );
 
       if (empId) {
-        andConditions.push({ employeeId: Number(empId) });
+        andConditions.push({
+          OR: [
+            { employeeId: Number(empId) },
+            { visits: { some: { employeeId: Number(empId) } } },
+          ],
+        });
       } else {
         andConditions.push({ id: -1 });
       }
@@ -1707,11 +1712,17 @@ export class LeadRepository {
     if (dto.action === 'SCHEDULE') {
       const visitDate = dto.date ? new Date(dto.date) : new Date();
       const fallbackEmpId = employee?.id || (await this.getOrCreateFallbackEmployee(numCustomerId, numUserId));
+      const targetEmpId = dto.employeeId
+        ? Number(dto.employeeId)
+        : lead.employeeId
+          ? Number(lead.employeeId)
+          : fallbackEmpId;
+
       const createdVisit = await this.prisma.visit.create({
         data: {
           customerId: numCustomerId,
           leadId: numLeadId,
-          employeeId: fallbackEmpId,
+          employeeId: targetEmpId,
           customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
           purpose: dto.purpose || 'Client Meeting & Demo',
           date: visitDate,
@@ -1722,11 +1733,43 @@ export class LeadRepository {
         },
       });
 
+      // Find Visit Scheduled stage
+      const visitScheduledStage = await this.prisma.leadStage.findFirst({
+        where: {
+          AND: [
+            {
+              OR: [
+                { key: 'VISIT_SCHEDULED' },
+                { key: 'VISIT' },
+                { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+              ],
+            },
+            {
+              OR: [
+                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                { customerId: null },
+              ],
+            },
+          ],
+          deletedAt: null,
+        },
+        orderBy: { customerId: 'desc' },
+      });
+
+      await this.prisma.lead.update({
+        where: { id: numLeadId },
+        data: {
+          status: LeadStatus.VISIT_SCHEDULED,
+          ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
+          ...(dto.employeeId ? { employeeId: targetEmpId } : {}),
+        },
+      });
+
       await this.logTimeline(
         numLeadId,
         'VISIT_SCHEDULED',
         `Field Visit Scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'} - ${dto.purpose || 'Client Demo'}`,
-        { visitId: createdVisit.id, location: dto.location },
+        { visitId: createdVisit.id, location: dto.location, employeeId: targetEmpId },
       );
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
@@ -1765,17 +1808,41 @@ export class LeadRepository {
             status: 'COMPLETED',
             completedAt: new Date(),
             notes: dto.notes || dto.summary,
+            outcome: dto.customerResponse || dto.summary || visit.outcome,
           },
         });
       }
+
+      const visitDoneStage = await this.prisma.leadStage.findFirst({
+        where: {
+          AND: [
+            {
+              OR: [
+                { key: 'VISIT_DONE' },
+                { key: 'VISIT' },
+                { name: { equals: 'Visit Done', mode: 'insensitive' } },
+              ],
+            },
+            {
+              OR: [
+                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                { customerId: null },
+              ],
+            },
+          ],
+          deletedAt: null,
+        },
+        orderBy: { customerId: 'desc' },
+      });
 
       await this.updateStatus(
         numCustomerId,
         numLeadId,
         lead.status,
-        LeadStatus.VISIT,
+        LeadStatus.VISIT_DONE,
         numUserId,
         `Visit completed: ${dto.summary || 'Successful discussion'}`,
+        visitDoneStage?.id,
       );
 
       await this.logTimeline(
