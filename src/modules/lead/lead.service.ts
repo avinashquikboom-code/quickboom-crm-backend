@@ -3928,7 +3928,7 @@ Sent by ${senderOrgName} via CRM.
 
     if (effectiveStageId && this.prisma.leadStage) {
       configuredStage = await this.prisma.leadStage.findFirst({
-        where: { id: Number(effectiveStageId) },
+        where: { id: Number(effectiveStageId), deletedAt: null },
         include: { whatsappTemplate: true },
       }).catch(() => null);
     }
@@ -3936,14 +3936,18 @@ Sent by ${senderOrgName} via CRM.
     if (!configuredStage && this.prisma.leadStage) {
       configuredStage = await this.prisma.leadStage.findFirst({
         where: {
+          deletedAt: null,
           OR: [
             { key: normStage },
             { name: { equals: targetStageName, mode: 'insensitive' } },
             { key: stageKey },
           ],
-          ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+          ...(customerId
+            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+            : { customerId: null }),
         },
         include: { whatsappTemplate: true },
+        orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
       }).catch(() => null);
     }
 
@@ -3967,8 +3971,8 @@ Sent by ${senderOrgName} via CRM.
     if (requestedTemplateId && this.prisma.metaTemplate) {
       metaTemplate = (configuredStage?.whatsappTemplate && configuredStage.whatsappTemplate.id === Number(requestedTemplateId))
         ? configuredStage.whatsappTemplate
-        : await this.prisma.metaTemplate.findUnique({
-            where: { id: Number(requestedTemplateId) },
+        : await this.prisma.metaTemplate.findFirst({
+            where: { id: Number(requestedTemplateId), deletedAt: null },
           }).catch(() => null);
 
       if (!metaTemplate) {
@@ -3997,12 +4001,17 @@ Sent by ${senderOrgName} via CRM.
     } else if (dto?.templateName && this.prisma.metaTemplate) {
       metaTemplate = await this.prisma.metaTemplate.findFirst({
         where: {
+          deletedAt: null,
           OR: [
             { templateName: dto.templateName },
             { name: dto.templateName },
           ],
           status: 'APPROVED',
+          ...(customerId
+            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+            : { customerId: null }),
         },
+        orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
       }).catch(() => null);
     } else if (!metaTemplate && !requestedTemplateId && this.prisma.metaTemplate) {
       // Auto-match approved Meta template by stage key/name
@@ -4027,7 +4036,9 @@ Sent by ${senderOrgName} via CRM.
             { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
             { name: { in: candidateKeys } },
           ],
-          ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+          ...(customerId
+            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+            : { customerId: null }),
         },
         orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
       }).catch(() => null);
@@ -4058,7 +4069,7 @@ Sent by ${senderOrgName} via CRM.
     const stageIdStr = String(configuredStage?.id || effectiveStageId || 'N/A');
     const templateIdStr = String(metaTemplate?.id || 'N/A');
     const templateNameStr = metaTemplate?.templateName || (dto?.message ? 'custom_message' : (fallbackTemplate?.templateName || stageKey));
-    const templateLangStr = metaTemplate?.language || fallbackTemplate?.language || 'en';
+    const templateLangStr = metaTemplate?.language || fallbackTemplate?.language || 'en_US';
 
     this.logger.log(`[STAGE_CHANGE] Lead ID: ${lead.id} | Stage: ${targetStageName} | Stage ID: ${stageIdStr}`);
     this.logger.log(`[WHATSAPP_AUTOMATION] Stage: ${targetStageName} | Stage ID: ${stageIdStr} | Automation Enabled: ${configuredStage ? configuredStage.whatsappEnabled : true}`);
@@ -4066,7 +4077,7 @@ Sent by ${senderOrgName} via CRM.
     this.logger.log(`[WHATSAPP_SEND] Recipient: ${maskPhone(phone)} | Template: ${templateNameStr}`);
 
     const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
-    const companyName = lead.customer?.companyName || lead.customer?.name || 'QUIKBOOM Digital Marketing Agency';
+    const companyName = lead.customer?.companyName || lead.customer?.name || lead.companyName || 'QUIKBOOM Digital Marketing Agency';
 
     let userName = 'QuickBoom Team';
     let assignedEmployeeName = 'QuickBoom Team';
@@ -4104,18 +4115,31 @@ Sent by ${senderOrgName} via CRM.
       }
     }
 
+    const followUpDateStr = lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '';
+    const followUpTimeStr = lead.nextFollowUpTime || '';
+
     const variables: Record<string, string> = {
       leadName: leadFullName,
-      leadTitle: lead.title || leadFullName,
+      name: leadFullName,
+      customerName: leadFullName,
+      firstName: lead.firstName || leadFullName,
+      lastName: lead.lastName || '',
+      phone,
+      mobile: phone,
       companyName,
+      businessName: lead.companyName || companyName,
+      leadTitle: lead.title || leadFullName,
+      leadId: String(lead.id),
       userName,
       assignedUser: userName,
       assignedEmployeeName,
       assignedEmployeeEmail,
       assignedEmployeePhone,
       stage: targetStageName,
-      startDate: lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '',
-      startTime: lead.nextFollowUpTime || '',
+      startDate: followUpDateStr,
+      startTime: followUpTimeStr,
+      nextFollowUpDate: followUpDateStr,
+      nextFollowUpTime: followUpTimeStr,
     };
 
     let result: any = { success: false, messageId: undefined, skipped: true };
@@ -4322,20 +4346,25 @@ Sent by ${senderOrgName} via CRM.
       let stageConfig: any = null;
       if (effectiveStageId && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: { id: Number(effectiveStageId) },
+          where: { id: Number(effectiveStageId), deletedAt: null },
           include: { whatsappTemplate: true },
         }).catch(() => null);
       }
       if (!stageConfig && newStageName && this.prisma.leadStage) {
+        const normKey = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
         stageConfig = await this.prisma.leadStage.findFirst({
           where: {
+            deletedAt: null,
             OR: [
               { name: { equals: newStageName, mode: 'insensitive' } },
-              { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
+              { key: normKey },
             ],
-            ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+            ...(customerId
+              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+              : { customerId: null }),
           },
           include: { whatsappTemplate: true },
+          orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
       }
 
@@ -4366,7 +4395,57 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // Check if template is configured strictly for the NEW stage
+      // Resolve the target Meta template for the NEW stage
+      let targetMetaTemplate: any = null;
+      const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
+
+      if (resolvedTplId && this.prisma.metaTemplate) {
+        targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
+          ? stageConfig.whatsappTemplate
+          : await this.prisma.metaTemplate.findFirst({
+              where: { id: Number(resolvedTplId), deletedAt: null },
+            }).catch(() => null);
+      }
+      if (!targetMetaTemplate && templateName && this.prisma.metaTemplate) {
+        targetMetaTemplate = await this.prisma.metaTemplate.findFirst({
+          where: {
+            deletedAt: null,
+            OR: [{ templateName }, { name: templateName }],
+            ...(customerId
+              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+              : { customerId: null }),
+          },
+          orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
+        }).catch(() => null);
+      }
+      if (!targetMetaTemplate && this.prisma.metaTemplate) {
+        const targetKey = (stageConfig?.key || newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+        const mappedKey = STAGE_KEY_TO_WHATSAPP_KEY[targetKey] || targetKey;
+        const candidateKeys = Array.from(new Set([
+          targetKey,
+          mappedKey,
+          `lead_stage_${targetKey.toLowerCase()}`,
+          `lead_stage_${mappedKey.toLowerCase()}`,
+        ].filter(Boolean)));
+
+        targetMetaTemplate = await this.prisma.metaTemplate.findFirst({
+          where: {
+            deletedAt: null,
+            isLocalActive: true,
+            status: 'APPROVED',
+            OR: [
+              { key: { in: candidateKeys } },
+              { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
+              { name: { in: candidateKeys } },
+            ],
+            ...(customerId
+              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
+              : { customerId: null }),
+          },
+          orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
+        }).catch(() => null);
+      }
+
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const normNewStageKey = (stageConfig?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
       const targetStageKey = normNewStageKey || normNewStage;
@@ -4375,10 +4454,8 @@ Sent by ${senderOrgName} via CRM.
       const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
         Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
-      const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
       const hasConfiguredTemplate = Boolean(
-        resolvedTplId ||
-        stageConfig?.whatsappTemplate ||
+        targetMetaTemplate ||
         customMessage ||
         templateName ||
         hasInMemoryFallback,
@@ -4411,7 +4488,7 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // 3. Debounce check: avoid duplicate sends within 60s for the same stage
+      // 3. Debounce check: avoid duplicate sends within 60s for the exact same stage transition
       let recentTimeline: any = null;
       if (this.prisma.leadActivityTimeline?.findFirst) {
         recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
@@ -4428,12 +4505,13 @@ Sent by ${senderOrgName} via CRM.
 
       if (recentTimeline) {
         const meta = (recentTimeline.metadata as any) || {};
-        const recentStage = (meta.stageName || '').trim().toUpperCase();
+        const recentStage = (meta.stageName || meta.newStage || '').trim().toUpperCase();
         const currentNewStage = (newStageName || '').trim().toUpperCase();
-        const wasSentOrPending = meta.status === 'Sent' || meta.success === true || !meta.status;
+        const wasSentOrPending = meta.status === 'Sent' || meta.status === 'SENT' || meta.success === true;
         if (
           wasSentOrPending &&
-          (!recentStage || recentStage === currentNewStage || (eventType === 'LEAD_CREATED' && recentTimeline.action === 'LEAD_CREATED_WHATSAPP'))
+          recentStage &&
+          recentStage === currentNewStage
         ) {
           this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
           return {
@@ -4499,9 +4577,9 @@ Sent by ${senderOrgName} via CRM.
       const sendRes = await this.sendLeadWhatsApp(customerId, lead.id, userId, {
         message: customMessage,
         templateName,
-        stageName: newStageName,
+        stageName: stageConfig?.name || newStageName,
         stageId: stageConfig?.id || effectiveStageId,
-        whatsappTemplateId: resolvedTplId,
+        whatsappTemplateId: targetMetaTemplate?.id || resolvedTplId,
         eventType,
       });
 

@@ -1364,15 +1364,27 @@ export class WhatsappService {
     }
 
     const positionalFallback: Record<string, string> = {
-      '1': variables.leadName || variables.leadTitle || 'Valued Prospect',
-      '2': variables.companyName || 'QUIKBOOM',
-      '3': variables.leadTitle || variables.userName || 'Marketing Solution',
-      '4': variables.userName || variables.assignedEmployeeName || 'QuickBoom Team',
+      '1': variables.customerName || variables.name || variables.firstName || variables.leadName || variables.leadTitle || 'Valued Prospect',
+      '2': variables.companyName || variables.businessName || 'QUIKBOOM',
+      '3': variables.leadTitle || variables.userName || variables.assignedUser || 'Marketing Solution',
+      '4': variables.userName || variables.assignedUser || variables.assignedEmployeeName || 'QuickBoom Team',
     };
 
     return matches.map((rawTag) => {
       const tag = rawTag.replace(/[\{\}\s]/g, '');
       let val = variables[tag];
+      if (val === undefined) {
+        const lower = tag.toLowerCase().replace(/_/g, '');
+        if (lower === 'customername' || lower === 'name' || lower === 'firstname' || lower === 'leadname') {
+          val = variables.customerName || variables.name || variables.firstName || variables.leadName;
+        } else if (lower === 'companyname' || lower === 'businessname') {
+          val = variables.companyName || variables.businessName;
+        } else if (lower === 'username' || lower === 'assigneduser' || lower === 'assignedemployeename') {
+          val = variables.userName || variables.assignedUser || variables.assignedEmployeeName;
+        } else if (lower === 'phone' || lower === 'mobile') {
+          val = variables.phone || variables.mobile;
+        }
+      }
       if (val === undefined && positionalFallback[tag] !== undefined) {
         val = positionalFallback[tag];
       }
@@ -1417,7 +1429,7 @@ export class WhatsappService {
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en',
+            language: dbTpl.language || 'en_US',
             status: dbTpl.status,
           };
         }
@@ -1454,7 +1466,7 @@ export class WhatsappService {
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en',
+            language: dbTpl.language || 'en_US',
             status: dbTpl.status,
           };
         }
@@ -1514,6 +1526,15 @@ export class WhatsappService {
         for (const [k, v] of Object.entries(variables)) {
           rendered = rendered.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), v || '');
         }
+        const positionalFallback: Record<string, string> = {
+          '1': variables.customerName || variables.name || variables.firstName || variables.leadName || variables.leadTitle || 'Valued Prospect',
+          '2': variables.companyName || variables.businessName || 'QUIKBOOM',
+          '3': variables.leadTitle || variables.userName || variables.assignedUser || 'Marketing Solution',
+          '4': variables.userName || variables.assignedUser || variables.assignedEmployeeName || 'QuickBoom Team',
+        };
+        for (const [k, v] of Object.entries(positionalFallback)) {
+          rendered = rendered.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), v || '');
+        }
         messageText = rendered;
       } else if (params.fallbackText) {
         messageText = params.fallbackText;
@@ -1532,7 +1553,7 @@ export class WhatsappService {
     }
 
     const templateName = template?.templateName || 'lead_stage_update';
-    const languageCode = template?.language || 'en';
+    const languageCode = template?.language || 'en_US';
     const templateParameters = template
       ? this.resolveTemplateParameters(template.body, variables)
       : Object.values(variables).slice(0, 3).map((v) => ({ type: 'text' as const, text: String(v) }));
