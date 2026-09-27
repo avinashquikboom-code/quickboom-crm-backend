@@ -182,15 +182,6 @@ export function extractUpcomingCall(
       ['LOST', 'CANCELLED'].includes(stageKey) ||
       ['lost', 'cancelled'].includes(stageName);
 
-    // Check if lead has reached WON or has been converted to customer
-    const isLeadWon =
-      ['WON', 'CONVERTED'].includes(st) ||
-      ['WON', 'CONVERTED'].includes(stageKey) ||
-      stageName.includes('won') ||
-      stageName.includes('converted') ||
-      Boolean(l.convertedAt) ||
-      Boolean(l.convertedCustomer);
-
     // Final Call stage detection using configured key, stageId, status enum, or fallback name
     const isFinalCallStage =
       st === 'FINAL_CALL' ||
@@ -210,6 +201,17 @@ export function extractUpcomingCall(
       (l.stageId && followUpStageIds?.has(Number(l.stageId))) ||
       (l.stage?.id && followUpStageIds?.has(Number(l.stage.id))) ||
       stageName.includes('follow');
+
+    // Check if lead has reached WON or has been converted to customer (and is not currently in follow-up/final call)
+    const isLeadWon =
+      !isFinalCallStage &&
+      !isFollowUpStage &&
+      (['WON', 'CONVERTED'].includes(st) ||
+        ['WON', 'CONVERTED'].includes(stageKey) ||
+        stageName.includes('won') ||
+        stageName.includes('converted') ||
+        Boolean(l.convertedAt) ||
+        Boolean(l.convertedCustomer));
 
     // Call completion and cancellation flags
     const isFinalCallCompleted =
