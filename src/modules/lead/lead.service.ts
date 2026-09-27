@@ -3861,7 +3861,7 @@ Sent by ${senderOrgName} via CRM.
     const rawKey = dto?.stageName
       ? normStage
       : (lead.stage?.key ? String(lead.stage.key).trim().toUpperCase().replace(/[\s-]+/g, '_') : normStage);
-    const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[rawKey] || rawKey || 'NEW';
+    const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[rawKey] || STAGE_KEY_TO_WHATSAPP_KEY[normStage] || rawKey;
 
     // 1. Resolve Target Lead Stage Configuration from DB
     const effectiveStageId = dto?.stageId || lead.stageId || lead.stage?.id;
@@ -3944,6 +3944,33 @@ Sent by ${senderOrgName} via CRM.
           ],
           status: 'APPROVED',
         },
+      }).catch(() => null);
+    } else if (!metaTemplate && !requestedTemplateId && this.prisma.metaTemplate) {
+      // Auto-match approved Meta template by stage key/name
+      const candidateKeys = Array.from(
+        new Set([
+          stageKey,
+          normStage,
+          rawKey,
+          targetStageName,
+          `lead_stage_${normStage.toLowerCase()}`,
+          `lead_stage_${stageKey.toLowerCase()}`,
+        ].filter(Boolean))
+      ) as string[];
+
+      metaTemplate = await this.prisma.metaTemplate.findFirst({
+        where: {
+          deletedAt: null,
+          isLocalActive: true,
+          status: 'APPROVED',
+          OR: [
+            { key: { in: candidateKeys } },
+            { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
+            { name: { in: candidateKeys } },
+          ],
+          ...(customerId ? { customerId: { in: [Number(customerId), null as any] } } : {}),
+        },
+        orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
       }).catch(() => null);
     }
 
@@ -4280,17 +4307,23 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // Check if template is configured
+      // Check if template is configured strictly for the NEW stage
       const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const targetStageKey = normNewStage || normLeadStageKey;
-      const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normLeadStageKey] || targetStageKey || 'NEW';
+      const normNewStageKey = (stageConfig?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const targetStageKey = normNewStageKey || normNewStage;
+      const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normNewStage] || targetStageKey;
 
       const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
         Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
       const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
-      const hasConfiguredTemplate = Boolean(resolvedTplId || stageConfig?.whatsappTemplate || customMessage || templateName || hasInMemoryFallback);
+      const hasConfiguredTemplate = Boolean(
+        resolvedTplId ||
+        stageConfig?.whatsappTemplate ||
+        customMessage ||
+        templateName ||
+        hasInMemoryFallback,
+      );
 
       if (!hasConfiguredTemplate) {
         const skipMsg = `No WhatsApp template configured for stage: ${stageConfig?.name || newStageName}`;
@@ -4319,7 +4352,7 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // 3. Debounce check: avoid duplicate sends within 15s for the same stage
+      // 3. Debounce check: avoid duplicate sends within 60s for the same stage
       let recentTimeline: any = null;
       if (this.prisma.leadActivityTimeline?.findFirst) {
         recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
@@ -4327,7 +4360,7 @@ Sent by ${senderOrgName} via CRM.
             leadId: Number(lead.id),
             action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP', 'STAGE_CHANGE_WHATSAPP'] },
             createdAt: {
-              gte: new Date(Date.now() - 15000),
+              gte: new Date(Date.now() - 60000),
             },
           },
           orderBy: { createdAt: 'desc' },
@@ -4338,8 +4371,12 @@ Sent by ${senderOrgName} via CRM.
         const meta = (recentTimeline.metadata as any) || {};
         const recentStage = (meta.stageName || '').trim().toUpperCase();
         const currentNewStage = (newStageName || '').trim().toUpperCase();
-        if (!recentStage || recentStage === currentNewStage || (eventType === 'LEAD_CREATED' && recentTimeline.action === 'LEAD_CREATED_WHATSAPP')) {
-          this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 15s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
+        const wasSentOrPending = meta.status === 'Sent' || meta.success === true || !meta.status;
+        if (
+          wasSentOrPending &&
+          (!recentStage || recentStage === currentNewStage || (eventType === 'LEAD_CREATED' && recentTimeline.action === 'LEAD_CREATED_WHATSAPP'))
+        ) {
+          this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
           return {
             sent: false,
             status: 'SKIPPED',
