@@ -2626,14 +2626,19 @@ export class DataCaptureService implements OnModuleInit {
         skippedDuplicates++;
         duplicateNames.push(businessName);
 
-        // If existing lead was unassigned, assign to importing employee
-        if (!matchedLead.assignedToId && candAssignedToUserId) {
+        // Always ensure employeeId is set so the importing employee can see the lead on Mobile
+        const needsEmployeeUpdate =
+          candEmployeeId &&
+          (matchedLead.employeeId == null || matchedLead.employeeId !== candEmployeeId);
+        const needsAssigneeUpdate = !matchedLead.assignedToId && candAssignedToUserId;
+
+        if (needsEmployeeUpdate || needsAssigneeUpdate) {
           try {
             const updated = await this.prisma.lead.update({
               where: { id: matchedLead.id },
               data: {
-                assignedToId: candAssignedToUserId,
-                employeeId: candEmployeeId || undefined,
+                ...(needsAssigneeUpdate ? { assignedToId: candAssignedToUserId } : {}),
+                ...(needsEmployeeUpdate ? { employeeId: candEmployeeId } : {}),
               },
             });
             matchedLead = { ...matchedLead, ...updated };
@@ -2656,8 +2661,11 @@ export class DataCaptureService implements OnModuleInit {
           imported: false,
           duplicate: true,
           existingLeadId: matchedLead.id,
+          leadId: matchedLead.id,
           duplicateMatchReason,
         });
+        // Include duplicate lead in response leads array so mobile can upsert it into local cache
+        createdLeads.push(matchedLead);
         continue;
       }
 
