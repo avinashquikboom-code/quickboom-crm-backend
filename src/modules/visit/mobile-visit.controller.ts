@@ -6,6 +6,8 @@ import {
   Patch,
   Query,
   UseGuards,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
@@ -15,6 +17,7 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 /**
  * Mobile-specific visit endpoints for employee field-visit management.
@@ -148,7 +151,32 @@ export class MobileVisitController {
     @Param('id') id: string,
     @Body() body: { notes?: string; outcome?: string; nextFollowUpDate?: string },
   ) {
-    return this.visitService.update(customerId, id, {
+    const numId = Number(id);
+    const visit = await this.prisma.visit.findUnique({
+      where: { id: numId },
+    });
+
+    if (!visit) {
+      throw new NotFoundException(`Visit with ID ${id} not found`);
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        OR: [
+          { userId: user?.id },
+          { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    const isSuperAdmin = isUserSuperAdmin(user);
+    if (!isSuperAdmin && employee && visit.employeeId !== employee.id) {
+      throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
+    }
+
+    const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
+
+    return this.visitService.update(numCustomerId, id, {
       status: VisitStatus.COMPLETED,
       notes: body?.notes,
       outcome: body?.outcome,
