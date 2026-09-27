@@ -113,6 +113,7 @@ export class MobileVisitController {
         leadTitle: v.lead?.title,
         leadId: v.leadId,
         assignedEmployee: assignedEmpName,
+        completedBy: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE') ? assignedEmpName : null,
         employee: v.employee,
         location: v.location || v.company?.city || 'N/A',
         purpose: v.purpose,
@@ -217,7 +218,7 @@ export class MobileVisitController {
       notes: body?.notes,
       outcome: body?.outcome,
       nextFollowUpDate: body?.nextFollowUpDate,
-      ...(visit.employeeId || !employee?.id ? {} : { employeeId: String(employee.id) }),
+      ...(employee?.id ? { employeeId: String(employee.id) } : {}),
     });
 
     if (visit.leadId) {
@@ -249,6 +250,7 @@ export class MobileVisitController {
           data: {
             status: 'VISIT_DONE',
             ...(visitDoneStage ? { stageId: visitDoneStage.id } : {}),
+            ...(employee?.id ? { employeeId: employee.id } : {}),
           },
         });
 

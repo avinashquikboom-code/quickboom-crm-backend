@@ -1222,6 +1222,18 @@ export class LeadRepository {
         ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
         : null,
       wonAt: lead.convertedAt || null,
+      visits: Array.isArray(lead.visits)
+        ? lead.visits.map((v: any) => {
+            const empName = v.employee
+              ? `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim()
+              : (v.assignedEmployee || null);
+            return {
+              ...v,
+              assignedEmployee: empName,
+              completedBy: (v.status === 'COMPLETED' || lead.status === 'VISIT_DONE') ? empName : null,
+            };
+          })
+        : lead.visits,
     };
   }
 
@@ -1255,7 +1267,12 @@ export class LeadRepository {
           timeline: { orderBy: { createdAt: 'desc' } },
           statusHistory: { orderBy: { createdAt: 'desc' } },
           reminders: { orderBy: { remindAt: 'asc' } },
-          visits: { orderBy: { createdAt: 'desc' } },
+          visits: {
+            include: {
+              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
           quotations: {
             include: { items: true },
             orderBy: { createdAt: 'desc' },
@@ -1291,7 +1308,12 @@ export class LeadRepository {
           timeline: { orderBy: { createdAt: 'desc' } },
           statusHistory: { orderBy: { createdAt: 'desc' } },
           reminders: { orderBy: { remindAt: 'asc' } },
-          visits: { orderBy: { createdAt: 'desc' } },
+          visits: {
+            include: {
+              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
           quotations: {
             include: { items: true },
             orderBy: { createdAt: 'desc' },
@@ -1605,7 +1627,7 @@ export class LeadRepository {
             ],
           },
         });
-        const targetEmpId = leadObj?.employeeId ? Number(leadObj.employeeId) : (emp?.id || null);
+        const completionEmpId = emp?.id || (leadObj?.employeeId ? Number(leadObj.employeeId) : null);
 
         const existingVisit = await this.prisma.visit.findFirst({
           where: { leadId: numId },
@@ -1620,15 +1642,15 @@ export class LeadRepository {
               completedAt: new Date(),
               notes: notes || existingVisit.notes,
               outcome: notes || existingVisit.outcome || 'Visit Done',
-              ...(existingVisit.employeeId ? {} : (targetEmpId ? { employeeId: targetEmpId } : {})),
+              ...(completionEmpId ? { employeeId: completionEmpId } : {}),
             },
           });
-        } else if (targetEmpId) {
+        } else if (completionEmpId) {
           await this.prisma.visit.create({
             data: {
               customerId: numCustomerId,
               leadId: numId,
-              employeeId: targetEmpId,
+              employeeId: completionEmpId,
               customerName: leadObj?.companyName || `${leadObj?.firstName || ''} ${leadObj?.lastName || ''}`.trim() || 'Client',
               purpose: 'Client Meeting & Demo',
               date: new Date(),
@@ -1640,6 +1662,13 @@ export class LeadRepository {
               outcome: notes || 'Visit Done',
             },
           });
+        }
+
+        if (completionEmpId) {
+          await this.prisma.lead.update({
+            where: { id: numId },
+            data: { employeeId: completionEmpId },
+          }).catch(() => {});
         }
       } catch (err: any) {
         this.logger.warn(`[updateStatus] Failed to sync visit completion: ${err.message}`);
@@ -1865,8 +1894,16 @@ export class LeadRepository {
             completedAt: new Date(),
             notes: dto.notes || dto.summary,
             outcome: dto.customerResponse || dto.summary || visit.outcome,
+            ...(employee?.id ? { employeeId: employee.id } : {}),
           },
         });
+      }
+
+      if (employee?.id) {
+        await this.prisma.lead.update({
+          where: { id: numLeadId },
+          data: { employeeId: employee.id },
+        }).catch(() => {});
       }
 
       const visitDoneStage = await this.prisma.leadStage.findFirst({

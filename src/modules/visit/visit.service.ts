@@ -212,6 +212,15 @@ export class VisitService {
 
     // Fallback employee if not specified
     let employeeId = dto.employeeId ? Number(dto.employeeId) : undefined;
+    if (!employeeId && dto.leadId) {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: Number(dto.leadId) },
+        select: { employeeId: true },
+      });
+      if (lead?.employeeId) {
+        employeeId = Number(lead.employeeId);
+      }
+    }
     if (!employeeId) {
       const emp = await this.prisma.employee.findFirst({ where: { customerId: numCustomerId } });
       employeeId = emp?.id;

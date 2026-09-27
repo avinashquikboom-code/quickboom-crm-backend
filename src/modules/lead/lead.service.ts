@@ -2982,17 +2982,7 @@ export class LeadService {
       throw new ForbiddenException('Lead does not belong to your company/tenant.');
     }
 
-    const isConverted =
-      lead.convertedAt != null ||
-      lead.status === 'CONVERTED' ||
-      (lead as any).convertedCustomer != null ||
-      lead.convertedToCompanyId != null ||
-      lead.convertedToContactId != null ||
-      lead.convertedToDealId != null;
 
-    if (isConverted) {
-      throw new BadRequestException('Lead cannot be deleted because it has been converted to a Customer.');
-    }
 
     if (user && !isAdmin) {
       const isAssigned =
@@ -3081,22 +3071,7 @@ export class LeadService {
         continue;
       }
 
-      const isConverted =
-        lead.convertedAt != null ||
-        lead.status === 'CONVERTED' ||
-        lead.convertedCustomer != null ||
-        lead.convertedToCompanyId != null ||
-        lead.convertedToContactId != null ||
-        lead.convertedToDealId != null;
 
-      if (isConverted) {
-        results.push({
-          id,
-          success: false,
-          message: 'Lead cannot be deleted because it has been converted to a Customer.',
-        });
-        continue;
-      }
 
       if (!isAdmin) {
         const isAssigned =
