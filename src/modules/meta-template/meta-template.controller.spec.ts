@@ -126,24 +126,45 @@ describe('MetaTemplateController & DTO Validation', () => {
       expect(dto.isActive).toBe('false');
     });
 
-    it('successfully validates CreateMetaTemplateDto with frontend payload (displayName, bodyText, etc.)', async () => {
+    it('successfully validates CreateMetaTemplateDto with canonical backend contract', async () => {
       const rawBody = {
-        name: 'test_lead_tpl',
-        displayName: 'Test Lead Template',
-        bodyText: 'Hello {{leadName}}, thanks for contacting us.',
-        footerText: 'Reply STOP to unsub',
+        name: 'Test Lead Template',
+        templateName: 'test_lead_tpl',
+        body: 'Hello {{leadName}}, thanks for contacting us.',
+        footer: 'Reply STOP to unsub',
         category: 'UTILITY',
         language: 'en_US',
         headerType: 'NONE',
-        isActive: true,
+        isLocalActive: true,
       };
 
       const dto = plainToInstance(CreateMetaTemplateDto, rawBody);
       const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
       expect(errors.length).toBe(0);
-      expect(dto.displayName).toBe('Test Lead Template');
-      expect(dto.bodyText).toContain('Hello {{leadName}}');
-      expect(dto.footerText).toBe('Reply STOP to unsub');
+      expect(dto.name).toBe('Test Lead Template');
+      expect(dto.body).toContain('Hello {{leadName}}');
+      expect(dto.footer).toBe('Reply STOP to unsub');
+      expect(dto.isLocalActive).toBe(true);
+    });
+
+    it('strictly rejects non-whitelisted UI-only properties (displayName, bodyText, footerText, isActive)', async () => {
+      const rawBody = {
+        name: 'Test Lead Template',
+        body: 'Hello {{leadName}}, thanks for contacting us.',
+        displayName: 'Test Lead Template',
+        bodyText: 'Hello {{leadName}}, thanks for contacting us.',
+        footerText: 'Reply STOP to unsub',
+        isActive: true,
+      };
+
+      const dto = plainToInstance(CreateMetaTemplateDto, rawBody);
+      const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.length).toBeGreaterThan(0);
+      const propertyErrors = errors.map((e) => e.property);
+      expect(propertyErrors).toContain('displayName');
+      expect(propertyErrors).toContain('bodyText');
+      expect(propertyErrors).toContain('footerText');
+      expect(propertyErrors).toContain('isActive');
     });
   });
 

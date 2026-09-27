@@ -276,12 +276,12 @@ export class MetaTemplateService {
    */
   async create(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
-    const effectiveName = (dto.name || dto.displayName || '').trim();
+    const effectiveName = dto.name.trim();
     if (!effectiveName) {
       throw new BadRequestException('Template display name is required.');
     }
 
-    const rawBody = (dto.body || dto.bodyText || '').trim();
+    const rawBody = dto.body.trim();
     if (!rawBody) {
       throw new BadRequestException('Template message body is required.');
     }
@@ -290,7 +290,7 @@ export class MetaTemplateService {
     const headerVars = dto.headerContent ? this.extractVariables(dto.headerContent) : [];
     const variables = Array.from(new Set([...(dto.variables || []), ...bodyVars, ...headerVars]));
 
-    let rawTemplateName = (dto.templateName || dto.name || dto.displayName || '')
+    let rawTemplateName = (dto.templateName || dto.name || '')
       .trim()
       .toLowerCase()
       .replace(/[\s-]+/g, '_')
@@ -320,8 +320,6 @@ export class MetaTemplateService {
     const effectiveIsLocalActive =
       dto.isLocalActive !== undefined
         ? dto.isLocalActive
-        : dto.isActive !== undefined
-        ? dto.isActive
         : true;
 
     return this.prisma.metaTemplate.create({
@@ -337,7 +335,7 @@ export class MetaTemplateService {
         headerType: dto.headerType || 'NONE',
         headerContent: dto.headerContent || null,
         body: rawBody,
-        footer: (dto.footer || dto.footerText)?.trim() || null,
+        footer: dto.footer?.trim() || null,
         buttons: dto.buttons || null,
         variables,
         isLocalActive: effectiveIsLocalActive,
@@ -352,8 +350,8 @@ export class MetaTemplateService {
   async update(id: number, dto: UpdateMetaTemplateDto, customerId?: number | string | null) {
     const item = await this.findOne(id, customerId);
 
-    const effectiveName = dto.name !== undefined ? dto.name.trim() : (dto.displayName !== undefined ? dto.displayName.trim() : item.name);
-    const bodyToUse = dto.body !== undefined ? dto.body : (dto.bodyText !== undefined ? dto.bodyText : item.body);
+    const effectiveName = dto.name !== undefined ? dto.name.trim() : item.name;
+    const bodyToUse = dto.body !== undefined ? dto.body : item.body;
     const headerToUse = dto.headerContent !== undefined ? dto.headerContent : item.headerContent;
     const bodyVars = this.extractVariables(bodyToUse);
     const headerVars = headerToUse ? this.extractVariables(headerToUse) : [];
@@ -371,15 +369,11 @@ export class MetaTemplateService {
     const effectiveIsLocalActive =
       dto.isLocalActive !== undefined
         ? dto.isLocalActive
-        : dto.isActive !== undefined
-        ? dto.isActive
         : item.isLocalActive;
 
     const effectiveFooter =
       dto.footer !== undefined
         ? (dto.footer ? dto.footer.trim() : null)
-        : dto.footerText !== undefined
-        ? (dto.footerText ? dto.footerText.trim() : null)
         : item.footer;
 
     return this.prisma.metaTemplate.update({
