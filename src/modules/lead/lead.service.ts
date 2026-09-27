@@ -1510,7 +1510,7 @@ export class LeadService {
     dto: UpdateLeadStatusDto,
     user?: any,
   ) {
-    const lead = await this.getLeadById(customerId, id);
+    const lead = await this.getLeadById(customerId, id, user);
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
     let resolvedStageId: number | undefined = dto.stageId ? Number(dto.stageId) : undefined;

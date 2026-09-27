@@ -131,6 +131,7 @@ export class CustomerController {
   @ApiOperation({ summary: 'Get all customers with advanced filtering, search, sorting and pagination' })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'stage', required: false, description: 'Filter by lead stage key or name (e.g. FOLLOW_UP, FINAL_CALL)' })
   @ApiQuery({ name: 'source', required: false })
   @ApiQuery({ name: 'teamId', required: false, description: 'Filter by assigned Team ID' })
   @ApiQuery({ name: 'assignedEmployee', required: false })
@@ -146,6 +147,7 @@ export class CustomerController {
     @CurrentUser() user: any,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('stage') stage?: string,
     @Query('isActive') isActive?: string,
     @Query('source') source?: string,
     @Query('teamId') teamId?: string,
@@ -164,6 +166,7 @@ export class CustomerController {
     return this.customerService.findAll({
       search,
       status,
+      stage,
       isActive: activeBool,
       source,
       teamId: teamId || assignedTeamId,

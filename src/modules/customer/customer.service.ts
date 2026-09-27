@@ -64,8 +64,8 @@ export const SYSTEM_CUSTOMER_EXCLUSIONS: Prisma.CustomerWhereInput[] = [
 ];
 
 export interface UpcomingCallInfo {
-  type: 'Final Call' | 'Next Call';
-  callType: 'FINAL_CALL' | 'NEXT_CALL';
+  type: 'Final Call' | 'Next Call' | 'Follow-up';
+  callType: 'FINAL_CALL' | 'NEXT_CALL' | 'FOLLOW_UP';
   date: string;
   formattedDate: string;
   time: string;
@@ -156,6 +156,7 @@ export function extractUpcomingCall(
   c: any,
   now: Date = new Date(),
   finalCallStageIds?: Set<number>,
+  followUpStageIds?: Set<number>,
 ): UpcomingCallInfo | null {
   const linkedLeads = [
     ...((c as any).originLead ? [(c as any).originLead] : []),
@@ -163,8 +164,8 @@ export function extractUpcomingCall(
   ].filter((l: any) => l && !l.deletedAt);
 
   const candidates: Array<{
-    type: 'Final Call' | 'Next Call';
-    callType: 'FINAL_CALL' | 'NEXT_CALL';
+    type: 'Final Call' | 'Next Call' | 'Follow-up';
+    callType: 'FINAL_CALL' | 'NEXT_CALL' | 'FOLLOW_UP';
     scheduledAt: Date;
     originalTime?: string | null;
     notes?: string;
@@ -181,6 +182,15 @@ export function extractUpcomingCall(
       ['LOST', 'CANCELLED'].includes(stageKey) ||
       ['lost', 'cancelled'].includes(stageName);
 
+    // Check if lead has reached WON or has been converted to customer
+    const isLeadWon =
+      ['WON', 'CONVERTED'].includes(st) ||
+      ['WON', 'CONVERTED'].includes(stageKey) ||
+      stageName.includes('won') ||
+      stageName.includes('converted') ||
+      Boolean(l.convertedAt) ||
+      Boolean(l.convertedCustomer);
+
     // Final Call stage detection using configured key, stageId, status enum, or fallback name
     const isFinalCallStage =
       st === 'FINAL_CALL' ||
@@ -190,6 +200,16 @@ export function extractUpcomingCall(
       stageName.includes('final') ||
       l.isFinalCall === true ||
       String(l.callType || '').toUpperCase() === 'FINAL_CALL';
+
+    // Follow-up stage detection using configured key, stageId, status enum, or fallback name
+    const isFollowUpStage =
+      st === 'FOLLOW_UP' ||
+      st === 'FOLLOWUP' ||
+      stageKey === 'FOLLOW_UP' ||
+      stageKey === 'FOLLOWUP' ||
+      (l.stageId && followUpStageIds?.has(Number(l.stageId))) ||
+      (l.stage?.id && followUpStageIds?.has(Number(l.stage.id))) ||
+      stageName.includes('follow');
 
     // Call completion and cancellation flags
     const isFinalCallCompleted =
@@ -217,6 +237,10 @@ export function extractUpcomingCall(
 
       // Only scheduled calls strictly in the future are upcoming candidates (overdue calls are excluded)
       if (scheduledAt > now) {
+        const isDateCompletedFinalCall =
+          (isFinalCallCompleted || isFinalCallCancelled) &&
+          (!l.finalCallDate || new Date(l.nextFollowUpDate).getTime() <= new Date(l.finalCallDate).getTime());
+
         if (isFinalCallStage) {
           if (!isFinalCallCompleted && !isFinalCallCancelled && !isLeadCallCompleted && !isLeadCallCancelled) {
             candidates.push({
@@ -227,23 +251,25 @@ export function extractUpcomingCall(
               notes: l.workNotes || undefined,
             });
           }
-        } else {
-          // Non-final-call stage (e.g. Follow-up, Negotiation, Contacted)
-          // If a final call on this lead was completed or cancelled:
-          // check if nextFollowUpDate is a subsequent next call (after the final call date)
-          const isDateCompletedFinalCall =
-            (isFinalCallCompleted || isFinalCallCancelled) &&
-            (!l.finalCallDate || new Date(l.nextFollowUpDate).getTime() <= new Date(l.finalCallDate).getTime());
+        } else if (!isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled && !isLeadWon) {
+          const callTypeTitle = (isFinalCallCompleted || isFinalCallCancelled)
+            ? 'Next Call'
+            : isFollowUpStage
+            ? 'Follow-up'
+            : 'Next Call';
+          const callTypeEnum = (isFinalCallCompleted || isFinalCallCancelled)
+            ? 'NEXT_CALL'
+            : isFollowUpStage
+            ? 'FOLLOW_UP'
+            : 'NEXT_CALL';
 
-          if (!isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled) {
-            candidates.push({
-              type: 'Next Call',
-              callType: 'NEXT_CALL',
-              scheduledAt,
-              originalTime: l.nextFollowUpTime,
-              notes: l.workNotes || undefined,
-            });
-          }
+          candidates.push({
+            type: callTypeTitle,
+            callType: callTypeEnum,
+            scheduledAt,
+            originalTime: l.nextFollowUpTime || '11:00 AM',
+            notes: l.workNotes || undefined,
+          });
         }
       }
     }
@@ -251,10 +277,25 @@ export function extractUpcomingCall(
     // 1b. Check explicit nextCallDate if provided separately
     if (l.nextCallDate && !isLeadLostOrCancelled) {
       const nextCallAt = parseCallDateTime(l.nextCallDate, l.nextCallTime);
-      if (nextCallAt > now && !isLeadCallCompleted && !isLeadCallCancelled) {
+      const isDateCompletedFinalCall =
+        (isFinalCallCompleted || isFinalCallCancelled) &&
+        (!l.finalCallDate || new Date(l.nextCallDate).getTime() <= new Date(l.finalCallDate).getTime());
+
+      if (nextCallAt > now && !isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled && !isLeadWon) {
+        const callTypeTitle = (isFinalCallCompleted || isFinalCallCancelled)
+          ? 'Next Call'
+          : isFollowUpStage
+          ? 'Follow-up'
+          : 'Next Call';
+        const callTypeEnum = (isFinalCallCompleted || isFinalCallCancelled)
+          ? 'NEXT_CALL'
+          : isFollowUpStage
+          ? 'FOLLOW_UP'
+          : 'NEXT_CALL';
+
         candidates.push({
-          type: 'Next Call',
-          callType: 'NEXT_CALL',
+          type: callTypeTitle,
+          callType: callTypeEnum,
           scheduledAt: nextCallAt,
           originalTime: l.nextCallTime || null,
           notes: l.workNotes || undefined,
@@ -262,22 +303,29 @@ export function extractUpcomingCall(
       }
     }
 
-    // 1c. Lead in Final Call stage automatically qualifies as an Upcoming prospect unless explicitly overdue
+    const isCallCompleted =
+      isFinalCallCompleted ||
+      l.isCompleted === true ||
+      l.isCallCompleted === true ||
+      ['COMPLETED', 'DONE'].includes(String(l.callStatus || '').toUpperCase());
+
+    const isCallCancelled =
+      isFinalCallCancelled ||
+      l.isCancelled === true ||
+      ['CANCELLED'].includes(String(l.callStatus || '').toUpperCase()) ||
+      st === 'CANCELLED';
+
     const explicitDate = l.nextFollowUpDate || l.nextCallDate;
     const isExplicitlyOverdue = explicitDate && parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime) < now;
 
+    // 1c. Lead in Final Call stage automatically qualifies as an Upcoming prospect
     if (
       isFinalCallStage &&
       !isExplicitlyOverdue &&
-      !isFinalCallCompleted &&
-      !isFinalCallCancelled &&
-      !isLeadCallCompleted &&
-      !isLeadCallCancelled &&
+      !isCallCompleted &&
+      !isCallCancelled &&
       !isLeadLostOrCancelled &&
-      st !== 'WON' &&
-      stageKey !== 'WON' &&
-      !l.convertedCustomer &&
-      !l.convertedAt
+      !isLeadWon
     ) {
       const alreadyHasFinalCall = candidates.some((c) => c.callType === 'FINAL_CALL');
       if (!alreadyHasFinalCall) {
@@ -288,8 +336,32 @@ export function extractUpcomingCall(
           type: 'Final Call',
           callType: 'FINAL_CALL',
           scheduledAt,
-          originalTime: l.nextFollowUpTime || l.nextCallTime || '11:00 AM',
+          originalTime: l.nextFollowUpTime || l.nextCallTime || (explicitDate ? null : '11:00 AM'),
           notes: l.workNotes || 'Lead reached Final Call stage',
+        });
+      }
+    }
+
+    // 1d. Lead in Follow-up stage automatically qualifies as an Upcoming prospect
+    if (
+      isFollowUpStage &&
+      !isExplicitlyOverdue &&
+      !isCallCompleted &&
+      !isCallCancelled &&
+      !isLeadLostOrCancelled &&
+      !isLeadWon
+    ) {
+      const alreadyHasFollowUp = candidates.some((c) => c.callType === 'FOLLOW_UP');
+      if (!alreadyHasFollowUp) {
+        const scheduledAt = explicitDate
+          ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
+          : now;
+        candidates.push({
+          type: 'Follow-up',
+          callType: 'FOLLOW_UP',
+          scheduledAt,
+          originalTime: l.nextFollowUpTime || l.nextCallTime || (explicitDate ? null : '11:00 AM'),
+          notes: l.workNotes || 'Lead in Follow-up stage',
         });
       }
     }
@@ -304,9 +376,10 @@ export function extractUpcomingCall(
           if (!isNaN(remDate.getTime()) && remDate > now) {
             const rTitle = String(r.title || '').toLowerCase();
             const rIsFinal = isFinalCallStage || rTitle.includes('final');
+            const rIsFollow = isFollowUpStage || rTitle.includes('follow');
             candidates.push({
-              type: rIsFinal ? 'Final Call' : 'Next Call',
-              callType: rIsFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+              type: rIsFinal ? 'Final Call' : rIsFollow ? 'Follow-up' : 'Next Call',
+              callType: rIsFinal ? 'FINAL_CALL' : rIsFollow ? 'FOLLOW_UP' : 'NEXT_CALL',
               scheduledAt: remDate,
               originalTime: null,
               notes: r.title,
@@ -326,9 +399,10 @@ export function extractUpcomingCall(
           if (callDate && !isNaN(callDate.getTime()) && callDate > now) {
             const callTitle = String(call.title || call.type || '').toLowerCase();
             const isCallFinal = isFinalCallStage || callTitle.includes('final');
+            const isCallFollow = isFollowUpStage || callTitle.includes('follow');
             candidates.push({
-              type: isCallFinal ? 'Final Call' : 'Next Call',
-              callType: isCallFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+              type: isCallFinal ? 'Final Call' : isCallFollow ? 'Follow-up' : 'Next Call',
+              callType: isCallFinal ? 'FINAL_CALL' : isCallFollow ? 'FOLLOW_UP' : 'NEXT_CALL',
               scheduledAt: callDate,
               originalTime: call.time || null,
               notes: call.notes || call.title,
@@ -349,9 +423,10 @@ export function extractUpcomingCall(
         if (!isNaN(remDate.getTime()) && remDate > now) {
           const rTitle = String(r.title || '').toLowerCase();
           const rIsFinal = rTitle.includes('final');
+          const rIsFollow = rTitle.includes('follow');
           candidates.push({
-            type: rIsFinal ? 'Final Call' : 'Next Call',
-            callType: rIsFinal ? 'FINAL_CALL' : 'NEXT_CALL',
+            type: rIsFinal ? 'Final Call' : rIsFollow ? 'Follow-up' : 'Next Call',
+            callType: rIsFinal ? 'FINAL_CALL' : rIsFollow ? 'FOLLOW_UP' : 'NEXT_CALL',
             scheduledAt: remDate,
             originalTime: null,
             notes: r.title,
@@ -410,9 +485,51 @@ export class CustomerService {
     const stageName = l.stage?.name || (l.status === 'NEW' ? 'New' : l.status);
     const stageColor = l.stage?.color || (l.status === 'WON' ? '#10B981' : '#6366F1');
     const stageId = l.stage?.id || l.stageId || null;
+    const stageKey = l.stage?.key || l.status;
+    const stageNameLower = (stageName || '').toLowerCase();
     const resolvedAssignedName = l.employee
       ? `${l.employee.firstName || ''} ${l.employee.lastName || ''}`.trim()
       : (l.assignedTo?.firstName ? `${l.assignedTo.firstName} ${l.assignedTo.lastName || ''}`.trim() : 'Assigned');
+
+    const isFinalCallStage =
+      l.status === 'FINAL_CALL' ||
+      stageKey === 'FINAL_CALL' ||
+      stageNameLower.includes('final') ||
+      upcomingCall?.callType === 'FINAL_CALL';
+
+    const isFollowUpStage =
+      l.status === 'FOLLOW_UP' ||
+      l.status === 'FOLLOWUP' ||
+      stageKey === 'FOLLOW_UP' ||
+      stageKey === 'FOLLOWUP' ||
+      stageNameLower.includes('follow') ||
+      upcomingCall?.callType === 'FOLLOW_UP';
+
+    const hasExplicitCallDate = Boolean(
+      l.nextFollowUpDate ||
+      l.nextCallDate ||
+      (upcomingCall && upcomingCall.notes !== 'Lead in Follow-up stage' && upcomingCall.notes !== 'Lead reached Final Call stage')
+    );
+
+    const resolvedCallType =
+      upcomingCall?.type ||
+      (isFinalCallStage ? 'Final Call' : isFollowUpStage ? 'Follow-up' : null);
+
+    const resolvedCallDate = l.nextFollowUpDate
+      ? formatCallDate(parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime))
+      : l.nextCallDate
+      ? formatCallDate(parseCallDateTime(l.nextCallDate, l.nextCallTime))
+      : hasExplicitCallDate
+      ? upcomingCall?.formattedDate || null
+      : null;
+
+    const resolvedCallTime = l.nextFollowUpDate
+      ? formatCallTime(parseCallDateTime(l.nextFollowUpDate, l.nextFollowUpTime), l.nextFollowUpTime)
+      : l.nextCallDate
+      ? formatCallTime(parseCallDateTime(l.nextCallDate, l.nextCallTime), l.nextCallTime)
+      : hasExplicitCallDate
+      ? upcomingCall?.formattedTime || null
+      : null;
 
     return {
       id: -(l.id),
@@ -449,9 +566,9 @@ export class CustomerService {
       customerStatus: upcomingCall ? 'UPCOMING' : 'LEAD',
       upcomingCall: upcomingCall || null,
       hasUpcomingCall: upcomingCall !== null,
-      upcomingCallType: upcomingCall?.type || null,
-      upcomingCallDate: upcomingCall?.formattedDate || null,
-      upcomingCallTime: upcomingCall?.formattedTime || null,
+      upcomingCallType: resolvedCallType,
+      upcomingCallDate: resolvedCallDate,
+      upcomingCallTime: resolvedCallTime,
       leadId: String(l.id),
       leadStatus: l.status,
       leadStageId: stageId,
@@ -854,6 +971,7 @@ export class CustomerService {
   async findAll(query: {
     search?: string;
     status?: string;
+    stage?: string;
     isActive?: boolean;
     source?: string;
     assignedEmployee?: string;
@@ -1067,26 +1185,37 @@ export class CustomerService {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    // Resolve configured Final Call stage IDs from LeadStage table
+    // Resolve configured Upcoming (Final Call & Follow Up) stage IDs from LeadStage table
     let finalCallStageIds: Set<number> | undefined;
+    let followUpStageIds: Set<number> | undefined;
     try {
       if (this.prisma.leadStage && typeof this.prisma.leadStage.findMany === 'function') {
-        const finalStages = await this.prisma.leadStage.findMany({
+        const upcomingStages = await this.prisma.leadStage.findMany({
           where: {
             OR: [
-              { key: 'FINAL_CALL' },
-              { name: { equals: 'Final Call', mode: 'insensitive' } },
+              { key: { in: ['FINAL_CALL', 'FOLLOW_UP', 'FOLLOWUP'] } },
+              { name: { contains: 'final', mode: 'insensitive' } },
+              { name: { contains: 'follow', mode: 'insensitive' } },
             ],
             deletedAt: null,
           },
-          select: { id: true },
+          select: { id: true, key: true, name: true },
         });
-        if (finalStages.length > 0) {
-          finalCallStageIds = new Set(finalStages.map((s: any) => s.id));
+        if (upcomingStages.length > 0) {
+          finalCallStageIds = new Set(
+            upcomingStages
+              .filter((s: any) => s.key === 'FINAL_CALL' || s.name?.toLowerCase().includes('final'))
+              .map((s: any) => s.id),
+          );
+          followUpStageIds = new Set(
+            upcomingStages
+              .filter((s: any) => ['FOLLOW_UP', 'FOLLOWUP'].includes(s.key) || s.name?.toLowerCase().includes('follow'))
+              .map((s: any) => s.id),
+          );
         }
       }
     } catch (err) {
-      this.logger.debug(`Could not query leadStage for finalCallStageIds: ${err}`);
+      this.logger.debug(`Could not query leadStage for upcoming stageIds: ${err}`);
     }
 
     const countsWhere: any = {
@@ -1159,7 +1288,7 @@ export class CustomerService {
     for (const c of allCustomersForCounts) {
       const sub = c.subscriptions?.[0];
       const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= now);
-      const call = extractUpcomingCall(c, now, finalCallStageIds);
+      const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
       if (call !== null) {
         upcomingCount++;
         upcomingCustomerIds.push(c.id);
@@ -1173,7 +1302,7 @@ export class CustomerService {
         inactiveCustomerIds.push(c.id);
       }
 
-      const st = this.computeCustomerStatus(c, finalCallStageIds);
+      const st = this.computeCustomerStatus(c, finalCallStageIds, followUpStageIds);
       if (st === 'COMPLETED') {
         completedCount++;
         completedCustomerIds.push(c.id);
@@ -1220,6 +1349,34 @@ export class CustomerService {
           });
         }
 
+        if (query.stage && query.stage.trim() && query.stage.trim().toUpperCase() !== 'ALL') {
+          const targetStage = query.stage.trim().toUpperCase();
+          const isTargetFollowUp = targetStage === 'FOLLOW_UP' || targetStage === 'FOLLOWUP';
+          const isTargetFinalCall = targetStage === 'FINAL_CALL';
+          const matchingStageIds = isTargetFollowUp
+            ? Array.from(followUpStageIds || [])
+            : isTargetFinalCall
+            ? Array.from(finalCallStageIds || [])
+            : [];
+
+          const stageConditions: any[] = [];
+          if (matchingStageIds.length > 0) {
+            stageConditions.push({ stageId: { in: matchingStageIds } });
+          }
+          if (['FOLLOW_UP', 'FINAL_CALL', 'NEW', 'WON', 'LOST'].includes(targetStage)) {
+            stageConditions.push({ status: targetStage });
+          }
+          stageConditions.push({
+            stage: {
+              OR: [
+                { key: { equals: targetStage, mode: 'insensitive' } },
+                { name: { contains: query.stage.trim(), mode: 'insensitive' } },
+              ],
+            },
+          });
+          leadAndConditions.push({ OR: stageConditions });
+        }
+
         if (leadAndConditions.length > 0) {
           leadWhere.AND = leadAndConditions;
         }
@@ -1251,11 +1408,16 @@ export class CustomerService {
 
         for (const l of leads) {
           // If already converted to or linked with a Customer, skip to prevent duplicates
-          if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
+          if (
+            l.convertedCustomer ||
+            convertedLeadIds.has(l.id) ||
+            ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase()) ||
+            String(l.stage?.key || '').toUpperCase() === 'WON'
+          ) {
             continue;
           }
 
-          const call = extractUpcomingCall({ leads: [l] }, now, finalCallStageIds);
+          const call = extractUpcomingCall({ leads: [l] }, now, finalCallStageIds, followUpStageIds);
           const leadItem = this.mapLeadToCustomerItem(l, call);
           if (call !== null) {
             unconvertedUpcomingLeads.push(leadItem);
@@ -1432,9 +1594,9 @@ export class CustomerService {
       const resolvedDepartment =
         c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
-      const upcomingCall = extractUpcomingCall(c, now, finalCallStageIds);
+      const upcomingCall = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
       const hasUpcomingCall = upcomingCall !== null;
-      const customerStatus = this.computeCustomerStatus(c, finalCallStageIds);
+      const customerStatus = this.computeCustomerStatus(c, finalCallStageIds, followUpStageIds);
       const linkedLead = (c as any).originLead || (c as any).leads?.[0];
       const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (c.leadId ? String(c.leadId) : null);
       const leadStatus = linkedLead?.status || (c.leads?.length > 0 || c.leadId ? 'WON' : null);
@@ -1721,8 +1883,12 @@ export class CustomerService {
   /**
    * Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
    */
-  public computeCustomerStatus(c: any, finalCallStageIds?: Set<number>): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
-    const call = extractUpcomingCall(c, new Date(), finalCallStageIds);
+  public computeCustomerStatus(
+    c: any,
+    finalCallStageIds?: Set<number>,
+    followUpStageIds?: Set<number>,
+  ): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
+    const call = extractUpcomingCall(c, new Date(), finalCallStageIds, followUpStageIds);
     if (call !== null) {
       return 'UPCOMING';
     }
