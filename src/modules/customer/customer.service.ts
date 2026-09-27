@@ -1796,6 +1796,7 @@ export class CustomerService {
             }
           : null,
         plan: planName,
+        planName,
         planCode,
         billingCycle,
         subscriptionStatus: subStatus,
@@ -1926,9 +1927,9 @@ export class CustomerService {
         totalPages,
         counts: {
           all: totalAll,
-          active: activeCount,
+          active: totalActive,
           upcoming: totalUpcoming,
-          inactive: inactiveCount,
+          inactive: totalInactive,
           completed: completedCount,
         },
       },
