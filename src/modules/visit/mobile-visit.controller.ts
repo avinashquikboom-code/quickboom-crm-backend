@@ -94,7 +94,7 @@ export class MobileVisitController {
         company: { select: { id: true, name: true, city: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
         deal: { select: { id: true, title: true } },
-        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true } },
+        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true, status: true } },
       },
     });
 
@@ -217,7 +217,7 @@ export class MobileVisitController {
       notes: body?.notes,
       outcome: body?.outcome,
       nextFollowUpDate: body?.nextFollowUpDate,
-      ...(visit.employeeId || !employee?.id ? {} : { employeeId: employee.id }),
+      ...(visit.employeeId || !employee?.id ? {} : { employeeId: String(employee.id) }),
     });
 
     if (visit.leadId) {
