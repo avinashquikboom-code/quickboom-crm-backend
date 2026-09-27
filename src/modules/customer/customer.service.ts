@@ -566,8 +566,8 @@ export class CustomerService {
       department: 'Sales',
       notes: l.workNotes,
       isActive: false,
-      status: upcomingCall ? 'UPCOMING' : 'LEAD',
-      customerStatus: upcomingCall ? 'UPCOMING' : 'LEAD',
+      status: upcomingCall ? 'UPCOMING' : 'INACTIVE',
+      customerStatus: upcomingCall ? 'UPCOMING' : 'INACTIVE',
       upcomingCall: upcomingCall || null,
       hasUpcomingCall: upcomingCall !== null,
       upcomingCallType: resolvedCallType,
@@ -1248,9 +1248,13 @@ export class CustomerService {
         isActive: true,
         subscriptions: {
           where: { deletedAt: null },
-          select: { status: true, endDate: true },
+          select: {
+            status: true,
+            endDate: true,
+            planId: true,
+            plan: { select: { id: true, name: true, code: true } },
+          },
           orderBy: { createdAt: 'desc' },
-          take: 1,
         },
         works: {
           select: { status: true, scheduledDate: true },
@@ -1299,24 +1303,30 @@ export class CustomerService {
     const completedCustomerIds: number[] = [];
 
     for (const c of allCustomersForCounts) {
-      const sub = c.subscriptions?.[0];
-      const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= now);
-      const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
-      if (call !== null) {
-        upcomingCount++;
-        upcomingCustomerIds.push(c.id);
-      }
+      // Priority 1: ACTIVE (valid, actually activated purchased plan)
+      const activeSub = c.subscriptions?.find(
+        (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
+      );
+      const isSubActive = !!activeSub;
 
       if (isSubActive) {
         activeCount++;
         activeCustomerIds.push(c.id);
-      } else if (call === null) {
-        inactiveCount++;
-        inactiveCustomerIds.push(c.id);
+      } else {
+        // Priority 2: UPCOMING (eligible follow-up / final call and no active plan)
+        const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
+        if (call !== null) {
+          upcomingCount++;
+          upcomingCustomerIds.push(c.id);
+        } else {
+          // Priority 3: INACTIVE (no active plan and not eligible for upcoming)
+          inactiveCount++;
+          inactiveCustomerIds.push(c.id);
+        }
       }
 
       const st = this.computeCustomerStatus(c, finalCallStageIds, followUpStageIds);
-      if (st === 'COMPLETED') {
+      if (st === 'INACTIVE' || st === 'ACTIVE') {
         completedCount++;
         completedCustomerIds.push(c.id);
       }
@@ -1324,6 +1334,8 @@ export class CustomerService {
 
     // Query unconverted Leads accessible to the employee/tenant
     const unconvertedUpcomingLeads: any[] = [];
+    const unconvertedInactiveLeads: any[] = [];
+    const unconvertedActiveLeads: any[] = [];
     const unconvertedAllLeads: any[] = [];
 
     if (this.prisma.lead) {
@@ -1422,25 +1434,22 @@ export class CustomerService {
             );
             continue;
           }
-          if (
-            ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase()) ||
-            String(l.stage?.key || '').toUpperCase() === 'WON' ||
-            (l.stageId && wonStageIds?.has(Number(l.stageId)))
-          ) {
-            this.logger.log(
-              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=won_or_converted_stage`,
-            );
-            continue;
-          }
 
           const call = extractUpcomingCall({ leads: [l] }, now, finalCallStageIds, followUpStageIds);
           const leadItem = this.mapLeadToCustomerItem(l, call);
           if (call !== null) {
+            leadItem.customerStatus = 'UPCOMING';
+            leadItem.status = 'UPCOMING';
+            leadItem.hasUpcomingCall = true;
             unconvertedUpcomingLeads.push(leadItem);
           } else {
+            leadItem.customerStatus = 'INACTIVE';
+            leadItem.status = 'INACTIVE';
+            leadItem.hasUpcomingCall = false;
             this.logger.log(
-              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=call_overdue_or_not_eligible`,
+              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=non_upcoming_stage`,
             );
+            unconvertedInactiveLeads.push(leadItem);
           }
           unconvertedAllLeads.push(leadItem);
         }
@@ -1614,9 +1623,10 @@ export class CustomerService {
       const resolvedDepartment =
         c.assignedEmployeeRel?.department?.name || c.department || 'General';
 
-      const upcomingCall = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
+      // Priority: 1. ACTIVE, 2. UPCOMING, 3. INACTIVE
+      const upcomingCall = !isSubActive ? extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds) : null;
       const hasUpcomingCall = upcomingCall !== null;
-      const customerStatus = this.computeCustomerStatus(c, finalCallStageIds, followUpStageIds);
+      const customerStatus = isSubActive ? 'ACTIVE' : (hasUpcomingCall ? 'UPCOMING' : 'INACTIVE');
       const linkedLead = (c as any).originLead || (c as any).leads?.[0];
       const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (c.leadId ? String(c.leadId) : null);
       const leadStatus = linkedLead?.status || (c.leads?.length > 0 || c.leadId ? 'WON' : null);
@@ -1815,11 +1825,13 @@ export class CustomerService {
     let finalItems: any[] = [];
     let effectiveTotal = 0;
 
+    const totalActive = activeCustomerIds.length + unconvertedActiveLeads.length;
     const totalUpcoming = upcomingCustomerIds.length + unconvertedUpcomingLeads.length;
-    const totalAll = allCustomersForCounts.length;
+    const totalInactive = inactiveCustomerIds.length + unconvertedInactiveLeads.length;
+    const totalAll = totalActive + totalUpcoming + totalInactive;
 
     if (targetStatus === 'UPCOMING') {
-      const customerUpcoming = formatted.filter((item) => item.hasUpcomingCall === true);
+      const customerUpcoming = formatted.filter((item) => item.customerStatus === 'UPCOMING');
       const combinedUpcoming = [...customerUpcoming, ...unconvertedUpcomingLeads];
       // Sort upcoming items strictly by scheduled call date/time ascending
       combinedUpcoming.sort((a, b) => {
@@ -1830,20 +1842,22 @@ export class CustomerService {
       effectiveTotal = combinedUpcoming.length;
       finalItems = combinedUpcoming.slice(skip, skip + limit);
     } else if (targetStatus === 'ACTIVE') {
-      const activeItems = formatted.filter((item) => item.subscriptionStatus === 'ACTIVE' || item.isActive === true);
-      effectiveTotal = activeItems.length;
-      finalItems = activeItems.slice(skip, skip + limit);
+      const customerActive = formatted.filter((item) => item.customerStatus === 'ACTIVE');
+      const combinedActive = [...customerActive, ...unconvertedActiveLeads];
+      effectiveTotal = combinedActive.length;
+      finalItems = combinedActive.slice(skip, skip + limit);
     } else if (targetStatus === 'INACTIVE') {
-      const inactiveItems = formatted.filter((item) => item.subscriptionStatus !== 'ACTIVE' && item.isActive === false && !item.hasUpcomingCall);
-      effectiveTotal = inactiveItems.length;
-      finalItems = inactiveItems.slice(skip, skip + limit);
+      const customerInactive = formatted.filter((item) => item.customerStatus === 'INACTIVE');
+      const combinedInactive = [...customerInactive, ...unconvertedInactiveLeads];
+      effectiveTotal = combinedInactive.length;
+      finalItems = combinedInactive.slice(skip, skip + limit);
     } else if (targetStatus === 'COMPLETED') {
       const completedItems = formatted.filter((item) => item.customerStatus === 'COMPLETED' || item.leadStatus === 'WON');
       effectiveTotal = completedItems.length;
       finalItems = completedItems.slice(skip, skip + limit);
     } else {
-      // 'ALL' tab: all customers + unconverted upcoming leads
-      const combinedAll = [...formatted, ...unconvertedUpcomingLeads];
+      // 'ALL' tab: all Active + all Upcoming + all Inactive
+      const combinedAll = [...formatted, ...unconvertedAllLeads];
       effectiveTotal = combinedAll.length;
       finalItems = combinedAll.slice(skip, skip + limit);
     }
@@ -1862,10 +1876,18 @@ export class CustomerService {
       `[CUSTOMER_UPCOMING]\nemployeeId=${employeeIdentifier}\ncompanyId=${companyId || 'none'}\nfollowUpStageId=${followUpStageIdStr}\nfinalCallStageId=${finalCallStageIdStr}\nresultCount=${totalUpcoming}`,
     );
 
-    const logItems = targetStatus === 'UPCOMING' ? finalItems : unconvertedUpcomingLeads;
-    for (const item of logItems) {
+    for (const item of finalItems) {
+      const leadId = item.leadId || (item as any).lead?.id || 'none';
+      const custId = item.id && item.id > 0 ? item.id : (item.customerId || 'none');
+      const stageId = (item as any).lead?.stage?.id || (item as any).leadStageId || 'none';
+      const stageKey = (item as any).lead?.stage?.key || (item as any).leadStatus || 'none';
+      const planId = (item as any).activeSub?.planId || (item as any).planId || (item.subscriptionStatus === 'ACTIVE' ? 'ACTIVE_PLAN' : 'none');
+      const planStatus = item.subscriptionStatus || 'none';
+      const purchaseStatus = item.subscriptionStatus === 'ACTIVE' ? 'SUCCESS' : 'NONE';
+      const classification = item.customerStatus;
+
       this.logger.log(
-        `[UPCOMING_RECORD]\nleadId=${item.leadId || 'none'}\ncustomerId=${item.customerId || 'none'}\nstageId=${(item as any).lead?.stage?.id || (item as any).leadStageId || 'none'}\nstageKey=${(item as any).lead?.stage?.key || (item as any).leadStatus || 'none'}\nemployeeId=${item.assignedEmployeeId || employeeIdentifier}`,
+        `[CUSTOMER_CLASSIFICATION]\nleadId=${leadId}\ncustomerId=${custId}\nemployeeId=${item.assignedEmployeeId || employeeIdentifier}\nstageId=${stageId}\nstageKey=${stageKey}\nplanId=${planId}\nplanStatus=${planStatus}\npurchaseStatus=${purchaseStatus}\nclassification=${classification}`,
       );
     }
 
@@ -1914,38 +1936,30 @@ export class CustomerService {
   }
 
   /**
-   * Helper to derive customer lifecycle status: ACTIVE, UPCOMING, COMPLETED
+   * Helper to derive customer lifecycle status according to priority:
+   * 1. ACTIVE (active purchased plan)
+   * 2. UPCOMING (eligible follow-up / final call and no active plan)
+   * 3. INACTIVE (no active plan and not eligible for upcoming)
    */
   public computeCustomerStatus(
     c: any,
     finalCallStageIds?: Set<number>,
     followUpStageIds?: Set<number>,
-  ): 'ACTIVE' | 'UPCOMING' | 'COMPLETED' {
-    const call = extractUpcomingCall(c, new Date(), finalCallStageIds, followUpStageIds);
+  ): 'ACTIVE' | 'UPCOMING' | 'INACTIVE' {
+    const now = new Date();
+    const activeSub = c.subscriptions?.find(
+      (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
+    );
+    if (activeSub) {
+      return 'ACTIVE';
+    }
+
+    const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
     if (call !== null) {
       return 'UPCOMING';
     }
-    const linkedLeads = [
-      ...((c as any).originLead ? [(c as any).originLead] : []),
-      ...((c as any).leads || []),
-    ];
-    const hasWonLead = linkedLeads.some((l: any) => {
-      const st = String(l?.status || '').toUpperCase();
-      const stageKey = String(l?.stage?.key || '').toUpperCase();
-      const stageName = String(l?.stage?.name || '').toLowerCase();
-      return st === 'WON' || st === 'CONVERTED' || stageKey === 'WON' || stageName === 'won';
-    });
 
-    if (hasWonLead) {
-      return 'COMPLETED';
-    }
-
-    const sub = c.subscriptions?.[0];
-    const isSubActive = c.isActive && sub && sub.status === 'ACTIVE' && (!sub.endDate || new Date(sub.endDate) >= new Date());
-    if (isSubActive) {
-      return 'ACTIVE';
-    }
-    return c.isActive ? 'ACTIVE' : 'COMPLETED';
+    return 'INACTIVE';
   }
 
   /**
