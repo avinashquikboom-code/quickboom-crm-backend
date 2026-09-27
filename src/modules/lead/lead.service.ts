@@ -1285,6 +1285,22 @@ export class LeadService {
       if (!isOwner) {
         throw new ForbiddenException('You do not have permission to access this lead.');
       }
+
+      if (this.leadRepository.isVisitorEmployee(user)) {
+        const stageKey = ((lead as any).stage?.key || '').toUpperCase();
+        const stageName = ((lead as any).stage?.name || '').toUpperCase();
+        const status = (lead.status || '').toUpperCase();
+        const isVisitScheduled =
+          status === 'VISIT_SCHEDULED' ||
+          status === 'VISIT' ||
+          stageKey === 'VISIT_SCHEDULED' ||
+          stageKey === 'VISIT' ||
+          stageName === 'VISIT SCHEDULED';
+
+        if (!isVisitScheduled) {
+          throw new ForbiddenException('Visitor employee can only access leads in Visit Scheduled stage.');
+        }
+      }
     }
 
     return lead;

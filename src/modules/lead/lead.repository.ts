@@ -756,13 +756,35 @@ export class LeadRepository {
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
       const empId = user.employee?.id ?? user.employeeId;
+      const isVisitor = this.isVisitorEmployee(user);
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
-        `companyId=${numCustomerId} filter=employeeId_only`,
+        `companyId=${numCustomerId} isVisitor=${isVisitor} filter=employeeId_only`,
       );
       if (empId) {
         // Strict: only leads where employeeId = this employee's record ID
         andConditions.push({ employeeId: Number(empId) });
+
+        // Visitor Employee Rule: Must ONLY see leads in "Visit Scheduled" stage
+        if (isVisitor) {
+          andConditions.push({
+            OR: [
+              { status: LeadStatus.VISIT_SCHEDULED },
+              { status: 'VISIT' as any },
+              {
+                stage: {
+                  is: {
+                    OR: [
+                      { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
+                      { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                    ],
+                    deletedAt: null,
+                  },
+                },
+              },
+            ],
+          });
+        }
       } else {
         // Employee user but no employee record — return nothing
         andConditions.push({ id: -1 });
@@ -2292,5 +2314,27 @@ export class LeadRepository {
     }
 
     return result;
+  }
+
+  public isVisitorEmployee(user: any): boolean {
+    if (!user) return false;
+    const desigName = (user.employee?.designation?.name || '').trim().toUpperCase();
+    const desigCode = (user.employee?.designation?.code || '').trim().toUpperCase();
+    const allRoles = [
+      ...(Array.isArray(user.roles) ? user.roles : []),
+      ...(user.userRoles?.map((ur: any) => ur.role?.name || ur.role?.type) || []),
+      user.role,
+    ]
+      .filter(Boolean)
+      .map((r: any) => String(r).trim().toUpperCase());
+
+    return (
+      desigName.includes('VISITOR') ||
+      desigCode.includes('VISITOR') ||
+      desigName.includes('FIELD VISIT') ||
+      desigName === 'VISIT' ||
+      desigCode === 'VISIT' ||
+      allRoles.some((r: string) => r.includes('VISITOR'))
+    );
   }
 }
