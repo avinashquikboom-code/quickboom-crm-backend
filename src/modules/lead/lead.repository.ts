@@ -13,7 +13,7 @@ import {
   UpdateLeadDto,
   normalizeLeadStatus,
 } from './dto/lead.dto';
-import { LeadStatus, Prisma } from '@prisma/client';
+import { LeadStatus, Prisma, VisitStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 @Injectable()
@@ -1589,6 +1589,62 @@ export class LeadRepository {
       `Stage updated to ${stageName || toStatus}${notes ? ` (${notes})` : ''}`,
       { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
     );
+
+    if (toStatus === LeadStatus.VISIT_DONE || (toStatus as string) === 'VISIT_DONE' || (toStatus as string) === 'VISIT') {
+      try {
+        const leadObj = await this.prisma.lead.findUnique({
+          where: { id: numId },
+          select: { id: true, employeeId: true, companyName: true, firstName: true, lastName: true, address: true },
+        });
+
+        const emp = await this.prisma.employee.findFirst({
+          where: {
+            OR: [
+              { userId: numUserId },
+              ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+            ],
+          },
+        });
+        const targetEmpId = leadObj?.employeeId ? Number(leadObj.employeeId) : (emp?.id || null);
+
+        const existingVisit = await this.prisma.visit.findFirst({
+          where: { leadId: numId },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (existingVisit) {
+          await this.prisma.visit.update({
+            where: { id: existingVisit.id },
+            data: {
+              status: VisitStatus.COMPLETED,
+              completedAt: new Date(),
+              notes: notes || existingVisit.notes,
+              outcome: notes || existingVisit.outcome || 'Visit Done',
+              ...(existingVisit.employeeId ? {} : (targetEmpId ? { employeeId: targetEmpId } : {})),
+            },
+          });
+        } else if (targetEmpId) {
+          await this.prisma.visit.create({
+            data: {
+              customerId: numCustomerId,
+              leadId: numId,
+              employeeId: targetEmpId,
+              customerName: leadObj?.companyName || `${leadObj?.firstName || ''} ${leadObj?.lastName || ''}`.trim() || 'Client',
+              purpose: 'Client Meeting & Demo',
+              date: new Date(),
+              time: '11:00 AM',
+              location: leadObj?.address || 'Client Site',
+              status: VisitStatus.COMPLETED,
+              completedAt: new Date(),
+              notes: notes || 'Visit completed',
+              outcome: notes || 'Visit Done',
+            },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`[updateStatus] Failed to sync visit completion: ${err.message}`);
+      }
+    }
   }
 
   async softDelete(customerId: number | string, id: number | string) {

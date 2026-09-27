@@ -59,8 +59,11 @@ export class MobileVisitController {
 
     const numCustomerId = Number(customerId) || employee.customerId;
     const where: any = {
-      employeeId: employee.id,
       customerId: numCustomerId,
+      OR: [
+        { employeeId: employee.id },
+        { lead: { employeeId: employee.id } },
+      ],
     };
 
     // Tab → status mapping
@@ -70,7 +73,14 @@ export class MobileVisitController {
       } else if (tab === 'ongoing') {
         where.status = VisitStatus.IN_PROGRESS;
       } else if (tab === 'completed') {
-        where.status = VisitStatus.COMPLETED;
+        where.AND = [
+          {
+            OR: [
+              { status: VisitStatus.COMPLETED },
+              { lead: { status: 'VISIT_DONE' } },
+            ],
+          },
+        ];
       }
     } else if (status && (status as string) !== 'ALL') {
       where.status = status;
@@ -109,12 +119,12 @@ export class MobileVisitController {
         date: v.date ? new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
         scheduledDate: v.date,
         time: v.time || '',
-        status: v.status,
-        tab: v.status === VisitStatus.SCHEDULED
-          ? 'upcoming'
-          : v.status === VisitStatus.IN_PROGRESS
-            ? 'ongoing'
-            : 'completed',
+        status: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE') ? VisitStatus.COMPLETED : v.status,
+        tab: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE')
+          ? 'completed'
+          : v.status === VisitStatus.SCHEDULED
+            ? 'upcoming'
+            : 'ongoing',
         notes: v.notes,
         outcome: v.outcome,
         visitType: v.visitType,
@@ -178,6 +188,7 @@ export class MobileVisitController {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
       where: { id: numId },
+      include: { lead: { select: { employeeId: true } } },
     });
 
     if (!visit) {
@@ -194,7 +205,8 @@ export class MobileVisitController {
     });
 
     const isSuperAdmin = isUserSuperAdmin(user);
-    if (!isSuperAdmin && employee && visit.employeeId !== employee.id) {
+    const isAssigned = visit.employeeId === employee?.id || visit.lead?.employeeId === employee?.id;
+    if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
 
@@ -205,6 +217,7 @@ export class MobileVisitController {
       notes: body?.notes,
       outcome: body?.outcome,
       nextFollowUpDate: body?.nextFollowUpDate,
+      ...(visit.employeeId || !employee?.id ? {} : { employeeId: employee.id }),
     });
 
     if (visit.leadId) {
