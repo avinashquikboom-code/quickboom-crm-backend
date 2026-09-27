@@ -319,9 +319,11 @@ export function extractUpcomingCall(
     const isExplicitlyOverdue = explicitDate && parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime) < now;
 
     // 1c. Lead in Final Call stage automatically qualifies as an Upcoming prospect
+    // NOTE: We intentionally do NOT block on isExplicitlyOverdue here — a lead in
+    // Final Call stage must always appear in Upcoming, even if its follow-up date
+    // has already passed. The overdue date is used as scheduledAt so sorting works.
     if (
       isFinalCallStage &&
-      !isExplicitlyOverdue &&
       !isCallCompleted &&
       !isCallCancelled &&
       !isLeadLostOrCancelled &&
@@ -329,6 +331,7 @@ export function extractUpcomingCall(
     ) {
       const alreadyHasFinalCall = candidates.some((c) => c.callType === 'FINAL_CALL');
       if (!alreadyHasFinalCall) {
+        // Use the scheduled date (even if overdue) for sorting; fall back to now
         const scheduledAt = explicitDate
           ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
           : now;
@@ -343,9 +346,11 @@ export function extractUpcomingCall(
     }
 
     // 1d. Lead in Follow-up stage automatically qualifies as an Upcoming prospect
+    // NOTE: We intentionally do NOT block on isExplicitlyOverdue here — a lead in
+    // Follow-up stage must always appear in Upcoming, even if its follow-up date
+    // has already passed. The overdue date is used as scheduledAt so sorting works.
     if (
       isFollowUpStage &&
-      !isExplicitlyOverdue &&
       !isCallCompleted &&
       !isCallCancelled &&
       !isLeadLostOrCancelled &&
@@ -353,6 +358,7 @@ export function extractUpcomingCall(
     ) {
       const alreadyHasFollowUp = candidates.some((c) => c.callType === 'FOLLOW_UP');
       if (!alreadyHasFollowUp) {
+        // Use the scheduled date (even if overdue) for sorting; fall back to now
         const scheduledAt = explicitDate
           ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
           : now;
