@@ -2877,6 +2877,54 @@ export class DataCaptureService implements OnModuleInit {
 
       createdLeads.push(freshLead || leadResult);
       importedCount++;
+
+      // Trigger automatic Email & WhatsApp communication for NEW Lead (Data Capture flow)
+      if (this.leadService && freshLead) {
+        const initialStageName = freshLead.stage?.name || freshLead.status || 'New';
+        this.logger.log(
+          `[LEAD_AUTOMATION]\n` +
+          `leadId=${freshLead.id}\n` +
+          `stage=NEW\n` +
+          `tenantId=${numCustomerId}\n` +
+          `emailTemplateLookup=START\n` +
+          `whatsappTemplateLookup=START`
+        );
+
+        const emailPromise = typeof this.leadService.handleLeadStageChangeNotification === 'function'
+          ? this.leadService.handleLeadStageChangeNotification(
+              numCustomerId,
+              freshLead,
+              '',
+              initialStageName,
+              validCreatedById,
+              undefined,
+              undefined,
+              undefined,
+              'LEAD_CREATED',
+              freshLead.stageId,
+            ).catch((err: any) => {
+              this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
+            })
+          : Promise.resolve();
+
+        const whatsappPromise = typeof this.leadService.handleLeadStageChangeWhatsappNotification === 'function'
+          ? this.leadService.handleLeadStageChangeWhatsappNotification(
+              numCustomerId,
+              freshLead,
+              '',
+              initialStageName,
+              validCreatedById,
+              undefined,
+              undefined,
+              'LEAD_CREATED',
+              freshLead.stageId,
+            ).catch((err: any) => {
+              this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
+            })
+          : Promise.resolve();
+
+        await Promise.allSettled([emailPromise, whatsappPromise]);
+      }
     }
 
     const primaryLead = createdLeads[0] || firstDuplicateLead || null;

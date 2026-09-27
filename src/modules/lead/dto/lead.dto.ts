@@ -1051,6 +1051,11 @@ export class SendLeadEmailDto {
   @IsString()
   @IsOptional()
   message?: string;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsNumber()
+  @IsOptional()
+  templateId?: number;
 }
 
 

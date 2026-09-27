@@ -1085,6 +1085,9 @@ export class LeadService {
     // Automated communication for NEW LEAD CREATED
     const leadCreatedIso = new Date().toISOString();
     this.logger.log(`[EMAIL_TIMING] Lead created time: ${leadCreatedIso}`);
+    this.logger.log(
+      `[LEAD_AUTOMATION] leadId=${createdLead.id} stage=NEW tenantId=${customerId} emailTemplateLookup=START whatsappTemplateLookup=START`,
+    );
 
     // 1. Email automation using initial stage template:
     let emailPromise: Promise<any> = Promise.resolve();
@@ -1755,6 +1758,10 @@ export class LeadService {
       this.logger.log(`[LEAD_STAGE] Lead: ${id}`);
       this.logger.log(`[LEAD_STAGE] Old stage: ${previousStageName}`);
       this.logger.log(`[LEAD_STAGE] New stage: ${newStageName}`);
+      this.logger.log(`[LEAD_STAGE_CHANGE] leadId: ${id} oldStage: ${previousStageName} newStage: ${newStageName} tenantId: ${customerId}`);
+      this.logger.log(`[LEAD_AUTOMATION] triggered=true leadId=${id} stage=${newStageName}`);
+    } else {
+      this.logger.log(`[LEAD_AUTOMATION] triggered=false leadId=${id} reason="Stage not changed"`);
     }
 
     await this.leadRepository.updateStatus(
@@ -2295,7 +2302,7 @@ export class LeadService {
     overrideTemplateId?: number,
     customSubject?: string,
     customBody?: string,
-    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
+    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND' = 'LEAD_STAGE_CHANGED',
     explicitNewStageId?: number,
   ): Promise<{
     sent: boolean;
@@ -2335,13 +2342,15 @@ export class LeadService {
         }).catch(() => null);
       }
       if (!stageConfig && newStageName && this.prisma.leadStage) {
+        const numCustId = lead.customerId ? Number(lead.customerId) : null;
         stageConfig = await this.prisma.leadStage.findFirst({
           where: {
+            deletedAt: null,
             OR: [
               { name: { equals: newStageName, mode: 'insensitive' } },
               { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
             ],
-            customerId: lead.customerId ? { in: [Number(lead.customerId), null as any] } : undefined,
+            ...(numCustId ? { OR: [{ customerId: numCustId }, { customerId: null }] } : { customerId: null }),
           },
           include: { emailTemplate: true },
         }).catch(() => null);
@@ -2481,6 +2490,10 @@ export class LeadService {
 
       const templateIdentifier = template?.key || template?.name || template?.id || 'CUSTOM';
 
+      this.logger.log(
+        `[EMAIL_TEMPLATE] leadId=${lead.id} stageId=${stageConfig?.id || effectiveStageId || 'N/A'} stageKey=${targetStageKey} templateId=${template?.id || 'N/A'} templateName=${templateIdentifier} found=${Boolean(template)}`,
+      );
+
       // 2. Resolve recipient email: strictly comes from the lead or contact associated with the lead
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       let recipientEmail = (lead.email || lead.customerEmail || (lead as any).emailAddress || '').trim();
@@ -2557,7 +2570,7 @@ export class LeadService {
         },
       });
 
-      if (recentLog) {
+      if (recentLog && eventType !== 'MANUAL_SEND') {
         return {
           sent: false,
           status: 'SKIPPED',
@@ -2593,6 +2606,9 @@ export class LeadService {
       // If email integration is not configured/disabled: log warning, save EmailLog as FAILED, do not crash stage update
       if (!isIntegrationConfigured || !isIntegrationEnabled) {
         this.logger.warn(`[LEAD_STAGE_EMAIL] Email integration warning: ${configWarning}`);
+        this.logger.error(
+          `[EMAIL_SEND_FAILED] leadId=${lead.id} errorCode=INTEGRATION_NOT_CONFIGURED errorMessage="${configWarning}"`,
+        );
         await this.prisma.emailLog.create({
           data: {
             leadId: Number(lead.id),
@@ -2902,6 +2918,9 @@ export class LeadService {
       this.logger.log(`[LEAD_STAGE_EMAIL] Recipient: ${recipientEmail}`);
       this.logger.log(`[LEAD_STAGE_EMAIL] Template: ${templateIdentifier}`);
       this.logger.log(`[LEAD_STAGE_EMAIL] Sending email`);
+      this.logger.log(
+        `[EMAIL_SEND] leadId=${lead.id} templateId=${template?.id || 'N/A'} recipient=${maskEmail(recipientEmail)} provider=SMTP status=START`,
+      );
 
       let messageId: string | null = null;
       let sendError: string | null = null;
@@ -2931,11 +2950,17 @@ export class LeadService {
 
         this.logger.log(`[LEAD_STAGE_EMAIL] Email sent successfully`);
         this.logger.log(`[LeadEmailAutomation] Email Send: SUCCESS`);
+        this.logger.log(
+          `[EMAIL_SEND] leadId=${lead.id} templateId=${template?.id || 'N/A'} recipient=${maskEmail(recipientEmail)} provider=SMTP status=SUCCESS messageId=${messageId || 'N/A'}`,
+        );
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
         this.logger.error(`[LEAD_STAGE_EMAIL] Email failed: ${sendError}`);
         this.logger.error(`[LeadEmailAutomation] Email Send: FAILED - ${sendError}`);
+        this.logger.error(
+          `[EMAIL_SEND_FAILED] leadId=${lead.id} errorCode=SMTP_ERROR errorMessage="${sendError}"`,
+        );
       }
 
       // 7. Store authoritative email delivery log in EmailLog table
@@ -3515,10 +3540,6 @@ Sent by ${senderOrgName} via CRM.
     user?: any,
     dto?: SendLeadEmailDto,
   ) {
-    if (!dto?.message && !dto?.subject) {
-      return this.sendLeadDetails(customerId, leadId, user);
-    }
-
     const id = Number(leadId);
     if (isNaN(id)) throw new BadRequestException('Invalid lead ID');
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
@@ -3533,10 +3554,41 @@ Sent by ${senderOrgName} via CRM.
         customer: {
           select: { name: true, companyName: true, email: true, phone: true },
         },
+        stage: true,
+        assignedTo: {
+          select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+        },
       },
     });
 
     if (!lead) throw new NotFoundException(`Lead record #${leadId} not found`);
+
+    // If no custom message and no subject supplied, send current stage Email template
+    if (!dto?.message && !dto?.subject) {
+      const currentStageName = lead.stage?.name || lead.status || 'NEW';
+      const notificationResult = await this.handleLeadStageChangeNotification(
+        customerId,
+        lead,
+        currentStageName,
+        currentStageName,
+        user?.id,
+        dto?.templateId,
+        undefined,
+        undefined,
+        'MANUAL_SEND',
+        lead.stageId,
+      );
+
+      if (notificationResult.status === 'FAILED') {
+        throw new BadRequestException(notificationResult.error || 'Failed to send stage email');
+      }
+
+      return {
+        success: notificationResult.sent,
+        message: notificationResult.message || `Stage email for ${currentStageName} sent to ${lead.email}`,
+        messageId: notificationResult.messageId,
+      };
+    }
 
     const recipient = (lead.email || '').trim();
     if (!recipient) {
@@ -3886,7 +3938,7 @@ Sent by ${senderOrgName} via CRM.
     id: number | string,
     userId?: number | string,
     dto?: SendLeadWhatsAppDto & {
-      eventType?: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED';
+      eventType?: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND';
       stageId?: number;
       whatsappTemplateId?: number;
     },
@@ -3971,9 +4023,11 @@ Sent by ${senderOrgName} via CRM.
     if (requestedTemplateId && this.prisma.metaTemplate) {
       metaTemplate = (configuredStage?.whatsappTemplate && configuredStage.whatsappTemplate.id === Number(requestedTemplateId))
         ? configuredStage.whatsappTemplate
-        : await this.prisma.metaTemplate.findFirst({
-            where: { id: Number(requestedTemplateId), deletedAt: null },
-          }).catch(() => null);
+        : (typeof this.prisma.metaTemplate.findUnique === 'function'
+            ? await this.prisma.metaTemplate.findUnique({ where: { id: Number(requestedTemplateId) } }).catch(() => null)
+            : await this.prisma.metaTemplate.findFirst({
+                where: { id: Number(requestedTemplateId), deletedAt: null },
+              }).catch(() => null));
 
       if (!metaTemplate) {
         this.logger.error(
@@ -4013,7 +4067,7 @@ Sent by ${senderOrgName} via CRM.
         },
         orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
       }).catch(() => null);
-    } else if (!metaTemplate && !requestedTemplateId && this.prisma.metaTemplate) {
+    } else if (!metaTemplate && !requestedTemplateId && !(configuredStage && configuredStage.whatsappTemplateId === null) && this.prisma.metaTemplate) {
       // Auto-match approved Meta template by stage key/name
       const candidateKeys = Array.from(
         new Set([
@@ -4071,10 +4125,16 @@ Sent by ${senderOrgName} via CRM.
     const templateNameStr = metaTemplate?.templateName || (dto?.message ? 'custom_message' : (fallbackTemplate?.templateName || stageKey));
     const templateLangStr = metaTemplate?.language || fallbackTemplate?.language || 'en_US';
 
+    const phoneNumberIdForLog = this.whatsappService && typeof (this.whatsappService as any).getWhatsAppStatus === 'function'
+      ? (await (this.whatsappService as any).getWhatsAppStatus().catch(() => null))?.phoneNumberId || 'N/A'
+      : 'N/A';
+
     this.logger.log(`[STAGE_CHANGE] Lead ID: ${lead.id} | Stage: ${targetStageName} | Stage ID: ${stageIdStr}`);
     this.logger.log(`[WHATSAPP_AUTOMATION] Stage: ${targetStageName} | Stage ID: ${stageIdStr} | Automation Enabled: ${configuredStage ? configuredStage.whatsappEnabled : true}`);
     this.logger.log(`[WHATSAPP_TEMPLATE] Template ID: ${templateIdStr} | Meta Name: ${templateNameStr} | Language: ${templateLangStr} | Status: ${metaTemplate?.status || 'APPROVED'}`);
-    this.logger.log(`[WHATSAPP_SEND] Recipient: ${maskPhone(phone)} | Template: ${templateNameStr}`);
+    this.logger.log(
+      `[WHATSAPP_SEND] leadId=${lead.id} templateId=${templateIdStr} templateName=${templateNameStr} phone=${maskPhone(phone)} phoneNumberId=${phoneNumberIdForLog} status=START`,
+    );
 
     const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Prospect';
     const companyName = lead.customer?.companyName || lead.customer?.name || lead.companyName || 'QUIKBOOM Digital Marketing Agency';
@@ -4222,6 +4282,16 @@ Sent by ${senderOrgName} via CRM.
       ? `WhatsApp message could not be sent: ${safeDetails}`
       : `WhatsApp message could not be sent: ${result.reason || result.error || 'Provider error'}`);
 
+    if (result.success) {
+      this.logger.log(
+        `[WHATSAPP_SEND] leadId=${lead.id} templateId=${templateIdStr} templateName=${templateNameStr} phone=${maskPhone(phone)} phoneNumberId=${phoneNumberIdForLog} status=SUCCESS messageId=${result.messageId || 'N/A'}`,
+      );
+    } else if (!result.skipped) {
+      this.logger.error(
+        `[WHATSAPP_SEND_FAILED] leadId=${lead.id} httpStatus=${result.providerStatus || 400} metaErrorCode=${result.metaErrorCode || result.errorCode || result.error || 'ERROR'} metaErrorMessage="${result.metaErrorMessage || result.providerMessage || result.details || result.message || 'WhatsApp message failed'}"`,
+      );
+    }
+
     return {
       success: result.success,
       provider: 'WHATSAPP',
@@ -4250,7 +4320,7 @@ Sent by ${senderOrgName} via CRM.
     userId?: number | string,
     customMessage?: string,
     templateName?: string,
-    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' = 'LEAD_STAGE_CHANGED',
+    eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND' = 'LEAD_STAGE_CHANGED',
     explicitNewStageId?: number,
     whatsappTemplateId?: number,
   ): Promise<{
@@ -4402,9 +4472,11 @@ Sent by ${senderOrgName} via CRM.
       if (resolvedTplId && this.prisma.metaTemplate) {
         targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
           ? stageConfig.whatsappTemplate
-          : await this.prisma.metaTemplate.findFirst({
-              where: { id: Number(resolvedTplId), deletedAt: null },
-            }).catch(() => null);
+          : (typeof this.prisma.metaTemplate.findUnique === 'function'
+              ? await this.prisma.metaTemplate.findUnique({ where: { id: Number(resolvedTplId) } }).catch(() => null)
+              : await this.prisma.metaTemplate.findFirst({
+                  where: { id: Number(resolvedTplId), deletedAt: null },
+                }).catch(() => null));
       }
       if (!targetMetaTemplate && templateName && this.prisma.metaTemplate) {
         targetMetaTemplate = await this.prisma.metaTemplate.findFirst({
@@ -4418,7 +4490,7 @@ Sent by ${senderOrgName} via CRM.
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
       }
-      if (!targetMetaTemplate && this.prisma.metaTemplate) {
+      if (!targetMetaTemplate && !(stageConfig && stageConfig.whatsappTemplateId === null) && this.prisma.metaTemplate) {
         const targetKey = (stageConfig?.key || newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
         const mappedKey = STAGE_KEY_TO_WHATSAPP_KEY[targetKey] || targetKey;
         const candidateKeys = Array.from(new Set([
@@ -4459,6 +4531,10 @@ Sent by ${senderOrgName} via CRM.
         customMessage ||
         templateName ||
         hasInMemoryFallback,
+      );
+
+      this.logger.log(
+        `[WHATSAPP_TEMPLATE] leadId=${lead.id} stageId=${stageConfig?.id || effectiveStageId || 'N/A'} stageKey=${stageKey} templateId=${targetMetaTemplate?.id || 'N/A'} templateName=${targetMetaTemplate?.templateName || targetMetaTemplate?.name || (hasInMemoryFallback ? stageKey : 'N/A')} found=${hasConfiguredTemplate}`,
       );
 
       if (!hasConfiguredTemplate) {
@@ -4503,15 +4579,14 @@ Sent by ${senderOrgName} via CRM.
         }).catch(() => null);
       }
 
-      if (recentTimeline) {
+      if (recentTimeline && eventType !== 'MANUAL_SEND') {
         const meta = (recentTimeline.metadata as any) || {};
         const recentStage = (meta.stageName || meta.newStage || '').trim().toUpperCase();
         const currentNewStage = (newStageName || '').trim().toUpperCase();
-        const wasSentOrPending = meta.status === 'Sent' || meta.status === 'SENT' || meta.success === true;
+        const wasSentOrPending = meta.status === 'Sent' || meta.status === 'SENT' || meta.success === true || !recentTimeline.metadata;
         if (
           wasSentOrPending &&
-          recentStage &&
-          recentStage === currentNewStage
+          (!recentStage || recentStage === currentNewStage)
         ) {
           this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
           return {
@@ -4549,6 +4624,9 @@ Sent by ${senderOrgName} via CRM.
 
       if (!isIntegrationConfigured || !isIntegrationEnabled) {
         this.logger.warn(`[LEAD_STAGE_WHATSAPP] WhatsApp integration warning: ${configWarning}`);
+        this.logger.error(
+          `[WHATSAPP_SEND_FAILED] leadId=${lead.id} httpStatus=400 metaErrorCode=INTEGRATION_NOT_CONFIGURED metaErrorMessage="${configWarning}"`,
+        );
         await this.leadRepository.logTimeline(
           lead.id,
           eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
