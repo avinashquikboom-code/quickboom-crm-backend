@@ -73,14 +73,7 @@ export class MobileVisitController {
       } else if (tab === 'ongoing') {
         where.status = VisitStatus.IN_PROGRESS;
       } else if (tab === 'completed') {
-        where.AND = [
-          {
-            OR: [
-              { status: VisitStatus.COMPLETED },
-              { lead: { status: 'VISIT_DONE' } },
-            ],
-          },
-        ];
+        where.status = VisitStatus.COMPLETED;
       }
     } else if (status && (status as string) !== 'ALL') {
       where.status = status;
@@ -94,7 +87,7 @@ export class MobileVisitController {
         company: { select: { id: true, name: true, city: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
         deal: { select: { id: true, title: true } },
-        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true, status: true } },
+        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true } },
       },
     });
 
@@ -113,15 +106,15 @@ export class MobileVisitController {
         leadTitle: v.lead?.title,
         leadId: v.leadId,
         assignedEmployee: assignedEmpName,
-        completedBy: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE') ? assignedEmpName : null,
+        completedBy: v.status === VisitStatus.COMPLETED ? assignedEmpName : null,
         employee: v.employee,
         location: v.location || v.company?.city || 'N/A',
         purpose: v.purpose,
         date: v.date ? new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
         scheduledDate: v.date,
         time: v.time || '',
-        status: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE') ? VisitStatus.COMPLETED : v.status,
-        tab: (v.status === VisitStatus.COMPLETED || v.lead?.status === 'VISIT_DONE')
+        status: v.status,
+        tab: v.status === VisitStatus.COMPLETED
           ? 'completed'
           : v.status === VisitStatus.SCHEDULED
             ? 'upcoming'
