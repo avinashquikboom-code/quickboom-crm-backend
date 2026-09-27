@@ -1286,7 +1286,7 @@ export class LeadService {
         throw new ForbiddenException('You do not have permission to access this lead.');
       }
 
-      if (this.leadRepository.isVisitorEmployee(user)) {
+      if (await this.leadRepository.isVisitorUser(user)) {
         const stageKey = ((lead as any).stage?.key || '').toUpperCase();
         const stageName = ((lead as any).stage?.name || '').toUpperCase();
         const status = (lead.status || '').toUpperCase();
@@ -1295,7 +1295,8 @@ export class LeadService {
           status === 'VISIT' ||
           stageKey === 'VISIT_SCHEDULED' ||
           stageKey === 'VISIT' ||
-          stageName === 'VISIT SCHEDULED';
+          stageName === 'VISIT SCHEDULED' ||
+          stageName === 'VISIT';
 
         if (!isVisitScheduled) {
           throw new ForbiddenException('Visitor employee can only access leads in Visit Scheduled stage.');

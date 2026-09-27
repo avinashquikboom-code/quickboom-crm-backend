@@ -754,37 +754,69 @@ export class LeadRepository {
     const andConditions: any[] = [];
 
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
-    if (user && !isAdmin) {
-      const empId = user.employee?.id ?? user.employeeId;
-      const isVisitor = this.isVisitorEmployee(user);
+    const isVisitor = await this.isVisitorUser(user);
+
+    if (isVisitor) {
+      let empId = user.employee?.id ?? user.employeeId;
+      if (!empId && user.id && this.prisma) {
+        const emp = await this.prisma.employee.findFirst({ where: { userId: user.id } });
+        if (emp) empId = emp.id;
+      }
+
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
-        `companyId=${numCustomerId} isVisitor=${isVisitor} filter=employeeId_only`,
+        `companyId=${numCustomerId} isVisitor=true filter=visitor_only`,
+      );
+
+      if (empId) {
+        andConditions.push({ employeeId: Number(empId) });
+      } else {
+        andConditions.push({ id: -1 });
+      }
+
+      // Query actual existing "Visit Scheduled" stages from DB for this customer/system
+      const visitStages = await this.prisma.leadStage.findMany({
+        where: {
+          OR: [
+            { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
+            { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+          ],
+          deletedAt: null,
+          ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
+        },
+        select: { id: true, key: true },
+      });
+      const stageIds = visitStages.map((s) => s.id);
+      const stageKeys = visitStages.map((s) => s.key).filter(Boolean);
+
+      andConditions.push({
+        OR: [
+          { status: LeadStatus.VISIT_SCHEDULED },
+          { status: 'VISIT' as any },
+          ...(stageIds.length > 0 ? [{ stageId: { in: stageIds } }] : []),
+          {
+            stage: {
+              is: {
+                OR: [
+                  { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...stageKeys] } },
+                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                ],
+                deletedAt: null,
+              },
+            },
+          },
+        ],
+      });
+    } else if (user && !isAdmin) {
+      // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
+      const empId = user.employee?.id ?? user.employeeId;
+      this.logger.log(
+        `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
+        `companyId=${numCustomerId} isVisitor=false filter=employeeId_only`,
       );
       if (empId) {
         // Strict: only leads where employeeId = this employee's record ID
         andConditions.push({ employeeId: Number(empId) });
-
-        // Visitor Employee Rule: Must ONLY see leads in "Visit Scheduled" stage
-        if (isVisitor) {
-          andConditions.push({
-            OR: [
-              { status: LeadStatus.VISIT_SCHEDULED },
-              { status: 'VISIT' as any },
-              {
-                stage: {
-                  is: {
-                    OR: [
-                      { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
-                      { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                    ],
-                    deletedAt: null,
-                  },
-                },
-              },
-            ],
-          });
-        }
       } else {
         // Employee user but no employee record — return nothing
         andConditions.push({ id: -1 });
@@ -793,50 +825,52 @@ export class LeadRepository {
 
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
-    if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
-      const sId = Number(options.stageId);
-      const stageRecord = await this.prisma.leadStage.findFirst({
-        where: { id: sId, deletedAt: null },
-      });
-      if (stageRecord?.key) {
-        const normKey = normalizeLeadStatus(stageRecord.key);
-        if (ALL_LEAD_STATUSES.includes(normKey)) {
-          andConditions.push({
-            OR: [
-              { stageId: sId },
-              { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
-            ],
-          });
+    if (!isVisitor) {
+      if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
+        const sId = Number(options.stageId);
+        const stageRecord = await this.prisma.leadStage.findFirst({
+          where: { id: sId, deletedAt: null },
+        });
+        if (stageRecord?.key) {
+          const normKey = normalizeLeadStatus(stageRecord.key);
+          if (ALL_LEAD_STATUSES.includes(normKey)) {
+            andConditions.push({
+              OR: [
+                { stageId: sId },
+                { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
+              ],
+            });
+          } else {
+            where.stageId = sId;
+          }
         } else {
           where.stageId = sId;
         }
-      } else {
-        where.stageId = sId;
-      }
-    } else if (options.status && options.status.toUpperCase() !== 'ALL') {
-      const statusStr = String(options.status).trim();
-      if (!isNaN(Number(statusStr))) {
-        where.stageId = Number(statusStr);
-      } else {
-        const normStatus = normalizeLeadStatus(statusStr);
-        if (ALL_LEAD_STATUSES.includes(normStatus)) {
-          where.status = normStatus as LeadStatus;
+      } else if (options.status && options.status.toUpperCase() !== 'ALL') {
+        const statusStr = String(options.status).trim();
+        if (!isNaN(Number(statusStr))) {
+          where.stageId = Number(statusStr);
         } else {
-          // Custom stage key or label
-          const matchStage = await this.prisma.leadStage.findFirst({
-            where: {
-              OR: [
-                { key: statusStr },
-                { name: { equals: statusStr, mode: 'insensitive' } },
-              ],
-              deletedAt: null,
-              ...(where.customerId ? { customerId: where.customerId } : {}),
-            },
-          });
-          if (matchStage) {
-            where.stageId = matchStage.id;
+          const normStatus = normalizeLeadStatus(statusStr);
+          if (ALL_LEAD_STATUSES.includes(normStatus)) {
+            where.status = normStatus as LeadStatus;
           } else {
-            where.stage = { name: { equals: statusStr, mode: 'insensitive' } };
+            // Custom stage key or label
+            const matchStage = await this.prisma.leadStage.findFirst({
+              where: {
+                OR: [
+                  { key: statusStr },
+                  { name: { equals: statusStr, mode: 'insensitive' } },
+                ],
+                deletedAt: null,
+                ...(where.customerId ? { customerId: where.customerId } : {}),
+              },
+            });
+            if (matchStage) {
+              where.stageId = matchStage.id;
+            } else {
+              where.stage = { name: { equals: statusStr, mode: 'insensitive' } };
+            }
           }
         }
       }
@@ -2318,8 +2352,17 @@ export class LeadRepository {
 
   public isVisitorEmployee(user: any): boolean {
     if (!user) return false;
-    const desigName = (user.employee?.designation?.name || '').trim().toUpperCase();
-    const desigCode = (user.employee?.designation?.code || '').trim().toUpperCase();
+    const desigName = (
+      user.employee?.designation?.name ||
+      user.employee?.designationName ||
+      user.designation ||
+      ''
+    ).trim().toUpperCase();
+    const desigCode = (
+      user.employee?.designation?.code ||
+      user.employee?.designationCode ||
+      ''
+    ).trim().toUpperCase();
     const allRoles = [
       ...(Array.isArray(user.roles) ? user.roles : []),
       ...(user.userRoles?.map((ur: any) => ur.role?.name || ur.role?.type) || []),
@@ -2334,7 +2377,59 @@ export class LeadRepository {
       desigName.includes('FIELD VISIT') ||
       desigName === 'VISIT' ||
       desigCode === 'VISIT' ||
-      allRoles.some((r: string) => r.includes('VISITOR'))
+      allRoles.some((r: string) => r.includes('VISITOR') || r === 'VISIT')
     );
+  }
+
+  public async isVisitorUser(user: any): Promise<boolean> {
+    if (!user) return false;
+    if (this.isVisitorEmployee(user)) return true;
+
+    const empId = user.employee?.id ?? user.employeeId;
+    if (empId && this.prisma) {
+      try {
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: Number(empId) },
+          include: { designation: true },
+        });
+        if (emp?.designation) {
+          const dName = (emp.designation.name || '').trim().toUpperCase();
+          const dCode = (emp.designation.code || '').trim().toUpperCase();
+          if (
+            dName.includes('VISITOR') ||
+            dCode.includes('VISITOR') ||
+            dName.includes('FIELD VISIT') ||
+            dName === 'VISIT' ||
+            dCode === 'VISIT'
+          ) {
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!user.employee && user.id && this.prisma) {
+      try {
+        const emp = await this.prisma.employee.findFirst({
+          where: { userId: user.id },
+          include: { designation: true },
+        });
+        if (emp?.designation) {
+          const dName = (emp.designation.name || '').trim().toUpperCase();
+          const dCode = (emp.designation.code || '').trim().toUpperCase();
+          if (
+            dName.includes('VISITOR') ||
+            dCode.includes('VISITOR') ||
+            dName.includes('FIELD VISIT') ||
+            dName === 'VISIT' ||
+            dCode === 'VISIT'
+          ) {
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return false;
   }
 }
