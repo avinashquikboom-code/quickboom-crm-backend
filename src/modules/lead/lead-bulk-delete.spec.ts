@@ -339,6 +339,15 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       expect(mockLeadService.deleteLead).toHaveBeenCalledWith('10', 651, user);
       expect(result.success).toBe(true);
     });
+
+    it('should safely redirect remove to bulkRemove if rawId is "bulk"', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+
+      const result: any = await controller.remove('10', user, 'bulk', { ids: [651, 650] } as any);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [651, 650]);
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('HTTP Route Integration (Supertest) - Route Separation & Prefix Resolution', () => {

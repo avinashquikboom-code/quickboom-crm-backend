@@ -12,6 +12,7 @@ import {
   ParseIntPipe,
   Req,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
@@ -329,8 +330,21 @@ export class LeadController {
   async remove(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') rawId: string | number,
+    @Body() dto?: BulkDeleteLeadsDto,
+    @Query('ids') queryIds?: string | string[],
+    @Query('leadIds') queryLeadIds?: string | string[],
   ) {
+    if (rawId === 'bulk' || rawId === 'bulk-delete') {
+      this.logger.warn(
+        `[ROUTE_SAFETY_NET] DELETE /leads/:id caught "${rawId}" — redirecting internally to bulkRemove`,
+      );
+      return this.bulkRemove(customerId, user, dto, queryIds, queryLeadIds);
+    }
+    const id = Number(rawId);
+    if (isNaN(id) || id <= 0) {
+      throw new BadRequestException('Lead ID must be a positive integer');
+    }
     this.logger.log(
       `[SINGLE_LEAD_DELETE] handler=single method=DELETE path=/leads/:id id=${id} customerId=${customerId} userId=${user?.id}`,
     );

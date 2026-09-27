@@ -529,10 +529,10 @@ export class LeadRepository {
 
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
-      const empId = user.employee?.id;
+      const empId = user.employee?.id ?? user.employeeId;
       if (empId) {
         // Strict: only leads where employeeId = this employee's record ID
-        baseWhere.employeeId = empId;
+        baseWhere.employeeId = Number(empId);
       } else {
         // Employee user but no employee record found — return nothing (safety net)
         baseWhere.id = -1;
@@ -755,14 +755,14 @@ export class LeadRepository {
 
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
-      const empId = user.employee?.id;
+      const empId = user.employee?.id ?? user.employeeId;
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
         `companyId=${numCustomerId} filter=employeeId_only`,
       );
       if (empId) {
         // Strict: only leads where employeeId = this employee's record ID
-        andConditions.push({ employeeId: empId });
+        andConditions.push({ employeeId: Number(empId) });
       } else {
         // Employee user but no employee record — return nothing
         andConditions.push({ id: -1 });
@@ -1038,29 +1038,6 @@ export class LeadRepository {
             lead.createdFrom = 'MOBILE_APP';
           }
 
-          // Auto-heal employee assignment if missing
-          if (!lead.assignedToId || !lead.employeeId || !lead.assignedTo) {
-            try {
-              const activeEmp = await this.prisma.employee.findFirst({
-                where: {
-                  ...(lead.customerId ? { customerId: lead.customerId } : {}),
-                  status: 'ACTIVE',
-                },
-                select: { id: true, userId: true, firstName: true, lastName: true },
-              });
-              if (activeEmp) {
-                if (!lead.employeeId) lead.employeeId = activeEmp.id;
-                if (!lead.assignedToId && activeEmp.userId) lead.assignedToId = activeEmp.userId;
-                if (!lead.assignedTo && activeEmp.userId) {
-                  lead.assignedTo = { id: activeEmp.userId, firstName: activeEmp.firstName, lastName: activeEmp.lastName, email: '' };
-                }
-                if (!lead.employee) {
-                  lead.employee = { id: activeEmp.id, firstName: activeEmp.firstName, lastName: activeEmp.lastName };
-                }
-              }
-            } catch (_) {}
-          }
-          
           this.logger.log(`[LEAD_NAME_RESOLUTION_UPDATED] Lead ${lead.id} companyName updated to "${resolvedName}"`);
 
           // Asynchronously update in PostgreSQL so database has real companyName
@@ -1075,8 +1052,6 @@ export class LeadRepository {
               ...(!lead.address && matchingPlace.address ? { address: matchingPlace.address } : {}),
               ...(lead.source ? { source: lead.source } : {}),
               ...(lead.createdFrom ? { createdFrom: lead.createdFrom as any } : {}),
-              ...(lead.assignedToId ? { assignedToId: lead.assignedToId } : {}),
-              ...(lead.employeeId ? { employeeId: lead.employeeId } : {}),
             },
           }).then(() => {
             this.logger.log(`[LEAD_NAME_RESOLUTION_DB_UPDATED] Lead ${lead.id} persisted to database`);
@@ -2004,9 +1979,9 @@ export class LeadRepository {
 
     // Employee RBAC Isolation: When user is an employee, scope lead count strictly to assigned leads (employeeId only)
     if (user && !isAdmin) {
-      const empId = user.employee?.id;
+      const empId = user.employee?.id ?? user.employeeId;
       if (empId) {
-        leadWhere.employeeId = empId;
+        leadWhere.employeeId = Number(empId);
       } else {
         // Employee user but no employee record — show 0 leads per stage
         leadWhere.id = -1;
