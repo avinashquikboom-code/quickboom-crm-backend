@@ -214,16 +214,25 @@ export class WhatsappService {
         }
         if (!dbTemplate && templateName) {
           const normName = templateName.trim().toLowerCase().replace(/[\s-]+/g, '_');
+          // Build the name-match OR clause
+          const nameOrClause = [
+            { templateName: templateName },
+            { templateName: normName },
+            { name: templateName },
+          ];
+          // Build tenant scope clause — use AND to combine with nameOrClause
+          // (spreading a second OR key would silently overwrite the first OR in Prisma)
+          const whereClause: any = {
+            deletedAt: null,
+            OR: nameOrClause,
+          };
+          if (customerId) {
+            whereClause.AND = [
+              { OR: [{ customerId: null }, { customerId: Number(customerId) }] },
+            ];
+          }
           dbTemplate = await (this.prisma as any).metaTemplate.findFirst({
-            where: {
-              deletedAt: null,
-              OR: [
-                { templateName: templateName },
-                { templateName: normName },
-                { name: templateName },
-              ],
-              ...(customerId ? { OR: [{ customerId: null }, { customerId: Number(customerId) }] } : {}),
-            },
+            where: whereClause,
             orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
           });
         }
@@ -1420,16 +1429,21 @@ export class WhatsappService {
 
       if (this.prisma && (this.prisma as any).metaTemplate) {
         const candidateKeys = [resolvedKey, normalized, stageKey];
+        const stageWhereClause: any = {
+          deletedAt: null,
+          isLocalActive: true,
+          OR: [
+            { key: { in: candidateKeys } },
+            { templateName: { in: [resolvedKey.toLowerCase(), normalized.toLowerCase(), `lead_stage_${resolvedKey.toLowerCase()}`] } },
+          ],
+        };
+        if (customerId) {
+          stageWhereClause.AND = [
+            { OR: [{ customerId: null }, { customerId: Number(customerId) }] },
+          ];
+        }
         const dbTpl = await (this.prisma as any).metaTemplate.findFirst({
-          where: {
-            deletedAt: null,
-            isLocalActive: true,
-            OR: [
-              { key: { in: candidateKeys } },
-              { templateName: { in: [resolvedKey.toLowerCase(), normalized.toLowerCase(), `lead_stage_${resolvedKey.toLowerCase()}`] } },
-            ],
-            ...(customerId ? { OR: [{ customerId: null }, { customerId: Number(customerId) }] } : {}),
-          },
+          where: stageWhereClause,
           orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
         });
 
