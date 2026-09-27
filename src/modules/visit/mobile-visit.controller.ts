@@ -59,21 +59,44 @@ export class MobileVisitController {
 
     const numCustomerId = Number(customerId) || employee.customerId;
     const where: any = {
-      customerId: numCustomerId,
-      OR: [
-        { employeeId: employee.id },
-        { lead: { employeeId: employee.id } },
+      ...(numCustomerId > 0 ? {
+        OR: [
+          { customerId: numCustomerId },
+          { customerId: employee.customerId },
+        ],
+      } : {}),
+      AND: [
+        {
+          OR: [
+            { employeeId: employee.id },
+            { lead: { employeeId: employee.id } },
+            ...(employee.userId ? [{ lead: { assignedToId: employee.userId } }] : []),
+          ],
+        },
       ],
     };
 
     // Tab → status mapping
     if (tab) {
       if (tab === 'upcoming') {
-        where.status = VisitStatus.SCHEDULED;
+        where.AND.push({
+          status: VisitStatus.SCHEDULED,
+          OR: [
+            { leadId: null },
+            { lead: { status: { notIn: ['VISIT_DONE', 'WON', 'LOST'] } } },
+          ],
+        });
       } else if (tab === 'ongoing') {
-        where.status = VisitStatus.IN_PROGRESS;
+        where.AND.push({ status: VisitStatus.IN_PROGRESS });
       } else if (tab === 'completed') {
-        where.status = VisitStatus.COMPLETED;
+        where.AND.push({
+          OR: [
+            { status: VisitStatus.COMPLETED },
+            { lead: { status: 'VISIT_DONE' } },
+            { lead: { stage: { key: 'VISIT_DONE' } } },
+            { lead: { stage: { name: { equals: 'Visit Done', mode: 'insensitive' } } } },
+          ],
+        });
       }
     } else if (status && (status as string) !== 'ALL') {
       where.status = status;
@@ -87,7 +110,17 @@ export class MobileVisitController {
         company: { select: { id: true, name: true, city: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
         deal: { select: { id: true, title: true } },
-        lead: { select: { id: true, title: true, companyName: true, firstName: true, lastName: true } },
+        lead: {
+          select: {
+            id: true,
+            title: true,
+            companyName: true,
+            firstName: true,
+            lastName: true,
+            status: true,
+            stage: { select: { key: true, name: true } },
+          },
+        },
       },
     });
 
@@ -99,6 +132,12 @@ export class MobileVisitController {
         ? (v.lead.companyName || `${v.lead.firstName || ''} ${v.lead.lastName || ''}`.trim() || v.lead.title)
         : null;
 
+      const isLeadVisitDone =
+        v.lead?.status === 'VISIT_DONE' ||
+        v.lead?.stage?.key === 'VISIT_DONE' ||
+        (v.lead?.stage?.name || '').toUpperCase().includes('VISIT DONE');
+      const isCompleted = v.status === VisitStatus.COMPLETED || isLeadVisitDone;
+
       return {
         id: v.id,
         customer: v.customerName || leadName || v.company?.name || 'Unknown Customer',
@@ -106,15 +145,15 @@ export class MobileVisitController {
         leadTitle: v.lead?.title,
         leadId: v.leadId,
         assignedEmployee: assignedEmpName,
-        completedBy: v.status === VisitStatus.COMPLETED ? assignedEmpName : null,
+        completedBy: isCompleted ? (v.outcome || assignedEmpName) : null,
         employee: v.employee,
         location: v.location || v.company?.city || 'N/A',
         purpose: v.purpose,
         date: v.date ? new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
         scheduledDate: v.date,
         time: v.time || '',
-        status: v.status,
-        tab: v.status === VisitStatus.COMPLETED
+        status: isCompleted ? VisitStatus.COMPLETED : v.status,
+        tab: isCompleted
           ? 'completed'
           : v.status === VisitStatus.SCHEDULED
             ? 'upcoming'
@@ -124,9 +163,9 @@ export class MobileVisitController {
         visitType: v.visitType,
         latitude: v.latitude,
         longitude: v.longitude,
-        completedAt: v.completedAt,
-        completedAtFormatted: v.completedAt
-          ? new Date(v.completedAt).toLocaleString('en-IN', {
+        completedAt: v.completedAt || (isCompleted ? v.updatedAt : null),
+        completedAtFormatted: (v.completedAt || (isCompleted ? v.updatedAt : null))
+          ? new Date(v.completedAt || v.updatedAt).toLocaleString('en-IN', {
               day: 'numeric',
               month: 'short',
               year: 'numeric',
@@ -134,6 +173,8 @@ export class MobileVisitController {
               minute: '2-digit',
             })
           : null,
+        createdAt: v.createdAt,
+        updatedAt: v.updatedAt,
         company: v.company,
         contact: v.contact,
       };

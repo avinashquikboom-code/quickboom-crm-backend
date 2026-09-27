@@ -1619,20 +1619,17 @@ export class LeadRepository {
           select: { id: true, employeeId: true, companyName: true, firstName: true, lastName: true, address: true },
         });
 
-        const emp = await this.prisma.employee.findFirst({
-          where: {
-            OR: [
-              { userId: numUserId },
-              ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-            ],
-          },
-        });
-        const completionEmpId = emp?.id || (leadObj?.employeeId ? Number(leadObj.employeeId) : null);
-
         const existingVisit = await this.prisma.visit.findFirst({
           where: { leadId: numId },
           orderBy: { createdAt: 'desc' },
         });
+
+        const emp = numUserId
+          ? await this.prisma.employee.findFirst({
+              where: { userId: numUserId },
+            })
+          : null;
+        const completionEmpId = emp?.id || existingVisit?.employeeId || (leadObj?.employeeId ? Number(leadObj.employeeId) : null);
 
         if (existingVisit) {
           await this.prisma.visit.update({
