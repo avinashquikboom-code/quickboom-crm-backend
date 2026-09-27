@@ -64,18 +64,89 @@ export function maskAccessToken(token?: string | null): string {
   return `${clean.substring(0, 4)}****${clean.substring(clean.length - 4)}`;
 }
 
-/** Resolves and decrypts access token if stored as enc:v1: */
+/** Resolves, decrypts, and thoroughly normalizes a Meta WhatsApp access token */
 export function resolveCleanAccessToken(rawToken: any): { token: string | null; error?: string } {
-  if (!rawToken || typeof rawToken !== 'string') {
+  if (!rawToken) {
     return { token: null, error: 'TOKEN_EMPTY' };
   }
-  let token = rawToken.trim();
-  if (token.startsWith('enc:v1:')) {
-    token = decryptSecret(token).trim();
+
+  let token = rawToken;
+
+  // 1. If an object was passed, extract the token string property
+  if (typeof token === 'object' && token !== null) {
+    token = token.accessToken || token.apiKey || token.access_token || token.token || '';
   }
-  if (!token || token === 'undefined' || token === 'null' || token === '[object Object]' || token.startsWith('enc:v1:')) {
+
+  if (typeof token !== 'string') {
+    return { token: null, error: 'TOKEN_EMPTY' };
+  }
+
+  token = token.trim();
+  if (!token || token.length === 0) {
+    return { token: null, error: 'TOKEN_EMPTY' };
+  }
+
+  // 2. Handle stringified JSON (e.g. '{"accessToken":"..."}' or '{"apiKey":"..."}')
+  if (token.startsWith('{') && token.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(token);
+      token = (
+        parsed.accessToken ||
+        parsed.apiKey ||
+        parsed.access_token ||
+        parsed.token ||
+        token
+      ).trim();
+    } catch {
+      // not valid JSON, proceed with raw string
+    }
+  }
+
+  // 3. Decrypt if encrypted with enc:v1:, handling potential double-encryption
+  let decryptAttempts = 0;
+  while (typeof token === 'string' && token.startsWith('enc:v1:') && decryptAttempts < 3) {
+    decryptAttempts++;
+    const decrypted = decryptSecret(token);
+    if (!decrypted || decrypted === token) {
+      break;
+    }
+    token = decrypted.trim();
+  }
+
+  if (!token || token.length === 0) {
+    return { token: null, error: 'TOKEN_EMPTY' };
+  }
+
+  if (token === 'undefined' || token === 'null' || token === '[object Object]' || token.startsWith('enc:v1:')) {
     return { token: null, error: 'TOKEN_DECRYPT_FAILED' };
   }
+
+  // 4. Repeatedly strip quotes, escaped quotes, 'Bearer ' prefixes, and trailing punctuation
+  let prev = '';
+  let cleanPasses = 0;
+  while (token !== prev && cleanPasses < 5) {
+    prev = token;
+    cleanPasses++;
+    token = token.trim()
+      // Remove leading & trailing single/double/backtick/smart quotes
+      .replace(/^["'`\u201C\u201D\u2018\u2019]+|["'`\u201C\u201D\u2018\u2019]+$/g, '')
+      // Remove escaped quotes e.g. \"...\"
+      .replace(/^[\\"'`]+|[\\"'`]+$/g, '')
+      // Remove leading Bearer or bearer prefix (e.g. "Bearer ", "Bearer:", "bearer ")
+      .replace(/^bearer[:\s]+/i, '')
+      // Remove trailing semicolons or commas
+      .replace(/[;,]+$/, '')
+      .trim();
+  }
+
+  // 5. Strip all internal whitespace, line-breaks (\r, \n), tabs, and zero-width chars
+  // Meta OAuth tokens are continuous Base64URL/alphanumeric strings without any whitespace
+  token = token.replace(/[\r\n\t\s\u200B-\u200D\uFEFF]/g, '');
+
+  if (!token || token.length === 0) {
+    return { token: null, error: 'TOKEN_EMPTY' };
+  }
+
   return { token };
 }
 
@@ -98,8 +169,13 @@ export function classifyWhatsAppError(httpStatus?: number, metaCode?: string | n
 /** Returns a safe user-facing message for a given error code. */
 export function friendlyWhatsAppErrorMessage(errorCode: string, metaMessage?: string): string {
   switch (errorCode) {
-    case WHATSAPP_ERROR_CODES.AUTH_ERROR:
+    case WHATSAPP_ERROR_CODES.AUTH_ERROR: {
+      const isCannotParse = metaMessage && (metaMessage.toLowerCase().includes('cannot parse') || metaMessage.toLowerCase().includes('malformed'));
+      if (isCannotParse) {
+        return `WhatsApp authentication failed: Meta could not parse the access token format (${metaMessage}). Please verify the token has no extra quotes or prefixes in Settings → Integrations → WhatsApp.`;
+      }
       return 'WhatsApp authentication failed. Please verify the WhatsApp Access Token in Settings → Integrations → WhatsApp.';
+    }
     case WHATSAPP_ERROR_CODES.PERMISSION_ERROR:
       return 'WhatsApp access is not permitted for this account. Check your Meta App permissions.';
     case WHATSAPP_ERROR_CODES.REQUEST_ERROR:

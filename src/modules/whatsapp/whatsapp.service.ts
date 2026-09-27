@@ -149,6 +149,10 @@ export class WhatsappService {
     const configuredWabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
+    this.logger.log(
+      `[WHATSAPP_CONFIG] configured=${Boolean(apiKey && phoneNumberId)} tenantId=${customerId || 'SYSTEM_ADMIN'} phoneNumberId=${phoneNumberId ? phoneNumberId.substring(0, 4) + '****' : 'MISSING'} tokenConfigured=${Boolean(apiKey)} tokenLength=${apiKey ? apiKey.length : 0}`
+    );
+
     // Detect silent decryption failure
     if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
       this.logger.error(
@@ -446,6 +450,10 @@ export class WhatsappService {
         `token: ${maskAccessToken(apiKey)}`
       );
 
+      this.logger.error(
+        `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
+      );
+
       const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
       return {
@@ -569,6 +577,10 @@ export class WhatsappService {
         `token: ${maskAccessToken(apiKey)}`
       );
 
+      this.logger.error(
+        `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
+      );
+
       // If other non-132001 template error and fallback text provided, attempt plain text message
       if (
         (metaCode === 100 || String(metaMessage).toLowerCase().includes('template')) &&
@@ -643,6 +655,10 @@ export class WhatsappService {
     const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
+
+    this.logger.log(
+      `[WHATSAPP_CONFIG] configured=${Boolean(apiKey && phoneNumberId)} tenantId=${customerId || 'SYSTEM_ADMIN'} phoneNumberId=${phoneNumberId ? phoneNumberId.substring(0, 4) + '****' : 'MISSING'} tokenConfigured=${Boolean(apiKey)} tokenLength=${apiKey ? apiKey.length : 0}`
+    );
 
     // Detect silent decryption failure
     if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
@@ -729,6 +745,10 @@ export class WhatsappService {
         `token: ${maskAccessToken(apiKey)}`
       );
 
+      this.logger.error(
+        `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
+      );
+
       const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
       return {
@@ -809,6 +829,10 @@ export class WhatsappService {
         `Meta error subcode: ${metaSubcode || 'N/A'}\n` +
         `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
         `token: ${maskAccessToken(apiKey)}`
+      );
+
+      this.logger.error(
+        `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
       );
 
       // Classify error according to status and Meta error code
@@ -1117,7 +1141,8 @@ export class WhatsappService {
     }
 
     const creds = config.credentials || {};
-    const apiKey = (creds.apiKey || creds.accessToken || creds.access_token || '').trim();
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
@@ -1688,14 +1713,16 @@ export class WhatsappService {
     const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', options);
     const creds = config?.credentials || {};
     const cfg = config?.config || {};
-    const apiKey = (
+    const rawApiKey = (
       creds.apiKey ||
       creds.accessToken ||
       creds.access_token ||
       process.env.WHATSAPP_API_KEY ||
       process.env.WHATSAPP_ACCESS_TOKEN ||
       ''
-    ).trim();
+    );
+    const { token: cleanApiKey } = resolveCleanAccessToken(rawApiKey);
+    const apiKey = cleanApiKey || '';
     const phoneNumberId = (
       creds.phoneNumberId ||
       creds.phone_number_id ||

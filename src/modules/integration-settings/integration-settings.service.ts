@@ -1054,9 +1054,16 @@ export class IntegrationSettingsService {
     // 1. First populate with existing credentials preserved
     for (const [key, value] of Object.entries(existingCreds)) {
       if (typeof value === 'string' && value.length > 0) {
+        let valToStore = value;
+        if (normProvider === IntegrationProvider.WHATSAPP && (key === 'apiKey' || key === 'accessToken' || key === 'access_token')) {
+          const { token: cleanTok } = resolveCleanAccessToken(valToStore);
+          if (cleanTok) {
+            valToStore = cleanTok;
+          }
+        }
         encryptedCreds[key] = isSensitiveKey(key)
-          ? (value.startsWith('enc:v1:') ? value : encryptSecret(value))
-          : value;
+          ? (valToStore.startsWith('enc:v1:') ? valToStore : encryptSecret(valToStore))
+          : valToStore;
       } else {
         encryptedCreds[key] = value;
       }
@@ -1065,7 +1072,7 @@ export class IntegrationSettingsService {
     // 2. Overlay incoming non-empty, non-masked credentials
     for (const [key, value] of Object.entries(incomingCreds)) {
       if (typeof value === 'string') {
-        const trimmed = value.trim();
+        let trimmed = value.trim();
 
         if (
           isMaskedSecret(trimmed) ||
@@ -1074,6 +1081,13 @@ export class IntegrationSettingsService {
           // Keep existing preserved value
           continue;
         } else if (isSensitiveKey(key)) {
+          // Pre-normalize WhatsApp token before encrypting to ensure clean storage
+          if (normProvider === IntegrationProvider.WHATSAPP && (key === 'apiKey' || key === 'accessToken' || key === 'access_token')) {
+            const { token: cleanTok } = resolveCleanAccessToken(trimmed);
+            if (cleanTok) {
+              trimmed = cleanTok;
+            }
+          }
           // Encrypt new sensitive value
           encryptedCreds[key] = encryptSecret(trimmed);
         } else {
@@ -1081,6 +1095,15 @@ export class IntegrationSettingsService {
         }
       } else {
         encryptedCreds[key] = value;
+      }
+    }
+
+    // Mirror WhatsApp apiKey and accessToken so both keys are always populated with identical clean tokens
+    if (normProvider === IntegrationProvider.WHATSAPP) {
+      if (encryptedCreds.apiKey && !encryptedCreds.accessToken) {
+        encryptedCreds.accessToken = encryptedCreds.apiKey;
+      } else if (encryptedCreds.accessToken && !encryptedCreds.apiKey) {
+        encryptedCreds.apiKey = encryptedCreds.accessToken;
       }
     }
 
@@ -1635,6 +1658,10 @@ export class IntegrationSettingsService {
         const apiVersion = (resolvedCreds.apiVersion || 'v25.0').trim();
         const testPhone = (testCreds.testPhone || testCreds.recipientPhone || testCreds.to || (dto?.credentials as any)?.testPhone || '').trim();
 
+        this.logger.log(
+          `[WHATSAPP_CONFIG] configured=${Boolean(apiKey && phoneNumberId)} tenantId=${adminUserId || 'SYSTEM_ADMIN'} phoneNumberId=${phoneNumberId ? phoneNumberId.substring(0, 4) + '****' : 'MISSING'} tokenConfigured=${Boolean(apiKey)} tokenLength=${apiKey ? apiKey.length : 0}`
+        );
+
         if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
           this.logger.error(
             `[WHATSAPP DEBUG]\n` +
@@ -1650,8 +1677,20 @@ export class IntegrationSettingsService {
           );
         }
 
-        if (!apiKey || !phoneNumberId) {
-          throw new BadRequestException('WhatsApp Access Token and Phone Number ID are required to test connection');
+        if (!rawApiKey) {
+          throw new BadRequestException('WhatsApp Access Token is required to test connection');
+        }
+
+        if (!apiKey) {
+          throw new BadRequestException('WhatsApp Access Token is malformed or could not be parsed');
+        }
+
+        if (!phoneNumberId) {
+          throw new BadRequestException('WhatsApp Phone Number ID is required to test connection');
+        }
+
+        if (!/^\d+$/.test(phoneNumberId)) {
+          throw new BadRequestException(`WhatsApp Phone Number ID "${phoneNumberId}" is invalid. Must contain numeric digits only.`);
         }
 
         const graphUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`;
@@ -1671,7 +1710,7 @@ export class IntegrationSettingsService {
           );
 
           this.logger.log(
-            `[WHATSAPP DEBUG] Test connection verified successfully with Meta API for Phone Number ID: ${phoneNumberId} (verified name: ${response.data?.verified_name}). Token: ${maskAccessToken(apiKey)}`,
+            `[WHATSAPP_META] httpStatus=200 verifiedName="${response.data?.verified_name}" status=SUCCESS`
           );
 
           let testMessageResult: any = null;
@@ -1736,25 +1775,16 @@ export class IntegrationSettingsService {
           const httpStatus = err?.response?.status as number | undefined;
 
           this.logger.error(
-            `[WHATSAPP DEBUG]\n` +
-            `tenant/company ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
-            `employee/user ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
-            `integration ID: WHATSAPP\n` +
-            `Phone Number ID: ${phoneNumberId}\n` +
-            `Graph API URL: ${graphUrl}\n` +
-            `HTTP method: GET\n` +
-            `HTTP status: ${httpStatus || 'N/A'}\n` +
-            `Meta error code: ${errorCode}\n` +
-            `Meta error type: ${errorType || 'N/A'}\n` +
-            `Meta error message: ${rawErrMsg}\n` +
-            `Meta error subcode: ${errorSubcode || 'N/A'}\n` +
-            `Meta error fbtrace_id if available: ${fbtraceId || 'N/A'}\n` +
-            `token: ${maskAccessToken(apiKey)}`,
+            `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${errorCode} metaErrorMessage="${rawErrMsg}"`
           );
 
           if (String(errorCode) === '190' || errorType === 'OAuthException' || httpStatus === 401) {
+            const isCannotParse = rawErrMsg.toLowerCase().includes('cannot parse') || rawErrMsg.toLowerCase().includes('malformed');
+            const reasonDetail = isCannotParse
+              ? `Meta rejected the access token format: ${rawErrMsg}`
+              : `Meta access token is invalid or expired: ${rawErrMsg}`;
             throw new BadRequestException(
-              `WhatsApp Access Token is invalid or expired (Meta Error 190): ${rawErrMsg}. Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
+              `WhatsApp Access Token error (Meta Error 190): ${reasonDetail}. Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
             );
           }
 
@@ -2390,7 +2420,8 @@ export class IntegrationSettingsService {
   async subscribeWhatsappWebhook(credentials?: any) {
     const conf = await this.getIntegrationConfig(IntegrationProvider.WHATSAPP);
     const creds = { ...(conf?.credentials || {}), ...(credentials || {}) };
-    const accessToken = (creds.apiKey || creds.accessToken || '').trim();
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: accessToken } = resolveCleanAccessToken(rawApiKey);
     const businessAccountId = (creds.businessAccountId || creds.wabaId || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
