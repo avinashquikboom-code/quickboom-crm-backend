@@ -83,12 +83,19 @@ export class CommissionService {
     }
 
     // 3. Resolve Employee who won/converted the Lead
-    // Priority 1: customer.assignedEmployeeId
-    // Priority 2: customer.createdByEmployeeId
-    // Priority 3: customer.originLead.employeeId
-    // Priority 4: employee linked to customer.originLead.assignedToId
-    let employeeId: number | null = customer.assignedEmployeeId || customer.createdByEmployeeId;
-    let employee = customer.assignedEmployeeRel || customer.createdByEmployeeRel;
+    // Priority 1: customer.originLead.convertedByEmployeeId (employee who actually WON the lead)
+    // Priority 2: customer.assignedEmployeeId
+    // Priority 3: customer.createdByEmployeeId
+    // Priority 4: customer.originLead.employeeId
+    // Priority 5: employee linked to customer.originLead.assignedToId
+    let employeeId: number | null =
+      customer.originLead?.convertedByEmployeeId ||
+      customer.assignedEmployeeId ||
+      customer.createdByEmployeeId;
+    let employee =
+      customer.originLead?.convertedByEmployeeId
+        ? null
+        : (customer.assignedEmployeeRel || customer.createdByEmployeeRel);
 
     if (!employeeId && customer.originLead?.employeeId) {
       employeeId = customer.originLead.employeeId;

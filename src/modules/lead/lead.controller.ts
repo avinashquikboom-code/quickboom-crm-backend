@@ -317,9 +317,10 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Body() dto: UpdateLeadStatusDto,
   ) {
-    return this.leadService.updateStatus(customerId, id, userId, dto);
+    return this.leadService.updateStatus(customerId, id, userId, dto, user);
   }
 
   @Delete(':id')

@@ -1173,6 +1173,19 @@ export class LeadRepository {
       convertedByEmployeeName: lead.convertedByEmployee
         ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
         : null,
+      wonByEmployeeId: lead.convertedByEmployeeId || null,
+      wonBy: lead.convertedByEmployee
+        ? {
+            id: lead.convertedByEmployee.id,
+            name: `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null,
+            firstName: lead.convertedByEmployee.firstName,
+            lastName: lead.convertedByEmployee.lastName,
+          }
+        : null,
+      wonByName: lead.convertedByEmployee
+        ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
+        : null,
+      wonAt: lead.convertedAt || null,
     };
   }
 

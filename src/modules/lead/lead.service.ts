@@ -1491,6 +1491,7 @@ export class LeadService {
         userId,
         previousStageName,
         effectiveNewStageName,
+        user,
       );
     }
 
@@ -1502,7 +1503,13 @@ export class LeadService {
     };
   }
 
-  async updateStatus(customerId: number | string, id: number | string, userId: number | string, dto: UpdateLeadStatusDto) {
+  async updateStatus(
+    customerId: number | string,
+    id: number | string,
+    userId: number | string,
+    dto: UpdateLeadStatusDto,
+    user?: any,
+  ) {
     const lead = await this.getLeadById(customerId, id);
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
@@ -1731,6 +1738,7 @@ export class LeadService {
         userId,
         previousStageName,
         newStageName,
+        user,
       );
     }
 
@@ -1780,6 +1788,7 @@ export class LeadService {
     userId?: number | string,
     previousStageName?: string,
     newStageName?: string,
+    user?: any,
   ): Promise<{
     success: boolean;
     customerId?: number;
@@ -1790,9 +1799,11 @@ export class LeadService {
     userExisted?: boolean;
     loginStatus?: string;
     lead?: { id: number; stage: string };
-    customer?: { id: number; leadId: number; email: string | null; name: string; loginStatus: string };
+    customer?: { id: number; leadId: number; email: string | null; name: string; loginStatus: string; assignedEmployeeId?: number | null; createdByEmployeeId?: number | null; wonByEmployeeId?: number | null; wonByName?: string | null; wonAt?: any };
     assignedEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
+    wonByEmployeeId?: number | null;
+    wonByName?: string | null;
     error?: string;
   }> {
     try {
@@ -1848,15 +1859,31 @@ export class LeadService {
         });
       }
 
-      // 2. Resolve Employee Hierarchy
+      // 2. Resolve Employee Hierarchy: Authenticated employee who won the lead
       let convertingEmp: any = null;
-      if (userId && this.prisma.employee) {
+      const callerEmpId = user?.employeeId || user?.employee?.id;
+      if (callerEmpId && this.prisma.employee) {
         convertingEmp = await this.prisma.employee.findFirst({
-          where: { userId: Number(userId), status: 'ACTIVE' },
+          where: { id: Number(callerEmpId), status: 'ACTIVE' },
           include: { department: true },
         });
       }
-      const convertingEmpId = convertingEmp?.id || null;
+      if (!convertingEmp && userId && this.prisma.employee) {
+        convertingEmp = await this.prisma.employee.findFirst({
+          where: {
+            OR: [
+              { userId: Number(userId) },
+              { id: Number(userId) },
+            ],
+            status: 'ACTIVE',
+          },
+          include: { department: true },
+        });
+      }
+      const convertingEmpId = convertingEmp?.id || (callerEmpId ? Number(callerEmpId) : null);
+      const convertingEmpName = convertingEmp
+        ? `${convertingEmp.firstName} ${convertingEmp.lastName || ''}`.trim()
+        : null;
 
       // Assigned employee resolution:
       let assignedEmpId: number | null = updatedLead.employeeId ? Number(updatedLead.employeeId) : null;
@@ -1886,15 +1913,16 @@ export class LeadService {
         }
       }
 
-      if (!assignedEmpId && convertingEmpId) {
-        assignedEmpId = convertingEmpId;
-        assignedEmpName = convertingEmp ? `${convertingEmp.firstName} ${convertingEmp.lastName || ''}`.trim() : null;
-        if (!resolvedDepartment && convertingEmp?.department?.name) {
-          resolvedDepartment = convertingEmp.department.name;
-        }
+      // Customer ownership: Belongs to the BPO employee who WON the lead!
+      const ownerEmpId: number | null = convertingEmpId || assignedEmpId;
+      const ownerEmpName: string | null = convertingEmpId
+        ? (convertingEmpName || assignedEmpName)
+        : assignedEmpName;
+      if (!resolvedDepartment && convertingEmp?.department?.name) {
+        resolvedDepartment = convertingEmp.department.name;
       }
 
-      const createdByEmpId: number | null = convertingEmpId || assignedEmpId;
+      const createdByEmpId: number | null = ownerEmpId;
 
       let isNewCustomer = false;
 
@@ -1911,19 +1939,22 @@ export class LeadService {
         if (!customer.phone && normalizedPhone) {
           updateData.phone = normalizedPhone;
         }
-        if (!customer.assignedEmployeeId && assignedEmpId) {
-          updateData.assignedEmployeeId = assignedEmpId;
-          updateData.assignedEmployee = assignedEmpName;
+        if (!customer.assignedEmployeeId && ownerEmpId) {
+          updateData.assignedEmployeeId = ownerEmpId;
+          updateData.assignedEmployee = ownerEmpName;
         }
         if (!customer.createdByEmployeeId && createdByEmpId) {
           updateData.createdByEmployeeId = createdByEmpId;
         }
         if (Object.keys(updateData).length > 0) {
-          customer = await this.prisma.customer.update({
+          const updatedCust = await this.prisma.customer.update({
             where: { id: customer.id },
             data: updateData,
             include: { originLead: true },
           });
+          if (updatedCust) {
+            customer = updatedCust;
+          }
         }
       } else {
         const leadFullName = [updatedLead.firstName, updatedLead.lastName].filter(Boolean).join(' ').trim();
@@ -1950,8 +1981,8 @@ export class LeadService {
             customerType: 'ENTERPRISE',
             source: updatedLead.source || 'LEAD_CONVERSION',
             leadId,
-            assignedEmployeeId: assignedEmpId,
-            assignedEmployee: assignedEmpName,
+            assignedEmployeeId: ownerEmpId,
+            assignedEmployee: ownerEmpName,
             createdByEmployeeId: createdByEmpId,
             department: resolvedDepartment,
             notes: `Converted automatically from Lead #${leadId} upon transition to WON.`,
@@ -2011,8 +2042,8 @@ export class LeadService {
             process.env.DEFAULT_ONBOARDING_PASSWORD ||
             '123456';
           const passwordHash = await bcrypt.hash(defaultOnboardingPassword, 10);
-          const firstName = updatedLead.firstName || customer.name.split(' ')[0] || 'Customer';
-          const lastName = updatedLead.lastName || customer.name.split(' ').slice(1).join(' ') || '';
+          const firstName = updatedLead.firstName || customer?.name?.split(' ')[0] || 'Customer';
+          const lastName = updatedLead.lastName || customer?.name?.split(' ').slice(1).join(' ') || '';
 
           let customerRole: any = null;
           if (this.prisma.role) {
@@ -2056,11 +2087,13 @@ export class LeadService {
       }
 
       // 5. Update Lead convertedAt, status, and convertedByEmployeeId
+      const wonAtTimestamp = updatedLead.convertedAt || new Date();
       if (this.prisma.lead) {
         const wonUpdateData: any = {
-          convertedAt: updatedLead.convertedAt || new Date(),
+          convertedAt: wonAtTimestamp,
           status: LeadStatus.WON,
         };
+        // Explicitly set convertedByEmployeeId if not already set, preserving the original WON employee
         if (convertingEmpId && !updatedLead.convertedByEmployeeId) {
           wonUpdateData.convertedByEmployeeId = convertingEmpId;
         }
@@ -2072,7 +2105,7 @@ export class LeadService {
 
       this.logger.log(
         `[LEAD_WON_CONVERSION] Completed successfully. Lead #${leadId} -> Customer #${customer.id}. ` +
-        `AssignedEmp: ${assignedEmpId}, CreatedByEmp: ${createdByEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
+        `AssignedEmp: ${ownerEmpId}, WonByEmp: ${convertingEmpId || ownerEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
       );
 
       const loginStatus = !validLoginEmail
@@ -2091,6 +2124,11 @@ export class LeadService {
           email: customer.email || validLoginEmail,
           name: customer.name,
           loginStatus,
+          assignedEmployeeId: customer.assignedEmployeeId || ownerEmpId,
+          createdByEmployeeId: customer.createdByEmployeeId || createdByEmpId,
+          wonByEmployeeId: convertingEmpId || customer.assignedEmployeeId || ownerEmpId,
+          wonByName: convertingEmpName || customer.assignedEmployee || ownerEmpName,
+          wonAt: wonAtTimestamp,
         },
         customerId: customer.id,
         customerName: customer.name,
@@ -2099,8 +2137,10 @@ export class LeadService {
         userCreated,
         userExisted,
         loginStatus,
-        assignedEmployeeId: assignedEmpId,
-        createdByEmployeeId: createdByEmpId,
+        assignedEmployeeId: customer.assignedEmployeeId || ownerEmpId,
+        createdByEmployeeId: customer.createdByEmployeeId || createdByEmpId,
+        wonByEmployeeId: convertingEmpId || customer.assignedEmployeeId || ownerEmpId,
+        wonByName: convertingEmpName || customer.assignedEmployee || ownerEmpName,
       };
     } catch (err: any) {
       this.logger.error(`[LEAD_WON_CONVERSION] Failed to convert Lead #${updatedLead?.id} to Customer: ${err?.message}`, err?.stack);
