@@ -259,6 +259,10 @@ export class VisitService {
         notes: dto.notes,
         outcome: dto.outcome,
         nextFollowUpDate: dto.nextFollowUpDate ? new Date(dto.nextFollowUpDate) : undefined,
+        scheduledBy: dto.scheduledBy,
+        scheduledById: dto.scheduledById ? Number(dto.scheduledById) : undefined,
+        completedBy: dto.completedBy,
+        completedById: dto.completedById ? Number(dto.completedById) : undefined,
       },
       include: {
         employee: true,
@@ -468,6 +472,10 @@ export class VisitService {
     if (dto.notes) data.notes = dto.notes;
     if (dto.outcome) data.outcome = dto.outcome;
     if (dto.nextFollowUpDate) data.nextFollowUpDate = new Date(dto.nextFollowUpDate);
+    if (dto.completedBy) data.completedBy = dto.completedBy;
+    if (dto.completedById) data.completedById = Number(dto.completedById);
+    if (dto.scheduledBy) data.scheduledBy = dto.scheduledBy;
+    if (dto.scheduledById) data.scheduledById = Number(dto.scheduledById);
 
     if (dto.status === VisitStatus.COMPLETED) {
       data.completedAt = new Date();

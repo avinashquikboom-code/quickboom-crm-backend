@@ -961,6 +961,7 @@ export class LeadRepository {
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
+      await this.resolveMissingLeadVisitedAndWonEmployees(data);
     }
 
     return {
@@ -1128,6 +1129,98 @@ export class LeadRepository {
     }
   }
 
+  public async resolveMissingLeadVisitedAndWonEmployees(leads: any[]) {
+    if (!Array.isArray(leads) || leads.length === 0) return;
+
+    // 1. Resolve missing convertedByEmployee for Won leads from status history
+    const wonLeadsWithoutEmp = leads.filter(
+      (l) => (l.status === 'WON' || l.stage?.key === 'WON' || l.stage?.name?.toLowerCase() === 'won') && !l.convertedByEmployeeId && !l.convertedByEmployee,
+    );
+    if (wonLeadsWithoutEmp.length > 0) {
+      try {
+        const leadIds = wonLeadsWithoutEmp.map((l) => l.id);
+        const wonHistories = await this.prisma.leadStatusHistory.findMany({
+          where: {
+            leadId: { in: leadIds },
+            toStatus: 'WON',
+            changedById: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (wonHistories.length > 0) {
+          const userIds = Array.from(new Set(wonHistories.map((h) => h.changedById!).filter(Boolean)));
+          const employees = await this.prisma.employee.findMany({
+            where: { userId: { in: userIds } },
+            select: { id: true, firstName: true, lastName: true, userId: true },
+          });
+
+          const empByUser = new Map<number, any>();
+          for (const emp of employees) {
+            if (emp.userId) empByUser.set(emp.userId, emp);
+          }
+
+          const wonHistoryByLead = new Map<number, any>();
+          for (const h of wonHistories) {
+            if (!wonHistoryByLead.has(h.leadId)) {
+              wonHistoryByLead.set(h.leadId, h);
+            }
+          }
+
+          for (const lead of wonLeadsWithoutEmp) {
+            const h = wonHistoryByLead.get(lead.id);
+            if (h && h.changedById) {
+              const emp = empByUser.get(h.changedById);
+              if (emp) {
+                lead.convertedByEmployeeId = emp.id;
+                lead.convertedByEmployee = emp;
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[resolveMissingLeadVisitedAndWonEmployees] Won history error: ${err?.message || err}`);
+      }
+    }
+
+    // 2. Resolve missing employee for Visit Done leads from completed visits
+    const visitedLeadsWithoutEmp = leads.filter(
+      (l) => (l.status === 'VISIT_DONE' || l.stage?.key === 'VISIT_DONE' || l.stage?.name?.toLowerCase() === 'visit done') && !l.employeeId && !l.employee,
+    );
+    if (visitedLeadsWithoutEmp.length > 0) {
+      try {
+        const leadIds = visitedLeadsWithoutEmp.map((l) => l.id);
+        const completedVisits = await this.prisma.visit.findMany({
+          where: {
+            leadId: { in: leadIds },
+            status: VisitStatus.COMPLETED,
+          },
+          include: {
+            employee: { select: { id: true, firstName: true, lastName: true } },
+          },
+          orderBy: { completedAt: 'desc' },
+        });
+
+        const visitByLead = new Map<number, any>();
+        for (const v of completedVisits) {
+          if (!visitByLead.has(v.leadId!)) {
+            visitByLead.set(v.leadId!, v);
+          }
+        }
+
+        for (const lead of visitedLeadsWithoutEmp) {
+          const v = visitByLead.get(lead.id);
+          if (v && v.employee) {
+            lead.employeeId = v.employee.id;
+            lead.employee = v.employee;
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[resolveMissingLeadVisitedAndWonEmployees] Visit error: ${err?.message || err}`);
+      }
+    }
+  }
+
   public enrichLeadRecord(lead: any): any {
     if (!lead) return lead;
     const isFake = (s: any) =>
@@ -1209,49 +1302,75 @@ export class LeadRepository {
       convertedByEmployeeName: lead.convertedByEmployee
         ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
         : null,
-      wonByEmployeeId: lead.convertedByEmployeeId || null,
-      wonBy: lead.convertedByEmployee
-        ? {
-            id: lead.convertedByEmployee.id,
-            name: `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null,
-            firstName: lead.convertedByEmployee.firstName,
-            lastName: lead.convertedByEmployee.lastName,
-          }
+      wonByEmployeeId: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployeeId)
+        ? (lead.convertedByEmployeeId || null)
         : null,
-      wonByName: lead.convertedByEmployee
-        ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
+      wonBy: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployee)
+        ? (lead.convertedByEmployee
+          ? {
+              id: lead.convertedByEmployee.id,
+              name: `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null,
+              firstName: lead.convertedByEmployee.firstName,
+              lastName: lead.convertedByEmployee.lastName,
+            }
+          : null)
         : null,
-      wonAt: lead.convertedAt || null,
-      visitedByEmployeeId: lead.employeeId || (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employeeId)?.employeeId) || null,
-      visitedBy: lead.employee
-        ? {
-            id: lead.employee.id,
-            name: `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null,
-            firstName: lead.employee.firstName,
-            lastName: lead.employee.lastName,
-          }
-        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
-        ? {
-            id: lead.visits.find((v: any) => v.employee).employee.id,
-            name: `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null,
-            firstName: lead.visits.find((v: any) => v.employee).employee.firstName,
-            lastName: lead.visits.find((v: any) => v.employee).employee.lastName,
-          }
+      wonByName: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployee)
+        ? (lead.convertedByEmployee
+          ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
+          : null)
         : null,
-      visitedByName: lead.employee
-        ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
-        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
-        ? `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null
-        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.completedBy || v.assignedEmployee)?.completedBy) || null,
+      wonAt: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won')
+        ? (lead.convertedAt || null)
+        : null,
+      visitedByEmployeeId: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+        ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedById)?.completedById) ||
+           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employeeId)?.employeeId) ||
+           lead.employeeId ||
+           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employeeId)?.employeeId) || null)
+        : null,
+      visitedBy: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+        ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy))
+          ? {
+              id: (lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedById)?.completedById) || null,
+              name: lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy).completedBy,
+            }
+          : lead.employee
+          ? {
+              id: lead.employee.id,
+              name: `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null,
+              firstName: lead.employee.firstName,
+              lastName: lead.employee.lastName,
+            }
+          : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
+          ? {
+              id: lead.visits.find((v: any) => v.employee).employee.id,
+              name: `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null,
+              firstName: lead.visits.find((v: any) => v.employee).employee.firstName,
+              lastName: lead.visits.find((v: any) => v.employee).employee.lastName,
+            }
+          : null)
+        : null,
+      visitedByName: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+        ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy)?.completedBy) ||
+           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.completedBy)?.completedBy) ||
+           (lead.employee
+             ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
+             : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
+             ? `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null
+             : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.assignedEmployee)?.assignedEmployee) || null))
+        : null,
       visits: Array.isArray(lead.visits)
         ? lead.visits.map((v: any) => {
             const empName = v.employee
               ? `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim()
               : (v.assignedEmployee || null);
+            const compName = v.completedBy || ((v.status === 'COMPLETED' || lead.status === 'VISIT_DONE') ? empName : null);
             return {
               ...v,
               assignedEmployee: empName,
-              completedBy: (v.status === 'COMPLETED' || lead.status === 'VISIT_DONE') ? empName : null,
+              completedBy: compName,
+              scheduledBy: v.scheduledBy || null,
             };
           })
         : lead.visits,
@@ -1309,6 +1428,7 @@ export class LeadRepository {
       });
       if (result) {
         await this.resolveMissingLeadBusinessNames([result]);
+        await this.resolveMissingLeadVisitedAndWonEmployees([result]);
       }
       return this.enrichLeadRecord(result);
     } catch (err: any) {
@@ -1350,6 +1470,7 @@ export class LeadRepository {
       });
       if (fallbackResult) {
         await this.resolveMissingLeadBusinessNames([fallbackResult]);
+        await this.resolveMissingLeadVisitedAndWonEmployees([fallbackResult]);
       }
       return this.enrichLeadRecord(fallbackResult);
     }
@@ -1652,6 +1773,8 @@ export class LeadRepository {
           : null;
         const completionEmpId = emp?.id || existingVisit?.employeeId || (leadObj?.employeeId ? Number(leadObj.employeeId) : null);
 
+        const actingEmpName = emp ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim() : null;
+
         if (existingVisit) {
           await this.prisma.visit.update({
             where: { id: existingVisit.id },
@@ -1660,7 +1783,8 @@ export class LeadRepository {
               completedAt: new Date(),
               notes: notes || existingVisit.notes,
               outcome: notes || existingVisit.outcome || 'Visit Done',
-              ...(completionEmpId ? { employeeId: completionEmpId } : {}),
+              completedById: emp?.id || null,
+              completedBy: actingEmpName || existingVisit.completedBy || 'Visitor',
             },
           });
         } else if (completionEmpId) {
@@ -1678,18 +1802,35 @@ export class LeadRepository {
               completedAt: new Date(),
               notes: notes || 'Visit completed',
               outcome: notes || 'Visit Done',
+              completedById: emp?.id || null,
+              completedBy: actingEmpName || 'Visitor',
             },
           });
         }
+      } catch (err: any) {
+        this.logger.warn(`[updateStatus] Failed to sync visit completion: ${err.message}`);
+      }
+    }
 
-        if (completionEmpId) {
+    if (toStatus === LeadStatus.WON || (toStatus as string) === 'WON') {
+      try {
+        const emp = numUserId
+          ? await this.prisma.employee.findFirst({
+              where: { userId: numUserId },
+              select: { id: true },
+            })
+          : null;
+        if (emp?.id) {
           await this.prisma.lead.update({
             where: { id: numId },
-            data: { employeeId: completionEmpId },
+            data: {
+              convertedByEmployeeId: emp.id,
+              convertedAt: new Date(),
+            },
           }).catch(() => {});
         }
       } catch (err: any) {
-        this.logger.warn(`[updateStatus] Failed to sync visit completion: ${err.message}`);
+        this.logger.warn(`[updateStatus] Failed to sync won conversion employee: ${err.message}`);
       }
     }
   }
@@ -1821,20 +1962,47 @@ export class LeadRepository {
           ? Number(lead.employeeId)
           : fallbackEmpId;
 
-      const createdVisit = await this.prisma.visit.create({
-        data: {
-          customerId: numCustomerId,
-          leadId: numLeadId,
-          employeeId: targetEmpId,
-          customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
-          purpose: dto.purpose || 'Client Meeting & Demo',
-          date: visitDate,
-          time: dto.time || '11:00 AM',
-          location: dto.location || lead.address || 'Client Site',
-          status: 'SCHEDULED',
-          notes: dto.notes,
-        },
+      const actingEmpName = employee
+        ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
+        : null;
+
+      // Check if an existing SCHEDULED visit exists for this lead to avoid duplicates
+      const existingScheduledVisit = await this.prisma.visit.findFirst({
+        where: { leadId: numLeadId, status: 'SCHEDULED' },
+        orderBy: { createdAt: 'desc' },
       });
+
+      const savedVisit = existingScheduledVisit
+        ? await this.prisma.visit.update({
+            where: { id: existingScheduledVisit.id },
+            data: {
+              employeeId: targetEmpId,
+              customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
+              purpose: dto.purpose || 'Client Meeting & Demo',
+              date: visitDate,
+              time: dto.time || '11:00 AM',
+              location: dto.location || lead.address || 'Client Site',
+              notes: dto.notes,
+              scheduledById: employee?.id || (numUserId > 0 ? numUserId : null),
+              scheduledBy: actingEmpName || existingScheduledVisit.scheduledBy,
+            },
+          })
+        : await this.prisma.visit.create({
+            data: {
+              customerId: numCustomerId,
+              leadId: numLeadId,
+              employeeId: targetEmpId,
+              customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
+              purpose: dto.purpose || 'Client Meeting & Demo',
+              date: visitDate,
+              time: dto.time || '11:00 AM',
+              location: dto.location || lead.address || 'Client Site',
+              status: 'SCHEDULED',
+              notes: dto.notes,
+              scheduledById: employee?.id || (numUserId > 0 ? numUserId : null),
+              scheduledBy: actingEmpName || 'CRM Employee',
+            },
+          });
 
       // Find Visit Scheduled stage
       const visitScheduledStage = await this.prisma.leadStage.findFirst({
@@ -1864,7 +2032,7 @@ export class LeadRepository {
         data: {
           status: LeadStatus.VISIT_SCHEDULED,
           ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-          ...(dto.employeeId ? { employeeId: targetEmpId } : {}),
+          employeeId: targetEmpId,
         },
       });
 
@@ -1872,7 +2040,7 @@ export class LeadRepository {
         numLeadId,
         'VISIT_SCHEDULED',
         `Field Visit Scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'} - ${dto.purpose || 'Client Demo'}`,
-        { visitId: createdVisit.id, location: dto.location, employeeId: targetEmpId },
+        { visitId: savedVisit.id, location: dto.location, employeeId: targetEmpId, scheduledBy: savedVisit.scheduledBy },
       );
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
@@ -1904,24 +2072,22 @@ export class LeadRepository {
         orderBy: { createdAt: 'desc' },
       });
 
+      const actingEmpName = employee
+        ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
+        : null;
+
       if (visit) {
         await this.prisma.visit.update({
           where: { id: visit.id },
           data: {
             status: 'COMPLETED',
             completedAt: new Date(),
-            notes: dto.notes || dto.summary,
+            notes: dto.notes || dto.summary || visit.notes,
             outcome: dto.customerResponse || dto.summary || visit.outcome,
-            ...(employee?.id ? { employeeId: employee.id } : {}),
+            completedById: employee?.id || null,
+            completedBy: actingEmpName || 'Visitor',
           },
         });
-      }
-
-      if (employee?.id) {
-        await this.prisma.lead.update({
-          where: { id: numLeadId },
-          data: { employeeId: employee.id },
-        }).catch(() => {});
       }
 
       const visitDoneStage = await this.prisma.leadStage.findFirst({

@@ -86,6 +86,26 @@ export class CreateVisitDto {
   @IsDateString()
   @IsOptional()
   nextFollowUpDate?: string;
+
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsOptional()
+  completedBy?: string;
+
+  @ApiPropertyOptional({ example: 5 })
+  @IsNumber()
+  @IsOptional()
+  completedById?: number;
+
+  @ApiPropertyOptional({ example: 'Bhavesh Gandhi' })
+  @IsString()
+  @IsOptional()
+  scheduledBy?: string;
+
+  @ApiPropertyOptional({ example: 3 })
+  @IsNumber()
+  @IsOptional()
+  scheduledById?: number;
 }
 
 export class UpdateVisitDto {
@@ -138,4 +158,24 @@ export class UpdateVisitDto {
   @IsDateString()
   @IsOptional()
   nextFollowUpDate?: string;
+
+  @ApiPropertyOptional({ example: 'Rahul Sharma' })
+  @IsString()
+  @IsOptional()
+  completedBy?: string;
+
+  @ApiPropertyOptional({ example: 5 })
+  @IsNumber()
+  @IsOptional()
+  completedById?: number;
+
+  @ApiPropertyOptional({ example: 'Bhavesh Gandhi' })
+  @IsString()
+  @IsOptional()
+  scheduledBy?: string;
+
+  @ApiPropertyOptional({ example: 3 })
+  @IsNumber()
+  @IsOptional()
+  scheduledById?: number;
 }

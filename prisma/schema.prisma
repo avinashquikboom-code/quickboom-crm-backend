@@ -1630,6 +1630,10 @@ model Visit {
   nextFollowUpDate DateTime?
   outcome          String?
   visitType        String?     @default("CLIENT_MEETING")
+  completedBy      String?
+  completedById    Int?
+  scheduledBy      String?
+  scheduledById    Int?
   company          Company?    @relation(fields: [companyId], references: [id])
   contact          Contact?    @relation(fields: [contactId], references: [id])
   deal             Deal?       @relation(fields: [dealId], references: [id])
@@ -1642,6 +1646,8 @@ model Visit {
   @@index([companyId])
   @@index([contactId])
   @@index([dealId])
+  @@index([completedById])
+  @@index([scheduledById])
 }
 
 model SalaryStructure {

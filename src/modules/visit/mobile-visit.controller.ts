@@ -70,7 +70,7 @@ export class MobileVisitController {
           OR: [
             { employeeId: employee.id },
             { lead: { employeeId: employee.id } },
-            ...(employee.userId ? [{ lead: { assignedToId: employee.userId } }] : []),
+            { completedById: employee.id },
           ],
         },
       ],
@@ -145,7 +145,8 @@ export class MobileVisitController {
         leadTitle: v.lead?.title,
         leadId: v.leadId,
         assignedEmployee: assignedEmpName,
-        completedBy: isCompleted ? (v.outcome || assignedEmpName) : null,
+        completedBy: isCompleted ? (v.completedBy || assignedEmpName) : null,
+        scheduledBy: v.scheduledBy || null,
         employee: v.employee,
         location: v.location || v.company?.city || 'N/A',
         purpose: v.purpose,
@@ -247,12 +248,17 @@ export class MobileVisitController {
 
     const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
 
+    const actingEmpName = employee
+      ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
+      : null;
+
     const updated = await this.visitService.update(numCustomerId, id, {
       status: VisitStatus.COMPLETED,
-      notes: body?.notes,
-      outcome: body?.outcome,
+      notes: body?.notes || visit.notes || undefined,
+      outcome: body?.outcome || visit.outcome || 'Visit Done',
       nextFollowUpDate: body?.nextFollowUpDate,
-      ...(employee?.id ? { employeeId: String(employee.id) } : {}),
+      completedById: employee?.id || undefined,
+      completedBy: actingEmpName || 'Visitor',
     });
 
     if (visit.leadId) {
@@ -284,7 +290,6 @@ export class MobileVisitController {
           data: {
             status: 'VISIT_DONE',
             ...(visitDoneStage ? { stageId: visitDoneStage.id } : {}),
-            ...(employee?.id ? { employeeId: employee.id } : {}),
           },
         });
 
@@ -292,8 +297,14 @@ export class MobileVisitController {
           data: {
             leadId: visit.leadId,
             action: 'VISIT_COMPLETED',
-            description: `Field Visit Completed: ${body?.outcome || 'Visit Done'} - ${body?.notes || ''}`.trim(),
-            metadata: { visitId: visit.id, outcome: body?.outcome, notes: body?.notes },
+            description: `Field Visit Completed by ${actingEmpName || 'Visitor'}: ${body?.outcome || 'Visit Done'} - ${body?.notes || ''}`.trim(),
+            metadata: {
+              visitId: visit.id,
+              outcome: body?.outcome,
+              notes: body?.notes,
+              completedById: employee?.id,
+              completedByName: actingEmpName,
+            },
           },
         }).catch(() => {});
       } catch (leadSyncErr: any) {
