@@ -319,19 +319,18 @@ export function extractUpcomingCall(
     const isExplicitlyOverdue = explicitDate && parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime) < now;
 
     // 1c. Lead in Final Call stage automatically qualifies as an Upcoming prospect
-    // NOTE: We intentionally do NOT block on isExplicitlyOverdue here — a lead in
-    // Final Call stage must always appear in Upcoming, even if its follow-up date
-    // has already passed. The overdue date is used as scheduledAt so sorting works.
+    // If an explicit follow-up date was set in the past, it is overdue rather than upcoming.
     if (
       isFinalCallStage &&
       !isCallCompleted &&
       !isCallCancelled &&
       !isLeadLostOrCancelled &&
-      !isLeadWon
+      !isLeadWon &&
+      !isExplicitlyOverdue
     ) {
       const alreadyHasFinalCall = candidates.some((c) => c.callType === 'FINAL_CALL');
       if (!alreadyHasFinalCall) {
-        // Use the scheduled date (even if overdue) for sorting; fall back to now
+        // Use the scheduled date for sorting; fall back to now
         const scheduledAt = explicitDate
           ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
           : now;
@@ -346,19 +345,18 @@ export function extractUpcomingCall(
     }
 
     // 1d. Lead in Follow-up stage automatically qualifies as an Upcoming prospect
-    // NOTE: We intentionally do NOT block on isExplicitlyOverdue here — a lead in
-    // Follow-up stage must always appear in Upcoming, even if its follow-up date
-    // has already passed. The overdue date is used as scheduledAt so sorting works.
+    // If an explicit follow-up date was set in the past, it is overdue rather than upcoming.
     if (
       isFollowUpStage &&
       !isCallCompleted &&
       !isCallCancelled &&
       !isLeadLostOrCancelled &&
-      !isLeadWon
+      !isLeadWon &&
+      !isExplicitlyOverdue
     ) {
       const alreadyHasFollowUp = candidates.some((c) => c.callType === 'FOLLOW_UP');
       if (!alreadyHasFollowUp) {
-        // Use the scheduled date (even if overdue) for sorting; fall back to now
+        // Use the scheduled date for sorting; fall back to now
         const scheduledAt = explicitDate
           ? parseCallDateTime(explicitDate, l.nextFollowUpTime || l.nextCallTime)
           : now;
@@ -1074,9 +1072,10 @@ export class CustomerService {
               ],
             },
           },
-          // 5. Customer with no originLead, but leads assigned to this employee
+          // 5. Customer with no originLead, but leads assigned to this employee (excluding the root tenant workspace)
           {
             leadId: null,
+            ...(companyId ? { id: { not: Number(companyId) } } : {}),
             leads: {
               some: {
                 deletedAt: null,
@@ -1194,14 +1193,17 @@ export class CustomerService {
     // Resolve configured Upcoming (Final Call & Follow Up) stage IDs from LeadStage table
     let finalCallStageIds: Set<number> | undefined;
     let followUpStageIds: Set<number> | undefined;
+    let wonStageIds: Set<number> | undefined;
     try {
       if (this.prisma.leadStage && typeof this.prisma.leadStage.findMany === 'function') {
         const upcomingStages = await this.prisma.leadStage.findMany({
           where: {
             OR: [
-              { key: { in: ['FINAL_CALL', 'FOLLOW_UP', 'FOLLOWUP'] } },
+              { key: { in: ['FINAL_CALL', 'FOLLOW_UP', 'FOLLOWUP', 'WON', 'CONVERTED'] } },
               { name: { contains: 'final', mode: 'insensitive' } },
               { name: { contains: 'follow', mode: 'insensitive' } },
+              { name: { contains: 'won', mode: 'insensitive' } },
+              { name: { contains: 'converted', mode: 'insensitive' } },
             ],
             deletedAt: null,
           },
@@ -1216,6 +1218,11 @@ export class CustomerService {
           followUpStageIds = new Set(
             upcomingStages
               .filter((s: any) => ['FOLLOW_UP', 'FOLLOWUP'].includes(s.key) || s.name?.toLowerCase().includes('follow'))
+              .map((s: any) => s.id),
+          );
+          wonStageIds = new Set(
+            upcomingStages
+              .filter((s: any) => ['WON', 'CONVERTED'].includes(s.key) || s.name?.toLowerCase().includes('won') || s.name?.toLowerCase().includes('converted'))
               .map((s: any) => s.id),
           );
         }
@@ -1400,26 +1407,29 @@ export class CustomerService {
           },
         });
 
-        // Set of lead IDs already converted to or associated with a Customer
+        // Set of lead IDs already converted to a Customer
         const convertedLeadIds = new Set<number>();
         for (const c of allCustomersForCounts) {
           if ((c as any).leadId) convertedLeadIds.add(Number((c as any).leadId));
           if ((c as any).originLead?.id) convertedLeadIds.add(Number((c as any).originLead.id));
-          if (Array.isArray((c as any).leads)) {
-            for (const l of (c as any).leads) {
-              if (l.id) convertedLeadIds.add(Number(l.id));
-            }
-          }
         }
 
         for (const l of leads) {
           // If already converted to or linked with a Customer, skip to prevent duplicates
+          if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
+            this.logger.log(
+              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=already_converted_to_customer`,
+            );
+            continue;
+          }
           if (
-            l.convertedCustomer ||
-            convertedLeadIds.has(l.id) ||
             ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase()) ||
-            String(l.stage?.key || '').toUpperCase() === 'WON'
+            String(l.stage?.key || '').toUpperCase() === 'WON' ||
+            (l.stageId && wonStageIds?.has(Number(l.stageId)))
           ) {
+            this.logger.log(
+              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=won_or_converted_stage`,
+            );
             continue;
           }
 
@@ -1427,6 +1437,10 @@ export class CustomerService {
           const leadItem = this.mapLeadToCustomerItem(l, call);
           if (call !== null) {
             unconvertedUpcomingLeads.push(leadItem);
+          } else {
+            this.logger.log(
+              `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=call_overdue_or_not_eligible`,
+            );
           }
           unconvertedAllLeads.push(leadItem);
         }
@@ -1802,7 +1816,7 @@ export class CustomerService {
     let effectiveTotal = 0;
 
     const totalUpcoming = upcomingCustomerIds.length + unconvertedUpcomingLeads.length;
-    const totalAll = allCustomersForCounts.length + unconvertedUpcomingLeads.length;
+    const totalAll = allCustomersForCounts.length;
 
     if (targetStatus === 'UPCOMING') {
       const customerUpcoming = formatted.filter((item) => item.hasUpcomingCall === true);
@@ -1836,11 +1850,24 @@ export class CustomerService {
 
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
-    // Safe Diagnostic Logs (Requirement 26)
+    // Safe Diagnostic Logs (Requirements 20 & 26)
     const employeeIdentifier =
       user?.employee?.employeeCode ||
       (effectiveEmployeeId ? `EMP-${effectiveEmployeeId}` : null) ||
       (user?.id ? `USER-${user.id}` : 'none');
+
+    const followUpStageIdStr = Array.from(followUpStageIds || []).join(',') || 'none';
+    const finalCallStageIdStr = Array.from(finalCallStageIds || []).join(',') || 'none';
+    this.logger.log(
+      `[CUSTOMER_UPCOMING]\nemployeeId=${employeeIdentifier}\ncompanyId=${companyId || 'none'}\nfollowUpStageId=${followUpStageIdStr}\nfinalCallStageId=${finalCallStageIdStr}\nresultCount=${totalUpcoming}`,
+    );
+
+    const logItems = targetStatus === 'UPCOMING' ? finalItems : unconvertedUpcomingLeads;
+    for (const item of logItems) {
+      this.logger.log(
+        `[UPCOMING_RECORD]\nleadId=${item.leadId || 'none'}\ncustomerId=${item.customerId || 'none'}\nstageId=${(item as any).lead?.stage?.id || (item as any).leadStageId || 'none'}\nstageKey=${(item as any).lead?.stage?.key || (item as any).leadStatus || 'none'}\nemployeeId=${item.assignedEmployeeId || employeeIdentifier}`,
+      );
+    }
 
     this.logger.log(
       `[UPCOMING_QUERY]\nemployeeId=${employeeIdentifier}\nstage=FINAL_CALL\ncount=${totalUpcoming}`,
@@ -2039,6 +2066,31 @@ export class CustomerService {
     });
 
     if (!customer || customer.deletedAt) {
+      if (this.prisma.lead) {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: numericId, deletedAt: null },
+          include: {
+            stage: true,
+            employee: true,
+            reminders: { where: { isCompleted: false }, orderBy: { remindAt: 'asc' } },
+          },
+        });
+        if (lead) {
+          const empId = user?.employeeId || user?.employee?.id;
+          const uId = user?.id || user?.sub;
+          const isPrivileged = isUserSuperAdmin(user) || isUserAdmin(user);
+          const isOwner =
+            isPrivileged ||
+            (empId && lead.employeeId === empId) ||
+            (uId && lead.assignedToId === uId) ||
+            (empId && lead.assignedToId === empId);
+          if (!isOwner) {
+            throw new ForbiddenException('You do not have permission to access details for this customer.');
+          }
+          const call = extractUpcomingCall({ leads: [lead] }, new Date());
+          return this.mapLeadToCustomerItem(lead, call);
+        }
+      }
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 

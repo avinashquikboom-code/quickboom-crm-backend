@@ -540,6 +540,8 @@ export class LeadService {
   private async validateEmployeeAssignment(
     customerId: number | string,
     assignedToId?: number | string | null,
+    currentAssignedToId?: number | null,
+    currentEmployeeId?: number | null,
   ): Promise<{ assignedToId: number | null; employeeId: number | null } | undefined> {
     if (assignedToId === undefined) {
       return undefined;
@@ -563,6 +565,16 @@ export class LeadService {
         ],
         customerId: Number(customerId),
       },
+      include: {
+        department: true,
+        designation: true,
+        teamMembers: {
+          include: {
+            team: true,
+          },
+        },
+        ledTeams: true,
+      },
     });
 
     if (!employee) {
@@ -573,8 +585,38 @@ export class LeadService {
       throw new BadRequestException('Cannot assign lead to an inactive employee');
     }
 
+    // Requirement 7: If this is the current assignment on an existing lead, preserve historical assignment
+    const isHistoricalPreserved =
+      (currentAssignedToId != null && (targetId === currentAssignedToId || employee.userId === currentAssignedToId)) ||
+      (currentEmployeeId != null && (targetId === currentEmployeeId || employee.id === currentEmployeeId));
+
+    if (!isHistoricalPreserved) {
+      // Validate that the assigned employee belongs to the BPO team / department / designation
+      const isBpoEmployee =
+        // 1. Team member of a team containing 'BPO'
+        employee.teamMembers?.some((tm: any) =>
+          (tm.team?.name || '').toUpperCase().includes('BPO') ||
+          (tm.team?.description || '').toUpperCase().includes('BPO')
+        ) ||
+        // 2. Leader of a team containing 'BPO'
+        employee.ledTeams?.some((t: any) =>
+          (t.name || '').toUpperCase().includes('BPO') ||
+          (t.description || '').toUpperCase().includes('BPO')
+        ) ||
+        // 3. Department containing 'BPO'
+        (employee.department?.name || '').toUpperCase().includes('BPO') ||
+        (employee.department?.code || '').toUpperCase().includes('BPO') ||
+        // 4. Designation containing 'BPO'
+        (employee.designation?.name || '').toUpperCase().includes('BPO') ||
+        (employee.designation?.code || '').toUpperCase().includes('BPO');
+
+      if (!isBpoEmployee) {
+        throw new BadRequestException('Lead can only be assigned to an active BPO team employee');
+      }
+    }
+
     this.logger.log(
-      `[LEAD_ASSIGNMENT] Assigning lead to employee: employeeId=${employee.id} userId=${employee.userId || targetId} customerId=${customerId}`,
+      `[LEAD_ASSIGNMENT] Assigning lead to BPO employee: employeeId=${employee.id} userId=${employee.userId || targetId} customerId=${customerId}`,
     );
 
     return {
@@ -1313,7 +1355,12 @@ export class LeadService {
     }
 
     const cleaned = this.sanitizeLeadFields(dto);
-    const assignment = await this.validateEmployeeAssignment(customerId, cleaned.assignedToId);
+    const assignment = await this.validateEmployeeAssignment(
+      customerId,
+      cleaned.assignedToId,
+      lead.assignedToId,
+      (lead as any).employeeId,
+    );
 
     const sanitizedDto = {
       ...cleaned,

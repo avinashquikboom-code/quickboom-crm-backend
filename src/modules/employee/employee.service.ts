@@ -164,6 +164,7 @@ export class EmployeeService {
           { designation: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
           { designation: { code: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
           { teamMembers: { some: { team: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } } } },
+          { ledTeams: { some: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } } },
         ],
       });
     } else if (department && department !== 'ALL') {
