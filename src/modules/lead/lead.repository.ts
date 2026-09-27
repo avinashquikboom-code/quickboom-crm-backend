@@ -1222,6 +1222,27 @@ export class LeadRepository {
         ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
         : null,
       wonAt: lead.convertedAt || null,
+      visitedByEmployeeId: lead.employeeId || (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employeeId)?.employeeId) || null,
+      visitedBy: lead.employee
+        ? {
+            id: lead.employee.id,
+            name: `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null,
+            firstName: lead.employee.firstName,
+            lastName: lead.employee.lastName,
+          }
+        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
+        ? {
+            id: lead.visits.find((v: any) => v.employee).employee.id,
+            name: `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null,
+            firstName: lead.visits.find((v: any) => v.employee).employee.firstName,
+            lastName: lead.visits.find((v: any) => v.employee).employee.lastName,
+          }
+        : null,
+      visitedByName: lead.employee
+        ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
+        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
+        ? `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null
+        : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.completedBy || v.assignedEmployee)?.completedBy) || null,
       visits: Array.isArray(lead.visits)
         ? lead.visits.map((v: any) => {
             const empName = v.employee
