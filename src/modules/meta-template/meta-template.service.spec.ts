@@ -240,6 +240,11 @@ describe('MetaTemplateService', () => {
         'TEMPLATE_TEST',
         1,
         1,
+        expect.objectContaining({
+          templateId: '10',
+          templateStatus: 'APPROVED',
+          isApproved: true,
+        }),
       );
     });
 

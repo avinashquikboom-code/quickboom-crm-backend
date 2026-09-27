@@ -20,6 +20,14 @@ export interface WhatsAppSendResult {
   reason?: string;
   /** Raw upstream HTTP status (for logging only) */
   error?: string;
+  /** Meta Graph API error code (e.g. 132001) */
+  metaErrorCode?: number;
+  /** Meta Graph API error type (e.g. OAuthException) */
+  metaErrorType?: string;
+  /** Meta Graph API error message */
+  metaErrorMessage?: string;
+  /** Meta Graph API fbtrace_id */
+  fbtraceId?: string;
 }
 
 /**

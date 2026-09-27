@@ -456,7 +456,20 @@ export class MetaTemplateService {
       );
     }
 
-    const targetAccount = wabaId || phoneNumberId;
+    let resolvedWabaId = wabaId;
+    if (!resolvedWabaId && phoneNumberId) {
+      try {
+        const phoneLookup = await axios.get(`https://graph.facebook.com/v21.0/${phoneNumberId}?fields=whatsapp_business_account`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        });
+        resolvedWabaId = phoneLookup.data?.whatsapp_business_account?.id || '';
+      } catch (err: any) {
+        this.logger.warn(`[MetaTemplateService] Could not resolve WABA ID from phoneNumberId: ${err?.message}`);
+      }
+    }
+
+    const targetAccount = resolvedWabaId || phoneNumberId;
     if (!targetAccount) {
       throw new BadRequestException(
         'WhatsApp Business Account ID (WABA ID) or Phone Number ID is missing in Settings → Integrations → WhatsApp.',
@@ -512,7 +525,7 @@ export class MetaTemplateService {
         }
       }
 
-      const language = mt.language || 'en_US';
+      const language = mt.language || 'en';
       const category = (mt.category || 'UTILITY').toUpperCase();
       const status = (mt.status || 'APPROVED').toUpperCase();
       const variables = this.extractVariables(bodyText + ' ' + (headerContent || ''));
@@ -520,7 +533,6 @@ export class MetaTemplateService {
       const existing = await this.prisma.metaTemplate.findFirst({
         where: {
           templateName,
-          language,
           deletedAt: null,
           OR: [
             { customerId: null },
@@ -534,6 +546,7 @@ export class MetaTemplateService {
           where: { id: existing.id },
           data: {
             status,
+            language,
             metaTemplateId: mt.id ? String(mt.id) : existing.metaTemplateId,
             body: bodyText || existing.body,
             headerType,
@@ -754,8 +767,10 @@ export class MetaTemplateService {
       };
     });
 
+    const resolvedLang = template.language || dto.language || 'en';
+
     this.logger.log(
-      `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${template.language || dto.language || 'en_US'}) ` +
+      `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${resolvedLang}) ` +
       `to recipient ${this.whatsappService.maskPhone(normalizedPhone)} with ${parameters.length} parameters. ` +
       `Company ID: ${customerId || 'GLOBAL'}`
     );
@@ -766,11 +781,17 @@ export class MetaTemplateService {
       normalizedPhone,
       template.templateName,
       parameters,
-      template.language || dto.language || 'en_US',
+      resolvedLang,
       undefined,
       'TEMPLATE_TEST',
       customerId ? Number(customerId) : undefined,
       user?.id ? Number(user.id) : undefined,
+      {
+        templateId: template.id ? String(template.id) : undefined,
+        providerTemplateId: template.metaTemplateId || undefined,
+        templateStatus: template.status || undefined,
+        isApproved: template.status === 'APPROVED',
+      },
     );
 
     if (!sendResult.success) {

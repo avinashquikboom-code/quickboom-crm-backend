@@ -1156,7 +1156,7 @@ export class LeadRepository {
       lastName: resolvedLastName,
       companyName: resolvedBiz,
       businessName: resolvedBiz,
-      title: resolvedBiz || (!isFake(lead.title) ? lead.title.trim() : (lead.title || '')),
+      title: (!isFake(lead.title) ? lead.title.trim() : (resolvedBiz || lead.title || '')),
       name: resolvedBiz,
       socialMedia: finalSocialMedia,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,

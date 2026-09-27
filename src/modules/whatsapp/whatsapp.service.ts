@@ -100,11 +100,18 @@ export class WhatsappService {
     to: string,
     templateName: string,
     parameters: Array<{ type: 'text'; text: string }> = [],
-    languageCode = 'en_US',
+    languageCode?: string,
     fallbackText?: string,
     stageName?: string,
     customerId?: number,
     userId?: number,
+    templateMetadata?: {
+      templateId?: number | string;
+      providerTemplateId?: string;
+      templateStatus?: string;
+      wabaId?: string;
+      isApproved?: boolean;
+    },
   ): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
@@ -139,6 +146,7 @@ export class WhatsappService {
     const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
     const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
+    const configuredWabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const apiVersion = (creds.apiVersion || 'v25.0').trim();
 
     // Detect silent decryption failure
@@ -182,6 +190,205 @@ export class WhatsappService {
       };
     }
 
+    // Resolve template from Database if templateName or templateId is provided
+    let resolvedTemplateId: number | string | undefined = templateMetadata?.templateId;
+    let resolvedTemplateName = templateName;
+    let resolvedLanguageCode = languageCode;
+    let resolvedTemplateStatus = templateMetadata?.templateStatus;
+    let resolvedProviderTemplateId = templateMetadata?.providerTemplateId;
+    let templateWabaId = templateMetadata?.wabaId;
+
+    let dbTemplate: any = null;
+    if (this.prisma && (this.prisma as any).metaTemplate) {
+      try {
+        const isNumericId = /^\d+$/.test(String(templateName).trim());
+        if (isNumericId) {
+          dbTemplate = await (this.prisma as any).metaTemplate.findFirst({
+            where: { id: Number(templateName), deletedAt: null },
+          });
+        }
+        if (!dbTemplate && resolvedTemplateId) {
+          dbTemplate = await (this.prisma as any).metaTemplate.findFirst({
+            where: { id: Number(resolvedTemplateId), deletedAt: null },
+          });
+        }
+        if (!dbTemplate && templateName) {
+          const normName = templateName.trim().toLowerCase().replace(/[\s-]+/g, '_');
+          dbTemplate = await (this.prisma as any).metaTemplate.findFirst({
+            where: {
+              deletedAt: null,
+              OR: [
+                { templateName: templateName },
+                { templateName: normName },
+                { name: templateName },
+              ],
+              ...(customerId ? { OR: [{ customerId: null }, { customerId: Number(customerId) }] } : {}),
+            },
+            orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
+          });
+        }
+
+        if (dbTemplate) {
+          resolvedTemplateId = dbTemplate.id;
+          resolvedTemplateName = dbTemplate.templateName;
+          resolvedTemplateStatus = dbTemplate.status;
+          resolvedProviderTemplateId = dbTemplate.metaTemplateId || resolvedProviderTemplateId;
+          // Use DB template's approved language if not explicitly provided or if defaulted
+          if (!resolvedLanguageCode) {
+            resolvedLanguageCode = dbTemplate.language;
+          }
+        }
+      } catch (err: any) {
+        this.logger.debug(`Could not query metaTemplate for pre-send resolution: ${err?.message}`);
+      }
+    }
+
+    if (!resolvedLanguageCode) {
+      resolvedLanguageCode = 'en_US';
+    }
+
+    // =========================================================================
+    // SECTION 16: PRE-SEND VALIDATION
+    // Validate template exists, is approved, has valid name, language, WABA & phone ID
+    // =========================================================================
+
+    // 1. Template name exists & is valid Meta format (Section 3)
+    if (!resolvedTemplateName || typeof resolvedTemplateName !== 'string' || resolvedTemplateName.trim() === '') {
+      const errorMsg = 'WhatsApp template name is missing or empty.';
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'INVALID_TEMPLATE_NAME',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    if (/\s/.test(resolvedTemplateName) || !/^[a-zA-Z0-9_]+$/.test(resolvedTemplateName)) {
+      const errorMsg = `WhatsApp template name "${resolvedTemplateName}" is invalid. Meta template names must contain only alphanumeric characters and underscores (no spaces).`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'INVALID_TEMPLATE_NAME_FORMAT',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    // Check if custom template does not exist locally (TEST 3)
+    const knownSystemTemplates = [
+      'customer_welcome',
+      'plan_activation_success',
+      'payment_success',
+      'calendar_scheduled',
+      'plan_expiry_reminder',
+      'hello_world',
+    ];
+    const isSystemTemplate = knownSystemTemplates.includes(resolvedTemplateName);
+    const inMemoryStageTpl = this.getStageTemplate(resolvedTemplateName);
+
+    if (this.prisma && (this.prisma as any).metaTemplate && !dbTemplate && !isSystemTemplate && !inMemoryStageTpl) {
+      const errorMsg = `WhatsApp template "${resolvedTemplateName}" does not exist in local template configuration.`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'TEMPLATE_NOT_FOUND',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    // 2. Language code validation & mismatch detection (TEST 2, Section 4 & 5)
+    if (!resolvedLanguageCode || typeof resolvedLanguageCode !== 'string' || resolvedLanguageCode.trim() === '') {
+      const errorMsg = `Language code is missing for WhatsApp template "${resolvedTemplateName}".`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'MISSING_LANGUAGE_CODE',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    if (dbTemplate && languageCode && dbTemplate.language && dbTemplate.language !== languageCode) {
+      const errorMsg = `WhatsApp template '${resolvedTemplateName}' is not approved for language '${languageCode}' on the configured WhatsApp Business Account.`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] Language mismatch: DB has "${dbTemplate.language}", requested "${languageCode}"`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'TEMPLATE_LANGUAGE_MISMATCH',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    // 3. Template status is approved (TEST 4, Section 6)
+    if (resolvedTemplateStatus && resolvedTemplateStatus !== 'APPROVED') {
+      const errorMsg = `WhatsApp template "${resolvedTemplateName}" has status "${resolvedTemplateStatus}". Only APPROVED templates can be sent.`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: `TEMPLATE_${resolvedTemplateStatus}`,
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    // 4. Template belongs to correct WABA (TEST 5, Section 7)
+    if (templateWabaId && configuredWabaId && templateWabaId !== configuredWabaId) {
+      const errorMsg = `WhatsApp template "${resolvedTemplateName}" belongs to WABA "${templateWabaId}" which does not match configured WABA "${configuredWabaId}".`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+        reason: 'WABA_MISMATCH',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
+    // 5. Phone Number ID valid numeric (Section 8)
+    if (!phoneNumberId || !/^\d+$/.test(phoneNumberId)) {
+      const errorMsg = `WhatsApp Phone Number ID "${phoneNumberId}" is invalid. Must be numeric digits.`;
+      this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+      return {
+        success: false,
+        skipped: true,
+        provider: 'WHATSAPP',
+        errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+        reason: 'INVALID_PHONE_NUMBER_ID',
+        message: errorMsg,
+        providerMessage: errorMsg,
+        details: errorMsg,
+      };
+    }
+
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -192,10 +399,14 @@ export class WhatsappService {
     try {
       const resourceRes = await axios.get(resourceUrl, {
         headers,
-        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status' },
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status,whatsapp_business_account' },
         timeout: 8000,
       });
       const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
+      const liveWabaId = resourceRes?.data?.whatsapp_business_account?.id;
+      if (liveWabaId && !configuredWabaId) {
+        this.logger.debug(`[WHATSAPP DEBUG] Discovered live WABA ID: ${liveWabaId}`);
+      }
       this.logger.log(
         `[WHATSAPP DEBUG] Pre-flight phone number check SUCCEEDED for Phone Number ID: ${phoneNumberId} (verified name: ${verifiedName}). Token: ${maskAccessToken(apiKey)}`
       );
@@ -249,8 +460,8 @@ export class WhatsappService {
       to: normalizedTo,
       type: 'template',
       template: {
-        name: templateName,
-        language: { code: languageCode },
+        name: resolvedTemplateName,
+        language: { code: resolvedLanguageCode },
         components: parameters.length > 0
           ? [
               {
@@ -262,26 +473,18 @@ export class WhatsappService {
       },
     };
 
-    const safePayload = {
-      messaging_product: 'whatsapp',
-      to: this.maskPhone(normalizedTo),
-      type: 'template',
-      template: {
-        name: templateName,
-        language: { code: languageCode },
-      },
-    };
-
+    // SECTION 2: SAFE TEMPLATE DEBUG LOGGING (NO SECRETS)
     this.logger.log(
-      `[WHATSAPP DEBUG]\n` +
-      `Stage: SEND_MESSAGE\n` +
-      `tenant/company ID: ${customerId || 'N/A'}\n` +
-      `employee/user ID: ${userId || 'N/A'}\n` +
-      `Phone Number ID: ${phoneNumberId}\n` +
-      `Graph API URL: ${url}\n` +
-      `HTTP method: POST\n` +
-      `Request Body: ${JSON.stringify(safePayload)}\n` +
-      `token: ${maskAccessToken(apiKey)}`
+      `[WHATSAPP_TEMPLATE_DEBUG]\n` +
+      `templateName=${resolvedTemplateName}\n` +
+      `languageCode=${resolvedLanguageCode}\n` +
+      `phoneNumberId=${phoneNumberId}\n` +
+      `wabaId=${configuredWabaId || templateWabaId || 'N/A'}\n` +
+      `templateStatus=${resolvedTemplateStatus || 'APPROVED'}\n` +
+      `templateId=${resolvedTemplateId || 'N/A'}\n` +
+      `providerTemplateId=${resolvedProviderTemplateId || 'N/A'}\n` +
+      `recipient=${this.maskPhone(normalizedTo)}\n` +
+      `GraphAPI URL=${url}`
     );
 
     try {
@@ -296,9 +499,49 @@ export class WhatsappService {
       const fbError = err?.response?.data?.error;
       const metaCode = fbError?.code || err?.code;
       const metaMessage = fbError?.message || err?.message || 'Meta API error';
-      const metaType = fbError?.type;
+      const metaType = fbError?.type || 'OAuthException';
       const metaSubcode = fbError?.error_subcode;
       const fbtraceId = fbError?.fbtrace_id;
+      const metaDetails = fbError?.error_data?.details || fbError?.details || metaMessage;
+
+      const is132001 =
+        metaCode === 132001 ||
+        String(metaCode) === '132001' ||
+        metaSubcode === 132001 ||
+        String(metaSubcode) === '132001' ||
+        String(metaMessage).includes('132001') ||
+        String(metaMessage).includes('Template name does not exist in the translation');
+
+      // SECTION 17: CAPTURE AND SAFELY LOG META ERROR #132001
+      if (is132001) {
+        this.logger.error(
+          `[WHATSAPP DEBUG]\n` +
+          `Meta error code: 132001\n` +
+          `Meta error type: ${metaType}\n` +
+          `Meta error message: ${metaMessage}\n` +
+          `Meta error details: ${metaDetails}\n` +
+          `fbtrace_id: ${fbtraceId || 'N/A'}`
+        );
+
+        const specificMsg = `Meta WhatsApp Error #132001: Template "${resolvedTemplateName}" does not exist in the translation for language "${resolvedLanguageCode}" on the configured WhatsApp Business Account. Please verify that the template name and language code match the approved Meta template.`;
+
+        return {
+          success: false,
+          skipped: false,
+          provider: 'WHATSAPP',
+          errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+          providerStatus: httpStatus || 400,
+          message: specificMsg,
+          providerMessage: metaMessage,
+          details: `(#132001) Template name does not exist in the translation: ${metaDetails}`,
+          reason: 'TEMPLATE_TRANSLATION_NOT_FOUND',
+          error: '132001',
+          metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || 132001,
+          metaErrorType: metaType,
+          metaErrorMessage: metaMessage,
+          fbtraceId: fbtraceId,
+        };
+      }
 
       this.logger.error(
         `[WHATSAPP DEBUG]\n` +
@@ -317,12 +560,12 @@ export class WhatsappService {
         `token: ${maskAccessToken(apiKey)}`
       );
 
-      // If template not found and fallback text provided, attempt plain text message
+      // If other non-132001 template error and fallback text provided, attempt plain text message
       if (
-        (metaCode === 132001 || String(metaCode) === '132001' || metaCode === 100 || String(metaMessage).toLowerCase().includes('template')) &&
+        (metaCode === 100 || String(metaMessage).toLowerCase().includes('template')) &&
         fallbackText
       ) {
-        this.logger.log(`[WHATSAPP] Template "${templateName}" not active on Meta. Falling back to direct text message.`);
+        this.logger.log(`[WHATSAPP] Template "${resolvedTemplateName}" not active on Meta. Falling back to direct text message.`);
         return this.sendMessage(normalizedTo, fallbackText, stageName, customerId, userId);
       }
 
@@ -1165,7 +1408,7 @@ export class WhatsappService {
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en_US',
+            language: dbTpl.language || 'en',
             status: dbTpl.status,
           };
         }
@@ -1197,7 +1440,7 @@ export class WhatsappService {
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en_US',
+            language: dbTpl.language || 'en',
             status: dbTpl.status,
           };
         }
@@ -1275,7 +1518,7 @@ export class WhatsappService {
     }
 
     const templateName = template?.templateName || 'lead_stage_update';
-    const languageCode = template?.language || 'en_US';
+    const languageCode = template?.language || 'en';
     const templateParameters = template
       ? this.resolveTemplateParameters(template.body, variables)
       : Object.values(variables).slice(0, 3).map((v) => ({ type: 'text' as const, text: String(v) }));
@@ -1289,6 +1532,11 @@ export class WhatsappService {
       stageName || template?.name || stageKey,
       customerId,
       userId,
+      {
+        templateId: template?.id,
+        providerTemplateId: (template as any)?.metaTemplateId,
+        templateStatus: template?.status,
+      },
     );
   }
 
