@@ -29,7 +29,7 @@ import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.ut
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('customers')
+@Controller(['customers', 'customer'])
 export class CustomerController {
   constructor(
     private readonly customerService: CustomerService,

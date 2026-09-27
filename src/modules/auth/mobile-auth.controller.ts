@@ -7,7 +7,7 @@ import { SetMetadata } from '@nestjs/common';
 export const Public = () => SetMetadata('isPublic', true);
 
 @ApiTags('Mobile Authentication')
-@Controller('mobile/auth')
+@Controller(['mobile/auth', 'customer-auth'])
 export class MobileAuthController {
   constructor(private readonly authService: AuthService) {}
 
@@ -42,9 +42,9 @@ export class MobileAuthController {
 
   // ✅ CUSTOMER LOGIN
   @Public()
-  @Post('login/customer')
+  @Post(['login/customer', 'login'])
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Customer mobile login' })
+  @ApiOperation({ summary: 'Customer mobile and portal login' })
   @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
   async loginCustomer(
     @Body() loginDto: LoginDto,

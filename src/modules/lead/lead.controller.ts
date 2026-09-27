@@ -166,6 +166,26 @@ export class LeadController {
     );
   }
 
+  private parseBulkDeleteIds(
+    dto?: BulkDeleteLeadsDto,
+    queryIds?: string | string[],
+    queryLeadIds?: string | string[],
+  ): number[] {
+    const fromDto = dto?.resolvedIds ?? dto?.ids ?? [];
+    const fromQueries: number[] = [];
+    for (const q of [queryIds, queryLeadIds]) {
+      if (q !== undefined && q !== null) {
+        const raw = Array.isArray(q) ? q.join(',') : String(q);
+        raw
+          .split(',')
+          .map((v) => Number(v.trim()))
+          .filter((n) => !isNaN(n) && n > 0)
+          .forEach((n) => fromQueries.push(n));
+      }
+    }
+    return Array.from(new Set([...fromDto, ...fromQueries]));
+  }
+
   @Delete('bulk')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk' })
@@ -174,16 +194,12 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto?: BulkDeleteLeadsDto,
     @Query('ids') queryIds?: string | string[],
+    @Query('leadIds') queryLeadIds?: string | string[],
   ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
-      ids = raw
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    const ids = this.parseBulkDeleteIds(dto, queryIds, queryLeadIds);
+    this.logger.log(
+      `[BULK_LEAD_DELETE] handler=bulk method=DELETE path=/leads/bulk ids=${JSON.stringify(ids)} count=${ids.length} customerId=${customerId} userId=${user?.id}`,
+    );
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -195,16 +211,12 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto?: BulkDeleteLeadsDto,
     @Query('ids') queryIds?: string | string[],
+    @Query('leadIds') queryLeadIds?: string | string[],
   ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
-      ids = raw
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    const ids = this.parseBulkDeleteIds(dto, queryIds, queryLeadIds);
+    this.logger.log(
+      `[BULK_LEAD_DELETE] handler=bulk method=POST path=/leads/bulk-delete ids=${JSON.stringify(ids)} count=${ids.length} customerId=${customerId} userId=${user?.id}`,
+    );
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -216,16 +228,12 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto?: BulkDeleteLeadsDto,
     @Query('ids') queryIds?: string | string[],
+    @Query('leadIds') queryLeadIds?: string | string[],
   ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
-      ids = raw
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    const ids = this.parseBulkDeleteIds(dto, queryIds, queryLeadIds);
+    this.logger.log(
+      `[BULK_LEAD_DELETE] handler=bulk method=POST path=/leads/bulk ids=${JSON.stringify(ids)} count=${ids.length} customerId=${customerId} userId=${user?.id}`,
+    );
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -237,16 +245,12 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto?: BulkDeleteLeadsDto,
     @Query('ids') queryIds?: string | string[],
+    @Query('leadIds') queryLeadIds?: string | string[],
   ) {
-    let ids = dto?.resolvedIds ?? dto?.ids ?? [];
-    if (ids.length === 0 && queryIds) {
-      const raw = Array.isArray(queryIds) ? queryIds.join(',') : String(queryIds);
-      ids = raw
-        .split(',')
-        .map((v) => Number(v.trim()))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    const ids = this.parseBulkDeleteIds(dto, queryIds, queryLeadIds);
+    this.logger.log(
+      `[BULK_LEAD_DELETE] handler=bulk method=DELETE path=/leads/bulk-delete ids=${JSON.stringify(ids)} count=${ids.length} customerId=${customerId} userId=${user?.id}`,
+    );
     return this.leadService.bulkDeleteLeads(customerId, user, ids);
   }
 
@@ -326,7 +330,9 @@ export class LeadController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${id}`);
+    this.logger.log(
+      `[SINGLE_LEAD_DELETE] handler=single method=DELETE path=/leads/:id id=${id} customerId=${customerId} userId=${user?.id}`,
+    );
     return this.leadService.deleteLead(customerId, id, user);
   }
 

@@ -1788,6 +1788,9 @@ export class LeadService {
     alreadyConverted?: boolean;
     userCreated?: boolean;
     userExisted?: boolean;
+    loginStatus?: string;
+    lead?: { id: number; stage: string };
+    customer?: { id: number; leadId: number; email: string | null; name: string; loginStatus: string };
     assignedEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
     error?: string;
@@ -1795,9 +1798,28 @@ export class LeadService {
     try {
       this.logger.log(`[LEAD_WON_CONVERSION] Starting conversion for Lead #${updatedLead.id} (Stage: ${newStageName})`);
 
+      if (!this.prisma?.customer || !this.prisma?.user) {
+        this.logger.warn('[LEAD_WON_CONVERSION] Prisma customer/user delegates are not available');
+        return {
+          success: false,
+          error: 'Database service unavailable for customer conversion',
+        };
+      }
+
       const leadId = Number(updatedLead.id);
-      const normalizedEmail = updatedLead.email ? ContactExtractor.normalizeEmail(updatedLead.email) : null;
-      const normalizedPhone = updatedLead.phone ? updatedLead.phone.trim() : null;
+      const rawEmail = updatedLead.email ? String(updatedLead.email).trim() : null;
+      const normalizedEmail = rawEmail ? ContactExtractor.normalizeEmail(rawEmail) : null;
+      // Stricter email validation: must contain @, a dot in domain, and no fake or test domains
+      const isEmailValid = Boolean(
+        normalizedEmail &&
+        normalizedEmail.includes('@') &&
+        normalizedEmail.split('@')[1]?.includes('.') &&
+        !normalizedEmail.toLowerCase().includes('fake') &&
+        !normalizedEmail.toLowerCase().includes('example.com') &&
+        !normalizedEmail.toLowerCase().includes('test@test')
+      );
+      const validLoginEmail = isEmailValid ? normalizedEmail : null;
+      const normalizedPhone = updatedLead.phone ? ContactExtractor.normalizePhoneNumber(updatedLead.phone) : null;
 
       // 1. Idempotency Check: Customer already linked to this leadId?
       let customer = await this.prisma.customer.findFirst({
@@ -1806,11 +1828,11 @@ export class LeadService {
       });
 
       // 1b. Check if existing customer matches email or phone
-      if (!customer && normalizedEmail) {
+      if (!customer && validLoginEmail) {
         customer = await this.prisma.customer.findFirst({
           where: {
             deletedAt: null,
-            email: { equals: normalizedEmail, mode: 'insensitive' },
+            email: { equals: validLoginEmail, mode: 'insensitive' },
           },
           include: { originLead: true },
         });
@@ -1826,10 +1848,9 @@ export class LeadService {
         });
       }
 
-      // 2. Resolve Employee Hierarchy:
-      // Converting employee (from current calling user)
+      // 2. Resolve Employee Hierarchy
       let convertingEmp: any = null;
-      if (userId) {
+      if (userId && this.prisma.employee) {
         convertingEmp = await this.prisma.employee.findFirst({
           where: { userId: Number(userId), status: 'ACTIVE' },
           include: { department: true },
@@ -1838,14 +1859,11 @@ export class LeadService {
       const convertingEmpId = convertingEmp?.id || null;
 
       // Assigned employee resolution:
-      // Priority 1: updatedLead.employeeId
-      // Priority 2: updatedLead.assignedToId -> employee via userId
-      // Priority 3: converting employee
       let assignedEmpId: number | null = updatedLead.employeeId ? Number(updatedLead.employeeId) : null;
       let assignedEmpName: string | null = null;
       let resolvedDepartment: string | null = null;
 
-      if (!assignedEmpId && updatedLead.assignedToId) {
+      if (!assignedEmpId && updatedLead.assignedToId && this.prisma.employee) {
         const staffEmp: any = await this.prisma.employee.findFirst({
           where: { userId: Number(updatedLead.assignedToId), status: 'ACTIVE' },
           include: { department: true },
@@ -1857,7 +1875,7 @@ export class LeadService {
         }
       }
 
-      if (assignedEmpId && !assignedEmpName) {
+      if (assignedEmpId && !assignedEmpName && this.prisma.employee) {
         const assignedEmp: any = await this.prisma.employee.findFirst({
           where: { id: assignedEmpId, status: 'ACTIVE' },
           include: { department: true },
@@ -1883,10 +1901,15 @@ export class LeadService {
       // 3. Create or Link Customer
       if (customer) {
         this.logger.log(`[LEAD_WON_CONVERSION] Existing customer found: #${customer.id} (${customer.name})`);
-        // If customer exists but leadId is not linked or employee is missing, update it
         const updateData: any = {};
         if (!customer.leadId) {
           updateData.leadId = leadId;
+        }
+        if (!customer.email && validLoginEmail) {
+          updateData.email = validLoginEmail;
+        }
+        if (!customer.phone && normalizedPhone) {
+          updateData.phone = normalizedPhone;
         }
         if (!customer.assignedEmployeeId && assignedEmpId) {
           updateData.assignedEmployeeId = assignedEmpId;
@@ -1903,13 +1926,12 @@ export class LeadService {
           });
         }
       } else {
-        // Build customer name
-        const leadFullName = `${updatedLead.firstName || ''} ${updatedLead.lastName || ''}`.trim();
+        const leadFullName = [updatedLead.firstName, updatedLead.lastName].filter(Boolean).join(' ').trim();
         const customerName = (
           updatedLead.companyName ||
           updatedLead.title ||
           leadFullName ||
-          'Valued Customer'
+          'Customer'
         ).trim();
 
         customer = await this.prisma.customer.create({
@@ -1917,7 +1939,7 @@ export class LeadService {
             name: customerName,
             companyName: updatedLead.companyName || customerName,
             domain: updatedLead.website ? updatedLead.website.replace(/^https?:\/\//, '') : undefined,
-            email: normalizedEmail,
+            email: validLoginEmail,
             phone: normalizedPhone,
             alternatePhone: updatedLead.alternatePhone || null,
             address: updatedLead.address || null,
@@ -1942,15 +1964,15 @@ export class LeadService {
         this.logger.log(`[LEAD_WON_CONVERSION] Created new customer: #${customer.id} (${customer.name})`);
       }
 
-      // 4. Create or Link Customer User Account (for Employee Mobile -> Customer or Customer Mobile Login)
+      // 4. Create or Link Customer User Account
       let userCreated = false;
       let userExisted = false;
 
-      if (normalizedEmail) {
+      if (validLoginEmail) {
         let customerUser: any = await this.prisma.user.findFirst({
           where: {
             OR: [
-              { email: { equals: normalizedEmail, mode: 'insensitive' } },
+              { email: { equals: validLoginEmail, mode: 'insensitive' } },
               ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
             ],
             deletedAt: null,
@@ -1960,16 +1982,19 @@ export class LeadService {
 
         if (customerUser) {
           userExisted = true;
-          // If user exists but is not linked to customer, link them
-          if (!customerUser.customerId) {
-            await this.prisma.user.update({
-              where: { id: customerUser.id },
-              data: { customerId: customer.id, isActive: true, isVerified: true },
-            });
-            this.logger.log(`[LEAD_WON_CONVERSION] Linked existing user #${customerUser.id} (${customerUser.email}) to Customer #${customer.id}`);
+          const userUpdateData: any = {
+            isActive: true,
+            isVerified: true,
+          };
+          if (!customerUser.customerId || customerUser.customerId !== customer.id) {
+            userUpdateData.customerId = customer.id;
           }
+          await this.prisma.user.update({
+            where: { id: customerUser.id },
+            data: userUpdateData,
+          });
+          this.logger.log(`[LEAD_WON_CONVERSION] Activated existing login user #${customerUser.id} (${customerUser.email}) for Customer #${customer.id}`);
         } else {
-          // Check if phone number is already occupied by another user
           let safePhone: string | null = normalizedPhone;
           if (safePhone) {
             const phoneConflict = await this.prisma.user.findFirst({
@@ -1981,25 +2006,30 @@ export class LeadService {
             }
           }
 
-          // Create default password hash for '123456'
-          const passwordHash = await bcrypt.hash('123456', 10);
+          const defaultOnboardingPassword =
+            process.env.CUSTOMER_DEFAULT_PASSWORD ||
+            process.env.DEFAULT_ONBOARDING_PASSWORD ||
+            '123456';
+          const passwordHash = await bcrypt.hash(defaultOnboardingPassword, 10);
           const firstName = updatedLead.firstName || customer.name.split(' ')[0] || 'Customer';
           const lastName = updatedLead.lastName || customer.name.split(' ').slice(1).join(' ') || '';
 
-          // Find Role for CUSTOMER
-          let customerRole = await this.prisma.role.findFirst({
-            where: { name: { in: ['CUSTOMER', 'Customer'] } },
-          });
-          if (!customerRole) {
+          let customerRole: any = null;
+          if (this.prisma.role) {
             customerRole = await this.prisma.role.findFirst({
-              where: { name: { contains: 'CUSTOMER', mode: 'insensitive' } },
+              where: { name: { in: ['CUSTOMER', 'Customer'] } },
             });
+            if (!customerRole) {
+              customerRole = await this.prisma.role.findFirst({
+                where: { name: { contains: 'CUSTOMER', mode: 'insensitive' } },
+              });
+            }
           }
 
           customerUser = await this.prisma.user.create({
             data: {
               customerId: customer.id,
-              email: normalizedEmail,
+              email: validLoginEmail,
               phone: safePhone,
               firstName,
               lastName,
@@ -2009,7 +2039,7 @@ export class LeadService {
             },
           });
 
-          if (customerRole) {
+          if (customerRole && this.prisma.userRole) {
             await this.prisma.userRole.create({
               data: {
                 userId: customerUser.id,
@@ -2019,39 +2049,56 @@ export class LeadService {
           }
 
           userCreated = true;
-          this.logger.log(`[LEAD_WON_CONVERSION] Created Customer User login account for ${normalizedEmail} (Role: CUSTOMER, User ID: ${customerUser.id})`);
+          this.logger.log(`[LEAD_WON_CONVERSION] Created Customer User login account for ${validLoginEmail} (User ID: ${customerUser.id})`);
         }
+      } else {
+        this.logger.log(`[LEAD_WON_CONVERSION] Lead #${leadId} has no valid email. Customer created but login user skipped (status: EMAIL_REQUIRED).`);
       }
 
-      // 5. Update Lead convertedAt, status, and convertedByEmployeeId — preserve assignedToId & employeeId
-      const wonUpdateData: any = {
-        convertedAt: updatedLead.convertedAt || new Date(),
-        status: LeadStatus.WON,
-      };
-      // Record which employee converted this lead (for Admin Panel & Mobile display)
-      if (convertingEmpId && !updatedLead.convertedByEmployeeId) {
-        wonUpdateData.convertedByEmployeeId = convertingEmpId;
+      // 5. Update Lead convertedAt, status, and convertedByEmployeeId
+      if (this.prisma.lead) {
+        const wonUpdateData: any = {
+          convertedAt: updatedLead.convertedAt || new Date(),
+          status: LeadStatus.WON,
+        };
+        if (convertingEmpId && !updatedLead.convertedByEmployeeId) {
+          wonUpdateData.convertedByEmployeeId = convertingEmpId;
+        }
+        await this.prisma.lead.update({
+          where: { id: leadId },
+          data: wonUpdateData,
+        });
       }
-      // Ensure assignedToId is preserved from the lead (never cleared on WON transition)
-      // employeeId is also preserved — only convertedByEmployeeId is newly set here
-      await this.prisma.lead.update({
-        where: { id: leadId },
-        data: wonUpdateData,
-      });
 
       this.logger.log(
         `[LEAD_WON_CONVERSION] Completed successfully. Lead #${leadId} -> Customer #${customer.id}. ` +
         `AssignedEmp: ${assignedEmpId}, CreatedByEmp: ${createdByEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
       );
 
+      const loginStatus = !validLoginEmail
+        ? 'EMAIL_REQUIRED'
+        : (userCreated || userExisted ? 'ACTIVE' : 'NOT_ACTIVATED');
+
       return {
         success: true,
+        lead: {
+          id: leadId,
+          stage: 'WON',
+        },
+        customer: {
+          id: customer.id,
+          leadId,
+          email: customer.email || validLoginEmail,
+          name: customer.name,
+          loginStatus,
+        },
         customerId: customer.id,
         customerName: customer.name,
         isNew: isNewCustomer,
         alreadyConverted: !isNewCustomer,
         userCreated,
         userExisted,
+        loginStatus,
         assignedEmployeeId: assignedEmpId,
         createdByEmployeeId: createdByEmpId,
       };
@@ -2793,7 +2840,9 @@ export class LeadService {
     if (isNaN(numId) || numId <= 0) {
       throw new BadRequestException(`Invalid lead ID: "${id}" is not a valid numeric identifier.`);
     }
-    this.logger.log(`[SINGLE_LEAD_DELETE]\nid=${numId}`);
+    this.logger.log(
+      `[SINGLE_LEAD_DELETE] service deleting leadId=${numId} customerId=${customerId} userId=${user?.id}`,
+    );
     const lead = await this.getLeadById(customerId, numId);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
@@ -2848,7 +2897,9 @@ export class LeadService {
   }
 
   async bulkDeleteLeads(customerId: number | string | undefined, user: any, ids: number[]) {
-    this.logger.log(`[BULK_LEAD_DELETE]\nhandler=bulk\nids=${JSON.stringify(ids)}`);
+    this.logger.log(
+      `[BULK_LEAD_DELETE] service bulk deleting ids=${JSON.stringify(ids)} count=${ids?.length} customerId=${customerId} userId=${user?.id}`,
+    );
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new BadRequestException('Lead IDs array must not be empty.');
     }

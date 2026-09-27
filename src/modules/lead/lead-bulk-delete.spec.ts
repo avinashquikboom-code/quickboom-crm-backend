@@ -150,6 +150,60 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       expect(deletedIds).toContain(102);
       expect(deletedIds).not.toContain(103);
     });
+
+    it('should successfully bulk-delete exactly 2 leads: [651, 650]', async () => {
+      const mockLeads = [
+        { id: 651, customerId: 10, status: 'NEW', convertedCustomer: null },
+        { id: 650, customerId: 10, status: 'CONTACTED', convertedCustomer: null },
+      ];
+      mockPrisma.lead.findMany.mockResolvedValue(mockLeads);
+
+      const result = await service.bulkDeleteLeads(10, adminUser, [651, 650]);
+
+      expect(result.success).toBe(true);
+      expect(result.requested).toBe(2);
+      expect(result.deleted).toBe(2);
+      expect(result.failed).toBe(0);
+      expect(mockLeadRepository.bulkSoftDelete).toHaveBeenCalledWith([651, 650], 10);
+    });
+
+    it('should successfully bulk-delete 5 leads: [651, 650, 649, 648, 647]', async () => {
+      const fiveIds = [651, 650, 649, 648, 647];
+      const mockLeads = fiveIds.map((id) => ({
+        id,
+        customerId: 10,
+        status: 'NEW',
+        convertedCustomer: null,
+      }));
+      mockPrisma.lead.findMany.mockResolvedValue(mockLeads);
+
+      const result = await service.bulkDeleteLeads(10, adminUser, fiveIds);
+
+      expect(result.success).toBe(true);
+      expect(result.requested).toBe(5);
+      expect(result.deleted).toBe(5);
+      expect(result.failed).toBe(0);
+      expect(mockLeadRepository.bulkSoftDelete).toHaveBeenCalledWith(fiveIds, 10);
+    });
+
+    it('should successfully bulk-delete "Select All current page" leads', async () => {
+      // Simulating a page of 10 leads selected all at once
+      const pageLeadIds = [651, 650, 649, 648, 647, 646, 645, 644, 643, 642];
+      const mockLeads = pageLeadIds.map((id) => ({
+        id,
+        customerId: 10,
+        status: 'NEW',
+        convertedCustomer: null,
+      }));
+      mockPrisma.lead.findMany.mockResolvedValue(mockLeads);
+
+      const result = await service.bulkDeleteLeads(10, adminUser, pageLeadIds);
+
+      expect(result.success).toBe(true);
+      expect(result.requested).toBe(10);
+      expect(result.deleted).toBe(10);
+      expect(mockLeadRepository.bulkSoftDelete).toHaveBeenCalledWith(pageLeadIds, 10);
+    });
   });
 
   describe('deleteLead (single delete)', () => {
@@ -252,22 +306,150 @@ describe('LeadService - Bulk Delete & Safe Delete', () => {
       expect(result.ids).toEqual([101, 102]);
     });
 
-    it('should support fallback query parameter "ids" when body is empty (proxy compatibility)', async () => {
+    it('should parse comma-delimited string query parameter "651,650" into [651, 650]', async () => {
       const user = { id: 1, role: 'COMPANY_ADMIN' };
-      const emptyDto = {} as any;
 
-      await controller.bulkRemove('10', user, emptyDto, '201,202');
+      await controller.bulkRemove('10', user, undefined, '651,650');
 
-      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [201, 202]);
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [651, 650]);
+    });
+
+    it('should parse 5 lead IDs "651,650,649,648,647" from query parameter', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+
+      await controller.bulkRemove('10', user, undefined, '651,650,649,648,647');
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [651, 650, 649, 648, 647]);
+    });
+
+    it('should merge and deduplicate IDs from body and query parameter', async () => {
+      const user = { id: 1, role: 'COMPANY_ADMIN' };
+      const dto = { ids: [651, 650] } as any;
+
+      await controller.bulkRemove('10', user, dto, '650,649');
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith('10', user, [651, 650, 649]);
     });
 
     it('should route remove to service.deleteLead for single numeric ID', async () => {
       const user = { id: 1, role: 'COMPANY_ADMIN' };
 
-      const result: any = await controller.remove('10', user, 101);
+      const result: any = await controller.remove('10', user, 651);
 
-      expect(mockLeadService.deleteLead).toHaveBeenCalledWith('10', 101, user);
+      expect(mockLeadService.deleteLead).toHaveBeenCalledWith('10', 651, user);
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('HTTP Route Integration (Supertest) - Route Separation & Prefix Resolution', () => {
+    let app: any;
+    let mockLeadService: any;
+
+    beforeAll(async () => {
+      mockLeadService = {
+        bulkDeleteLeads: jest.fn().mockImplementation((customerId, user, ids) => {
+          return Promise.resolve({
+            success: true,
+            requested: ids.length,
+            deleted: ids.length,
+            failed: 0,
+            ids,
+          });
+        }),
+        deleteLead: jest.fn().mockImplementation((customerId, id, user) => {
+          return Promise.resolve({
+            success: true,
+            message: `Lead ${id} deleted successfully`,
+          });
+        }),
+      };
+
+      const moduleRef = await Test.createTestingModule({
+        controllers: [LeadController],
+        providers: [{ provide: LeadService, useValue: mockLeadService }],
+      })
+        .overrideGuard(require('../../common/guards/jwt-auth.guard').JwtAuthGuard)
+        .useValue({
+          canActivate: (ctx: any) => {
+            const req = ctx.switchToHttp().getRequest();
+            req.user = { id: 1, role: 'COMPANY_ADMIN', customerId: 10 };
+            req.customerId = 10;
+            return true;
+          },
+        })
+        .overrideGuard(require('../../common/guards/customer.guard').CustomerGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(require('../../common/guards/permissions.guard').PermissionsGuard)
+        .useValue({ canActivate: () => true })
+        .compile();
+
+      app = moduleRef.createNestApplication();
+      app.setGlobalPrefix('api/v1');
+      await app.init();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('DELETE /api/v1/leads/bulk?ids=651,650 must hit bulkRemove and NEVER deleteLead', async () => {
+      const request = require('supertest');
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/leads/bulk?ids=651,650')
+        .expect(200);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith(10, expect.any(Object), [651, 650]);
+      expect(mockLeadService.deleteLead).not.toHaveBeenCalled();
+      expect(res.body.deleted).toBe(2);
+      expect(res.body.ids).toEqual([651, 650]);
+    });
+
+    it('DELETE /api/v1/leads/bulk with JSON body { ids: [651, 650] } must hit bulkRemove', async () => {
+      const request = require('supertest');
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/leads/bulk')
+        .send({ ids: [651, 650] })
+        .expect(200);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith(10, expect.any(Object), [651, 650]);
+      expect(mockLeadService.deleteLead).not.toHaveBeenCalled();
+      expect(res.body.deleted).toBe(2);
+    });
+
+    it('DELETE /api/v1/leads/651 must hit single-delete remove handler and NEVER bulkDeleteLeads', async () => {
+      const request = require('supertest');
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/leads/651')
+        .expect(200);
+
+      expect(mockLeadService.deleteLead).toHaveBeenCalledWith(10, 651, expect.any(Object));
+      expect(mockLeadService.bulkDeleteLeads).not.toHaveBeenCalled();
+      expect(res.body.success).toBe(true);
+    });
+
+    it('DELETE /api/v1/admin/leads/bulk?ids=651,650 must hit bulkRemove via admin prefix', async () => {
+      const request = require('supertest');
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/admin/leads/bulk?ids=651,650')
+        .expect(200);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith(10, expect.any(Object), [651, 650]);
+      expect(mockLeadService.deleteLead).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/v1/leads/bulk-delete with { ids: [651, 650] } must hit bulkRemovePost', async () => {
+      const request = require('supertest');
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/leads/bulk-delete')
+        .send({ ids: [651, 650] })
+        .expect(201);
+
+      expect(mockLeadService.bulkDeleteLeads).toHaveBeenCalledWith(10, expect.any(Object), [651, 650]);
+      expect(mockLeadService.deleteLead).not.toHaveBeenCalled();
     });
   });
 });
