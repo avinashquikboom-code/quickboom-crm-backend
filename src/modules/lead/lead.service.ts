@@ -1397,6 +1397,36 @@ export class LeadService {
       (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
       (resolvedStatus !== undefined && resolvedStatus !== lead.status);
 
+    if (isStageChanged && (await this.leadRepository.isVisitorUser(user))) {
+      const currentStatus = (lead.status || '').toUpperCase();
+      const currentStageKey = (lead.stage?.key || '').toUpperCase();
+      const currentStageName = (lead.stage?.name || '').toUpperCase();
+      const isCurrentVisitScheduled =
+        currentStatus === 'VISIT_SCHEDULED' ||
+        currentStatus === 'VISIT' ||
+        currentStageKey === 'VISIT_SCHEDULED' ||
+        currentStageKey === 'VISIT' ||
+        currentStageName === 'VISIT SCHEDULED' ||
+        currentStageName.includes('VISIT SCHEDULED');
+
+      if (!isCurrentVisitScheduled) {
+        throw new ForbiddenException('Visitors can only update leads that are currently scheduled for a visit.');
+      }
+
+      const targetStatus = (resolvedStatus || '').toUpperCase();
+      const targetName = (stageName || '').toUpperCase();
+      const isTargetVisitDone =
+        targetStatus === 'VISIT_DONE' ||
+        targetStatus === 'VISIT' ||
+        targetName === 'VISIT DONE' ||
+        targetName === 'VISIT' ||
+        targetName.includes('VISIT DONE');
+
+      if (!isTargetVisitDone) {
+        throw new ForbiddenException('Visitor employee can only update leads to Visit Done stage.');
+      }
+    }
+
     await this.leadRepository.update(customerId, id, sanitizedDto as any);
     await this.leadRepository.logTimeline(
       id,
@@ -1640,8 +1670,23 @@ export class LeadService {
       throw new BadRequestException('Either stageId or status must be provided.');
     }
 
-    // Visitor permission enforcement: Visitor can only transition to VISIT_DONE
+    // Visitor permission enforcement: Visitor can only transition a Visit Scheduled lead to VISIT_DONE
     if (await this.leadRepository.isVisitorUser(user)) {
+      const currentStatus = (lead.status || '').toUpperCase();
+      const currentStageKey = (lead.stage?.key || '').toUpperCase();
+      const currentStageName = (lead.stage?.name || '').toUpperCase();
+      const isCurrentVisitScheduled =
+        currentStatus === 'VISIT_SCHEDULED' ||
+        currentStatus === 'VISIT' ||
+        currentStageKey === 'VISIT_SCHEDULED' ||
+        currentStageKey === 'VISIT' ||
+        currentStageName === 'VISIT SCHEDULED' ||
+        currentStageName.includes('VISIT SCHEDULED');
+
+      if (!isCurrentVisitScheduled) {
+        throw new ForbiddenException('Visitors can only update leads that are currently scheduled for a visit.');
+      }
+
       const targetStatus = (resolvedStatus || '').toUpperCase();
       const targetName = (stageName || '').toUpperCase();
       const isTargetVisitDone =
