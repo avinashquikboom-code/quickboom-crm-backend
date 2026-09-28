@@ -333,5 +333,40 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.CALENDAR.view).toBe(false);
       expect(result.permissions.some((p: any) => p.module === 'CALENDAR')).toBe(false);
     });
+
+    it('resolves VISITOR role with VISITS:VIEW, START, COMPLETE but WITHOUT VISITS:CREATE', async () => {
+      const mockVisitor = {
+        id: 25,
+        email: 'visitor@company.com',
+        employee: {
+          id: 25,
+          designation: { name: 'Visitor' },
+        },
+        userRoles: [{ role: { name: 'VISITOR', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(25, mockVisitor);
+      expect(result.effectivePermissions.VISITS.view).toBe(true);
+      expect(result.effectivePermissions.VISITS.create).toBe(false);
+      expect(result.permissions.some((p: any) => p.module === 'VISITS' && p.action === 'CREATE')).toBe(false);
+      expect(result.permissions.some((p: any) => p.module === 'VISITS' && p.action === 'VIEW')).toBe(true);
+    });
+
+    it('resolves BPO role with VISITS:CREATE for scheduling visits', async () => {
+      const mockBpo = {
+        id: 26,
+        email: 'bpo@company.com',
+        employee: {
+          id: 26,
+          designation: { name: 'BPO Executive' },
+        },
+        userRoles: [{ role: { name: 'BPO', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(26, mockBpo);
+      expect(result.effectivePermissions.VISITS.view).toBe(true);
+      expect(result.effectivePermissions.VISITS.create).toBe(true);
+      expect(result.permissions.some((p: any) => p.module === 'VISITS' && p.action === 'CREATE')).toBe(true);
+    });
   });
 });

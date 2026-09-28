@@ -339,6 +339,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           const upper = String(candidate).toUpperCase().replace(/\s+/g, '_');
           let matched: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
+          else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) matched = 'VISITOR';
           else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) matched = 'TELECALLER';
           else if (upper.includes('DESIGN')) matched = 'DESIGNER';
           else if (upper.includes('EDIT')) matched = 'EDITOR';
@@ -363,45 +364,68 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
-    // For CRM / calling / sales designations, ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
     const desigUpper = (desigName || '').toUpperCase();
-    const isCrmDesignation = Boolean(
-      (desigUpper && (
-        desigUpper.includes('BPO') ||
-        desigUpper.includes('TELE') ||
-        desigUpper.includes('SALES') ||
-        desigUpper.includes('CALL') ||
-        desigUpper.includes('MANAGER') ||
-        desigUpper.includes('VISIT') ||
-        desigUpper.includes('FIELD') ||
-        desigUpper.includes('CRM') ||
-        desigUpper.includes('LEAD') ||
-        desigUpper.includes('EXECUTIVE') ||
-        desigUpper.includes('BD') ||
-        desigUpper.includes('OFFICER') ||
-        desigUpper.includes('AGENT') ||
-        desigUpper.includes('COORDINATOR') ||
-        desigUpper.includes('MARKETING') ||
-        desigUpper.includes('CONSULTANT')
-      )) ||
-      user.employee?.designation?.crmMobileAccess === true ||
-      permissionsMap.has('LEADS:VIEW') ||
-      permissionsMap.has('LEADS:CREATE') ||
-      permissionsMap.has('LEADS:CHANGE_STAGE') ||
-      permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
-      permissionsMap.has('LEADS:CALL') ||
-      (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
+    const isVisitorDesignation = Boolean(
+      desigUpper && (
+        desigUpper.includes('VISITOR') ||
+        desigUpper === 'VISIT' ||
+        desigUpper.includes('FIELD VISIT') ||
+        desigUpper.includes('FIELD OFFICER')
+      )
     );
 
-    if (isCrmDesignation) {
-      if (!permissionsMap.has('VISITS:CREATE')) {
-        permissionsMap.set('VISITS:CREATE', { module: 'VISITS', action: 'CREATE' });
-      }
+    if (isVisitorDesignation) {
+      // Visitors only view, start (check-in), and complete assigned visits.
+      // They intentionally do NOT have VISITS:CREATE or LEADS:SCHEDULE_VISIT.
       if (!permissionsMap.has('VISITS:VIEW')) {
         permissionsMap.set('VISITS:VIEW', { module: 'VISITS', action: 'VIEW' });
       }
-      if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
-        permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
+      if (!permissionsMap.has('VISITS:START')) {
+        permissionsMap.set('VISITS:START', { module: 'VISITS', action: 'START' });
+      }
+      if (!permissionsMap.has('VISITS:COMPLETE')) {
+        permissionsMap.set('VISITS:COMPLETE', { module: 'VISITS', action: 'COMPLETE' });
+      }
+    } else {
+      // For CRM / calling / sales designations (BPO, Telecaller, Sales Executive, etc.),
+      // ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
+      const isCrmDesignation = Boolean(
+        (desigUpper && (
+          desigUpper.includes('BPO') ||
+          desigUpper.includes('TELE') ||
+          desigUpper.includes('SALES') ||
+          desigUpper.includes('CALL') ||
+          desigUpper.includes('MANAGER') ||
+          desigUpper.includes('FIELD') ||
+          desigUpper.includes('CRM') ||
+          desigUpper.includes('LEAD') ||
+          desigUpper.includes('EXECUTIVE') ||
+          desigUpper.includes('BD') ||
+          desigUpper.includes('OFFICER') ||
+          desigUpper.includes('AGENT') ||
+          desigUpper.includes('COORDINATOR') ||
+          desigUpper.includes('MARKETING') ||
+          desigUpper.includes('CONSULTANT')
+        )) ||
+        user.employee?.designation?.crmMobileAccess === true ||
+        permissionsMap.has('LEADS:VIEW') ||
+        permissionsMap.has('LEADS:CREATE') ||
+        permissionsMap.has('LEADS:CHANGE_STAGE') ||
+        permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
+        permissionsMap.has('LEADS:CALL') ||
+        (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
+      );
+
+      if (isCrmDesignation) {
+        if (!permissionsMap.has('VISITS:CREATE')) {
+          permissionsMap.set('VISITS:CREATE', { module: 'VISITS', action: 'CREATE' });
+        }
+        if (!permissionsMap.has('VISITS:VIEW')) {
+          permissionsMap.set('VISITS:VIEW', { module: 'VISITS', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
+          permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
+        }
       }
     }
 

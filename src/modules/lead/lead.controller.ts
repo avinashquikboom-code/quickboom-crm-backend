@@ -377,7 +377,7 @@ export class LeadController {
   }
 
   @Post(':id/visits')
-  @RequirePermissions({ module: 'LEADS', action: 'SCHEDULE_VISIT' })
+  @RequirePermissions({ module: 'VISITS', action: 'CREATE' })
   @ApiOperation({ summary: 'Manage field visit: schedule, start (GPS), or complete' })
   async manageVisit(
     @CurrentCustomer() customerId: string,

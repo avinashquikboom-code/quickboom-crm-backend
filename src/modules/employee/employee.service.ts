@@ -3011,6 +3011,8 @@ export class EmployeeService {
       let matchedKey: string | null = null;
       if (ROLE_PERMISSION_DEFAULTS[upper]) {
         matchedKey = upper;
+      } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
+        matchedKey = 'VISITOR';
       } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
         matchedKey = 'TELECALLER';
       } else if (upper.includes('DESIGNER')) {
