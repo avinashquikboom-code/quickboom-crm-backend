@@ -571,6 +571,8 @@ export class VisitService {
     } else if (dto.status === VisitStatus.IN_PROGRESS) {
       data.startedAt = new Date();
     }
+    if (dto.latitude !== undefined) data.latitude = Number(dto.latitude);
+    if (dto.longitude !== undefined) data.longitude = Number(dto.longitude);
 
     if (dto.status === VisitStatus.COMPLETED) {
       data.completedAt = new Date();

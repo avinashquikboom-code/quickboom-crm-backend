@@ -732,7 +732,7 @@ export class MobileVisitController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
-    @Body() body: { notes?: string; outcome?: string; nextFollowUpDate?: string; rating?: number; feedback?: string },
+    @Body() body: { notes?: string; outcome?: string; nextFollowUpDate?: string; rating?: number; feedback?: string; latitude?: number; longitude?: number },
   ) {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
@@ -786,6 +786,8 @@ export class MobileVisitController {
       nextFollowUpDate: body?.nextFollowUpDate,
       completedById: employee?.id || undefined,
       completedBy: actingEmpName || undefined,
+      ...(body?.latitude != null ? { latitude: Number(body.latitude) } : {}),
+      ...(body?.longitude != null ? { longitude: Number(body.longitude) } : {}),
     });
 
     if (visit.leadId) {
@@ -833,6 +835,9 @@ export class MobileVisitController {
               feedback: body?.feedback,
               completedById: employee?.id || null,
               completedByName: actingEmpName || null,
+              completedLatitude: body?.latitude || null,
+              completedLongitude: body?.longitude || null,
+              completedAt: new Date(),
             },
           },
         }).catch(() => {});

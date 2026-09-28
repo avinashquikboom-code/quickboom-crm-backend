@@ -188,4 +188,14 @@ export class UpdateVisitDto {
   @IsDateString()
   @IsOptional()
   startedAt?: string;
+
+  @ApiPropertyOptional({ example: 19.0760 })
+  @IsNumber()
+  @IsOptional()
+  latitude?: number;
+
+  @ApiPropertyOptional({ example: 72.8777 })
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
 }
