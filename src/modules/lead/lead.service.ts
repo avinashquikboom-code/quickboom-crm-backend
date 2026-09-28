@@ -1391,9 +1391,16 @@ export class LeadService {
     }
 
     const cleaned = this.sanitizeLeadFields(dto);
+    const rawAssignmentTarget =
+      cleaned.assignedToId !== undefined
+        ? cleaned.assignedToId
+        : (dto as any).employeeId !== undefined
+        ? (dto as any).employeeId
+        : undefined;
+
     const assignment = await this.validateEmployeeAssignment(
       customerId,
-      cleaned.assignedToId,
+      rawAssignmentTarget,
       lead.assignedToId,
       (lead as any).employeeId,
     );
@@ -1447,9 +1454,17 @@ export class LeadService {
       `Lead details updated`,
     );
 
+    const hasExplicitAssignment =
+      rawAssignmentTarget !== undefined &&
+      rawAssignmentTarget !== null &&
+      rawAssignmentTarget !== '' &&
+      rawAssignmentTarget !== 0 &&
+      rawAssignmentTarget !== '0';
+
     const isNewlyAssigned =
       Boolean(assignment?.assignedToId || assignment?.employeeId) &&
-      (assignment?.assignedToId !== lead.assignedToId ||
+      (hasExplicitAssignment ||
+        assignment?.assignedToId !== lead.assignedToId ||
         (assignment?.employeeId && assignment.employeeId !== (lead as any).employeeId));
 
     if (isNewlyAssigned) {
