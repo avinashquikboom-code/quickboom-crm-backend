@@ -196,6 +196,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // 1. First, load user's system roles permissions
     (user.userRoles || []).forEach((ur) => {
       if (ur.role?.rolePermissions) {
+        const rNameUpper = ur.role.name ? String(ur.role.name).toUpperCase() : '';
+        const rTypeUpper = ur.role.type ? String(ur.role.type).toUpperCase() : '';
+        if (user.employee && (rNameUpper === 'EMPLOYEE' || rTypeUpper === 'EMPLOYEE')) {
+          return;
+        }
         ur.role.rolePermissions.forEach((rp) => {
           if (rp.permission) {
             const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
@@ -209,14 +214,32 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     let designationPermissionCount = 0;
+    let desigId = user.employee?.designationId;
+    const desigName = user.employee?.designation?.name?.trim() || user.designation?.trim();
+
+    // If designationId is null on Employee, but designation name is known, resolve designationId from DB
+    if (!desigId && desigName && user.employee?.customerId) {
+      try {
+        const matchedDesig = await this.prisma.designation.findFirst({
+          where: {
+            customerId: user.employee.customerId,
+            name: { equals: desigName, mode: 'insensitive' },
+            isActive: true,
+          },
+        });
+        if (matchedDesig) {
+          desigId = matchedDesig.id;
+        }
+      } catch (_) {}
+    }
 
     // 2. If user is an employee with a designation, load Designation Role permissions (Single Source of Truth)
-    if (user.employee?.designationId) {
+    if (desigId) {
       const desigRole = await this.prisma.role.findFirst({
         where: {
-          designationId: user.employee.designationId,
+          designationId: desigId,
           OR: [
-            { customerId: user.employee.customerId },
+            { customerId: user.employee?.customerId },
             { customerId: null },
           ],
           deletedAt: null,
@@ -244,13 +267,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     // Also check role matching designation name if still zero designation permissions
-    if (designationPermissionCount === 0 && user.employee?.designation?.name) {
+    if (designationPermissionCount === 0 && desigName) {
       const namedRole = await this.prisma.role.findFirst({
         where: {
-          name: { equals: user.employee.designation.name, mode: 'insensitive' },
-          OR: [
-            { customerId: user.employee.customerId },
-            { customerId: null },
+          AND: [
+            {
+              OR: [
+                { name: { equals: desigName, mode: 'insensitive' } },
+                { name: { equals: desigName.toUpperCase().replace(/\s+/g, '_'), mode: 'insensitive' } },
+              ],
+            },
+            {
+              OR: [
+                { customerId: user.employee?.customerId },
+                { customerId: null },
+              ],
+            },
           ],
           deletedAt: null,
         },
@@ -292,11 +324,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           });
         });
       } else {
+        const nonGenericUserRoles = (user.userRoles || [])
+          .map((ur: any) => ur.role?.name)
+          .filter((r: any) => r && !['EMPLOYEE', 'CUSTOMER'].includes(String(r).toUpperCase()));
+
         const roleCandidates = [
-          (user.employee as any)?.designation?.name,
-          ...(user.userRoles || []).map((ur: any) => ur.role?.name),
-          'EMPLOYEE',
+          desigName,
+          ...nonGenericUserRoles,
           'TELECALLER',
+          'EMPLOYEE',
         ].filter(Boolean);
 
         for (const candidate of roleCandidates) {

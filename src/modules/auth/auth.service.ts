@@ -2483,7 +2483,7 @@ export class AuthService {
         if (ur.role.rolePermissions && ur.role.rolePermissions.length > 0) {
           const rNameUpper = String(ur.role.name).toUpperCase();
           const rTypeUpper = ur.role.type ? String(ur.role.type).toUpperCase() : '';
-          if (user.employee?.designationId && (rNameUpper === 'EMPLOYEE' || rTypeUpper === 'EMPLOYEE')) {
+          if (user.employee && (rNameUpper === 'EMPLOYEE' || rTypeUpper === 'EMPLOYEE')) {
             return;
           }
           ur.role.rolePermissions.forEach((rp: any) => {
@@ -2501,23 +2501,38 @@ export class AuthService {
       }
     });
 
-    const desigName = user.employee?.designation?.name?.trim();
+    const desigName = user.employee?.designation?.name?.trim() || user.designation?.trim();
     if (desigName) {
       roleNames.push(desigName);
     }
     if (roleNames.length === 0 && user.employee) {
-      roleNames.push('EMPLOYEE');
       roleNames.push('TELECALLER');
     }
 
+    let desigId = user.employee?.designationId;
+    if (!desigId && desigName && user.employee?.customerId && this.prisma?.designation?.findFirst) {
+      try {
+        const matchedDesig = await this.prisma.designation.findFirst({
+          where: {
+            customerId: user.employee.customerId,
+            name: { equals: desigName, mode: 'insensitive' },
+            isActive: true,
+          },
+        });
+        if (matchedDesig) {
+          desigId = matchedDesig.id;
+        }
+      } catch (_) {}
+    }
+
     // 2. If user is an employee with a designation, load Designation Role permissions (Single Source of Truth)
-    if (user.employee?.designationId && this.prisma?.role?.findFirst) {
+    if (desigId && this.prisma?.role?.findFirst) {
       try {
         const desigRole = await this.prisma.role.findFirst({
           where: {
-            designationId: user.employee.designationId,
+            designationId: desigId,
             OR: [
-              { customerId: user.employee.customerId },
+              { customerId: user.employee?.customerId },
               { customerId: null },
             ],
             deletedAt: null,
@@ -2610,12 +2625,12 @@ export class AuthService {
             action: p.action.toUpperCase(),
           });
         });
-      } else {
+        const nonGenericRoles = roleNames.filter((r) => r && !['EMPLOYEE', 'CUSTOMER'].includes(String(r).toUpperCase()));
         const candidates = [
-          user.employee?.designation?.name,
-          ...roleNames,
-          'EMPLOYEE',
+          desigName,
+          ...nonGenericRoles,
           'TELECALLER',
+          'EMPLOYEE',
         ].filter(Boolean);
 
         for (const rName of candidates) {

@@ -2912,7 +2912,7 @@ export class EmployeeService {
     }
 
     // 1. Derive canonical role name strictly from Employee's configured Designation
-    const desigName = employee.designation?.name?.trim();
+    const desigName = employee.designation?.name?.trim() || employee.user?.designation?.trim();
     const userRoleNames = (employee.user?.userRoles?.map((ur) => ur.role.name) || []).filter(
       (r) => !['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'].includes(r),
     );
@@ -2923,9 +2923,23 @@ export class EmployeeService {
     let hasDbPermissions = false;
 
     // First check if a Role is directly linked to this employee's Designation
-    if (employee.designationId) {
+    let effectiveDesigId = employee.designationId;
+    if (!effectiveDesigId && desigName) {
+      try {
+        const matchedDesig = await this.prisma.designation.findFirst({
+          where: {
+            customerId: employee.customerId,
+            name: { equals: desigName, mode: 'insensitive' },
+            isActive: true,
+          },
+        });
+        if (matchedDesig) effectiveDesigId = matchedDesig.id;
+      } catch (_) {}
+    }
+
+    if (effectiveDesigId) {
       const linkedRole = await this.prisma.role.findFirst({
-        where: { designationId: employee.designationId },
+        where: { designationId: effectiveDesigId },
         include: {
           rolePermissions: {
             include: { permission: true },
