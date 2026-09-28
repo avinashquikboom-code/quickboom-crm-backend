@@ -263,6 +263,7 @@ export class VisitService {
         scheduledById: dto.scheduledById ? Number(dto.scheduledById) : undefined,
         completedBy: dto.completedBy,
         completedById: dto.completedById ? Number(dto.completedById) : undefined,
+        startedAt: dto.startedAt ? new Date(dto.startedAt) : undefined,
       },
       include: {
         employee: true,
@@ -476,6 +477,11 @@ export class VisitService {
     if (dto.completedById) data.completedById = Number(dto.completedById);
     if (dto.scheduledBy) data.scheduledBy = dto.scheduledBy;
     if (dto.scheduledById) data.scheduledById = Number(dto.scheduledById);
+    if (dto.startedAt) {
+      data.startedAt = new Date(dto.startedAt);
+    } else if (dto.status === VisitStatus.IN_PROGRESS) {
+      data.startedAt = new Date();
+    }
 
     if (dto.status === VisitStatus.COMPLETED) {
       data.completedAt = new Date();

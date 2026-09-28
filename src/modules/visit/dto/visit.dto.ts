@@ -106,6 +106,11 @@ export class CreateVisitDto {
   @IsNumber()
   @IsOptional()
   scheduledById?: number;
+
+  @ApiPropertyOptional({ example: '2026-08-26T10:30:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  startedAt?: string;
 }
 
 export class UpdateVisitDto {
@@ -178,4 +183,9 @@ export class UpdateVisitDto {
   @IsNumber()
   @IsOptional()
   scheduledById?: number;
+
+  @ApiPropertyOptional({ example: '2026-08-26T10:30:00.000Z' })
+  @IsDateString()
+  @IsOptional()
+  startedAt?: string;
 }

@@ -1323,42 +1323,30 @@ export class LeadRepository {
       wonAt: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won')
         ? (lead.convertedAt || null)
         : null,
-      visitedByEmployeeId: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+      visitedByEmployeeId: (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED'))
         ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedById)?.completedById) ||
-           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employeeId)?.employeeId) ||
-           lead.employeeId ||
-           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employeeId)?.employeeId) || null)
+           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employeeId)?.employeeId) || null)
         : null,
-      visitedBy: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+      visitedBy: (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED'))
         ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy))
           ? {
               id: (lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedById)?.completedById) || null,
               name: lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy).completedBy,
             }
-          : lead.employee
+          : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee))
           ? {
-              id: lead.employee.id,
-              name: `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null,
-              firstName: lead.employee.firstName,
-              lastName: lead.employee.lastName,
-            }
-          : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
-          ? {
-              id: lead.visits.find((v: any) => v.employee).employee.id,
-              name: `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null,
-              firstName: lead.visits.find((v: any) => v.employee).employee.firstName,
-              lastName: lead.visits.find((v: any) => v.employee).employee.lastName,
+              id: lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.id,
+              name: `${lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.lastName || ''}`.trim() || null,
+              firstName: lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.firstName,
+              lastName: lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.lastName,
             }
           : null)
         : null,
-      visitedByName: (lead.status === 'VISIT_DONE' || lead.stage?.key === 'VISIT_DONE' || (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED')))
+      visitedByName: (Array.isArray(lead.visits) && lead.visits.some((v: any) => v.status === 'COMPLETED'))
         ? ((Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.completedBy)?.completedBy) ||
-           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.completedBy)?.completedBy) ||
-           (lead.employee
-             ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
-             : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.employee)?.employee)
-             ? `${lead.visits.find((v: any) => v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.employee).employee.lastName || ''}`.trim() || null
-             : (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.assignedEmployee)?.assignedEmployee) || null))
+           (Array.isArray(lead.visits) && lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee)
+             ? `${lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.firstName || ''} ${lead.visits.find((v: any) => v.status === 'COMPLETED' && v.employee).employee.lastName || ''}`.trim() || null
+             : null))
         : null,
       visits: Array.isArray(lead.visits)
         ? lead.visits.map((v: any) => {
