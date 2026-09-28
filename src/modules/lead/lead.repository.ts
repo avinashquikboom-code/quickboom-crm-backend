@@ -1800,6 +1800,95 @@ export class LeadRepository {
       }
     }
 
+    const isVisitScheduled =
+      toStatus === LeadStatus.VISIT_SCHEDULED ||
+      (toStatus as string) === 'VISIT_SCHEDULED' ||
+      (toStatus as string) === 'VISIT' ||
+      (stageName && stageName.toLowerCase().includes('visit schedule'));
+
+    if (isVisitScheduled) {
+      try {
+        const leadObj = await this.prisma.lead.findUnique({
+          where: { id: numId },
+          select: {
+            id: true,
+            customerId: true,
+            employeeId: true,
+            assignedToId: true,
+            companyName: true,
+            firstName: true,
+            lastName: true,
+            address: true,
+            city: true,
+            category: true,
+            title: true,
+            nextFollowUpDate: true,
+            nextFollowUpTime: true,
+            workNotes: true,
+          },
+        });
+
+        const emp = numUserId
+          ? await this.prisma.employee.findFirst({
+              where: { userId: numUserId },
+            })
+          : null;
+
+        const targetEmpId =
+          leadObj?.employeeId ||
+          (leadObj?.assignedToId ? Number(leadObj.assignedToId) : null) ||
+          emp?.id;
+
+        const actingEmpName = emp
+          ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim()
+          : 'CRM Admin';
+
+        const existingVisit = await this.prisma.visit.findFirst({
+          where: { leadId: numId },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (existingVisit) {
+          if (existingVisit.status !== VisitStatus.SCHEDULED) {
+            await this.prisma.visit.update({
+              where: { id: existingVisit.id },
+              data: {
+                status: VisitStatus.SCHEDULED,
+                date: leadObj?.nextFollowUpDate || new Date(),
+                time: leadObj?.nextFollowUpTime || existingVisit.time || '11:00 AM',
+                employeeId: targetEmpId || existingVisit.employeeId,
+                scheduledById: emp?.id || existingVisit.scheduledById,
+                scheduledBy: actingEmpName || existingVisit.scheduledBy,
+              },
+            });
+          }
+        } else if (targetEmpId) {
+          await this.prisma.visit.create({
+            data: {
+              customerId: numCustomerId || leadObj?.customerId || 1,
+              leadId: numId,
+              employeeId: targetEmpId,
+              customerName:
+                leadObj?.companyName ||
+                `${leadObj?.firstName || ''} ${leadObj?.lastName || ''}`.trim() ||
+                leadObj?.title ||
+                'Client',
+              purpose: leadObj?.category || leadObj?.title || 'Client Meeting & Demo',
+              date: leadObj?.nextFollowUpDate || new Date(),
+              time: leadObj?.nextFollowUpTime || '11:00 AM',
+              location: leadObj?.address || leadObj?.city || 'Client Site',
+              status: VisitStatus.SCHEDULED,
+              notes: notes || leadObj?.workNotes || 'Visit scheduled from CRM',
+              scheduledById: emp?.id || null,
+              scheduledBy: actingEmpName,
+            },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`[updateStatus] Failed to sync visit scheduling: ${err.message}`);
+      }
+    }
+
     if (toStatus === LeadStatus.WON || (toStatus as string) === 'WON') {
       try {
         const emp = numUserId

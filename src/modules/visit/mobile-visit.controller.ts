@@ -53,43 +53,62 @@ export class MobileVisitController {
       },
     });
 
-    if (!employee) {
+    const isAdmin =
+      isUserSuperAdmin(user) ||
+      (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
+
+    if (!employee && !isAdmin) {
       return { items: [], data: [], total: 0 };
     }
 
-    const numCustomerId = Number(customerId) || employee.customerId;
+    const numCustomerId = Number(customerId) || employee?.customerId || 1;
     const where: any = {
-      ...(numCustomerId > 0 ? {
-        OR: [
-          { customerId: numCustomerId },
-          { customerId: employee.customerId },
-        ],
-      } : {}),
-      AND: [
-        {
-          OR: [
-            { employeeId: employee.id },
-            { lead: { employeeId: employee.id } },
-            { lead: { assignedToId: user.id } },
-            { completedById: employee.id },
-          ],
-        },
-      ],
+      ...(numCustomerId > 0
+        ? {
+            OR: [
+              { customerId: numCustomerId },
+              ...(employee?.customerId ? [{ customerId: employee.customerId }] : []),
+            ],
+          }
+        : {}),
+      ...(!isAdmin && employee
+        ? {
+            AND: [
+              {
+                OR: [
+                  { employeeId: employee.id },
+                  { lead: { employeeId: employee.id } },
+                  { lead: { assignedToId: user.id } },
+                  { completedById: employee.id },
+                  { employeeId: null as any },
+                ],
+              },
+            ],
+          }
+        : { AND: [] }),
     };
 
     // Tab → status mapping
     if (tab) {
       if (tab === 'upcoming') {
+        if (!where.AND) where.AND = [];
         where.AND.push({
           status: VisitStatus.SCHEDULED,
           OR: [
             { leadId: null },
-            { lead: { status: { notIn: ['VISIT_DONE', 'WON', 'LOST'] } } },
+            {
+              lead: {
+                status: { notIn: ['VISIT_DONE', 'WON', 'LOST'] },
+                deletedAt: null,
+              },
+            },
           ],
         });
       } else if (tab === 'ongoing') {
+        if (!where.AND) where.AND = [];
         where.AND.push({ status: VisitStatus.IN_PROGRESS });
       } else if (tab === 'completed') {
+        if (!where.AND) where.AND = [];
         where.AND.push({
           OR: [
             { status: VisitStatus.COMPLETED },
@@ -138,28 +157,77 @@ export class MobileVisitController {
     if (tab === 'upcoming') {
       const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
 
-      const unlinkedLeads = await this.prisma.lead.findMany({
+      // Resolve all stages in the database that correspond to Visit Scheduled
+      const visitStages = await this.prisma.leadStage.findMany({
         where: {
-          deletedAt: null,
-          ...(numCustomerId > 0 ? { customerId: numCustomerId } : {}),
           OR: [
-            { employeeId: employee.id },
-            { assignedToId: user.id },
+            { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
+            { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+            { name: { contains: 'Visit Schedule', mode: 'insensitive' } },
+            { name: { contains: 'Visit', mode: 'insensitive' } },
           ],
-          AND: [
-            {
-              OR: [
-                { status: LeadStatus.VISIT_SCHEDULED },
-                { status: 'VISIT' as any },
-                { stage: { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } } },
-                { stage: { name: { equals: 'Visit Scheduled', mode: 'insensitive' } } },
-              ],
-            },
-            ...(existingLeadIds.size > 0 ? [{ id: { notIn: Array.from(existingLeadIds) as number[] } }] : []),
-          ],
+          deletedAt: null,
         },
+        select: { id: true, key: true, name: true },
+      });
+
+      const validVisitStages = visitStages.filter((s) => {
+        const lower = s.name.toLowerCase();
+        return !lower.includes('done') && !lower.includes('cancel') && !lower.includes('lost');
+      });
+      const visitStageIds = validVisitStages.map((s) => s.id);
+      const visitStageKeys = validVisitStages.map((s) => s.key).filter(Boolean);
+
+      const leadWhere: any = {
+        deletedAt: null,
+        ...(numCustomerId > 0
+          ? {
+              OR: [
+                { customerId: numCustomerId },
+                ...(employee?.customerId ? [{ customerId: employee.customerId }] : []),
+                { customerId: null },
+              ],
+            }
+          : {}),
+        AND: [
+          {
+            OR: [
+              { status: LeadStatus.VISIT_SCHEDULED },
+              { status: 'VISIT' as any },
+              ...(visitStageIds.length > 0 ? [{ stageId: { in: visitStageIds } }] : []),
+              {
+                stage: {
+                  is: {
+                    OR: [
+                      { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...visitStageKeys] } },
+                      { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                      { name: { contains: 'Visit Schedule', mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          ...(!isAdmin && employee
+            ? [
+                {
+                  OR: [
+                    { employeeId: employee.id },
+                    { assignedToId: user.id },
+                    { employeeId: null },
+                  ],
+                },
+              ]
+            : []),
+          ...(existingLeadIds.size > 0 ? [{ id: { notIn: Array.from(existingLeadIds) as number[] } }] : []),
+        ],
+      };
+
+      const unlinkedLeads = await this.prisma.lead.findMany({
+        where: leadWhere,
         include: {
           stage: { select: { key: true, name: true } },
+          employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
         },
       });
 
@@ -193,21 +261,33 @@ export class MobileVisitController {
           },
         });
 
-        if (!visit) {
+        const effectiveEmpId =
+          lead.employeeId ||
+          employee?.id ||
+          (lead.assignedToId ? Number(lead.assignedToId) : null) ||
+          1;
+
+        if (!visit && effectiveEmpId) {
           visit = await this.prisma.visit.create({
             data: {
-              customerId: lead.customerId,
+              customerId: lead.customerId || numCustomerId || 1,
               leadId: lead.id,
-              employeeId: employee.id,
-              customerName: lead.companyName || `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Client',
+              employeeId: effectiveEmpId,
+              customerName:
+                lead.companyName ||
+                `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
+                lead.title ||
+                'Client',
               purpose: lead.category || lead.title || 'Field Visit & Demo',
-              date: new Date(),
-              time: '11:00 AM',
+              date: lead.nextFollowUpDate || new Date(),
+              time: lead.nextFollowUpTime || '11:00 AM',
               location: lead.address || lead.city || 'Client Site',
               status: VisitStatus.SCHEDULED,
               notes: lead.workNotes || 'Scheduled lead assigned to visitor',
-              scheduledById: employee.id,
-              scheduledBy: 'Lead Assignment',
+              scheduledById: employee?.id || null,
+              scheduledBy: employee
+                ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
+                : 'Lead Assignment',
             },
             include: {
               employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
@@ -234,9 +314,16 @@ export class MobileVisitController {
               },
             },
           });
+
+          if (!lead.employeeId && employee?.id) {
+            await this.prisma.lead.update({
+              where: { id: lead.id },
+              data: { employeeId: employee.id },
+            }).catch(() => {});
+          }
         }
 
-        if (visit && visit.status === VisitStatus.SCHEDULED) {
+        if (visit && (visit.status === VisitStatus.SCHEDULED || !visit.status)) {
           visits.push(visit);
         }
       }
@@ -356,13 +443,16 @@ export class MobileVisitController {
       },
     });
 
-    const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin =
+      isUserSuperAdmin(user) ||
+      (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
     const isAssigned =
+      !visit.employeeId ||
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
       visit.completedById === employee?.id;
-    if (!isSuperAdmin && employee && !isAssigned) {
+    if (!isAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to view another employee\'s visit.');
     }
 
@@ -461,17 +551,22 @@ export class MobileVisitController {
     }
 
     const isSuperAdmin = isUserSuperAdmin(user);
+    const isAdmin =
+      isSuperAdmin ||
+      (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
     const isAssigned =
+      !visit.employeeId ||
       visit.employeeId === employee.id ||
       visit.lead?.employeeId === employee.id ||
       (visit.lead as any)?.assignedToId === user?.id;
-    if (!isSuperAdmin && !isAssigned) {
+    if (!isAdmin && !isAssigned) {
       throw new ForbiddenException('You do not have permission to start another employee\'s visit.');
     }
 
     const data: any = {
       status: VisitStatus.IN_PROGRESS,
       startedAt: visit.startedAt || new Date(),
+      employeeId: visit.employeeId || employee.id,
     };
     if (body?.latitude) data.latitude = body.latitude;
     if (body?.longitude) data.longitude = body.longitude;
