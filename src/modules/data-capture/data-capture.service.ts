@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -691,6 +691,9 @@ export class DataCaptureService implements OnModuleInit {
     const textQuery = `${keyword} in ${location}`;
     const jobId = `job-${randomUUID().slice(0, 8)}`;
 
+    const tStart = Date.now();
+    let tGoogleTotal = 0;
+    let tProcessTotal = 0;
     let allPlaces: CapturedPlace[] = [];
     let googleApiRequests = 0;
     let nextPageToken: string | undefined = undefined;
@@ -715,6 +718,7 @@ export class DataCaptureService implements OnModuleInit {
             `[Google Places API] Request #${googleApiRequests} for "${textQuery}" (pageSize: ${pageSize})`,
           );
 
+          const tGStart = Date.now();
           const response = await axios.post(
             'https://places.googleapis.com/v1/places:searchText',
             requestBody,
@@ -727,7 +731,13 @@ export class DataCaptureService implements OnModuleInit {
               timeout: 10000,
             },
           );
+          const tGDuration = Date.now() - tGStart;
+          tGoogleTotal += tGDuration;
+          this.logger.log(
+            `[DATA_CAPTURE_TIMING] Google Places Request #${googleApiRequests} completed in ${tGDuration}ms`,
+          );
 
+          const tPStart = Date.now();
           const rawPlaces: any[] = response.data?.places || [];
           nextPageToken = response.data?.nextPageToken;
 
@@ -740,34 +750,8 @@ export class DataCaptureService implements OnModuleInit {
             const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(p.websiteUri);
             const normalizedName = ContactExtractor.normalizeCompanyName(p.displayName.text);
 
-            let extractedEmail: string | undefined = undefined;
-            let finalPhone = normalizedPhone || undefined;
-            let discoveredSocialMedia: SocialMediaHandles | undefined = undefined;
-
-            if (normalizedWebsite) {
-              const webContact = await ContactExtractor.extractContactFromWebsite(normalizedWebsite);
-              if (webContact.email) extractedEmail = webContact.email;
-              if (!finalPhone && webContact.phone) finalPhone = webContact.phone;
-              if (webContact.socialMedia) {
-                discoveredSocialMedia = { ...webContact.socialMedia };
-                delete (discoveredSocialMedia as any).website;
-              }
-            }
-
             const resolvedGooglePhotos = apiKey ? this.resolveGooglePhotos(p, apiKey) : [];
             const resolvedPhotoUrls = resolvedGooglePhotos.map((gp) => gp.url);
-            const rawPhotos = Array.isArray(p.photos) ? p.photos : [];
-            const firstRawPhoto = rawPhotos[0];
-
-            this.logger.log(
-              `[DATA_CAPTURE_PHOTO_DEBUG]\n` +
-              `businessName: ${p.displayName.text}\n` +
-              `googlePlaceId: ${p.id || 'N/A'}\n` +
-              `photoFieldPresent: ${Object.prototype.hasOwnProperty.call(p, 'photos')}\n` +
-              `photoCount: ${rawPhotos.length}\n` +
-              `firstPhotoReferencePresent: ${Boolean(firstRawPhoto && (firstRawPhoto.name || firstRawPhoto.photoReference || firstRawPhoto.photo_reference))}\n` +
-              `firstPhotoUrlPresent: ${Boolean(typeof firstRawPhoto === 'string' ? firstRawPhoto.startsWith('http') : firstRawPhoto?.url)}`
-            );
 
             const placeRecord: CapturedPlace = {
               provider: 'GOOGLE_PLACES',
@@ -775,8 +759,8 @@ export class DataCaptureService implements OnModuleInit {
               businessName: normalizedName,
               category: p.primaryTypeDisplayName?.text || p.primaryType || keyword,
               address: p.formattedAddress || 'N/A',
-              phone: finalPhone || undefined,
-              email: extractedEmail || undefined,
+              phone: normalizedPhone || undefined,
+              email: undefined,
               website: normalizedWebsite || undefined,
               rating: p.rating || undefined,
               reviewCount: p.userRatingCount || undefined,
@@ -790,10 +774,9 @@ export class DataCaptureService implements OnModuleInit {
               customerId: String(effectiveCustomerId),
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
-              rawData: { ...(p || {}), socialMedia: discoveredSocialMedia },
+              rawData: p || {},
               googlePhotos: resolvedGooglePhotos,
               photos: resolvedPhotoUrls.length > 0 ? resolvedPhotoUrls : undefined,
-              socialMedia: discoveredSocialMedia,
             };
 
             allPlaces.push(placeRecord);
@@ -802,6 +785,7 @@ export class DataCaptureService implements OnModuleInit {
               break;
             }
           }
+          tProcessTotal += (Date.now() - tPStart);
 
           if (!nextPageToken || rawPlaces.length === 0) {
             fetchMore = false;
@@ -809,17 +793,36 @@ export class DataCaptureService implements OnModuleInit {
         }
       } catch (err: any) {
         this.logger.warn(
-          `[Google Places API] Failed to extract places via live API: ${err.message}. Falling back to sandbox places generator.`,
+          `[Google Places API] Live search failed for "${textQuery}": ${err.message}`,
         );
-        allPlaces = this.generateSandboxPlaces(
-          keyword,
-          location,
-          maxAllowed,
-          String(effectiveCustomerId),
-          String(effectiveUserId),
-          jobId,
-        );
-        googleApiRequests = 1;
+
+        if (allPlaces.length > 0) {
+          this.logger.log(`[Google Places API] Returning ${allPlaces.length} places captured before error`);
+        } else if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
+          throw new HttpException(
+            'Google Places search timed out. Please try again with fewer results or a more specific location.',
+            HttpStatus.GATEWAY_TIMEOUT,
+          );
+        } else if (err.response?.status === 429) {
+          throw new HttpException(
+            'Google Places API quota limit reached. Please try again later.',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        } else if (err.response?.status === 400 || err.response?.status === 403) {
+          throw new BadRequestException(
+            `Google Places search error: ${err.response?.data?.error?.message || err.message}`,
+          );
+        } else {
+          allPlaces = this.generateSandboxPlaces(
+            keyword,
+            location,
+            maxAllowed,
+            String(effectiveCustomerId),
+            String(effectiveUserId),
+            jobId,
+          );
+          googleApiRequests = 1;
+        }
       }
     } else {
       this.logger.log(
@@ -839,6 +842,7 @@ export class DataCaptureService implements OnModuleInit {
     // 5. Duplicate Detection Before Insertion
     // A record in DataCapturePlace that has NOT been imported to Leads is NOT a duplicate Lead.
     // Only check CRM Leads for already-imported/linked Google source records.
+    const tDbStart = Date.now();
     const existingPlaceIds = new Set<string>();
     const candidatePlaceIds = allPlaces
       .map((p) => p.googlePlaceId)
@@ -916,6 +920,11 @@ export class DataCaptureService implements OnModuleInit {
         places: true,
       },
     });
+
+    // Asynchronously enrich website email/social contacts in the background without blocking the user response
+    if (createdJob.places && createdJob.places.length > 0) {
+      this.enrichPlacesWithWebsiteContactsInBackground(createdJob.places);
+    }
 
     // 6.1 Record Employee Search Event (authoritative employee-specific count)
     try {
@@ -1007,6 +1016,15 @@ export class DataCaptureService implements OnModuleInit {
       };
     });
 
+    const tDbDuration = Date.now() - tDbStart;
+    const tTotal = Date.now() - tStart;
+    this.logger.log(
+      `[DATA_CAPTURE_TIMING] Job ${jobId} summary: Total: ${(tTotal / 1000).toFixed(2)}s | ` +
+      `Google Places API: ${(tGoogleTotal / 1000).toFixed(2)}s (${googleApiRequests} reqs) | ` +
+      `Processing: ${(tProcessTotal / 1000).toFixed(2)}s | ` +
+      `DB Operations: ${(tDbDuration / 1000).toFixed(2)}s | Places: ${mappedPlaces.length}`,
+    );
+
     return {
       jobId,
       keyword,
@@ -1018,6 +1036,40 @@ export class DataCaptureService implements OnModuleInit {
       records: mappedPlaces,
       message: `Extracted ${mappedPlaces.length} business prospects from Google Places API for "${textQuery}".`,
     };
+  }
+
+  /**
+   * Asynchronously enrich places with email / social media extracted from their websites
+   * without blocking the synchronous Google Places search response.
+   */
+  private enrichPlacesWithWebsiteContactsInBackground(places: any[]) {
+    if (process.env.NODE_ENV === 'test') return;
+    setImmediate(async () => {
+      for (const p of places) {
+        if (!p.website || !p.id) continue;
+        try {
+          const webContact = await ContactExtractor.extractContactFromWebsite(p.website);
+          if (webContact && (webContact.email || (webContact.socialMedia && Object.keys(webContact.socialMedia).length > 0))) {
+            const updates: any = {};
+            if (webContact.email && !p.email) {
+              updates.email = webContact.email;
+            }
+            if (webContact.socialMedia) {
+              const existingSocial = (p.socialMedia as any) || {};
+              updates.socialMedia = { ...existingSocial, ...webContact.socialMedia };
+            }
+            if (Object.keys(updates).length > 0) {
+              await this.prisma.dataCapturePlace.update({
+                where: { id: p.id },
+                data: updates,
+              });
+            }
+          }
+        } catch (err: any) {
+          this.logger.debug?.(`[Background Enrichment] Failed for place ${p.id} (${p.website}): ${err?.message}`);
+        }
+      }
+    });
   }
 
   /**
