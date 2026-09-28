@@ -2184,10 +2184,8 @@ export class LeadRepository {
         orderBy: { customerId: 'desc' },
       });
 
-      // Preserve BPO employee assignment on the lead
-      const leadAssignedEmpId = lead.employeeId
-        ? Number(lead.employeeId)
-        : (employee?.id || fallbackEmpId);
+      // Assign lead to the Field Visitor employee so their pipeline filter (employeeId) picks it up
+      const leadAssignedEmpId = targetEmpId || (lead.employeeId ? Number(lead.employeeId) : (employee?.id || fallbackEmpId));
 
       await this.prisma.lead.update({
         where: { id: numLeadId },
