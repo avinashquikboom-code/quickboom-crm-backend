@@ -388,12 +388,18 @@ export class VisitService {
           orderBy: { customerId: 'desc' },
         });
 
+        const currentLead = await this.prisma.lead.findUnique({
+          where: { id: numLeadId },
+          select: { employeeId: true },
+        });
+        const leadEmpId = currentLead?.employeeId || dto.scheduledById || employeeId;
+
         await this.prisma.lead.update({
           where: { id: numLeadId },
           data: {
             status: 'VISIT_SCHEDULED',
             ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-            ...(employeeId ? { employeeId } : {}),
+            ...(leadEmpId ? { employeeId: Number(leadEmpId) } : {}),
           },
         });
 

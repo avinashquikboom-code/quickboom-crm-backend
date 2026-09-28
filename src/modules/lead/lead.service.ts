@@ -1290,10 +1290,15 @@ export class LeadService {
         ? (lead as any).visits.some((v: any) => v.employeeId === empId)
         : false;
 
+      const hasScheduledVisit =
+        (empId && Array.isArray((lead as any).visits) && (lead as any).visits.some((v: any) => v.scheduledById === empId)) ||
+        (user.id && Array.isArray((lead as any).visits) && (lead as any).visits.some((v: any) => v.scheduledById === user.id));
+
       const isOwner =
         (empId && (lead as any).employeeId === empId) ||
         lead.assignedToId === user.id ||
-        hasAssignedVisit;
+        hasAssignedVisit ||
+        hasScheduledVisit;
 
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] getLeadById leadId=${numId} authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +

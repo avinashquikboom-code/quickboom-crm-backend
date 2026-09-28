@@ -813,15 +813,33 @@ export class LeadRepository {
         ],
       });
     } else if (user && !isAdmin) {
-      // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
-      const empId = user.employee?.id ?? user.employeeId;
+      // Employee RBAC Isolation: Non-admin employees see leads assigned to them via employeeId/assignedToId,
+      // or where a visit was scheduled by this employee.
+      let empId = user.employee?.id ?? user.employeeId;
+      if (!empId && user.id && this.prisma) {
+        const emp = await this.prisma.employee.findFirst({ where: { userId: user.id } });
+        if (emp) empId = emp.id;
+      }
       this.logger.log(
         `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
-        `companyId=${numCustomerId} isVisitor=false filter=employeeId_only`,
+        `companyId=${numCustomerId} isVisitor=false filter=employee_scope`,
       );
       if (empId) {
-        // Strict: only leads where employeeId = this employee's record ID
-        andConditions.push({ employeeId: Number(empId) });
+        andConditions.push({
+          OR: [
+            { employeeId: Number(empId) },
+            ...(user.id ? [{ assignedToId: user.id }] : []),
+            { visits: { some: { scheduledById: Number(empId) } } },
+            ...(user.id ? [{ visits: { some: { scheduledById: user.id } } }] : []),
+          ],
+        });
+      } else if (user.id) {
+        andConditions.push({
+          OR: [
+            { assignedToId: user.id },
+            { visits: { some: { scheduledById: user.id } } },
+          ],
+        });
       } else {
         // Employee user but no employee record — return nothing
         andConditions.push({ id: -1 });
@@ -831,28 +849,88 @@ export class LeadRepository {
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
     if (!isVisitor) {
+      let sId: number | null = null;
+      let stageRecord: any = null;
+
       if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
-        const sId = Number(options.stageId);
-        const stageRecord = await this.prisma.leadStage.findFirst({
+        sId = Number(options.stageId);
+        stageRecord = await this.prisma.leadStage.findFirst({
           where: { id: sId, deletedAt: null },
         });
-        if (stageRecord?.key) {
+      }
+
+      const statusStr =
+        options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
+
+      // Check if this filter is for Visit Scheduled
+      const isVisitScheduledFilter =
+        (statusStr && (statusStr.toUpperCase() === 'VISIT_SCHEDULED' || statusStr.toUpperCase() === 'VISIT')) ||
+        (stageRecord && (
+          stageRecord.key === 'VISIT_SCHEDULED' ||
+          stageRecord.key === 'VISIT' ||
+          stageRecord.name?.toLowerCase().includes('visit schedule')
+        ));
+
+      if (isVisitScheduledFilter) {
+        // Query actual existing "Visit Scheduled" stages from DB for this customer/system
+        const visitStages = await this.prisma.leadStage.findMany({
+          where: {
+            OR: [
+              { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
+              { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+            ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
+          },
+          select: { id: true, key: true },
+        });
+        const stageIds = visitStages.map((s) => s.id);
+        if (sId && !stageIds.includes(sId)) {
+          stageIds.push(sId);
+        }
+        const stageKeys = visitStages.map((s) => s.key).filter(Boolean);
+
+        andConditions.push({
+          OR: [
+            { status: LeadStatus.VISIT_SCHEDULED },
+            { status: 'VISIT' as any },
+            ...(stageIds.length > 0 ? [{ stageId: { in: stageIds } }] : []),
+            {
+              stage: {
+                is: {
+                  OR: [
+                    { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...stageKeys] } },
+                    { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                  ],
+                  deletedAt: null,
+                },
+              },
+            },
+          ],
+        });
+      } else if (sId && stageRecord) {
+        if (stageRecord.key) {
           const normKey = normalizeLeadStatus(stageRecord.key);
           if (ALL_LEAD_STATUSES.includes(normKey)) {
             andConditions.push({
               OR: [
                 { stageId: sId },
-                { AND: [{ stageId: null }, { status: normKey as LeadStatus }] },
+                { status: normKey as LeadStatus },
+                { stage: { is: { key: stageRecord.key, deletedAt: null } } },
               ],
             });
           } else {
-            where.stageId = sId;
+            andConditions.push({
+              OR: [
+                { stageId: sId },
+                { stage: { is: { key: stageRecord.key, deletedAt: null } } },
+              ],
+            });
           }
         } else {
           where.stageId = sId;
         }
-      } else if (options.status && options.status.toUpperCase() !== 'ALL') {
-        const statusStr = String(options.status).trim();
+      } else if (statusStr) {
         if (!isNaN(Number(statusStr))) {
           where.stageId = Number(statusStr);
         } else {
@@ -2106,12 +2184,17 @@ export class LeadRepository {
         orderBy: { customerId: 'desc' },
       });
 
+      // Preserve BPO employee assignment on the lead
+      const leadAssignedEmpId = lead.employeeId
+        ? Number(lead.employeeId)
+        : (employee?.id || fallbackEmpId);
+
       await this.prisma.lead.update({
         where: { id: numLeadId },
         data: {
           status: LeadStatus.VISIT_SCHEDULED,
           ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-          employeeId: targetEmpId,
+          ...(leadAssignedEmpId ? { employeeId: leadAssignedEmpId } : {}),
         },
       });
 
