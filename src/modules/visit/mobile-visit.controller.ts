@@ -80,7 +80,6 @@ export class MobileVisitController {
                   { lead: { employeeId: employee.id } },
                   { lead: { assignedToId: user.id } },
                   { completedById: employee.id },
-                  { employeeId: null as any },
                 ],
               },
             ],
@@ -185,7 +184,6 @@ export class MobileVisitController {
               OR: [
                 { customerId: numCustomerId },
                 ...(employee?.customerId ? [{ customerId: employee.customerId }] : []),
-                { customerId: null },
               ],
             }
           : {}),
@@ -214,7 +212,6 @@ export class MobileVisitController {
                   OR: [
                     { employeeId: employee.id },
                     { assignedToId: user.id },
-                    { employeeId: null },
                   ],
                 },
               ]
