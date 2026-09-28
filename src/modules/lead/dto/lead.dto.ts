@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
+  Allow,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -758,6 +759,7 @@ export class ManageVisitDto {
   action: 'SCHEDULE' | 'START' | 'COMPLETE';
 
   @ApiPropertyOptional({ example: 12, description: 'Assigned employee/visitor ID' })
+  @Allow()
   @IsOptional()
   employeeId?: number | string;
 
@@ -767,6 +769,7 @@ export class ManageVisitDto {
   purpose?: string;
 
   @ApiPropertyOptional({ example: '2026-08-20' })
+  @Allow()
   @IsOptional()
   date?: string;
 

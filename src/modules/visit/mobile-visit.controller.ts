@@ -88,8 +88,9 @@ export class MobileVisitController {
     };
 
     // Tab → status mapping
-    if (tab) {
-      if (tab === 'upcoming') {
+    const normalizedTab = (tab || '').toLowerCase().trim();
+    if (normalizedTab) {
+      if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
         if (!where.AND) where.AND = [];
         where.AND.push({
           status: VisitStatus.SCHEDULED,
@@ -103,10 +104,10 @@ export class MobileVisitController {
             },
           ],
         });
-      } else if (tab === 'ongoing') {
+      } else if (normalizedTab === 'ongoing' || normalizedTab === 'in_progress') {
         if (!where.AND) where.AND = [];
         where.AND.push({ status: VisitStatus.IN_PROGRESS });
-      } else if (tab === 'completed') {
+      } else if (normalizedTab === 'completed' || normalizedTab === 'done') {
         if (!where.AND) where.AND = [];
         where.AND.push({
           OR: [
@@ -123,7 +124,7 @@ export class MobileVisitController {
 
     const visits = await this.prisma.visit.findMany({
       where,
-      orderBy: tab === 'completed' ? { updatedAt: 'desc' } : { date: 'asc' },
+      orderBy: normalizedTab === 'completed' || normalizedTab === 'done' ? { updatedAt: 'desc' } : { date: 'asc' },
       include: {
         employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
         company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
@@ -153,7 +154,7 @@ export class MobileVisitController {
     // ── When viewing upcoming / scheduled visits: ────────────────────────────
     // Ensure all leads assigned to this visitor in VISIT_SCHEDULED stage appear
     // in the Scheduled tab as per requirements and reference design.
-    if (tab === 'upcoming') {
+    if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
       const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
 
       // Resolve all stages in the database that correspond to Visit Scheduled

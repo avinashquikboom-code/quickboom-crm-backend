@@ -2025,14 +2025,16 @@ export class LeadRepository {
     });
     if (!lead) return null;
 
+    const effectiveCustomerId = !isNaN(numCustomerId) && numCustomerId > 0 ? numCustomerId : (lead.customerId || 1);
+
     // Find employee linked to user, or fallback
     const employee = await this.prisma.employee.findFirst({
-      where: { customerId: numCustomerId, userId: numUserId },
+      where: { customerId: effectiveCustomerId, userId: numUserId },
     });
 
     if (dto.action === 'SCHEDULE') {
       const visitDate = dto.date ? new Date(dto.date) : new Date();
-      const fallbackEmpId = employee?.id || (await this.getOrCreateFallbackEmployee(numCustomerId, numUserId));
+      const fallbackEmpId = employee?.id || (await this.getOrCreateFallbackEmployee(effectiveCustomerId, numUserId));
       const targetEmpId = dto.employeeId
         ? Number(dto.employeeId)
         : lead.employeeId
@@ -2066,7 +2068,7 @@ export class LeadRepository {
           })
         : await this.prisma.visit.create({
             data: {
-              customerId: numCustomerId,
+              customerId: effectiveCustomerId,
               leadId: numLeadId,
               employeeId: targetEmpId,
               customerName: lead.companyName || `${lead.firstName} ${lead.lastName}`,
@@ -2094,7 +2096,7 @@ export class LeadRepository {
             },
             {
               OR: [
-                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                { customerId: effectiveCustomerId },
                 { customerId: null },
               ],
             },
@@ -2179,7 +2181,7 @@ export class LeadRepository {
             },
             {
               OR: [
-                ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                { customerId: effectiveCustomerId },
                 { customerId: null },
               ],
             },
@@ -2190,7 +2192,7 @@ export class LeadRepository {
       });
 
       await this.updateStatus(
-        numCustomerId,
+        effectiveCustomerId,
         numLeadId,
         lead.status,
         LeadStatus.VISIT_DONE,
@@ -2207,7 +2209,7 @@ export class LeadRepository {
       );
     }
 
-    return this.findOne(numCustomerId, numLeadId);
+    return this.findOne(effectiveCustomerId, numLeadId);
   }
 
   async createProposal(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateProposalDto) {
@@ -2217,12 +2219,14 @@ export class LeadRepository {
     const lead = await this.prisma.lead.findUnique({ where: { id: numLeadId } });
     if (!lead) return null;
 
+    const effectiveCustomerId = !isNaN(numCustomerId) && numCustomerId > 0 ? numCustomerId : (lead.customerId || 1);
+
     const propNo = dto.proposalNo || `PROP-${Date.now().toString().slice(-6)}`;
     const validUntil = dto.validUntil ? new Date(dto.validUntil) : new Date(Date.now() + 30 * 86400000);
 
     const quotation = await this.prisma.quotation.create({
       data: {
-        customerId: numCustomerId,
+        customerId: effectiveCustomerId,
         leadId: numLeadId,
         quotationNo: propNo,
         status: 'SENT',
