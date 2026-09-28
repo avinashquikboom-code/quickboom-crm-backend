@@ -54,14 +54,14 @@ export class NotificationService {
   }
 
   async findAll(
-    customerId: number | string,
+    customerId?: number | string,
     userId?: number | string,
     unreadOnly = false,
     page = 1,
     limit = 20,
     search?: string,
   ) {
-    const numCustomerId = Number(customerId);
+    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : NaN;
     const numPage = Math.max(Number(page) || 1, 1);
     const numLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const skip = (numPage - 1) * numLimit;
@@ -117,23 +117,32 @@ export class NotificationService {
 
   async markAsRead(
     id: number | string,
-    customerId: number | string,
-    userId: number | string,
+    customerId?: number | string,
+    userId?: number | string,
   ) {
     const numId = Number(id);
-    const numCustomerId = Number(customerId);
-    const numUserId = Number(userId);
+    const numUserId = userId ? Number(userId) : undefined;
+    const where: any = { id: numId };
+    if (numUserId) {
+      where.userId = numUserId;
+    }
     return this.prisma.notification.updateMany({
-      where: { id: numId, customerId: numCustomerId, userId: numUserId },
+      where,
       data: { isRead: true },
     });
   }
 
-  async markAllAsRead(customerId: number | string, userId: number | string) {
-    const numCustomerId = Number(customerId);
-    const numUserId = Number(userId);
+  async markAllAsRead(customerId?: number | string, userId?: number | string) {
+    const numUserId = userId ? Number(userId) : undefined;
+    const numCustomerId = customerId ? Number(customerId) : undefined;
+    const where: any = { isRead: false };
+    if (numUserId) {
+      where.userId = numUserId;
+    } else if (numCustomerId) {
+      where.customerId = numCustomerId;
+    }
     return this.prisma.notification.updateMany({
-      where: { customerId: numCustomerId, userId: numUserId, isRead: false },
+      where,
       data: { isRead: true },
     });
   }
@@ -1645,30 +1654,47 @@ export class NotificationService {
     body: string;
     type: string;
     data?: Record<string, string>;
+    customerId?: number | string;
   }) {
-    const { title, body, type, data = {} } = params;
+    const { title, body, type, data = {}, customerId } = params;
+    const numCustomerId = customerId ? Number(customerId) : undefined;
 
     try {
-      // 1. Find all active Admin / Super Admin users
+      // 1. Find all active Admin / Super Admin users (and company admins if customerId is specified)
+      const orConditions: any[] = [
+        {
+          userRoles: {
+            some: {
+              role: {
+                OR: [
+                  { type: 'SUPER_ADMIN' as any },
+                  { name: { in: ['SUPER_ADMIN', 'Super Admin', 'Super Administrator', 'ADMIN', 'Admin'] } },
+                ],
+              },
+            },
+          },
+        },
+        { customerId: null },
+      ];
+
+      if (numCustomerId) {
+        orConditions.push({
+          customerId: numCustomerId,
+          userRoles: {
+            some: {
+              role: {
+                name: { in: ['ADMIN', 'Admin', 'COMPANY_ADMIN', 'Company Admin', 'SUPER_ADMIN', 'Super Admin'] },
+              },
+            },
+          },
+        });
+      }
+
       const adminUsers = await this.prisma.user.findMany({
         where: {
           deletedAt: null,
           isActive: true,
-          OR: [
-            {
-              userRoles: {
-                some: {
-                  role: {
-                    OR: [
-                      { type: 'SUPER_ADMIN' as any },
-                      { name: { in: ['SUPER_ADMIN', 'Super Admin', 'Super Administrator', 'ADMIN', 'Admin'] } },
-                    ],
-                  },
-                },
-              },
-            },
-            { customerId: null },
-          ],
+          OR: orConditions,
         },
         select: { id: true, customerId: true },
       });
@@ -1682,7 +1708,7 @@ export class NotificationService {
 
       // 2. Create in-app Notification database records for each admin
       for (const admin of adminUsers) {
-        const fallbackCustomerId = admin.customerId || 1;
+        const fallbackCustomerId = admin.customerId || numCustomerId || 1;
         try {
           await this.prisma.notification.create({
             data: {

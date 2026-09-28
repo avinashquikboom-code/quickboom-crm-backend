@@ -25,6 +25,8 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+import { isUserSuperAdmin } from '../../common/utils/role.util';
+
 @ApiTags('Notifications')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
@@ -44,12 +46,14 @@ export class NotificationController {
   async findAll(
     @CurrentCustomer() customerId: number | string | undefined,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('unreadOnly') unreadOnly?: string,
     @Query('search') search?: string,
   ) {
-    const targetCustomerId = customerId || 1;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = customerId || (isSuperAdmin ? undefined : 1);
     return this.notificationService.findAll(
       targetCustomerId,
       userId,

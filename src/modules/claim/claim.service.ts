@@ -253,7 +253,7 @@ export class ClaimService {
       claimDate = new Date(dto.claimDate);
     }
 
-    return this.prisma.employeeClaim.create({
+    const created = await this.prisma.employeeClaim.create({
       data: {
         customerId: cid,
         employeeId: employeeId,
@@ -276,6 +276,29 @@ export class ClaimService {
         },
       },
     });
+
+    if (this.notificationService) {
+      const empName = created.employee
+        ? `${created.employee.firstName || ''} ${created.employee.lastName || ''}`.trim()
+        : `Employee #${employeeId}`;
+      this.notificationService
+        .notifyAdmins({
+          title: `New Expense Claim: ${empName}`,
+          body: `${empName} submitted a claim of ₹${created.amount} for ${created.category || 'Expense'}.`,
+          type: 'CLAIM',
+          customerId: cid,
+          data: {
+            type: 'CLAIM',
+            claimId: String(created.id),
+            employeeId: String(employeeId),
+            amount: String(created.amount),
+            route: '/settings/notifications',
+          },
+        })
+        .catch((err) => this.logger.warn(`Failed to notify admins of claim: ${err?.message}`));
+    }
+
+    return created;
   }
 
   async update(customerId: any, id: string | number, dto: UpdateClaimDto) {

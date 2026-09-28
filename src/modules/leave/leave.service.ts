@@ -675,6 +675,32 @@ export class LeaveService {
       },
     });
 
+    if (this.notificationService) {
+      const empName = created.employee
+        ? `${created.employee.firstName || ''} ${created.employee.lastName || ''}`.trim()
+        : `Employee #${employeeId}`;
+      const leaveTypeName = created.leaveType?.name || 'Leave';
+      const fromStr = created.fromDate ? created.fromDate.toISOString().split('T')[0] : '';
+      const toStr = created.toDate ? created.toDate.toISOString().split('T')[0] : '';
+      const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+
+      this.notificationService
+        .notifyAdmins({
+          title: `New Leave Request: ${empName}`,
+          body: `${empName} applied for ${created.days} day(s) of ${leaveTypeName} (${dateText}).`,
+          type: 'LEAVE',
+          customerId: numCustomerId,
+          data: {
+            type: 'LEAVE',
+            leaveId: String(created.id),
+            employeeId: String(employeeId),
+            employeeName: empName,
+            route: '/settings/notifications',
+          },
+        })
+        .catch((err) => this.logger.warn(`Failed to notify admins of new leave request: ${err?.message}`));
+    }
+
     return {
       success: true,
       message: 'Leave application submitted successfully with status PENDING',

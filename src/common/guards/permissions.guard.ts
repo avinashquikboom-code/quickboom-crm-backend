@@ -58,7 +58,8 @@ export class PermissionsGuard implements CanActivate {
 
       const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
       const isLeadScheduleVisitEquivalent =
-        (rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) &&
+        ((rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) ||
+          (rMod === 'LEADS' && rAct === 'SCHEDULE_VISIT')) &&
         (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE' || uAct === 'CHANGE_STAGE'));
 
       if (isLeadScheduleVisitEquivalent) {
@@ -78,7 +79,8 @@ export class PermissionsGuard implements CanActivate {
         (rAct === 'READ' && uAct === 'VIEW') ||
         ((rAct === 'CREATE' || rAct === 'SCHEDULE') &&
           (uAct === 'CREATE' || uAct === 'SCHEDULE' || uAct === 'SCHEDULE_VISIT' || uAct === 'ADD')) ||
-        (rAct === 'CHANGE_STAGE' && (uAct === 'CHANGE_STAGE' || uAct === 'EDIT'));
+        (rAct === 'CHANGE_STAGE' && (uAct === 'CHANGE_STAGE' || uAct === 'EDIT')) ||
+        (rAct === 'SCHEDULE_VISIT' && (uAct === 'SCHEDULE_VISIT' || uAct === 'CHANGE_STAGE' || uAct === 'CREATE'));
       return modMatches && actMatches;
     };
 
