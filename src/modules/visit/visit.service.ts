@@ -144,7 +144,7 @@ export class VisitService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       this.prisma.visit.findMany({
         where,
         skip,
@@ -160,6 +160,59 @@ export class VisitService {
       }),
       this.prisma.visit.count({ where }),
     ]);
+
+    // Batch resolve completed employee details if completedById exists
+    const completedByIds = [
+      ...new Set(
+        rawItems
+          .map((v) => v.completedById)
+          .filter((id): id is number => typeof id === 'number' && id > 0),
+      ),
+    ];
+
+    let completedEmpMap = new Map<number, { id: number; firstName: string; lastName: string; employeeCode: string }>();
+    if (completedByIds.length > 0) {
+      const emps = await this.prisma.employee.findMany({
+        where: { id: { in: completedByIds } },
+        select: { id: true, firstName: true, lastName: true, employeeCode: true },
+      });
+      completedEmpMap = new Map(emps.map((e) => [e.id, e]));
+    }
+
+    const items = rawItems.map((v) => {
+      const empFromId = v.completedById ? completedEmpMap.get(v.completedById) : null;
+      const empNameFromId = empFromId
+        ? `${empFromId.firstName || ''} ${empFromId.lastName || ''}`.trim()
+        : null;
+
+      // Visited By is ONLY the employee who actually completed the visit when completed.
+      // Must NOT be dummy string 'Visitor', must be the real employee name.
+      const actualEmpName =
+        v.completedBy && v.completedBy !== 'Visitor'
+          ? v.completedBy
+          : empNameFromId || null;
+
+      const isCompleted = v.status === VisitStatus.COMPLETED;
+      const finalVisitedByName = isCompleted ? actualEmpName : null;
+
+      return {
+        ...v,
+        completedBy: finalVisitedByName,
+        completedEmployee: isCompleted ? (empFromId || null) : null,
+        visitedBy: finalVisitedByName
+          ? {
+              id: v.completedById || empFromId?.id || null,
+              name: finalVisitedByName,
+            }
+          : null,
+        assignedVisitor: v.employee
+          ? {
+              id: v.employee.id,
+              name: `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim(),
+            }
+          : null,
+      };
+    });
 
     const totalPages = Math.ceil(total / limit) || 1;
 
@@ -204,7 +257,43 @@ export class VisitService {
       throw new NotFoundException(`Visit with ID ${id} not found`);
     }
 
-    return visit;
+    let completedEmployee: any = null;
+    if (visit.completedById) {
+      completedEmployee = await this.prisma.employee.findUnique({
+        where: { id: visit.completedById },
+        select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true },
+      });
+    }
+
+    const empNameFromId = completedEmployee
+      ? `${completedEmployee.firstName || ''} ${completedEmployee.lastName || ''}`.trim()
+      : null;
+
+    const actualEmpName =
+      visit.completedBy && visit.completedBy !== 'Visitor'
+        ? visit.completedBy
+        : empNameFromId || null;
+
+    const isCompleted = visit.status === VisitStatus.COMPLETED;
+    const finalVisitedByName = isCompleted ? actualEmpName : null;
+
+    return {
+      ...visit,
+      completedBy: finalVisitedByName,
+      completedEmployee: isCompleted ? completedEmployee : null,
+      visitedBy: finalVisitedByName
+        ? {
+            id: visit.completedById || completedEmployee?.id || null,
+            name: finalVisitedByName,
+          }
+        : null,
+      assignedVisitor: visit.employee
+        ? {
+            id: visit.employee.id,
+            name: `${visit.employee.firstName || ''} ${visit.employee.lastName || ''}`.trim(),
+          }
+        : null,
+    };
   }
 
   async create(customerId: number | string | undefined, dto: CreateVisitDto) {
@@ -487,16 +576,54 @@ export class VisitService {
       data.completedAt = new Date();
     }
 
-    return this.prisma.visit.update({
+    const updated = await this.prisma.visit.update({
       where: { id: numId },
       data,
       include: {
-        employee: true,
+        employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
         company: true,
         contact: true,
         deal: true,
       },
     });
+
+    let completedEmployee: any = null;
+    if (updated.completedById) {
+      completedEmployee = await this.prisma.employee.findUnique({
+        where: { id: updated.completedById },
+        select: { id: true, firstName: true, lastName: true, employeeCode: true },
+      });
+    }
+
+    const empNameFromId = completedEmployee
+      ? `${completedEmployee.firstName || ''} ${completedEmployee.lastName || ''}`.trim()
+      : null;
+
+    const actualEmpName =
+      updated.completedBy && updated.completedBy !== 'Visitor'
+        ? updated.completedBy
+        : empNameFromId || null;
+
+    const isCompleted = updated.status === VisitStatus.COMPLETED;
+    const finalVisitedByName = isCompleted ? actualEmpName : null;
+
+    return {
+      ...updated,
+      completedBy: finalVisitedByName,
+      completedEmployee: isCompleted ? completedEmployee : null,
+      visitedBy: finalVisitedByName
+        ? {
+            id: updated.completedById || completedEmployee?.id || null,
+            name: finalVisitedByName,
+          }
+        : null,
+      assignedVisitor: updated.employee
+        ? {
+            id: updated.employee.id,
+            name: `${updated.employee.firstName || ''} ${updated.employee.lastName || ''}`.trim(),
+          }
+        : null,
+    };
   }
 
   async remove(customerId: number | string | undefined, id: number | string) {

@@ -728,7 +728,7 @@ export class MobileVisitController {
 
     const actingEmpName = employee
       ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
-      : null;
+      : (user?.firstName || user?.lastName ? `${user?.firstName || ''} ${user?.lastName || ''}`.trim() : null);
 
     const finalOutcome = body?.outcome || body?.feedback || visit.outcome || 'Visit Done';
     let finalNotes = body?.notes || visit.notes || undefined;
@@ -743,7 +743,7 @@ export class MobileVisitController {
       outcome: finalOutcome,
       nextFollowUpDate: body?.nextFollowUpDate,
       completedById: employee?.id || undefined,
-      completedBy: actingEmpName || 'Visitor',
+      completedBy: actingEmpName || undefined,
     });
 
     if (visit.leadId) {
@@ -782,15 +782,15 @@ export class MobileVisitController {
           data: {
             leadId: visit.leadId,
             action: 'VISIT_COMPLETED',
-            description: `Field Visit Completed by ${actingEmpName || 'Visitor'}: ${finalOutcome} - ${body?.notes || ''}`.trim(),
+            description: `Field Visit Completed${actingEmpName ? ` by ${actingEmpName}` : ''}: ${finalOutcome} - ${body?.notes || ''}`.trim(),
             metadata: {
               visitId: visit.id,
               outcome: finalOutcome,
               notes: body?.notes,
               rating: body?.rating,
               feedback: body?.feedback,
-              completedById: employee?.id,
-              completedByName: actingEmpName,
+              completedById: employee?.id || null,
+              completedByName: actingEmpName || null,
             },
           },
         }).catch(() => {});

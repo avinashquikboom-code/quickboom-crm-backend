@@ -1772,7 +1772,7 @@ export class LeadRepository {
               notes: notes || existingVisit.notes,
               outcome: notes || existingVisit.outcome || 'Visit Done',
               completedById: emp?.id || null,
-              completedBy: actingEmpName || existingVisit.completedBy || 'Visitor',
+              completedBy: actingEmpName || (existingVisit.completedBy !== 'Visitor' ? existingVisit.completedBy : null) || null,
             },
           });
         } else if (completionEmpId) {
@@ -1791,7 +1791,7 @@ export class LeadRepository {
               notes: notes || 'Visit completed',
               outcome: notes || 'Visit Done',
               completedById: emp?.id || null,
-              completedBy: actingEmpName || 'Visitor',
+              completedBy: actingEmpName || null,
             },
           });
         }
