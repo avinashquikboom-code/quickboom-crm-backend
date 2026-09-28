@@ -1510,6 +1510,7 @@ export class LeadService {
       error: string | null;
       message: string;
       details?: string | null;
+      errorCode?: string | null;
     } = {
       sent: false,
       status: 'SKIPPED',
@@ -1772,6 +1773,7 @@ export class LeadService {
       error: string | null;
       message: string;
       details?: string | null;
+      errorCode?: string | null;
     } = {
       sent: false,
       status: 'SKIPPED',
@@ -4359,6 +4361,7 @@ Sent by ${senderOrgName} via CRM.
     error: string | null;
     message: string;
     details?: string | null;
+    errorCode?: string | null;
   }> {
     try {
       this.logger.log(`[WHATSAPP] Handling ${eventType} WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
@@ -4701,7 +4704,8 @@ Sent by ${senderOrgName} via CRM.
         status: notifStatus,
         recipient: maskPhone(phone),
         messageId: sendRes?.messageId || null,
-        error: isSent ? null : (sendRes?.reason || (sendRes as any)?.error || (sendRes as any)?.details || null),
+        error: isSent ? null : (sendRes?.reason || (sendRes as any)?.error || sendRes?.message || null),
+        errorCode: isSent ? null : (sendRes?.errorCode || sendRes?.reason || null),
         message: sendRes?.message || (isSent ? 'Customer WhatsApp message sent successfully' : 'WhatsApp delivery failed'),
         details: (sendRes as any)?.details || null,
       };
