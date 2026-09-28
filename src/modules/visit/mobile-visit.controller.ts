@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
-import { VisitStatus } from '@prisma/client';
+import { VisitStatus, LeadStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -70,6 +70,7 @@ export class MobileVisitController {
           OR: [
             { employeeId: employee.id },
             { lead: { employeeId: employee.id } },
+            { lead: { assignedToId: user.id } },
             { completedById: employee.id },
           ],
         },
@@ -130,6 +131,116 @@ export class MobileVisitController {
         },
       },
     });
+
+    // ── When viewing upcoming / scheduled visits: ────────────────────────────
+    // Ensure all leads assigned to this visitor in VISIT_SCHEDULED stage appear
+    // in the Scheduled tab as per requirements and reference design.
+    if (tab === 'upcoming') {
+      const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
+
+      const unlinkedLeads = await this.prisma.lead.findMany({
+        where: {
+          deletedAt: null,
+          ...(numCustomerId > 0 ? { customerId: numCustomerId } : {}),
+          OR: [
+            { employeeId: employee.id },
+            { assignedToId: user.id },
+          ],
+          AND: [
+            {
+              OR: [
+                { status: LeadStatus.VISIT_SCHEDULED },
+                { status: 'VISIT' as any },
+                { stage: { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } } },
+                { stage: { name: { equals: 'Visit Scheduled', mode: 'insensitive' } } },
+              ],
+            },
+            ...(existingLeadIds.size > 0 ? [{ id: { notIn: Array.from(existingLeadIds) as number[] } }] : []),
+          ],
+        },
+        include: {
+          stage: { select: { key: true, name: true } },
+        },
+      });
+
+      for (const lead of unlinkedLeads) {
+        let visit = await this.prisma.visit.findFirst({
+          where: { leadId: lead.id },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
+            company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
+            contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+            deal: { select: { id: true, title: true } },
+            lead: {
+              select: {
+                id: true,
+                title: true,
+                companyName: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                email: true,
+                address: true,
+                city: true,
+                value: true,
+                category: true,
+                status: true,
+                employeeId: true,
+                stage: { select: { key: true, name: true } },
+              },
+            },
+          },
+        });
+
+        if (!visit) {
+          visit = await this.prisma.visit.create({
+            data: {
+              customerId: lead.customerId,
+              leadId: lead.id,
+              employeeId: employee.id,
+              customerName: lead.companyName || `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Client',
+              purpose: lead.category || lead.title || 'Field Visit & Demo',
+              date: new Date(),
+              time: '11:00 AM',
+              location: lead.address || lead.city || 'Client Site',
+              status: VisitStatus.SCHEDULED,
+              notes: lead.workNotes || 'Scheduled lead assigned to visitor',
+              scheduledById: employee.id,
+              scheduledBy: 'Lead Assignment',
+            },
+            include: {
+              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
+              company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
+              contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+              deal: { select: { id: true, title: true } },
+              lead: {
+                select: {
+                  id: true,
+                  title: true,
+                  companyName: true,
+                  firstName: true,
+                  lastName: true,
+                  phone: true,
+                  email: true,
+                  address: true,
+                  city: true,
+                  value: true,
+                  category: true,
+                  status: true,
+                  employeeId: true,
+                  stage: { select: { key: true, name: true } },
+                },
+              },
+            },
+          });
+        }
+
+        if (visit && visit.status === VisitStatus.SCHEDULED) {
+          visits.push(visit);
+        }
+      }
+    }
 
     const mapped = visits.map((v) => {
       const assignedEmpName = v.employee
@@ -246,7 +357,11 @@ export class MobileVisitController {
     });
 
     const isSuperAdmin = isUserSuperAdmin(user);
-    const isAssigned = visit.employeeId === employee?.id || visit.lead?.employeeId === employee?.id || visit.completedById === employee?.id;
+    const isAssigned =
+      visit.employeeId === employee?.id ||
+      visit.lead?.employeeId === employee?.id ||
+      (visit.lead as any)?.assignedToId === user?.id ||
+      visit.completedById === employee?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to view another employee\'s visit.');
     }
@@ -346,7 +461,10 @@ export class MobileVisitController {
     }
 
     const isSuperAdmin = isUserSuperAdmin(user);
-    const isAssigned = visit.employeeId === employee.id || visit.lead?.employeeId === employee.id;
+    const isAssigned =
+      visit.employeeId === employee.id ||
+      visit.lead?.employeeId === employee.id ||
+      (visit.lead as any)?.assignedToId === user?.id;
     if (!isSuperAdmin && !isAssigned) {
       throw new ForbiddenException('You do not have permission to start another employee\'s visit.');
     }
@@ -415,7 +533,10 @@ export class MobileVisitController {
     });
 
     const isSuperAdmin = isUserSuperAdmin(user);
-    const isAssigned = visit.employeeId === employee?.id || visit.lead?.employeeId === employee?.id;
+    const isAssigned =
+      visit.employeeId === employee?.id ||
+      visit.lead?.employeeId === employee?.id ||
+      (visit.lead as any)?.assignedToId === user?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
@@ -502,7 +623,11 @@ export class MobileVisitController {
     });
 
     const isSuperAdmin = isUserSuperAdmin(user);
-    const isAssigned = visit.employeeId === employee?.id || visit.lead?.employeeId === employee?.id;
+    const isAssigned =
+      visit.employeeId === employee?.id ||
+      visit.lead?.employeeId === employee?.id ||
+      (visit.lead as any)?.assignedToId === user?.id ||
+      visit.completedById === employee?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
