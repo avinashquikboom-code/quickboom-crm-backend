@@ -2676,34 +2676,44 @@ export class AuthService {
     }
 
     // For CRM / calling / sales designations, ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
-    const isCrmDesignation = desigName && (
-      desigName.toUpperCase().includes('BPO') ||
-      desigName.toUpperCase().includes('TELE') ||
-      desigName.toUpperCase().includes('SALES') ||
-      desigName.toUpperCase().includes('CALL') ||
-      desigName.toUpperCase().includes('MANAGER') ||
-      desigName.toUpperCase().includes('VISIT') ||
-      desigName.toUpperCase().includes('FIELD')
+    const desigUpper = (desigName || '').toUpperCase();
+    const isCrmDesignation = Boolean(
+      (desigUpper && (
+        desigUpper.includes('BPO') ||
+        desigUpper.includes('TELE') ||
+        desigUpper.includes('SALES') ||
+        desigUpper.includes('CALL') ||
+        desigUpper.includes('MANAGER') ||
+        desigUpper.includes('VISIT') ||
+        desigUpper.includes('FIELD') ||
+        desigUpper.includes('CRM') ||
+        desigUpper.includes('LEAD') ||
+        desigUpper.includes('EXECUTIVE') ||
+        desigUpper.includes('BD') ||
+        desigUpper.includes('OFFICER') ||
+        desigUpper.includes('AGENT') ||
+        desigUpper.includes('COORDINATOR') ||
+        desigUpper.includes('MARKETING') ||
+        desigUpper.includes('CONSULTANT')
+      )) ||
+      user.employee?.designation?.crmMobileAccess === true ||
+      permissionsMap.has('LEADS:VIEW') ||
+      permissionsMap.has('LEADS:CREATE') ||
+      permissionsMap.has('LEADS:CHANGE_STAGE') ||
+      permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
+      permissionsMap.has('LEADS:CALL') ||
+      (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
     );
 
-    if (isCrmDesignation && !permissionsMap.has('VISITS:CREATE')) {
-      let matchedTemplate = 'TELECALLER';
-      const upper = desigName.toUpperCase().replace(/\s+/g, '_');
-      if (upper.includes('SALES') || upper.includes('VISIT') || upper.includes('FIELD')) {
-        matchedTemplate = 'SALES_EXECUTIVE';
-      } else if (upper.includes('MANAGER')) {
-        matchedTemplate = 'MANAGER';
+    if (isCrmDesignation) {
+      if (!permissionsMap.has('VISITS:CREATE')) {
+        permissionsMap.set('VISITS:CREATE', { module: 'VISITS', action: 'CREATE' });
       }
-      if (ROLE_PERMISSION_DEFAULTS[matchedTemplate]) {
-        ROLE_PERMISSION_DEFAULTS[matchedTemplate].forEach((p) => {
-          const key = `${p.module.toUpperCase()}:${p.action.toUpperCase()}`;
-          if (!permissionsMap.has(key)) {
-            permissionsMap.set(key, {
-              module: p.module.toUpperCase(),
-              action: p.action.toUpperCase(),
-            });
-          }
-        });
+      if (!permissionsMap.has('VISITS:VIEW')) {
+        permissionsMap.set('VISITS:VIEW', { module: 'VISITS', action: 'VIEW' });
+      }
+      if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
+        permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
       }
     }
 

@@ -126,6 +126,46 @@ describe('RBAC & Module Permission System', () => {
       expect(permissionsGuard.canActivate(context)).toBe(true);
     });
 
+    it('allows VISITS:CREATE when user has VISITS:CREATE', () => {
+      const user = {
+        role: 'EMPLOYEE',
+        roles: ['EMPLOYEE'],
+        permissions: [{ module: 'VISITS', action: 'CREATE' }],
+      };
+      const context = createMockContext(user, [{ module: 'VISITS', action: 'CREATE' }]);
+      expect(permissionsGuard.canActivate(context)).toBe(true);
+    });
+
+    it('allows VISITS:CREATE when user has equivalent LEADS:SCHEDULE_VISIT permission', () => {
+      const user = {
+        role: 'EMPLOYEE',
+        roles: ['EMPLOYEE'],
+        permissions: [{ module: 'LEADS', action: 'SCHEDULE_VISIT' }],
+      };
+      const context = createMockContext(user, [{ module: 'VISITS', action: 'CREATE' }]);
+      expect(permissionsGuard.canActivate(context)).toBe(true);
+    });
+
+    it('allows VISITS:CREATE when user has equivalent LEADS:CHANGE_STAGE permission', () => {
+      const user = {
+        role: 'EMPLOYEE',
+        roles: ['EMPLOYEE'],
+        permissions: [{ module: 'LEADS', action: 'CHANGE_STAGE' }],
+      };
+      const context = createMockContext(user, [{ module: 'VISITS', action: 'CREATE' }]);
+      expect(permissionsGuard.canActivate(context)).toBe(true);
+    });
+
+    it('rejects VISITS:CREATE when user lacks visit and lead scheduling permissions', () => {
+      const user = {
+        role: 'EMPLOYEE',
+        roles: ['EMPLOYEE'],
+        permissions: [{ module: 'LEADS', action: 'VIEW' }],
+      };
+      const context = createMockContext(user, [{ module: 'VISITS', action: 'CREATE' }]);
+      expect(() => permissionsGuard.canActivate(context)).toThrow(ForbiddenException);
+    });
+
     it('allows access for user with DATA_CAPTURE:VIEW and DATA_CAPTURE:CREATE', () => {
       const user = {
         role: 'DATA_EXECUTIVE',

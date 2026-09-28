@@ -12,7 +12,7 @@ export class PermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic) {
+    if (isPublic === true) {
       return true;
     }
 
@@ -59,13 +59,16 @@ export class PermissionsGuard implements CanActivate {
       const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
       const isLeadScheduleVisitEquivalent =
         (rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) &&
-        (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE'));
+        (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE' || uAct === 'CHANGE_STAGE'));
+
+      if (isLeadScheduleVisitEquivalent) {
+        return true;
+      }
 
       const modMatches =
         uMod === rMod ||
         uMod === rMod.replace(/_/g, '') ||
-        normalizeMod(uMod) === normalizeMod(rMod) ||
-        isLeadScheduleVisitEquivalent;
+        normalizeMod(uMod) === normalizeMod(rMod);
 
       const actMatches =
         uAct === rAct ||
