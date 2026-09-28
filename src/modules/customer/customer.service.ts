@@ -1737,7 +1737,7 @@ export class CustomerService {
         assignedEmployeeId: c.assignedEmployeeId,
         assignedEmployee: resolvedAssignedName,
         department: resolvedDepartment,
-        wonByEmployeeId: (c as any).originLead?.convertedByEmployeeId || c.createdByEmployeeId || c.assignedEmployeeId || null,
+        wonByEmployeeId: (c as any).originLead?.convertedByEmployeeId || (c as any).originLead?.employeeId || c.createdByEmployeeId || null,
         wonBy: (c as any).originLead?.convertedByEmployee
           ? {
               id: (c as any).originLead.convertedByEmployee.id,
@@ -1748,18 +1748,11 @@ export class CustomerService {
               id: (c as any).createdByEmployeeRel.id,
               name: `${(c as any).createdByEmployeeRel.firstName || ''} ${(c as any).createdByEmployeeRel.lastName || ''}`.trim() || null,
             }
-          : c.assignedEmployeeRel
-          ? {
-              id: c.assignedEmployeeRel.id,
-              name: `${c.assignedEmployeeRel.firstName || ''} ${c.assignedEmployeeRel.lastName || ''}`.trim() || null,
-            }
           : null,
         wonByName: (c as any).originLead?.convertedByEmployee
           ? `${(c as any).originLead.convertedByEmployee.firstName || ''} ${(c as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null
           : (c as any).createdByEmployeeRel
           ? `${(c as any).createdByEmployeeRel.firstName || ''} ${(c as any).createdByEmployeeRel.lastName || ''}`.trim() || null
-          : c.assignedEmployeeRel
-          ? `${c.assignedEmployeeRel.firstName || ''} ${c.assignedEmployeeRel.lastName || ''}`.trim() || null
           : null,
         wonAt: (c as any).originLead?.convertedAt || c.createdAt || null,
         notes: c.notes || linkedLead?.workNotes,
@@ -2325,7 +2318,7 @@ export class CustomerService {
       assignedEmployeeId: customer.assignedEmployeeId,
       assignedEmployee: resolvedAssignedName,
       department: resolvedDepartment,
-      wonByEmployeeId: (customer as any).originLead?.convertedByEmployeeId || customer.createdByEmployeeId || customer.assignedEmployeeId || null,
+      wonByEmployeeId: (customer as any).originLead?.convertedByEmployeeId || (customer as any).originLead?.employeeId || customer.createdByEmployeeId || null,
       wonBy: (customer as any).originLead?.convertedByEmployee
         ? {
             id: (customer as any).originLead.convertedByEmployee.id,
@@ -2336,18 +2329,11 @@ export class CustomerService {
             id: (customer as any).createdByEmployeeRel.id,
             name: `${(customer as any).createdByEmployeeRel.firstName || ''} ${(customer as any).createdByEmployeeRel.lastName || ''}`.trim() || null,
           }
-        : customer.assignedEmployeeRel
-        ? {
-            id: customer.assignedEmployeeRel.id,
-            name: `${customer.assignedEmployeeRel.firstName || ''} ${customer.assignedEmployeeRel.lastName || ''}`.trim() || null,
-          }
         : null,
       wonByName: (customer as any).originLead?.convertedByEmployee
         ? `${(customer as any).originLead.convertedByEmployee.firstName || ''} ${(customer as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null
         : (customer as any).createdByEmployeeRel
         ? `${(customer as any).createdByEmployeeRel.firstName || ''} ${(customer as any).createdByEmployeeRel.lastName || ''}`.trim() || null
-        : customer.assignedEmployeeRel
-        ? `${customer.assignedEmployeeRel.firstName || ''} ${customer.assignedEmployeeRel.lastName || ''}`.trim() || null
         : null,
       wonAt: (customer as any).originLead?.convertedAt || customer.createdAt || null,
       plan: planName,
