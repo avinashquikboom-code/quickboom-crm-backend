@@ -86,6 +86,18 @@ export class LeadService {
     }
   }
 
+  public async sendLeadAssignedNotification(params: {
+    customerId: number | string;
+    employeeId?: number | string | null;
+    userId?: number | string | null;
+    leadId: number | string;
+    leadName?: string | null;
+  }) {
+    const notifService = this.getNotificationService();
+    if (!notifService) return null;
+    return notifService.sendLeadAssignedNotification(params);
+  }
+
   async getSummaryMetrics(customerId: number | string | undefined, user?: any) {
     return this.leadRepository.getSummaryMetrics(customerId, user);
   }
@@ -1158,23 +1170,21 @@ export class LeadService {
 
     await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
 
-    if (assignment?.assignedToId) {
-      const notifService = this.getNotificationService();
-      if (notifService) {
-        notifService.sendPushNotification({
-          userId: Number(assignment.assignedToId),
-          customerId: Number(customerId),
-          title: 'New Lead Assigned',
-          body: `You have been assigned to lead "${lead.companyName || lead.title || lead.firstName || 'Lead #' + lead.id}".`,
-          type: 'LEAD_ASSIGNED',
-          data: {
-            leadId: String(lead.id),
-            customerId: String(customerId),
-            channel: 'LEAD',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          },
-        }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
-      }
+    if (assignment?.assignedToId || assignment?.employeeId) {
+      const displayName =
+        [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() ||
+        lead.companyName ||
+        lead.title ||
+        lead.firstName ||
+        `Lead #${lead.id}`;
+
+      await this.sendLeadAssignedNotification({
+        customerId: Number(customerId),
+        employeeId: assignment.employeeId,
+        userId: assignment.assignedToId,
+        leadId: lead.id,
+        leadName: displayName,
+      }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
     }
 
     return createdLead ?? lead;
@@ -1437,23 +1447,26 @@ export class LeadService {
       `Lead details updated`,
     );
 
-    if (assignment?.assignedToId && assignment.assignedToId !== lead.assignedToId) {
-      const notifService = this.getNotificationService();
-      if (notifService) {
-        notifService.sendPushNotification({
-          userId: Number(assignment.assignedToId),
-          customerId: Number(customerId),
-          title: 'New Lead Assigned',
-          body: `You have been assigned to lead "${lead.companyName || lead.title || lead.firstName || 'Lead #' + id}".`,
-          type: 'LEAD_ASSIGNED',
-          data: {
-            leadId: String(id),
-            customerId: String(customerId),
-            channel: 'LEAD',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          },
-        }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
-      }
+    const isNewlyAssigned =
+      Boolean(assignment?.assignedToId || assignment?.employeeId) &&
+      (assignment?.assignedToId !== lead.assignedToId ||
+        (assignment?.employeeId && assignment.employeeId !== (lead as any).employeeId));
+
+    if (isNewlyAssigned) {
+      const leadDisplayName =
+        [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() ||
+        lead.companyName ||
+        lead.title ||
+        lead.firstName ||
+        `Lead #${id}`;
+
+      await this.sendLeadAssignedNotification({
+        customerId: Number(customerId),
+        employeeId: assignment?.employeeId,
+        userId: assignment?.assignedToId,
+        leadId: id,
+        leadName: leadDisplayName,
+      }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
     }
 
     const updatedLead = await this.getLeadById(customerId, id);

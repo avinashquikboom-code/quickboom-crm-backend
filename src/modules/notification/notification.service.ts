@@ -313,10 +313,10 @@ export class NotificationService {
 
     // 2. Fetch all active device tokens for the recipient(s)
     const tokenQuery: any = { isActive: true };
-    if (targetCustomerId) {
-      tokenQuery.user = { customerId: targetCustomerId, deletedAt: null };
-    } else if (targetUserId) {
+    if (targetUserId) {
       tokenQuery.userId = targetUserId;
+    } else if (targetCustomerId) {
+      tokenQuery.user = { customerId: targetCustomerId, deletedAt: null };
     }
 
     const deviceRecords = await this.prisma.userDeviceToken.findMany({
@@ -553,6 +553,125 @@ export class NotificationService {
       });
     } catch (err: any) {
       this.logger.error(`Error sending leave approval notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * Send New Lead Assignment Push Notification to Employee (Requirement: Task Send Push Notification when a new Lead is assigned)
+   */
+  async sendLeadAssignedNotification(params: {
+    customerId: number | string;
+    employeeId?: number | string | null;
+    userId?: number | string | null;
+    leadId: number | string;
+    leadName?: string | null;
+  }) {
+    const { customerId, employeeId, userId, leadId, leadName } = params;
+    const numCustomerId = Number(customerId);
+    const numLeadId = Number(leadId);
+
+    try {
+      let targetUserId: number | null = userId ? Number(userId) : null;
+      let targetEmployeeId: number | null = employeeId ? Number(employeeId) : null;
+
+      // 1. Resolve employee and userId
+      if (targetEmployeeId && !targetUserId) {
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: targetEmployeeId },
+          select: { id: true, userId: true, email: true },
+        });
+        if (emp?.userId) {
+          targetUserId = emp.userId;
+        } else if (emp?.email) {
+          const linkedUser = await this.prisma.user.findFirst({
+            where: { email: emp.email, deletedAt: null },
+            select: { id: true },
+          });
+          if (linkedUser) {
+            targetUserId = linkedUser.id;
+          }
+        }
+      } else if (targetUserId && !targetEmployeeId) {
+        const emp = await this.prisma.employee.findFirst({
+          where: { userId: targetUserId, customerId: numCustomerId },
+          select: { id: true },
+        });
+        if (emp) {
+          targetEmployeeId = emp.id;
+        }
+      }
+
+      // If targetUserId is not found in User table, check if targetUserId was actually an Employee ID
+      if (targetUserId) {
+        const userExists = await this.prisma.user.findUnique({
+          where: { id: targetUserId },
+          select: { id: true },
+        });
+        if (!userExists) {
+          const emp = await this.prisma.employee.findUnique({
+            where: { id: targetUserId },
+            select: { id: true, userId: true },
+          });
+          if (emp?.userId) {
+            targetEmployeeId = emp.id;
+            targetUserId = emp.userId;
+          }
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(
+          `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: no\nSend status: skipped (no linked userId)`,
+        );
+        return null;
+      }
+
+      // 2. Resolve lead name if not provided
+      let resolvedLeadName = (leadName || '').trim();
+      if (!resolvedLeadName) {
+        const lead = await this.prisma.lead.findUnique({
+          where: { id: numLeadId },
+          select: { id: true, firstName: true, lastName: true, companyName: true, title: true },
+        });
+        if (lead) {
+          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+          resolvedLeadName = fullName || lead.companyName || lead.title || lead.firstName || `Lead #${lead.id}`;
+        } else {
+          resolvedLeadName = `Lead #${numLeadId}`;
+        }
+      }
+
+      const title = 'New Lead Assigned';
+      const body = `You have been assigned a new lead: ${resolvedLeadName}`;
+
+      const res = await this.sendPushNotification({
+        userId: targetUserId,
+        customerId: numCustomerId,
+        title,
+        body,
+        type: 'LEAD_ASSIGNED',
+        data: {
+          type: 'LEAD_ASSIGNED',
+          leadId: String(numLeadId),
+          customerId: String(numCustomerId),
+          channel: 'LEAD',
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+      });
+
+      const tokenFound = (res?.status === 'NO_ACTIVE_TOKENS') ? 'no' : 'yes';
+      const sendStatus = (res?.delivered) ? 'success' : (res?.status === 'NO_ACTIVE_TOKENS' ? 'skipped (no tokens)' : 'failed');
+
+      this.logger.log(
+        `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? targetUserId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: ${tokenFound}\nSend status: ${sendStatus}`,
+      );
+
+      return res;
+    } catch (err: any) {
+      this.logger.warn(
+        `[FCM] Lead assignment notification:\nEmployee ID: ${employeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: unknown\nSend status: failed (${err?.message})`,
+      );
       return null;
     }
   }

@@ -25,6 +25,13 @@ describe('NotificationService & FCM Integration', () => {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
     },
+    employee: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    lead: {
+      findUnique: jest.fn(),
+    },
   };
 
   const mockFcmService = {
@@ -183,6 +190,56 @@ describe('NotificationService & FCM Integration', () => {
           title: 'Payment Successful',
         }),
       );
+    });
+
+    describe('sendLeadAssignedNotification', () => {
+      it('dispatches push with exact title, body, and LEAD_ASSIGNED payload to assigned employee user', async () => {
+        mockPrisma.employee.findUnique.mockResolvedValue({ id: 25, userId: 10, email: 'emp@example.com' });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 10 });
+        const pushSpy = jest.spyOn(service, 'sendPushNotification').mockResolvedValue({
+          delivered: true,
+          status: 'DELIVERED',
+        } as any);
+
+        const res = await service.sendLeadAssignedNotification({
+          customerId: 1,
+          employeeId: 25,
+          userId: 10,
+          leadId: 764,
+          leadName: 'John Doe Enterprises',
+        });
+
+        expect(pushSpy).toHaveBeenCalledWith({
+          userId: 10,
+          customerId: 1,
+          title: 'New Lead Assigned',
+          body: 'You have been assigned a new lead: John Doe Enterprises',
+          type: 'LEAD_ASSIGNED',
+          data: {
+            type: 'LEAD_ASSIGNED',
+            leadId: '764',
+            customerId: '1',
+            channel: 'LEAD',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        });
+        expect(res).toBeDefined();
+      });
+
+      it('safely isolates errors and does not throw when push delivery fails', async () => {
+        mockPrisma.employee.findUnique.mockResolvedValue({ id: 25, userId: 10, email: 'emp@example.com' });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 10 });
+        jest.spyOn(service, 'sendPushNotification').mockRejectedValue(new Error('FCM network failure'));
+
+        const res = await service.sendLeadAssignedNotification({
+          customerId: 1,
+          employeeId: 25,
+          leadId: 764,
+          leadName: 'Acme Corp',
+        });
+
+        expect(res).toBeNull();
+      });
     });
   });
 });

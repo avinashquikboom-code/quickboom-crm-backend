@@ -2674,6 +2674,7 @@ export class DataCaptureService implements OnModuleInit {
         ? (cb: any, opts?: any) => (this.prisma as any).$transaction(cb, opts)
         : (cb: any) => cb(this.prisma);
 
+      let createdViaDirectTx = false;
       const leadResult = await runTransaction(
         async (tx: any) => {
           // Resolve initial stage: 'NEW'
@@ -2743,6 +2744,7 @@ export class DataCaptureService implements OnModuleInit {
                   socialMedia: placeSocialMedia || null,
                 },
               });
+              createdViaDirectTx = true;
             } catch (createErr: any) {
               this.logger.error(`[IMPORT ERROR] tx.lead.create failed for "${businessName}": ${createErr?.message || createErr}`);
               throw createErr;
@@ -2924,6 +2926,37 @@ export class DataCaptureService implements OnModuleInit {
           : Promise.resolve();
 
         await Promise.allSettled([emailPromise, whatsappPromise]);
+      }
+
+      // Trigger Lead Assignment push notification if assigned to an employee and created directly via tx
+      if (
+        createdViaDirectTx &&
+        this.leadService &&
+        freshLead &&
+        (candEmployeeId || employeeId || candAssignedToUserId || (assignedToUserId && assignedToUserId !== validCreatedById))
+      ) {
+        const assignedEmpId = candEmployeeId || employeeId || null;
+        const assignedUsrId =
+          candAssignedToUserId || (assignedToUserId !== validCreatedById ? assignedToUserId : null);
+        const displayName =
+          freshLead.companyName ||
+          freshLead.title ||
+          [freshLead.firstName, freshLead.lastName].filter(Boolean).join(' ').trim() ||
+          `Lead #${freshLead.id}`;
+
+        await (this.leadService as any)
+          .sendLeadAssignedNotification?.({
+            customerId: numCustomerId,
+            employeeId: assignedEmpId,
+            userId: assignedUsrId,
+            leadId: freshLead.id,
+            leadName: displayName,
+          })
+          ?.catch?.((err: any) => {
+            this.logger.warn(
+              `Failed to dispatch LEAD_ASSIGNED push for data-capture lead #${freshLead.id}: ${err?.message}`,
+            );
+          });
       }
     }
 
