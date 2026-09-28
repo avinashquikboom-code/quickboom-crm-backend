@@ -33,6 +33,21 @@ export class MobileVisitController {
     private readonly prisma: PrismaService,
   ) {}
 
+  private isVisitorEmployee(employee: any, user: any): boolean {
+    const desigName = (employee?.designation?.name || '').toUpperCase();
+    const roleName = (user?.role || '').toUpperCase();
+    const roleTypeName = (user?.roleType || '').toUpperCase();
+    return (
+      employee?.designationId === 11 ||
+      desigName.includes('VISIT') ||
+      desigName.includes('FIELD') ||
+      roleName.includes('VISITOR') ||
+      roleName.includes('VISIT') ||
+      roleTypeName.includes('VISITOR') ||
+      roleTypeName.includes('VISIT')
+    );
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get visits assigned to authenticated employee' })
   @ApiQuery({ name: 'status', required: false })
@@ -51,8 +66,12 @@ export class MobileVisitController {
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
         ],
       },
+      include: {
+        designation: true,
+      },
     });
 
+    const isVisitorUser = this.isVisitorEmployee(employee, user);
     const isAdmin =
       isUserSuperAdmin(user) ||
       (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
@@ -71,7 +90,7 @@ export class MobileVisitController {
             ],
           }
         : {}),
-      ...(!isAdmin && employee
+      ...(!isAdmin && !isVisitorUser && employee
         ? {
             AND: [
               {
@@ -117,6 +136,14 @@ export class MobileVisitController {
             { lead: { stage: { name: { equals: 'Visit Done', mode: 'insensitive' } } } },
           ],
         });
+        if (!isAdmin && employee) {
+          where.AND.push({
+            OR: [
+              { completedById: employee.id },
+              { employeeId: employee.id },
+            ],
+          });
+        }
       }
     } else if (status && (status as string) !== 'ALL') {
       where.status = status;
@@ -207,7 +234,7 @@ export class MobileVisitController {
               },
             ],
           },
-          ...(!isAdmin && employee
+          ...(!isAdmin && !isVisitorUser && employee
             ? [
                 {
                   OR: [
@@ -260,10 +287,12 @@ export class MobileVisitController {
         });
 
         const effectiveEmpId =
-          lead.employeeId ||
-          employee?.id ||
-          (lead.assignedToId ? Number(lead.assignedToId) : null) ||
-          1;
+          (isVisitorUser && employee?.id) ? employee.id : (
+            lead.employeeId ||
+            employee?.id ||
+            (lead.assignedToId ? Number(lead.assignedToId) : null) ||
+            1
+          );
 
         if (!visit && effectiveEmpId) {
           visit = await this.prisma.visit.create({
@@ -439,8 +468,10 @@ export class MobileVisitController {
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
         ],
       },
+      include: { designation: true },
     });
 
+    const isVisitorUser = this.isVisitorEmployee(employee, user);
     const isAdmin =
       isUserSuperAdmin(user) ||
       (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
@@ -449,7 +480,8 @@ export class MobileVisitController {
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
-      visit.completedById === employee?.id;
+      visit.completedById === employee?.id ||
+      isVisitorUser;
     if (!isAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to view another employee\'s visit.');
     }
@@ -542,12 +574,14 @@ export class MobileVisitController {
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
         ],
       },
+      include: { designation: true },
     });
 
     if (!employee) {
       throw new Error('Employee profile not found');
     }
 
+    const isVisitorUser = this.isVisitorEmployee(employee, user);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAdmin =
       isSuperAdmin ||
@@ -556,7 +590,8 @@ export class MobileVisitController {
       !visit.employeeId ||
       visit.employeeId === employee.id ||
       visit.lead?.employeeId === employee.id ||
-      (visit.lead as any)?.assignedToId === user?.id;
+      (visit.lead as any)?.assignedToId === user?.id ||
+      isVisitorUser;
     if (!isAdmin && !isAssigned) {
       throw new ForbiddenException('You do not have permission to start another employee\'s visit.');
     }
@@ -564,7 +599,7 @@ export class MobileVisitController {
     const data: any = {
       status: VisitStatus.IN_PROGRESS,
       startedAt: visit.startedAt || new Date(),
-      employeeId: visit.employeeId || employee.id,
+      employeeId: employee.id,
     };
     if (body?.latitude) data.latitude = body.latitude;
     if (body?.longitude) data.longitude = body.longitude;
@@ -623,13 +658,16 @@ export class MobileVisitController {
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
         ],
       },
+      include: { designation: true },
     });
 
+    const isVisitorUser = this.isVisitorEmployee(employee, user);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
-      (visit.lead as any)?.assignedToId === user?.id;
+      (visit.lead as any)?.assignedToId === user?.id ||
+      isVisitorUser;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
@@ -713,14 +751,17 @@ export class MobileVisitController {
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
         ],
       },
+      include: { designation: true },
     });
 
+    const isVisitorUser = this.isVisitorEmployee(employee, user);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
-      visit.completedById === employee?.id;
+      visit.completedById === employee?.id ||
+      isVisitorUser;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
