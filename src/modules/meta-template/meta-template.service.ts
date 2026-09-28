@@ -676,29 +676,30 @@ export class MetaTemplateService {
 
     // 1. Locate the exact selected template with tenant isolation
     let template: any = null;
+    const templateWhere: any = { deletedAt: null };
     if (dto.templateId) {
-      template = await this.prisma.metaTemplate.findFirst({
-        where: {
-          id: Number(dto.templateId),
-          deletedAt: null,
-          OR: [
-            { customerId: null },
-            ...(customerId ? [{ customerId }] : []),
-          ],
-        },
-      });
+      templateWhere.id = Number(dto.templateId);
     } else if (dto.templateName) {
-      template = await this.prisma.metaTemplate.findFirst({
-        where: {
-          templateName: dto.templateName.trim().toLowerCase(),
-          deletedAt: null,
-          OR: [
-            { customerId: null },
-            ...(customerId ? [{ customerId }] : []),
-          ],
-        },
-      });
+      const norm = dto.templateName.trim().toLowerCase();
+      templateWhere.OR = [
+        { templateName: dto.templateName.trim() },
+        { templateName: norm },
+        { name: dto.templateName.trim() },
+      ];
+    } else {
+      throw new BadRequestException('Template ID or Template Name is required');
     }
+
+    if (customerId) {
+      // Enforce tenant boundary: can access system global (null) or own tenant's templates
+      templateWhere.AND = [
+        { OR: [{ customerId: null }, { customerId }] },
+      ];
+    }
+
+    template = await this.prisma.metaTemplate.findFirst({
+      where: templateWhere,
+    });
 
     if (!template) {
       throw new NotFoundException('Selected WhatsApp template not found or access denied.');
@@ -796,10 +797,34 @@ export class MetaTemplateService {
 
     if (!sendResult.success) {
       const errStatus = sendResult.providerStatus || 400;
-      const errMsg = sendResult.message || sendResult.details || 'Failed to send WhatsApp test message via Meta';
-      this.logger.warn(`[WHATSAPP TEST SEND FAILED] Template: "${template.templateName}", Error: ${errMsg}, ProviderStatus: ${errStatus}`);
+      const errMsg = sendResult.details || sendResult.message || 'Failed to send WhatsApp test message via Meta';
 
-      throw new BadRequestException(errMsg);
+      // Log safe diagnostic metadata (never logs secrets, auth headers, or raw tokens)
+      this.logger.error(
+        `[WHATSAPP_TEST_SEND_DIAGNOSTIC]\n` +
+        `endpoint: POST /api/v1/templates/meta/test-send\n` +
+        `companyId: ${customerId || 'GLOBAL'}\n` +
+        `templateId: ${template.id}\n` +
+        `templateName: ${template.templateName}\n` +
+        `language: ${resolvedLang}\n` +
+        `recipientMasked: ${this.whatsappService.maskPhone(normalizedPhone)}\n` +
+        `internalErrorCode: ${sendResult.errorCode || 'UNKNOWN'}\n` +
+        `metaHttpStatus: ${sendResult.providerStatus || 'N/A'}\n` +
+        `metaErrorCode: ${sendResult.metaErrorCode || sendResult.error || 'N/A'}\n` +
+        `metaErrorType: ${sendResult.metaErrorType || 'N/A'}\n` +
+        `metaErrorMessage: "${sendResult.metaErrorMessage || sendResult.providerMessage || 'N/A'}"\n` +
+        `failureOrigin: ${sendResult.providerStatus ? 'META_GRAPH_API' : 'BACKEND_VALIDATION'}`
+      );
+
+      throw new BadRequestException({
+        statusCode: 400,
+        message: errMsg,
+        errorCode: sendResult.errorCode,
+        metaErrorCode: sendResult.metaErrorCode,
+        metaErrorType: sendResult.metaErrorType,
+        metaErrorMessage: sendResult.metaErrorMessage,
+        details: sendResult.details,
+      });
     }
 
     return {

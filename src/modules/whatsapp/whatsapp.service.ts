@@ -178,9 +178,13 @@ export class WhatsappService {
     }
 
     if (!apiKey || !phoneNumberId) {
-      this.logger.warn(
-        `[WHATSAPP] WhatsApp not configured: missing ${!apiKey ? 'Access Token' : 'Phone Number ID'} in Admin Settings`,
-      );
+      const missingField = !apiKey && !phoneNumberId
+        ? 'Access Token and Phone Number ID are missing'
+        : !apiKey
+        ? 'Access Token is missing'
+        : 'Phone Number ID is missing';
+      const configMsg = `WhatsApp configuration error: ${missingField} in Admin Settings. Please configure WhatsApp in Settings → Integrations → WhatsApp.`;
+      this.logger.warn(`[WHATSAPP] ${configMsg}`);
       return {
         success: false,
         skipped: true,
@@ -188,9 +192,9 @@ export class WhatsappService {
         errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
         providerStatus: 400,
         reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
-        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR),
-        providerMessage: 'Access token or Phone Number ID not configured in Admin Settings',
-        details: 'Access token or Phone Number ID not configured in Admin Settings',
+        message: configMsg,
+        providerMessage: configMsg,
+        details: configMsg,
       };
     }
 
@@ -454,7 +458,7 @@ export class WhatsappService {
         `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
       );
 
-      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType, metaMessage);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
       return {
         success: false,
@@ -466,6 +470,10 @@ export class WhatsappService {
         details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
         error: metaCode ? String(metaCode) : typedErrorCode,
+        metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
+        metaErrorType: metaType,
+        metaErrorMessage: metaMessage,
+        fbtraceId: fbtraceId,
       };
     }
 
@@ -607,6 +615,10 @@ export class WhatsappService {
         details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
         error: metaCode ? String(metaCode) : typedErrorCode,
+        metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
+        metaErrorType: metaType,
+        metaErrorMessage: metaMessage,
+        fbtraceId: fbtraceId,
       };
     }
   }
@@ -685,9 +697,13 @@ export class WhatsappService {
     }
 
     if (!apiKey || !phoneNumberId) {
-      this.logger.warn(
-        `[WHATSAPP] WhatsApp not configured: missing ${!apiKey ? 'Access Token' : 'Phone Number ID'} in Admin Settings`,
-      );
+      const missingField = !apiKey && !phoneNumberId
+        ? 'Access Token and Phone Number ID are missing'
+        : !apiKey
+        ? 'Access Token is missing'
+        : 'Phone Number ID is missing';
+      const configMsg = `WhatsApp configuration error: ${missingField} in Admin Settings. Please configure WhatsApp in Settings → Integrations → WhatsApp.`;
+      this.logger.warn(`[WHATSAPP] ${configMsg}`);
       return {
         success: false,
         skipped: true,
@@ -695,9 +711,9 @@ export class WhatsappService {
         errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
         providerStatus: 400,
         reason: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
-        message: friendlyWhatsAppErrorMessage(WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR),
-        providerMessage: 'Access token or Phone Number ID not configured in Admin Settings',
-        details: 'Access token or Phone Number ID not configured in Admin Settings',
+        message: configMsg,
+        providerMessage: configMsg,
+        details: configMsg,
       };
     }
 
@@ -761,6 +777,10 @@ export class WhatsappService {
         details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
         error: metaCode ? String(metaCode) : typedErrorCode,
+        metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
+        metaErrorType: metaType,
+        metaErrorMessage: metaMessage,
+        fbtraceId: fbtraceId,
       };
     }
 
@@ -849,6 +869,10 @@ export class WhatsappService {
         details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
         reason: typedErrorCode,
         error: metaCode ? String(metaCode) : typedErrorCode,
+        metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
+        metaErrorType: metaType,
+        metaErrorMessage: metaMessage,
+        fbtraceId: fbtraceId,
       };
     }
   }
