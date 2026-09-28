@@ -2625,6 +2625,7 @@ export class AuthService {
             action: p.action.toUpperCase(),
           });
         });
+      } else {
         const nonGenericRoles = roleNames.filter((r) => r && !['EMPLOYEE', 'CUSTOMER'].includes(String(r).toUpperCase()));
         const candidates = [
           desigName,
@@ -2671,6 +2672,38 @@ export class AuthService {
             break;
           }
         }
+      }
+    }
+
+    // For CRM / calling / sales designations, ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
+    const isCrmDesignation = desigName && (
+      desigName.toUpperCase().includes('BPO') ||
+      desigName.toUpperCase().includes('TELE') ||
+      desigName.toUpperCase().includes('SALES') ||
+      desigName.toUpperCase().includes('CALL') ||
+      desigName.toUpperCase().includes('MANAGER') ||
+      desigName.toUpperCase().includes('VISIT') ||
+      desigName.toUpperCase().includes('FIELD')
+    );
+
+    if (isCrmDesignation && !permissionsMap.has('VISITS:CREATE')) {
+      let matchedTemplate = 'TELECALLER';
+      const upper = desigName.toUpperCase().replace(/\s+/g, '_');
+      if (upper.includes('SALES') || upper.includes('VISIT') || upper.includes('FIELD')) {
+        matchedTemplate = 'SALES_EXECUTIVE';
+      } else if (upper.includes('MANAGER')) {
+        matchedTemplate = 'MANAGER';
+      }
+      if (ROLE_PERMISSION_DEFAULTS[matchedTemplate]) {
+        ROLE_PERMISSION_DEFAULTS[matchedTemplate].forEach((p) => {
+          const key = `${p.module.toUpperCase()}:${p.action.toUpperCase()}`;
+          if (!permissionsMap.has(key)) {
+            permissionsMap.set(key, {
+              module: p.module.toUpperCase(),
+              action: p.action.toUpperCase(),
+            });
+          }
+        });
       }
     }
 

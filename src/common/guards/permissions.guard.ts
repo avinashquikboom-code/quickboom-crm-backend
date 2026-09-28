@@ -56,13 +56,25 @@ export class PermissionsGuard implements CanActivate {
       const rMod = (reqPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
       const rAct = (reqPerm.action || '').toUpperCase();
 
-      const modMatches = uMod === rMod || uMod === rMod.replace(/_/g, '');
+      const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
+      const isLeadScheduleVisitEquivalent =
+        (rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) &&
+        (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE'));
+
+      const modMatches =
+        uMod === rMod ||
+        uMod === rMod.replace(/_/g, '') ||
+        normalizeMod(uMod) === normalizeMod(rMod) ||
+        isLeadScheduleVisitEquivalent;
+
       const actMatches =
         uAct === rAct ||
         uAct === 'MANAGE' ||
         uAct === 'ALL' ||
         (rAct === 'VIEW' && uAct === 'READ') ||
         (rAct === 'READ' && uAct === 'VIEW') ||
+        ((rAct === 'CREATE' || rAct === 'SCHEDULE') &&
+          (uAct === 'CREATE' || uAct === 'SCHEDULE' || uAct === 'SCHEDULE_VISIT' || uAct === 'ADD')) ||
         (rAct === 'CHANGE_STAGE' && (uAct === 'CHANGE_STAGE' || uAct === 'EDIT'));
       return modMatches && actMatches;
     };
