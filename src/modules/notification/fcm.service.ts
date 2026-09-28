@@ -276,9 +276,11 @@ export class FcmService implements OnModuleInit {
     try {
       if (this.integrationSettingsService) {
         const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
-        if (!fbConfig.isEnabled) {
+        // Only block push delivery if the admin has EXPLICITLY disabled Firebase in DB settings.
+        // When source is ENV_FALLBACK (no DB record), credentials are from env vars and are treated as enabled.
+        if (!fbConfig.isEnabled && fbConfig.source === 'DATABASE') {
           this.logger.log(
-            '[FCM] Push notification skipped: Firebase integration is disabled in Admin Settings',
+            '[FCM] Push notification skipped: Firebase integration is explicitly disabled in Admin Settings (DB)',
           );
           return { success: false, error: 'FIREBASE_DISABLED', details: 'FCM push delivery is disabled in Admin Panel' };
         }
@@ -413,9 +415,11 @@ export class FcmService implements OnModuleInit {
     try {
       if (this.integrationSettingsService) {
         const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
-        if (!fbConfig.isEnabled) {
+        // Only block push delivery if the admin has EXPLICITLY disabled Firebase in DB settings.
+        // When source is ENV_FALLBACK (no DB record), credentials are from env vars and are treated as enabled.
+        if (!fbConfig.isEnabled && fbConfig.source === 'DATABASE') {
           this.logger.log(
-            '[FCM] Push notification skipped: Firebase integration is disabled in Admin Settings',
+            '[FCM] Push notification skipped: Firebase integration is explicitly disabled in Admin Settings (DB)',
           );
           return {
             successCount: 0,
