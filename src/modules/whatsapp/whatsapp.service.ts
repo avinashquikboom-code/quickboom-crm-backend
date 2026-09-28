@@ -516,7 +516,7 @@ export class WhatsappService {
       const fbError = err?.response?.data?.error;
       const metaCode = fbError?.code || err?.code;
       const metaMessage = fbError?.message || err?.message || 'Meta API error';
-      const metaType = fbError?.type || 'OAuthException';
+      const metaType = fbError?.type;
       const metaSubcode = fbError?.error_subcode;
       const fbtraceId = fbError?.fbtrace_id;
       const metaDetails = fbError?.error_data?.details || fbError?.details || metaMessage;
@@ -534,7 +534,7 @@ export class WhatsappService {
         this.logger.error(
           `[WHATSAPP DEBUG]\n` +
           `Meta error code: 132001\n` +
-          `Meta error type: ${metaType}\n` +
+          `Meta error type: ${metaType || 'N/A'}\n` +
           `Meta error message: ${metaMessage}\n` +
           `Meta error details: ${metaDetails}\n` +
           `fbtrace_id: ${fbtraceId || 'N/A'}`
@@ -594,7 +594,7 @@ export class WhatsappService {
       const isTemplateError = metaCode === 132001 || String(metaCode) === '132001' || String(metaMessage).toLowerCase().includes('template');
       const typedErrorCode = isTemplateError
         ? WHATSAPP_ERROR_CODES.TEMPLATE_ERROR
-        : classifyWhatsAppError(httpStatus, metaCode, metaType);
+        : classifyWhatsAppError(httpStatus, metaCode, metaType, metaMessage);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
 
       return {
@@ -749,7 +749,7 @@ export class WhatsappService {
         `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${metaCode || 'N/A'} metaErrorMessage="${metaMessage}"`
       );
 
-      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType, metaMessage);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
       return {
         success: false,
@@ -836,7 +836,7 @@ export class WhatsappService {
       );
 
       // Classify error according to status and Meta error code
-      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType);
+      const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType, metaMessage);
       const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
 
       return {

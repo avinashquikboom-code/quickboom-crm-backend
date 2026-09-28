@@ -1778,19 +1778,34 @@ export class IntegrationSettingsService {
             `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${errorCode} metaErrorMessage="${rawErrMsg}"`
           );
 
-          if (String(errorCode) === '190' || errorType === 'OAuthException' || httpStatus === 401) {
+          // 1. 24-hour service window closed (code 131047)
+          if (String(errorCode) === '131047' || rawErrMsg.toLowerCase().includes('re-engagement message') || rawErrMsg.toLowerCase().includes('24 hours')) {
+            throw new BadRequestException(
+              `WhatsApp 24-hour service window restriction (Meta Error 131047): Token and Phone Number ID are valid, but WhatsApp free-form text can only be sent within 24 hours of a customer message. Outside this window, you must use an approved Message Template.`,
+            );
+          }
+
+          // 2. Test recipient not in allowlist (code 131030 / 131026)
+          if (String(errorCode) === '131030' || String(errorCode) === '131026' || rawErrMsg.toLowerCase().includes('recipient phone number not in allowed list')) {
+            throw new BadRequestException(
+              `WhatsApp recipient rejected (Meta Error ${errorCode}): Token and Phone Number ID are valid, but recipient "${testPhone}" is not allowed. In development mode, add this number to the allowed list in Meta Developer Portal: ${rawErrMsg}`,
+            );
+          }
+
+          // 3. True Token / Authentication Error (code 190 or HTTP 401)
+          if (String(errorCode) === '190' || httpStatus === 401 || rawErrMsg.toLowerCase().includes('error validating access token')) {
             const isCannotParse = rawErrMsg.toLowerCase().includes('cannot parse') || rawErrMsg.toLowerCase().includes('malformed');
             const reasonDetail = isCannotParse
               ? `Meta rejected the access token format: ${rawErrMsg}`
               : `Meta access token is invalid or expired: ${rawErrMsg}`;
             throw new BadRequestException(
-              `WhatsApp Access Token error (Meta Error 190): ${reasonDetail}. Please verify and update the Meta Access Token in Settings → Integrations → WhatsApp.`,
+              `WhatsApp Access Token error (Meta Error 190): ${reasonDetail}. Please generate a permanent System User token in Meta Business Suite and update it in Settings → Integrations → WhatsApp.`,
             );
           }
 
-          if (httpStatus === 403) {
+          if (httpStatus === 403 || String(errorCode) === '200' || String(errorCode) === '10') {
             throw new BadRequestException(
-              `WhatsApp access is not permitted for this account (HTTP 403): ${rawErrMsg}. Check your Meta App permissions.`,
+              `WhatsApp access is not permitted for this account (HTTP ${httpStatus || 403}, Code ${errorCode}): ${rawErrMsg}. Check your Meta App permissions (whatsapp_business_messaging, whatsapp_business_management).`,
             );
           }
 

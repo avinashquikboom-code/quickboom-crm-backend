@@ -1,4 +1,4 @@
-import { resolveCleanAccessToken, maskAccessToken, friendlyWhatsAppErrorMessage, WHATSAPP_ERROR_CODES } from './whatsapp.util';
+import { resolveCleanAccessToken, maskAccessToken, friendlyWhatsAppErrorMessage, classifyWhatsAppError, WHATSAPP_ERROR_CODES } from './whatsapp.util';
 import { encryptSecret } from '../../common/utils/crypto.util';
 
 describe('WhatsApp Meta Access Token Resolution & Normalization', () => {
@@ -134,5 +134,44 @@ describe('WhatsApp Meta Access Token Resolution & Normalization', () => {
     expect(masked).not.toContain(RAW_VALID_TOKEN);
     expect(maskAccessToken(null)).toBe('MISSING');
     expect(maskAccessToken('short')).toBe('****');
+  });
+
+  it('20. Meta error 131047 with OAuthException is classified as WINDOW_EXPIRED, not AUTH_ERROR', () => {
+    const code = classifyWhatsAppError(400, 131047, 'OAuthException', '(#131047) Re-engagement message');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.WINDOW_EXPIRED);
+    expect(code).not.toBe(WHATSAPP_ERROR_CODES.AUTH_ERROR);
+    const friendly = friendlyWhatsAppErrorMessage(code);
+    expect(friendly).toContain('24-hour service window closed');
+  });
+
+  it('21. Meta error 131030 with OAuthException is classified as RECIPIENT_NOT_ALLOWED, not AUTH_ERROR', () => {
+    const code = classifyWhatsAppError(400, 131030, 'OAuthException', 'Recipient phone number not in allowed list');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.RECIPIENT_NOT_ALLOWED);
+    expect(code).not.toBe(WHATSAPP_ERROR_CODES.AUTH_ERROR);
+    const friendly = friendlyWhatsAppErrorMessage(code, 'Recipient not in allowed list');
+    expect(friendly).toContain('recipient');
+  });
+
+  it('22. Meta error 190 is classified as AUTH_ERROR', () => {
+    const code = classifyWhatsAppError(400, 190, 'OAuthException', 'Error validating access token');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.AUTH_ERROR);
+    const friendly = friendlyWhatsAppErrorMessage(code);
+    expect(friendly).toContain('WhatsApp authentication failed');
+  });
+
+  it('23. Meta HTTP 401 is classified as AUTH_ERROR', () => {
+    const code = classifyWhatsAppError(401, undefined, undefined, 'Unauthorized');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.AUTH_ERROR);
+  });
+
+  it('24. Meta error 100 with OAuthException is classified as REQUEST_ERROR, not AUTH_ERROR', () => {
+    const code = classifyWhatsAppError(400, 100, 'OAuthException', 'Invalid parameter');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.REQUEST_ERROR);
+    expect(code).not.toBe(WHATSAPP_ERROR_CODES.AUTH_ERROR);
+  });
+
+  it('25. Meta error 132001 is classified as TEMPLATE_ERROR', () => {
+    const code = classifyWhatsAppError(400, 132001, 'OAuthException', 'Template not found');
+    expect(code).toBe(WHATSAPP_ERROR_CODES.TEMPLATE_ERROR);
   });
 });
