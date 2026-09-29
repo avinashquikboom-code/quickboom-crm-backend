@@ -90,6 +90,32 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         );
       `);
 
+      // 5. Ensure "Designation"."audience", "customers"."mobileRoleId", and "customer_module_overrides" table exist safely
+      await this.$executeRawUnsafe(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DesignationAudience') THEN
+            CREATE TYPE "DesignationAudience" AS ENUM ('EMPLOYEE', 'CUSTOMER');
+          END IF;
+        END $$;
+      `);
+      await this.$executeRawUnsafe(`ALTER TABLE "Designation" ADD COLUMN IF NOT EXISTS "audience" "DesignationAudience" NOT NULL DEFAULT 'EMPLOYEE';`);
+      await this.$executeRawUnsafe(`ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "mobileRoleId" INTEGER REFERENCES "Designation"("id") ON DELETE SET NULL;`);
+      await this.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customers_mobileRoleId_idx" ON "customers"("mobileRoleId");`);
+      await this.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "customer_module_overrides" (
+          "id" SERIAL PRIMARY KEY,
+          "subjectCustomerId" INTEGER NOT NULL REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+          "moduleKey" TEXT NOT NULL,
+          "override" "AccessOverrideType" NOT NULL DEFAULT 'INHERIT',
+          "permissionId" INTEGER REFERENCES "Permission"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      await this.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "customer_module_overrides_subjectCustomerId_moduleKey_key" ON "customer_module_overrides"("subjectCustomerId", "moduleKey");`);
+      await this.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customer_module_overrides_subjectCustomerId_idx" ON "customer_module_overrides"("subjectCustomerId");`);
+      await this.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customer_module_overrides_permissionId_idx" ON "customer_module_overrides"("permissionId");`);
+
       this.logger.log('Database schema alignment verified successfully.');
     } catch (err: any) {
       this.logger.error(`ensureDatabaseSchema non-fatal warning: ${err?.message || err}`);
