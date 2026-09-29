@@ -457,8 +457,11 @@ export class SubscriptionService {
       const purchaseDate = p.createdAt;
       const sub = p.subscription;
       const durationMonths = billingCycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-      const activationDate = resolveSubscriptionActivationDate(purchaseDate, sub?.startDate);
-      const startDate = activationDate;
+      // Order details activation date is the stored subscription start date.
+      const startDate = sub?.startDate
+        ? new Date(sub.startDate)
+        : resolveSubscriptionActivationDate(purchaseDate, null);
+      const activationDate = startDate;
       const expiryDate = resolveSubscriptionExpiryDate(
         activationDate,
         durationMonths,

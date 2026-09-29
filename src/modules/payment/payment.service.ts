@@ -1288,6 +1288,9 @@ export class PaymentService {
 
       const isFullyPaid = isSuccess && (activeSubTotalPaid >= activeSubTotalAmount || Number(p.totalAmount || 0) >= subFullTotal);
       const invoiceUrl = isFullyPaid ? (p.invoiceUrl?.startsWith('INV-') ? p.invoiceUrl : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`) : null;
+      const subscriptionStartDate = p.subscription?.startDate
+        ? new Date(p.subscription.startDate)
+        : resolveSubscriptionActivationDate(p.createdAt, null);
 
       return {
         id: p.id,
@@ -1311,10 +1314,8 @@ export class PaymentService {
         totalPaid: activeSubTotalPaid > 0 ? activeSubTotalPaid : Number(p.totalAmount || 0),
         balanceAmount: Math.max(0, activeSubTotalAmount - activeSubTotalPaid),
         purchaseDate: p.createdAt,
-        activationDate: resolveSubscriptionActivationDate(
-          p.createdAt,
-          p.subscription?.startDate,
-        ),
+        startDate: subscriptionStartDate,
+        activationDate: subscriptionStartDate,
         expiryDate: p.subscription?.endDate,
         features: p.subscription?.plan?.features || [],
       };
