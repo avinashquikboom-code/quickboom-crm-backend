@@ -35,6 +35,14 @@ export class CreateRazorpayOrderDto {
   @IsOptional()
   @IsString()
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-03',
+    description: 'Calendar-selected plan activation/start date (YYYY-MM-DD)',
+  })
+  @IsOptional()
+  @IsString()
+  activationDate?: string;
 }
 
 export class VerifyRazorpayPaymentDto {
@@ -70,6 +78,14 @@ export class VerifyRazorpayPaymentDto {
   @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
   @IsOptional()
   subscriptionId?: number | string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-03',
+    description: 'Calendar-selected plan activation/start date (YYYY-MM-DD)',
+  })
+  @IsOptional()
+  @IsString()
+  activationDate?: string;
 }
 
 export class CreateOfflinePaymentDto {
@@ -105,6 +121,14 @@ export class CreateOfflinePaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-03',
+    description: 'Calendar-selected plan activation/start date (YYYY-MM-DD)',
+  })
+  @IsOptional()
+  @IsString()
+  activationDate?: string;
 }
 
 export class SendPaymentReminderDto {

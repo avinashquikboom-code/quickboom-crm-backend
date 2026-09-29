@@ -36,43 +36,61 @@ export function calculateSubscriptionStartDate(purchaseDate: Date | string = new
   return new Date(Date.UTC(y, m, d + 2, 0, 0, 0, 0));
 }
 
+/** Parse YYYY-MM-DD (or ISO) as UTC calendar date (no timezone day shift). */
+export function parseCalendarDateInput(value?: string | null): Date | null {
+  if (value == null) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+  const ymd = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) {
+    const y = Number(ymd[1]);
+    const m = Number(ymd[2]) - 1;
+    const d = Number(ymd[3]);
+    if (y > 0 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+      return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+    }
+  }
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 0, 0, 0, 0),
+  );
+}
+
 /**
- * Activation date for display/persistence:
- * - Default: purchase + 2 calendar days (business rule)
- * - If stored start is on a different calendar day than purchase, treat as explicit scheduled activation
+ * Purchase date = payment time; activation = calendar-selected date when provided,
+ * otherwise default purchase + 2 calendar days.
  */
+export function resolvePlanSubscriptionDates(
+  purchaseDate: Date | string,
+  durationMonths = 1,
+  requestedActivationDate?: string | null,
+): { purchaseDate: Date; startDate: Date; endDate: Date } {
+  const purchase = new Date(purchaseDate);
+  const parsedActivation = parseCalendarDateInput(requestedActivationDate);
+  const startDate = parsedActivation ?? calculateSubscriptionStartDate(purchase);
+  const endDate = calculatePlanExpiry(startDate, durationMonths);
+  return { purchaseDate: purchase, startDate, endDate };
+}
+
+/** Order/API display: trust stored subscription start when present. */
 export function resolveSubscriptionActivationDate(
   purchaseDate: Date | string,
   storedStartDate?: Date | string | null,
 ): Date {
-  const calculated = calculateSubscriptionStartDate(purchaseDate);
-  if (!storedStartDate) {
-    return calculated;
+  if (storedStartDate) {
+    return new Date(storedStartDate);
   }
-  const stored = new Date(storedStartDate);
-  if (utcCalendarDateKey(stored) !== utcCalendarDateKey(purchaseDate)) {
-    return stored;
-  }
-  return calculated;
+  return calculateSubscriptionStartDate(purchaseDate);
 }
 
 export function resolveSubscriptionExpiryDate(
   activationDate: Date | string,
   durationMonths = 1,
   storedEndDate?: Date | string | null,
-  purchaseDate?: Date | string | null,
-  storedStartDate?: Date | string | null,
 ): Date {
-  const activation = new Date(activationDate);
-  const calculated = calculatePlanExpiry(activation, durationMonths);
+  const calculated = calculatePlanExpiry(activationDate, durationMonths);
   if (!storedEndDate) {
-    return calculated;
-  }
-  if (
-    purchaseDate &&
-    storedStartDate &&
-    utcCalendarDateKey(storedStartDate) === utcCalendarDateKey(purchaseDate)
-  ) {
     return calculated;
   }
   return new Date(storedEndDate);

@@ -26,7 +26,8 @@ import { PaymentMethod, SubscriptionStatus, InvoiceStatus, InstallmentStatus } f
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
-  calculateSubscriptionDates,
+  resolvePlanSubscriptionDates,
+  resolveSubscriptionActivationDate,
 } from '../../common/utils/subscription-date.util';
 import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
@@ -190,6 +191,7 @@ export class PaymentService {
         planName: plan.name,
         billingCycle: cycle,
         paymentOption,
+        ...(dto.activationDate ? { activationDate: String(dto.activationDate) } : {}),
       },
     };
 
@@ -397,10 +399,9 @@ export class PaymentService {
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const purchaseDate = new Date();
-    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
-    const startDate = subscriptionDates.startDate;
-    const expiryDate = subscriptionDates.endDate;
+    const requestedActivation = dto.activationDate ?? (dto as any).startDate;
+    let startDate: Date;
+    let expiryDate: Date;
 
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${dto.razorpay_payment_id}`;
@@ -434,6 +435,14 @@ export class PaymentService {
           },
         });
       }
+
+      const subscriptionDates = resolvePlanSubscriptionDates(
+        payment.createdAt,
+        durationMonths,
+        requestedActivation,
+      );
+      startDate = subscriptionDates.startDate;
+      expiryDate = subscriptionDates.endDate;
 
       // 2. Create or update CustomerSubscription (Active so work starts on 50% advance)
       let sub = await tx.customerSubscription.findFirst({
@@ -632,13 +641,13 @@ export class PaymentService {
               contactId: contact.id,
               invoiceNo: finalInvoiceNo,
               status: InvoiceStatus.PAID,
-              issueDate: startDate,
-              dueDate: startDate,
+              issueDate: payment.createdAt,
+              dueDate: payment.createdAt,
               subTotal: fullBasePrice,
               taxAmount: fullTaxAmount,
               discount: 0,
               totalAmount: fullTotalAmount,
-              notes: `Subscription payment for ${plan.name} (${cycle} billing). Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+              notes: `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
             },
           });
         }
@@ -914,6 +923,7 @@ export class PaymentService {
             orderId,
             paymentId,
             billingCycle,
+            activationDate: notes.activationDate ? String(notes.activationDate) : undefined,
           });
           this.logger.log(`[WEBHOOK_ACTIVATION_SUCCESS] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
         } catch (err: any) {
@@ -938,8 +948,9 @@ export class PaymentService {
     orderId: string;
     paymentId: string;
     billingCycle: string;
+    activationDate?: string;
   }) {
-    const { customerId, planId, orderId, paymentId, billingCycle } = params;
+    const { customerId, planId, orderId, paymentId, billingCycle, activationDate } = params;
 
     const plan = await this.prisma.plan.findUnique({
       where: { id: planId, deletedAt: null },
@@ -954,11 +965,6 @@ export class PaymentService {
     const total = basePrice + tax;
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const purchaseDate = new Date();
-    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
-    const startDate = subscriptionDates.startDate;
-    const expiryDate = subscriptionDates.endDate;
-
     const orderNumber = `#QB-WH-${Date.now().toString(36).toUpperCase()}`;
     const transactionId = `TXN-${paymentId}`;
 
@@ -989,6 +995,14 @@ export class PaymentService {
           transactionId,
         },
       });
+
+      const subscriptionDates = resolvePlanSubscriptionDates(
+        payment.createdAt,
+        durationMonths,
+        activationDate,
+      );
+      const startDate = subscriptionDates.startDate;
+      const expiryDate = subscriptionDates.endDate;
 
       let sub = await tx.customerSubscription.findFirst({
         where: { customerId, deletedAt: null },
@@ -1297,7 +1311,10 @@ export class PaymentService {
         totalPaid: activeSubTotalPaid > 0 ? activeSubTotalPaid : Number(p.totalAmount || 0),
         balanceAmount: Math.max(0, activeSubTotalAmount - activeSubTotalPaid),
         purchaseDate: p.createdAt,
-        activationDate: p.createdAt,
+        activationDate: resolveSubscriptionActivationDate(
+          p.createdAt,
+          p.subscription?.startDate,
+        ),
         expiryDate: p.subscription?.endDate,
         features: p.subscription?.plan?.features || [],
       };
@@ -1385,7 +1402,11 @@ export class PaymentService {
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
     const purchaseDate = new Date();
-    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const subscriptionDates = resolvePlanSubscriptionDates(
+      purchaseDate,
+      durationMonths,
+      dto.activationDate ?? dto.startDate,
+    );
     const startDate = subscriptionDates.startDate;
     const expiryDate = subscriptionDates.endDate;
 

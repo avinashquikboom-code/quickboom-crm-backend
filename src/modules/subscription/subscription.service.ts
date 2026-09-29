@@ -30,6 +30,7 @@ import {
   calculatePlanExpiry,
   calculateSubscriptionStartDate,
   calculateSubscriptionDates,
+  resolvePlanSubscriptionDates,
   resolveSubscriptionActivationDate,
   resolveSubscriptionExpiryDate,
   calculateDaysRemaining,
@@ -456,15 +457,12 @@ export class SubscriptionService {
       const purchaseDate = p.createdAt;
       const sub = p.subscription;
       const durationMonths = billingCycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-      const calculatedDates = calculateSubscriptionDates(purchaseDate, durationMonths);
       const activationDate = resolveSubscriptionActivationDate(purchaseDate, sub?.startDate);
       const startDate = activationDate;
       const expiryDate = resolveSubscriptionExpiryDate(
         activationDate,
         durationMonths,
         sub?.endDate,
-        purchaseDate,
-        sub?.startDate,
       );
 
       const receiptNo = p.invoiceUrl?.startsWith('REC-')
@@ -818,7 +816,7 @@ export class SubscriptionService {
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
     const purchaseDate = new Date();
-    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const subscriptionDates = resolvePlanSubscriptionDates(purchaseDate, durationMonths, null);
     const startDate = subscriptionDates.startDate;
     const expiryDate = subscriptionDates.endDate;
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -2824,15 +2822,16 @@ export class SubscriptionService {
     const cycle = sub.billingCycle || SubscriptionBillingCycle.MONTHLY;
     const durationMonths = sub.duration || (cycle === 'YEARLY' ? 12 : 1);
     const purchaseDate = payment.createdAt || new Date();
-    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
-    const startDate = subscriptionDates.startDate;
-    const endDate = subscriptionDates.endDate;
+    const startDate = sub.startDate
+      ? new Date(sub.startDate)
+      : resolvePlanSubscriptionDates(purchaseDate, durationMonths, null).startDate;
+    const endDate = calculatePlanExpiry(startDate, durationMonths);
 
     const fullBaseAmount = cycle === 'YEARLY' ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
     const fullGstAmount = Math.round(fullBaseAmount * 0.18);
     const fullTotalAmount = fullBaseAmount + fullGstAmount;
 
-    const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+    const receiptNo = `REC-${purchaseDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
     let finalInvoiceNo: string | null = null;
     let isFullyPaid = false;
 
