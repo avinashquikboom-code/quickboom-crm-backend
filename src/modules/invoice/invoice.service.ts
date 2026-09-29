@@ -8,10 +8,79 @@ import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument = require('pdfkit');
 import { formatInrCurrency } from '../receipt/receipt.service';
+import {
+  parseCalendarDateInput,
+  resolveSubscriptionActivationDate,
+  resolvePlanSubscriptionDates,
+  calculatePlanExpiry,
+  utcCalendarDateKey,
+} from '../../common/utils/subscription-date.util';
 
 @Injectable()
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private parsePlanActivationFromNotes(notes?: string | null): Date | null {
+    if (!notes) return null;
+    const match = notes.match(/Plan activation:\s*(\d{4}-\d{2}-\d{2})/i);
+    return match ? parseCalendarDateInput(match[1]) : null;
+  }
+
+  /** Authoritative plan start/end for tax invoice (subscription), separate from issueDate (purchase). */
+  async resolveInvoicePlanDates(inv: {
+    invoiceNo: string;
+    customerId: number;
+    issueDate: Date;
+    notes?: string | null;
+  }): Promise<{ purchaseDate: Date; activationDate: Date; expiryDate: Date }> {
+    const purchaseDate = new Date(inv.issueDate);
+    let activationDate = this.parsePlanActivationFromNotes(inv.notes);
+    let expiryDate: Date | null = null;
+
+    const invPaymentIdMatch = inv.invoiceNo.match(/^INV-\d{4}-0*(\d+)$/i);
+    const linkedPaymentId = invPaymentIdMatch ? Number(invPaymentIdMatch[1]) : null;
+
+    const payment = await this.prisma.paymentHistory.findFirst({
+      where: {
+        customerId: inv.customerId,
+        deletedAt: null,
+        status: { in: ['SUCCESS', 'PAID'] },
+        OR: [
+          ...(linkedPaymentId ? [{ id: linkedPaymentId }] : []),
+          { invoiceUrl: inv.invoiceNo },
+        ],
+      },
+      include: { subscription: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (payment) {
+      const sub = payment.subscription;
+      const durationMonths = sub?.billingCycle === 'YEARLY' || payment.billingCycle === 'YEARLY' ? 12 : 1;
+      const storedStart = sub?.startDate;
+      const requestedActivation =
+        storedStart &&
+        utcCalendarDateKey(storedStart) !== utcCalendarDateKey(payment.createdAt)
+          ? utcCalendarDateKey(storedStart)
+          : null;
+      const resolved = resolvePlanSubscriptionDates(
+        payment.createdAt,
+        durationMonths,
+        requestedActivation,
+      );
+      activationDate = resolved.startDate;
+      expiryDate = sub?.endDate ? new Date(sub.endDate) : resolved.endDate;
+    }
+
+    if (!activationDate) {
+      activationDate = resolveSubscriptionActivationDate(purchaseDate, null);
+    }
+    if (!expiryDate) {
+      expiryDate = calculatePlanExpiry(activationDate, 1);
+    }
+
+    return { purchaseDate, activationDate, expiryDate };
+  }
 
   async reconcileCustomerInvoices(customerId: number): Promise<void> {
     if (!customerId || isNaN(customerId) || customerId <= 0) return;
@@ -95,6 +164,10 @@ export class InvoiceService {
           const planName = p.planName || p.subscription?.plan?.name || 'CRM Subscription Plan';
           const cycle = p.billingCycle || p.subscription?.billingCycle || 'MONTHLY';
           const method = p.paymentMethod || 'RAZORPAY';
+          const planActivation = resolveSubscriptionActivationDate(
+            p.createdAt,
+            p.subscription?.startDate,
+          );
 
           console.log('[RECONCILE_CREATING_INVOICE]', {
             customerId,
@@ -115,7 +188,7 @@ export class InvoiceService {
               taxAmount: taxAmount,
               discount: 0,
               totalAmount: totalAmount,
-              notes: `Subscription payment for ${planName} (${cycle} billing). Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+              notes: `Subscription payment for ${planName} (${cycle} billing). Purchase: ${utcCalendarDateKey(p.createdAt)}. Plan activation: ${utcCalendarDateKey(planActivation)}. Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
             },
           });
         }
@@ -268,7 +341,8 @@ export class InvoiceService {
       throw err;
     }
 
-    const formatted = items.map((inv) => {
+    const formatted = await Promise.all(items.map(async (inv) => {
+      const planDates = await this.resolveInvoicePlanDates(inv);
       const contactFullName = inv.contact
         ? `${inv.contact.firstName || ''} ${inv.contact.lastName || ''}`.trim()
         : '';
@@ -301,6 +375,11 @@ export class InvoiceService {
         companyName: inv.customer?.companyName || inv.customer?.name || 'General Client',
         issueDate: inv.issueDate,
         invoiceDate: inv.issueDate,
+        purchaseDate: planDates.purchaseDate,
+        activationDate: planDates.activationDate,
+        planStartDate: planDates.activationDate,
+        expiryDate: planDates.expiryDate,
+        planEndDate: planDates.expiryDate,
         dueDate: inv.dueDate,
         amount: `₹${Number(inv.totalAmount || 0).toLocaleString('en-IN')}`,
         subTotal: Number(inv.subTotal || 0),
@@ -318,7 +397,7 @@ export class InvoiceService {
         customer: inv.customer,
         items: inv.items || [],
       };
-    });
+    }));
 
     const totalPages = Math.ceil(total / limit) || 1;
 
@@ -436,6 +515,7 @@ export class InvoiceService {
       ? `${invoice.contact.firstName || ''} ${invoice.contact.lastName || ''}`.trim()
       : '';
     const clientDisplayName = contactFullName || invoice.customer?.companyName || invoice.customer?.name || 'General Client';
+    const planDates = await this.resolveInvoicePlanDates(invoice);
 
     return {
       ...invoice,
@@ -443,6 +523,11 @@ export class InvoiceService {
       clientName: clientDisplayName,
       customerName: invoice.customer?.name || 'General Client',
       companyName: invoice.customer?.companyName || invoice.customer?.name || 'General Client',
+      purchaseDate: planDates.purchaseDate,
+      activationDate: planDates.activationDate,
+      planStartDate: planDates.activationDate,
+      expiryDate: planDates.expiryDate,
+      planEndDate: planDates.expiryDate,
     };
   }
 
@@ -787,14 +872,26 @@ export class InvoiceService {
 
         doc.fillColor(darkColor).fontSize(16).font(boldFont).text('FINAL TAX INVOICE', 300, 40, { width: 255, align: 'right' });
         doc.fillColor(primaryColor).fontSize(10).font(boldFont).text(invoiceNo, 300, 60, { width: 255, align: 'right' });
+        const purchaseDateLabel = new Date(invoice.issueDate).toLocaleDateString('en-IN');
+        const planStartLabel = invoice.activationDate
+          ? new Date(invoice.activationDate).toLocaleDateString('en-IN')
+          : purchaseDateLabel;
+        const planEndLabel = invoice.expiryDate
+          ? new Date(invoice.expiryDate).toLocaleDateString('en-IN')
+          : null;
+
         doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
           .text('Original for Recipient', 300, 74, { width: 255, align: 'right' })
-          .text(`Invoice Date: ${new Date(invoice.issueDate).toLocaleDateString('en-IN')}`, 300, 86, { width: 255, align: 'right' });
+          .text(`Purchase Date: ${purchaseDateLabel}`, 300, 86, { width: 255, align: 'right' })
+          .text(`Plan Start: ${planStartLabel}`, 300, 98, { width: 255, align: 'right' });
+        if (planEndLabel) {
+          doc.text(`Plan Validity End: ${planEndLabel}`, 300, 110, { width: 255, align: 'right' });
+        }
 
-        doc.moveTo(40, 102).lineTo(555, 102).strokeColor(borderCol).lineWidth(1).stroke();
+        doc.moveTo(40, planEndLabel ? 114 : 102).lineTo(555, planEndLabel ? 114 : 102).strokeColor(borderCol).lineWidth(1).stroke();
 
         // Customer & Invoice Details 2-Column Section (Balanced 245pt each)
-        const metaTop = 112;
+        const metaTop = planEndLabel ? 124 : 112;
         doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('BILLED TO (CUSTOMER)', 40, metaTop);
         const clientName = invoice.contact
           ? `${invoice.contact.firstName || ''} ${invoice.contact.lastName || ''}`.trim()
@@ -834,7 +931,10 @@ export class InvoiceService {
         const rowTop = tableTop + 28;
 
         doc.fillColor(darkColor).fontSize(9.5).font(boldFont).text('QuikBoom CRM Plan & Growth Package', 50, rowTop, { width: 180 });
-        doc.fontSize(8).font(regularFont).fillColor(grayColor).text(`Tax Invoice Reference: ${invoiceNo} • 100% Fully Settled`, 50, rowTop + 13, { width: 180 });
+        const validityLine = planEndLabel
+          ? `Validity: ${planStartLabel} → ${planEndLabel}`
+          : `Tax Invoice Reference: ${invoiceNo} • 100% Fully Settled`;
+        doc.fontSize(8).font(regularFont).fillColor(grayColor).text(validityLine, 50, rowTop + 13, { width: 180 });
 
         doc.fillColor(darkColor).fontSize(8.5).font(regularFont).text('998311', 240, rowTop, { width: 70 });
         doc.text(formatInrCurrency(subTotal), 315, rowTop, { width: 75, align: 'right' });
@@ -922,11 +1022,11 @@ export class InvoiceService {
   ) {
     console.log(`[PDF_REQUEST]\ndocumentType: INVOICE\ndocumentId: ${id}`);
     try {
-      const invoice = await this.findOne(customerId, id, user);
-      const invoiceNo = invoice.invoiceNo || `INV-${invoice.id}`;
+      const invoiceRecord = await this.findOne(customerId, id, user);
+      const invoiceNo = invoiceRecord.invoiceNo || `INV-${invoiceRecord.id}`;
       const safeInvoiceNo = invoiceNo.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-      const pdfBuffer = await this.generateInvoicePdfBuffer(invoice, invoiceNo);
+      const pdfBuffer = await this.generateInvoicePdfBuffer(invoiceRecord, invoiceNo);
 
       if (!pdfBuffer || pdfBuffer.length === 0 || pdfBuffer.toString('utf8', 0, 5) !== '%PDF-') {
         throw new Error('Generated PDF document is invalid or empty');
