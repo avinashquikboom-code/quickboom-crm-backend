@@ -139,6 +139,20 @@ export class CustomerController {
     );
   }
 
+  @Delete(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
+  @ApiOperation({ summary: 'Reset customer overrides to role defaults' })
+  async resetMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
+    this.assertCanManageCustomerAccess(user);
+    return this.customerMobilePermissionService.resetPermissions(Number(id));
+  }
+
+  @Post(`${NUMERIC_CUSTOMER_ID}/mobile-permissions/restrict-all`)
+  @ApiOperation({ summary: 'Deny all customer mobile permissions for one customer' })
+  async restrictMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
+    this.assertCanManageCustomerAccess(user);
+    return this.customerMobilePermissionService.restrictAll(Number(id));
+  }
+
   @Get('metrics')
   @ApiOperation({ summary: 'Get Customer KPI summary metrics' })
   async getMetrics() {

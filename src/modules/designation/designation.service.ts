@@ -650,21 +650,40 @@ export class DesignationService {
     await this.seedInitialDesignationsIfEmpty(numCustomerId);
     await this.ensureCustomerAppDesignation(numCustomerId);
 
-    const designations = await this.prisma.designation.findMany({
-      where: { customerId: numCustomerId },
-      include: {
-        department: { select: { id: true, name: true, code: true } },
-        role: {
-          include: {
-            rolePermissions: { include: { permission: true } },
+    let designations: any[];
+    try {
+      designations = await this.prisma.designation.findMany({
+        where: { customerId: numCustomerId },
+        include: {
+          department: { select: { id: true, name: true, code: true } },
+          role: {
+            include: {
+              rolePermissions: { include: { permission: true } },
+            },
+          },
+          _count: {
+            select: { employees: true, mobileCustomers: true },
           },
         },
-        _count: {
-          select: { employees: true, mobileCustomers: true },
+        orderBy: [{ level: 'asc' }, { name: 'asc' }],
+      });
+    } catch {
+      designations = await this.prisma.designation.findMany({
+        where: { customerId: numCustomerId },
+        include: {
+          department: { select: { id: true, name: true, code: true } },
+          role: {
+            include: {
+              rolePermissions: { include: { permission: true } },
+            },
+          },
+          _count: {
+            select: { employees: true },
+          },
         },
-      },
-      orderBy: [{ level: 'asc' }, { name: 'asc' }],
-    });
+        orderBy: [{ level: 'asc' }, { name: 'asc' }],
+      });
+    }
 
     const result = [];
     for (const d of designations) {
@@ -680,12 +699,17 @@ export class DesignationService {
         designationId: d.id,
         name: d.name,
         code: d.code,
-        audience: d.audience || 'EMPLOYEE',
+        audience:
+          d.audience === 'CUSTOMER' || String(d.code || '').toUpperCase() === 'CUSTOMER'
+            ? 'CUSTOMER'
+            : d.audience || 'EMPLOYEE',
         departmentName: d.department?.name || 'General',
         department: d.department,
         description: d.description || `${d.name} role`,
         permissionsCount: perms.length,
-        usersCount: d.audience === 'CUSTOMER' ? d._count.mobileCustomers : d._count.employees,
+        usersCount: d.audience === 'CUSTOMER' || String(d.code || '').toUpperCase() === 'CUSTOMER'
+          ? (d._count as any).mobileCustomers ?? 0
+          : d._count.employees,
         isSystem: false,
         isActive: d.isActive,
         crmMobileAccess: Boolean(d.crmMobileAccess),

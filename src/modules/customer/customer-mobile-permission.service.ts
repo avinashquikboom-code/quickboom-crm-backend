@@ -3,22 +3,44 @@ import { AccessOverrideType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CUSTOMER_APP_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 
+const CUSTOMER_MODULE_LABELS: Record<string, string> = {
+  CUSTOMER_HOME: 'Home',
+  CUSTOMER_PLANS: 'Plans',
+  CUSTOMER_TRENDING: 'Trending',
+  CUSTOMER_ORDERS: 'Orders',
+  CUSTOMER_INVOICES: 'Invoices',
+  CUSTOMER_PROFILE: 'Profile',
+  CUSTOMER_CALENDAR: 'Calendar',
+  CUSTOMER_SSM: 'SSM',
+  CUSTOMER_INFLUENCERS: 'Influencer Hub',
+  CUSTOMER_INFLUENCER_BOOKINGS: 'Bookings',
+  CUSTOMER_NOTIFICATIONS: 'Notifications',
+  CUSTOMER_SUPPORT: 'Support',
+};
+
 @Injectable()
 export class CustomerMobilePermissionService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getPermissions(customerId: number) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, deletedAt: null },
-      include: {
-        mobileRole: {
-          include: {
-            role: { include: { rolePermissions: { include: { permission: true } } } },
+    let customer: any;
+    try {
+      customer = await this.prisma.customer.findFirst({
+        where: { id: customerId, deletedAt: null },
+        include: {
+          mobileRole: {
+            include: {
+              role: { include: { rolePermissions: { include: { permission: true } } } },
+            },
           },
+          moduleOverrides: true,
         },
-        moduleOverrides: true,
-      },
-    });
+      });
+    } catch {
+      customer = await this.prisma.customer.findFirst({
+        where: { id: customerId, deletedAt: null },
+      });
+    }
     if (!customer) {
       throw new NotFoundException(`Customer #${customerId} not found`);
     }
@@ -86,7 +108,7 @@ export class CustomerMobilePermissionService {
       const meta = CUSTOMER_APP_PERMISSIONS.find((p) => p.module === moduleKey);
       return {
         moduleKey,
-        label: meta?.label || moduleKey,
+        label: CUSTOMER_MODULE_LABELS[moduleKey] || meta?.label || moduleKey,
         category: 'CUSTOMER',
         description: meta?.description || '',
         roleDefault,
@@ -98,8 +120,8 @@ export class CustomerMobilePermissionService {
     return {
       customerId: customer.id,
       customerName: customer.companyName || customer.name,
-      roleName: customer.mobileRole?.name || 'Unassigned',
-      designationName: customer.mobileRole?.name || 'Unassigned',
+      roleName: customer.mobileRole?.name || 'Customer',
+      designationName: customer.mobileRole?.name || 'Customer',
       mobileRoleId: customer.mobileRoleId,
       customPermissionsEnabled: (customer.moduleOverrides || []).some(
         (ov) => ov.override === 'ALLOW' || ov.override === 'DENY',
@@ -171,7 +193,10 @@ export class CustomerMobilePermissionService {
 
     if (mobileRoleId) {
       const role = await this.prisma.designation.findFirst({
-        where: { id: mobileRoleId, audience: 'CUSTOMER' },
+        where: {
+          id: mobileRoleId,
+          OR: [{ audience: 'CUSTOMER' }, { code: 'CUSTOMER' }],
+        },
       });
       if (!role) throw new NotFoundException('Customer role not found');
     }
@@ -181,5 +206,20 @@ export class CustomerMobilePermissionService {
       data: { mobileRoleId },
     });
     return this.getPermissions(customerId);
+  }
+
+  async resetPermissions(customerId: number) {
+    await this.prisma.customerModuleOverride.deleteMany({
+      where: { subjectCustomerId: customerId },
+    });
+    return this.getPermissions(customerId);
+  }
+
+  async restrictAll(customerId: number) {
+    const overrides = CUSTOMER_APP_PERMISSIONS.map((p) => ({
+      moduleKey: p.key,
+      override: 'DENY',
+    }));
+    return this.updatePermissions(customerId, overrides);
   }
 }

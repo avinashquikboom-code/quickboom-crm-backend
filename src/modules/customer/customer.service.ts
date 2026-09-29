@@ -1815,6 +1815,10 @@ export class CustomerService {
         aiWallet: (c as any).aiWallet || { balance: 20, totalEarned: 20, totalSpent: 0 },
         lastActivity: c.updatedAt,
         createdAt: c.createdAt,
+        mobileRoleId: (c as any).mobileRoleId || (c as any).mobileRole?.id || null,
+        mobileRole: (c as any).mobileRole
+          ? { id: (c as any).mobileRole.id, name: (c as any).mobileRole.name, audience: (c as any).mobileRole.audience }
+          : null,
       };
     });
 

@@ -1,5 +1,10 @@
 -- Customer roles reuse Designation. Existing rows stay employee roles.
-CREATE TYPE "DesignationAudience" AS ENUM ('EMPLOYEE', 'CUSTOMER');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DesignationAudience') THEN
+    CREATE TYPE "DesignationAudience" AS ENUM ('EMPLOYEE', 'CUSTOMER');
+  END IF;
+END $$;
 
 ALTER TABLE "Designation" ADD COLUMN IF NOT EXISTS "audience" "DesignationAudience" NOT NULL DEFAULT 'EMPLOYEE';
 
