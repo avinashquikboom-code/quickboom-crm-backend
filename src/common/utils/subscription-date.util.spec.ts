@@ -5,6 +5,8 @@ import {
   calculateDaysRemaining,
   deriveSubscriptionStatus,
   resolvePlanSubscriptionDates,
+  resolveSubscriptionActivationDate,
+  utcCalendarDateKey,
 } from './subscription-date.util';
 
 describe('Subscription Date Calculation & Edge Cases', () => {
@@ -83,6 +85,24 @@ describe('Subscription Date Calculation & Edge Cases', () => {
       expect(start.getUTCDate()).toBe(2);
       expect(start.getUTCMonth()).toBe(0); // January
       expect(start.getUTCFullYear()).toBe(2027);
+    });
+  });
+
+  describe('resolveSubscriptionActivationDate (orders/invoices)', () => {
+    it('delegates to calculateSubscriptionStartDate when stored start is same calendar day as purchase', () => {
+      const purchase = new Date('2026-09-29T18:00:00.000Z');
+      const stored = new Date('2026-09-29T10:00:00.000Z');
+      const activation = resolveSubscriptionActivationDate(purchase, stored);
+      expect(utcCalendarDateKey(activation)).toBe(
+        utcCalendarDateKey(calculateSubscriptionStartDate(purchase)),
+      );
+    });
+
+    it('returns stored calendar start when it is after purchase day', () => {
+      const purchase = new Date('2026-09-29T18:00:00.000Z');
+      const scheduledStart = '2026-10-02';
+      const activation = resolveSubscriptionActivationDate(purchase, scheduledStart);
+      expect(utcCalendarDateKey(activation)).toBe(scheduledStart);
     });
   });
 

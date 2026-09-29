@@ -84,13 +84,24 @@ export function resolvePlanSubscriptionDates(
   return { purchaseDate: purchase, startDate, endDate };
 }
 
-/** Order/API display: trust stored subscription start when present. */
+/**
+ * Display/API activation date from purchase + stored subscription start.
+ * Future calendar start (after purchase day) is used as-is.
+ * Same calendar day as purchase → existing rule: purchase + 2 calendar days.
+ */
 export function resolveSubscriptionActivationDate(
   purchaseDate: Date | string,
   storedStartDate?: Date | string | null,
 ): Date {
   if (storedStartDate) {
-    return new Date(storedStartDate);
+    const purchaseDay = utcCalendarDateKey(purchaseDate);
+    const storedDay = utcCalendarDateKey(storedStartDate);
+    if (storedDay > purchaseDay) {
+      const parsed = parseCalendarDateInput(storedDay);
+      if (parsed) {
+        return parsed;
+      }
+    }
   }
   return calculateSubscriptionStartDate(purchaseDate);
 }

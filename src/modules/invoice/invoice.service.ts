@@ -101,20 +101,7 @@ export class InvoiceService {
       const sub = payment.subscription;
       const durationMonths = sub.billingCycle === 'YEARLY' || payment.billingCycle === 'YEARLY' ? 12 : 1;
 
-      // Plan start = stored subscription activation (calendar), else earliest scheduled service, else notes/default.
-      if (sub.startDate) {
-        activationDate = this.toUtcCalendarDate(sub.startDate);
-      } else {
-        const calendarStart = await this.resolveFirstCalendarScheduleStartDate(inv.customerId, sub.id);
-        if (calendarStart) {
-          activationDate = calendarStart;
-        }
-      }
-
-      if (!activationDate) {
-        activationDate = resolveSubscriptionActivationDate(payment.createdAt, null);
-      }
-
+      activationDate = resolveSubscriptionActivationDate(payment.createdAt, sub.startDate);
       expiryDate = resolveSubscriptionExpiryDate(activationDate, durationMonths, sub.endDate);
     } else if (activationDate) {
       expiryDate = calculatePlanExpiry(activationDate, 1);
