@@ -2774,16 +2774,7 @@ export class SubscriptionService {
       throw new BadRequestException('Valid payment request ID is required');
     }
 
-    // Try finding by PaymentHistory ID or Subscription ID
-    let payment = await this.prisma.paymentHistory.findFirst({
-      where: {
-        OR: [{ id: numId }, { subscriptionId: numId }],
-      },
-      include: {
-        customer: true,
-        subscription: { include: { plan: true } },
-      },
-    });
+    const payment = await this.findOfflinePaymentRequest(numId);
 
     if (!payment) {
       throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
@@ -3222,6 +3213,39 @@ export class SubscriptionService {
   }
 
   /**
+   * Resolve an offline request by payment id first.
+   * Falling back to subscriptionId must not pick an older approved payment
+   * when a pending offline request exists for that subscription.
+   */
+  private async findOfflinePaymentRequest(numId: number) {
+    const include = {
+      customer: true,
+      subscription: { include: { plan: true } },
+    } as const;
+
+    const exact = await this.prisma.paymentHistory.findFirst({
+      where: { id: numId, deletedAt: null },
+      include,
+    });
+
+    const pendingOffline = await this.prisma.paymentHistory.findFirst({
+      where: {
+        OR: [{ id: numId }, { subscriptionId: numId }],
+        status: 'PENDING',
+        paymentMethod: { in: [PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.OTHER] },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      include,
+    });
+
+    if (pendingOffline) {
+      return pendingOffline;
+    }
+    return exact;
+  }
+
+  /**
    * Admin: Reject Offline Payment Request
    * Sets paymentStatus = REJECTED, subscriptionStatus = REJECTED
    */
@@ -3231,15 +3255,7 @@ export class SubscriptionService {
       throw new BadRequestException('Valid payment request ID is required');
     }
 
-    const payment = await this.prisma.paymentHistory.findFirst({
-      where: {
-        OR: [{ id: numId }, { subscriptionId: numId }],
-      },
-      include: {
-        customer: true,
-        subscription: { include: { plan: true } },
-      },
-    });
+    const payment = await this.findOfflinePaymentRequest(numId);
 
     if (!payment) {
       throw new NotFoundException(`Offline payment request #${requestIdOrSubId} not found`);
