@@ -397,8 +397,10 @@ export class PaymentService {
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const startDate = new Date();
-    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
+    const purchaseDate = new Date();
+    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const startDate = subscriptionDates.startDate;
+    const expiryDate = subscriptionDates.endDate;
 
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${dto.razorpay_payment_id}`;
@@ -811,7 +813,7 @@ export class PaymentService {
           paymentStatus: result.isFullyPaid ? 'PAID' : 'PARTIALLY_PAID',
           paymentMethod: 'RAZORPAY',
           transactionId,
-          purchaseDate: startDate,
+          purchaseDate: result.payment.createdAt,
           activationDate: startDate,
           expiryDate,
           features: plan.features,
@@ -952,8 +954,10 @@ export class PaymentService {
     const total = basePrice + tax;
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const startDate = new Date();
-    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
+    const purchaseDate = new Date();
+    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const startDate = subscriptionDates.startDate;
+    const expiryDate = subscriptionDates.endDate;
 
     const orderNumber = `#QB-WH-${Date.now().toString(36).toUpperCase()}`;
     const transactionId = `TXN-${paymentId}`;
@@ -1380,8 +1384,10 @@ export class PaymentService {
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
-    const startDate = new Date();
-    const expiryDate = calculatePlanExpiry(startDate, durationMonths);
+    const purchaseDate = new Date();
+    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const startDate = subscriptionDates.startDate;
+    const expiryDate = subscriptionDates.endDate;
 
     const orderNumber = `#QB-OFFLINE-${Date.now().toString(36).toUpperCase()}`;
 

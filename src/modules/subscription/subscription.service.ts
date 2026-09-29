@@ -30,6 +30,8 @@ import {
   calculatePlanExpiry,
   calculateSubscriptionStartDate,
   calculateSubscriptionDates,
+  resolveSubscriptionActivationDate,
+  resolveSubscriptionExpiryDate,
   calculateDaysRemaining,
   deriveSubscriptionStatus,
   getExpiryNotificationPayload,
@@ -455,9 +457,15 @@ export class SubscriptionService {
       const sub = p.subscription;
       const durationMonths = billingCycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
       const calculatedDates = calculateSubscriptionDates(purchaseDate, durationMonths);
-      const startDate = sub?.startDate || calculatedDates.startDate;
-      const activationDate = startDate;
-      const expiryDate = sub?.endDate || calculatedDates.endDate;
+      const activationDate = resolveSubscriptionActivationDate(purchaseDate, sub?.startDate);
+      const startDate = activationDate;
+      const expiryDate = resolveSubscriptionExpiryDate(
+        activationDate,
+        durationMonths,
+        sub?.endDate,
+        purchaseDate,
+        sub?.startDate,
+      );
 
       const receiptNo = p.invoiceUrl?.startsWith('REC-')
         ? p.invoiceUrl
@@ -808,8 +816,11 @@ export class SubscriptionService {
     const tax = basePrice * 0.18;
     const total = basePrice + tax;
 
-    const startDate = new Date();
-    const expiryDate = SubscriptionService.calculateExpiryDate(startDate, cycle);
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const purchaseDate = new Date();
+    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const startDate = subscriptionDates.startDate;
+    const expiryDate = subscriptionDates.endDate;
     const orderNumber = `#QB-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const transactionId = `TXN-${Date.now().toString().substring(3)}`;
 
@@ -2812,8 +2823,10 @@ export class SubscriptionService {
 
     const cycle = sub.billingCycle || SubscriptionBillingCycle.MONTHLY;
     const durationMonths = sub.duration || (cycle === 'YEARLY' ? 12 : 1);
-    const startDate = new Date();
-    const endDate = calculatePlanExpiry(startDate, durationMonths);
+    const purchaseDate = payment.createdAt || new Date();
+    const subscriptionDates = calculateSubscriptionDates(purchaseDate, durationMonths);
+    const startDate = subscriptionDates.startDate;
+    const endDate = subscriptionDates.endDate;
 
     const fullBaseAmount = cycle === 'YEARLY' ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
     const fullGstAmount = Math.round(fullBaseAmount * 0.18);

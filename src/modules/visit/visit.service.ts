@@ -6,6 +6,7 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { NotificationService } from '../notification/notification.service';
 import { generateCalendarAppointmentPdfBuffer } from '../../common/utils/calendar-pdf.util';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class VisitService {
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
@@ -555,7 +557,8 @@ export class VisitService {
   async update(customerId: number | string | undefined, id: number | string, dto: UpdateVisitDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const existingVisit = await this.findOne(numCustomerId, numId);
+    const wasCompleted = existingVisit?.status === VisitStatus.COMPLETED;
 
     const data: any = {};
     if (dto.employeeId) data.employeeId = Number(dto.employeeId);
@@ -614,6 +617,40 @@ export class VisitService {
 
     const isCompleted = updated.status === VisitStatus.COMPLETED;
     const finalVisitedByName = isCompleted ? actualEmpName : null;
+
+    if (
+      isCompleted &&
+      !wasCompleted &&
+      this.notificationService &&
+      numCustomerId &&
+      numCustomerId > 0
+    ) {
+      const leadId = (updated as any).leadId ?? existingVisit?.leadId;
+      let leadName: string | null = null;
+      if (leadId) {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: Number(leadId), deletedAt: null },
+          select: { firstName: true, lastName: true, companyName: true, title: true },
+        });
+        if (lead) {
+          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+          leadName = fullName || lead.companyName || lead.title || null;
+        }
+      }
+      try {
+        await this.notificationService.sendVisitCompletedNotification({
+          customerId: numCustomerId,
+          visitId: numId,
+          leadId: leadId ? Number(leadId) : null,
+          visitorName: finalVisitedByName || updated.employee
+            ? `${updated.employee?.firstName || ''} ${updated.employee?.lastName || ''}`.trim()
+            : null,
+          leadName,
+        });
+      } catch (notifErr: any) {
+        this.logger.warn(`[FCM] Visit completed push skipped: ${notifErr?.message}`);
+      }
+    }
 
     return {
       ...updated,

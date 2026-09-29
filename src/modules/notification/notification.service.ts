@@ -1378,6 +1378,199 @@ export class NotificationService {
   }
 
   /**
+   * Notify the BPO assigned to a lead when a field visit is completed.
+   */
+  async sendVisitCompletedNotification(params: {
+    customerId: number;
+    visitId: number;
+    leadId?: number | null;
+    visitorName?: string | null;
+    leadName?: string | null;
+  }) {
+    const { customerId, visitId, leadId, visitorName, leadName } = params;
+    try {
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId,
+          type: 'VISIT_COMPLETED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.visitId) === String(visitId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      let targetUserId: number | null = null;
+      let resolvedLeadName = (leadName || '').trim();
+
+      if (leadId) {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: Number(leadId), customerId, deletedAt: null },
+          select: {
+            id: true,
+            assignedToId: true,
+            createdById: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+            title: true,
+          },
+        });
+        if (lead) {
+          targetUserId = lead.assignedToId ? Number(lead.assignedToId) : null;
+          if (!targetUserId && lead.createdById) {
+            targetUserId = Number(lead.createdById);
+          }
+          if (!resolvedLeadName) {
+            const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+            resolvedLeadName = fullName || lead.companyName || lead.title || `Lead #${lead.id}`;
+          }
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(
+          `[FCM] Visit completed notification skipped — no BPO user for visitId=${visitId}, leadId=${leadId ?? 'none'}`,
+        );
+        return null;
+      }
+
+      const visitorLabel = (visitorName || '').trim() || 'Visitor';
+      const title = 'Visit Completed';
+      const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+        customerId,
+        title,
+        body,
+        type: 'VISIT_COMPLETED',
+        data: {
+          type: 'VISIT_COMPLETED',
+          visitId: String(visitId),
+          leadId: leadId ? String(leadId) : '',
+          leadName: resolvedLeadName,
+          visitorName: visitorLabel,
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(`[FCM] Visit completed notification failed: ${err?.message}`);
+      return null;
+    }
+  }
+
+  private async resolveBpoUserIdForCustomer(customerId: number): Promise<number | null> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: {
+        assignedEmployeeId: true,
+        assignedEmployeeRel: { select: { userId: true } },
+        originLead: {
+          select: { assignedToId: true, createdById: true },
+        },
+      },
+    });
+    if (!customer) {
+      return null;
+    }
+
+    const fromLead = customer.originLead?.assignedToId
+      ? Number(customer.originLead.assignedToId)
+      : null;
+    if (fromLead) {
+      return fromLead;
+    }
+    if (customer.assignedEmployeeRel?.userId) {
+      return Number(customer.assignedEmployeeRel.userId);
+    }
+    if (customer.originLead?.createdById) {
+      return Number(customer.originLead.createdById);
+    }
+    return null;
+  }
+
+  /**
+   * Notify the relevant BPO when a customer successfully purchases a plan.
+   */
+  async sendPlanPurchaseBpoNotification(params: {
+    customerId: number;
+    subscriptionId: number;
+    planId: number;
+    planName: string;
+    paymentId?: string | number;
+    purchaseAmount?: number;
+  }) {
+    const { customerId, subscriptionId, planId, planName, paymentId, purchaseAmount } = params;
+    try {
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const recent = await this.prisma.notification.findMany({
+        where: {
+          customerId,
+          type: 'PLAN_PURCHASE_BPO',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+      const isDuplicate = recent.some((n) => {
+        const data = (n.data as any) || {};
+        if (paymentId && data.paymentId && String(data.paymentId) === String(paymentId)) {
+          return true;
+        }
+        return (
+          String(data.subscriptionId) === String(subscriptionId) &&
+          String(data.planId) === String(planId)
+        );
+      });
+      if (isDuplicate) {
+        return { skippedDuplicate: true };
+      }
+
+      const targetUserId = await this.resolveBpoUserIdForCustomer(customerId);
+      if (!targetUserId) {
+        this.logger.warn(
+          `[FCM] Plan purchase BPO notification skipped — no assigned BPO for customerId=${customerId}`,
+        );
+        return null;
+      }
+
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { name: true, companyName: true },
+      });
+      const customerLabel = customer?.companyName || customer?.name || `Customer #${customerId}`;
+      const title = 'Plan Purchased';
+      const amountSuffix =
+        purchaseAmount != null && purchaseAmount > 0 ? ` (₹${Math.round(purchaseAmount)})` : '';
+      const body = `${customerLabel} purchased ${planName}${amountSuffix}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+        customerId,
+        title,
+        body,
+        type: 'PLAN_PURCHASE_BPO',
+        data: {
+          type: 'PLAN_PURCHASE_BPO',
+          customerId: String(customerId),
+          subscriptionId: String(subscriptionId),
+          planId: String(planId),
+          planName,
+          paymentId: paymentId ? String(paymentId) : '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(`[FCM] Plan purchase BPO notification failed: ${err?.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Send Plan Purchase Success Notification
    * Triggers after payment verification succeeds and subscription is activated (ACTIVE).
    * Creates in-app DB notification and dispatches FCM push to all valid customer devices.
@@ -1457,8 +1650,8 @@ export class NotificationService {
         };
       }
 
-      const title = 'Plan Activated Successfully';
-      const body = `Your ${planName} has been activated successfully.`;
+      const title = 'Plan Purchase Successful';
+      const body = `Your ${planName} has been purchased successfully.`;
       const payloadData: Record<string, string> = {
         type: 'PLAN_PURCHASE_SUCCESS',
         subscriptionId: String(subscriptionId),
@@ -1633,6 +1826,16 @@ export class NotificationService {
         },
       }).catch((adminErr) =>
         this.logger.warn(`Failed notifying admins of plan purchase: ${adminErr?.message}`),
+      );
+
+      await this.sendPlanPurchaseBpoNotification({
+        customerId,
+        subscriptionId,
+        planId,
+        planName,
+        paymentId,
+      }).catch((bpoErr) =>
+        this.logger.warn(`Failed notifying BPO of plan purchase: ${bpoErr?.message}`),
       );
 
       return {

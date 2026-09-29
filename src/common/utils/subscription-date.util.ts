@@ -23,12 +23,59 @@
  *   Purchase: 30 Dec 2026 -> Start: 1 Jan 2027
  *   Purchase: 31 Dec 2026 -> Start: 2 Jan 2027
  */
+export function utcCalendarDateKey(date: Date | string): string {
+  const d = new Date(date);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
 export function calculateSubscriptionStartDate(purchaseDate: Date | string = new Date()): Date {
   const purchase = new Date(purchaseDate);
   const y = purchase.getUTCFullYear();
   const m = purchase.getUTCMonth();
   const d = purchase.getUTCDate();
   return new Date(Date.UTC(y, m, d + 2, 0, 0, 0, 0));
+}
+
+/**
+ * Activation date for display/persistence:
+ * - Default: purchase + 2 calendar days (business rule)
+ * - If stored start is on a different calendar day than purchase, treat as explicit scheduled activation
+ */
+export function resolveSubscriptionActivationDate(
+  purchaseDate: Date | string,
+  storedStartDate?: Date | string | null,
+): Date {
+  const calculated = calculateSubscriptionStartDate(purchaseDate);
+  if (!storedStartDate) {
+    return calculated;
+  }
+  const stored = new Date(storedStartDate);
+  if (utcCalendarDateKey(stored) !== utcCalendarDateKey(purchaseDate)) {
+    return stored;
+  }
+  return calculated;
+}
+
+export function resolveSubscriptionExpiryDate(
+  activationDate: Date | string,
+  durationMonths = 1,
+  storedEndDate?: Date | string | null,
+  purchaseDate?: Date | string | null,
+  storedStartDate?: Date | string | null,
+): Date {
+  const activation = new Date(activationDate);
+  const calculated = calculatePlanExpiry(activation, durationMonths);
+  if (!storedEndDate) {
+    return calculated;
+  }
+  if (
+    purchaseDate &&
+    storedStartDate &&
+    utcCalendarDateKey(storedStartDate) === utcCalendarDateKey(purchaseDate)
+  ) {
+    return calculated;
+  }
+  return new Date(storedEndDate);
 }
 
 export function calculatePlanExpiry(startDate: Date | string, durationMonths = 1): Date {
