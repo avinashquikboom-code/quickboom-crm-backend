@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
   ForbiddenException,
@@ -27,6 +28,7 @@ import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { CustomerMobilePermissionService } from './customer-mobile-permission.service';
 
 /** Numeric PK only — prevents /customer/:id from capturing paths like /customer/influencers */
 const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
@@ -40,6 +42,7 @@ export class CustomerController {
     private readonly customerService: CustomerService,
     private readonly workService: WorkService,
     private readonly aiCreditService: AiCreditService,
+    private readonly customerMobilePermissionService: CustomerMobilePermissionService,
   ) {}
 
   @Get(['calendar', '/customer/calendar'])
@@ -93,6 +96,39 @@ export class CustomerController {
   @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
   async getProfile(@CurrentUser() user: any) {
     return this.customerService.getMe(user);
+  }
+
+  @Get(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
+  @ApiOperation({ summary: 'Customer role defaults plus individual overrides' })
+  async getMobilePermissions(@Param('id') id: string) {
+    return this.customerMobilePermissionService.getPermissions(Number(id));
+  }
+
+  @Put(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
+  @ApiOperation({ summary: 'Save customer permission overrides (INHERIT, ALLOW, DENY)' })
+  async updateMobilePermissions(
+    @Param('id') id: string,
+    @Body() dto: { overrides?: Array<{ moduleKey: string; override: string }> },
+    @CurrentUser() user: any,
+  ) {
+    return this.customerMobilePermissionService.updatePermissions(
+      Number(id),
+      dto?.overrides || [],
+      user?.customerId,
+      isUserSuperAdmin(user),
+    );
+  }
+
+  @Patch(`${NUMERIC_CUSTOMER_ID}/mobile-role`)
+  @ApiOperation({ summary: 'Assign a customer role to a customer' })
+  async assignMobileRole(
+    @Param('id') id: string,
+    @Body() dto: { mobileRoleId?: number | null },
+  ) {
+    return this.customerMobilePermissionService.assignRole(
+      Number(id),
+      dto?.mobileRoleId ? Number(dto.mobileRoleId) : null,
+    );
   }
 
   @Get('metrics')

@@ -76,6 +76,9 @@ model Customer {
   shifts                   Shift[]
   shiftGuidances           ShiftGuidance[]
   tickets                  SupportTicket[]
+  mobileRoleId             Int?
+  mobileRole               Designation?              @relation("CustomerMobileRole", fields: [mobileRoleId], references: [id], onDelete: SetNull)
+  moduleOverrides          CustomerModuleOverride[]
   tasks                    Task[]
   teams                    Team[]
   users                    User[]
@@ -119,6 +122,7 @@ model Customer {
   @@index([assignedEmployeeId])
   @@index([createdByEmployeeId])
   @@index([assignedTeamId])
+  @@index([mobileRoleId])
   @@map("customers")
 }
 
@@ -306,6 +310,7 @@ model Permission {
   updatedAt       DateTime         @updatedAt
   rolePermissions RolePermission[]
   employeeOverrides EmployeeModuleOverride[]
+  customerOverrides CustomerModuleOverride[]
 
   @@unique([module, action])
 }
@@ -1130,11 +1135,13 @@ model Designation {
   commissionEnabled Boolean @default(false)
   commissionType   CommissionType @default(PERCENTAGE)
   commissionRate   Float          @default(0.0)
+  audience     DesignationAudience @default(EMPLOYEE)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department   Department? @relation(fields: [departmentId], references: [id])
   employees    Employee[]
+  mobileCustomers Customer[] @relation("CustomerMobileRole")
   tasks        Task[]
   role         Role?
 
@@ -2673,6 +2680,11 @@ model WorkAccessRequest {
   @@map("work_access_requests")
 }
 
+enum DesignationAudience {
+  EMPLOYEE
+  CUSTOMER
+}
+
 enum AccessOverrideType {
   DEFAULT
   INHERIT
@@ -2698,6 +2710,23 @@ model EmployeeModuleOverride {
   @@index([employeeId])
   @@index([permissionId])
   @@map("employee_module_overrides")
+}
+
+model CustomerModuleOverride {
+  id                Int                @id @default(autoincrement())
+  subjectCustomerId Int
+  moduleKey         String
+  override          AccessOverrideType @default(INHERIT)
+  permissionId      Int?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  subjectCustomer   Customer           @relation(fields: [subjectCustomerId], references: [id], onDelete: Cascade)
+  permission        Permission?        @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([subjectCustomerId, moduleKey])
+  @@index([subjectCustomerId])
+  @@index([permissionId])
+  @@map("customer_module_overrides")
 }
 
 model RoleLeadLimit {

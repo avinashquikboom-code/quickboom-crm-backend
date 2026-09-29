@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateDesignationDto {
   @ApiProperty({ example: 'Software Engineer' })
@@ -36,6 +36,11 @@ export class CreateDesignationDto {
   @IsBoolean()
   @IsOptional()
   crmMobileAccess?: boolean;
+
+  @ApiPropertyOptional({ enum: ['EMPLOYEE', 'CUSTOMER'], default: 'EMPLOYEE' })
+  @IsOptional()
+  @IsIn(['EMPLOYEE', 'CUSTOMER'])
+  audience?: 'EMPLOYEE' | 'CUSTOMER';
 }
 
 export class UpdateDesignationDto {

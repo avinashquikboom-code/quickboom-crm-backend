@@ -1477,6 +1477,7 @@ export class CustomerService {
       where,
       orderBy,
       include: {
+        mobileRole: { select: { id: true, name: true, audience: true } },
         assignedTeam: {
           select: {
             id: true,

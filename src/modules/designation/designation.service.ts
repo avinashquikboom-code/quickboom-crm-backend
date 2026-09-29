@@ -235,6 +235,7 @@ export class DesignationService {
         level: dto.level !== undefined ? dto.level : 1,
         isActive: dto.isActive !== undefined ? dto.isActive : true,
         crmMobileAccess,
+        audience: dto.audience === 'CUSTOMER' ? 'CUSTOMER' : 'EMPLOYEE',
       },
       include: {
         department: {
@@ -253,6 +254,7 @@ export class DesignationService {
         name: created.name,
         customerId: numCustomerId,
         description: created.description,
+        audience: dto.audience === 'CUSTOMER' ? 'CUSTOMER' : 'EMPLOYEE',
       });
     } catch (roleErr) {
       this.logger.warn(`[DESIGNATION_CREATE] Could not auto-link Role for Designation #${created.id}: ${roleErr}`);
@@ -480,7 +482,7 @@ export class DesignationService {
   /**
    * Ensure a Role entity exists and is linked 1:1 with this Designation.
    */
-  async ensureRoleForDesignation(designation: { id: number; name: string; customerId: number; description?: string | null }) {
+  async ensureRoleForDesignation(designation: { id: number; name: string; customerId: number; description?: string | null; audience?: string | null }) {
     let role = await this.prisma.role.findUnique({
       where: { designationId: designation.id },
       include: {
@@ -540,6 +542,8 @@ export class DesignationService {
       defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
     } else if (upperName.includes('PHOTO')) {
       defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
+    } else if (designation.audience === 'CUSTOMER') {
+      defaultKeys = ROLE_PERMISSION_DEFAULTS.CUSTOMER || [];
     } else {
       defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
     }
@@ -594,7 +598,13 @@ export class DesignationService {
           description: 'Customer mobile app access',
           isActive: true,
           crmMobileAccess: false,
+          audience: 'CUSTOMER',
         },
+      });
+    } else if (designation.audience !== 'CUSTOMER') {
+      designation = await this.prisma.designation.update({
+        where: { id: designation.id },
+        data: { audience: 'CUSTOMER' },
       });
     }
 
@@ -650,7 +660,7 @@ export class DesignationService {
           },
         },
         _count: {
-          select: { employees: true },
+          select: { employees: true, mobileCustomers: true },
         },
       },
       orderBy: [{ level: 'asc' }, { name: 'asc' }],
@@ -670,11 +680,12 @@ export class DesignationService {
         designationId: d.id,
         name: d.name,
         code: d.code,
+        audience: d.audience || 'EMPLOYEE',
         departmentName: d.department?.name || 'General',
         department: d.department,
         description: d.description || `${d.name} role`,
         permissionsCount: perms.length,
-        usersCount: d._count.employees,
+        usersCount: d.audience === 'CUSTOMER' ? d._count.mobileCustomers : d._count.employees,
         isSystem: false,
         isActive: d.isActive,
         crmMobileAccess: Boolean(d.crmMobileAccess),
