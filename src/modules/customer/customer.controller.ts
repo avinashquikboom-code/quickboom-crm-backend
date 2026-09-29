@@ -26,6 +26,9 @@ import { AiCreditService } from '../ai-studio/ai-credit.service';
 import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 
+/** Numeric PK only — prevents /customer/:id from capturing paths like /customer/influencers */
+const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
+
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -182,49 +185,49 @@ export class CustomerController {
     }, user);
   }
 
-  @Get(':id')
+  @Get(NUMERIC_CUSTOMER_ID)
   @ApiOperation({ summary: 'Get single customer details' })
   async findOne(@Param('id') id: string, @CurrentUser() user: any) {
     return this.customerService.findOne(id, user);
   }
 
-  @Get(':id/activities')
+  @Get(`${NUMERIC_CUSTOMER_ID}/activities`)
   @ApiOperation({ summary: 'Get customer activities and audit history' })
   async getCustomerActivities(@Param('id') id: string) {
     return this.customerService.getCustomerActivities(id);
   }
 
-  @Get(':id/tasks')
+  @Get(`${NUMERIC_CUSTOMER_ID}/tasks`)
   @ApiOperation({ summary: 'Get customer tasks' })
   async getCustomerTasks(@Param('id') id: string) {
     return this.customerService.getCustomerTasks(id);
   }
 
-  @Get(':id/visits')
+  @Get(`${NUMERIC_CUSTOMER_ID}/visits`)
   @ApiOperation({ summary: 'Get customer visits' })
   async getCustomerVisits(@Param('id') id: string) {
     return this.customerService.getCustomerVisits(id);
   }
 
-  @Get(':id/deals')
+  @Get(`${NUMERIC_CUSTOMER_ID}/deals`)
   @ApiOperation({ summary: 'Get customer deals' })
   async getCustomerDeals(@Param('id') id: string) {
     return this.customerService.getCustomerDeals(id);
   }
 
-  @Get(':id/plan')
+  @Get(`${NUMERIC_CUSTOMER_ID}/plan`)
   @ApiOperation({ summary: 'Get current plan and customization details for customer' })
   async getCustomerPlan(@Param('id') id: string) {
     return this.customerService.getCustomerPlan(id);
   }
 
-  @Get(':id/plan/history')
+  @Get(`${NUMERIC_CUSTOMER_ID}/plan/history`)
   @ApiOperation({ summary: 'Get customer subscription assignment history' })
   async getCustomerPlanHistory(@Param('id') id: string) {
     return this.customerService.getCustomerPlanHistory(id);
   }
 
-  @Post(':id/customize-plan')
+  @Post(`${NUMERIC_CUSTOMER_ID}/customize-plan`)
   @ApiOperation({ summary: 'Customize and assign subscription plan for customer' })
   async customizePlan(@Param('id') id: string, @Body() dto: any) {
     return this.customerService.customizeCustomerPlan(id, dto);
@@ -236,19 +239,19 @@ export class CustomerController {
     return this.customerService.create(dto, user);
   }
 
-  @Patch(':id')
+  @Patch(NUMERIC_CUSTOMER_ID)
   @ApiOperation({ summary: 'Update customer' })
   async update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
     return this.customerService.update(id, dto);
   }
 
-  @Get([':id/assign-team', ':id/team'])
+  @Get([`${NUMERIC_CUSTOMER_ID}/assign-team`, `${NUMERIC_CUSTOMER_ID}/team`])
   @ApiOperation({ summary: 'Get assigned team for a customer' })
   async getAssignedTeam(@Param('id') id: string, @CurrentUser() user: any) {
     return this.customerService.getAssignedTeam(id, user);
   }
 
-  @Patch([':id/assign-team', ':id/team'])
+  @Patch([`${NUMERIC_CUSTOMER_ID}/assign-team`, `${NUMERIC_CUSTOMER_ID}/team`])
   @ApiOperation({ summary: 'Assign or reassign customer to an operating team' })
   async assignTeam(
     @Param('id') id: string,
@@ -259,7 +262,7 @@ export class CustomerController {
     return this.customerService.assignTeam(id, targetTeamId, user);
   }
 
-  @Delete(':id')
+  @Delete(NUMERIC_CUSTOMER_ID)
   @ApiOperation({ summary: 'Permanently delete customer and all customer-owned data' })
   async remove(
     @Param('id') id: string,
@@ -268,7 +271,7 @@ export class CustomerController {
     return this.customerService.remove(id, user);
   }
 
-  @Get([':id/reset-summary', 'admin/customers/:id/reset-summary'])
+  @Get([`${NUMERIC_CUSTOMER_ID}/reset-summary`, `admin/customers/${NUMERIC_CUSTOMER_ID}/reset-summary`])
   @ApiOperation({ summary: 'Get summary of customer data that would be affected by reset' })
   async getResetSummary(
     @Param('id') id: string,
@@ -277,7 +280,7 @@ export class CustomerController {
     return this.customerService.getResetSummary(id, user);
   }
 
-  @Post([':id/reset-data', 'admin/customers/:id/reset-data'])
+  @Post([`${NUMERIC_CUSTOMER_ID}/reset-data`, `admin/customers/${NUMERIC_CUSTOMER_ID}/reset-data`])
   @ApiOperation({ summary: 'Reset all customer transactional data while preserving customer account & master records' })
   async resetCustomerData(
     @Param('id') id: string,
@@ -287,7 +290,7 @@ export class CustomerController {
     return this.customerService.resetCustomerData(id, user, dto);
   }
 
-  @Delete([':id/data', 'admin/customers/:id/data'])
+  @Delete([`${NUMERIC_CUSTOMER_ID}/data`, `admin/customers/${NUMERIC_CUSTOMER_ID}/data`])
   @ApiOperation({ summary: 'Reset all customer transactional data (DELETE alias)' })
   async deleteCustomerData(
     @Param('id') id: string,
@@ -297,7 +300,7 @@ export class CustomerController {
     return this.customerService.resetCustomerData(id, user, dto);
   }
 
-  @Get([':id/ai-credits', 'admin/customers/:id/ai-credits'])
+  @Get([`${NUMERIC_CUSTOMER_ID}/ai-credits`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits`])
   @ApiOperation({ summary: 'Get customer AI credits wallet and ledger (Admin)' })
   async getAiCredits(
     @Param('id') id: string,
@@ -310,7 +313,7 @@ export class CustomerController {
     return { statusCode: 200, success: true, data };
   }
 
-  @Post([':id/ai-credits/add', 'admin/customers/:id/ai-credits/add'])
+  @Post([`${NUMERIC_CUSTOMER_ID}/ai-credits/add`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits/add`])
   @ApiOperation({ summary: 'Add AI credits to customer wallet (Admin)' })
   async addAiCredits(
     @Param('id') id: string,
@@ -324,7 +327,7 @@ export class CustomerController {
     return { statusCode: 200, success: true, message: data.message, data };
   }
 
-  @Post([':id/ai-credits/reduce', 'admin/customers/:id/ai-credits/reduce'])
+  @Post([`${NUMERIC_CUSTOMER_ID}/ai-credits/reduce`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits/reduce`])
   @ApiOperation({ summary: 'Reduce AI credits from customer wallet (Admin)' })
   async reduceAiCredits(
     @Param('id') id: string,
