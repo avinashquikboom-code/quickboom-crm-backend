@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AccessOverrideType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CUSTOMER_APP_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
@@ -113,16 +113,11 @@ export class CustomerMobilePermissionService {
   async updatePermissions(
     customerId: number,
     overrides: Array<{ moduleKey: string; override: string }>,
-    actorCustomerId?: number,
-    isSuperAdmin?: boolean,
   ) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
     });
     if (!customer) throw new NotFoundException(`Customer #${customerId} not found`);
-    if (!isSuperAdmin && actorCustomerId && customer.id !== Number(actorCustomerId) && customer.id !== customerId) {
-      throw new ForbiddenException('Access denied to another customer');
-    }
 
     for (const item of overrides || []) {
       const modKey = String(item.moduleKey || '').trim();

@@ -38,6 +38,12 @@ const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
 @UseGuards(JwtAuthGuard)
 @Controller(['customers', 'customer'])
 export class CustomerController {
+  private assertCanManageCustomerAccess(user: any) {
+    if (!isUserSuperAdmin(user) && !isUserAdminOrStaff(user)) {
+      throw new ForbiddenException('Only admins can manage customer permissions');
+    }
+  }
+
   constructor(
     private readonly customerService: CustomerService,
     private readonly workService: WorkService,
@@ -100,7 +106,8 @@ export class CustomerController {
 
   @Get(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
   @ApiOperation({ summary: 'Customer role defaults plus individual overrides' })
-  async getMobilePermissions(@Param('id') id: string) {
+  async getMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
+    this.assertCanManageCustomerAccess(user);
     return this.customerMobilePermissionService.getPermissions(Number(id));
   }
 
@@ -111,11 +118,10 @@ export class CustomerController {
     @Body() dto: { overrides?: Array<{ moduleKey: string; override: string }> },
     @CurrentUser() user: any,
   ) {
+    this.assertCanManageCustomerAccess(user);
     return this.customerMobilePermissionService.updatePermissions(
       Number(id),
       dto?.overrides || [],
-      user?.customerId,
-      isUserSuperAdmin(user),
     );
   }
 
@@ -124,7 +130,9 @@ export class CustomerController {
   async assignMobileRole(
     @Param('id') id: string,
     @Body() dto: { mobileRoleId?: number | null },
+    @CurrentUser() user: any,
   ) {
+    this.assertCanManageCustomerAccess(user);
     return this.customerMobilePermissionService.assignRole(
       Number(id),
       dto?.mobileRoleId ? Number(dto.mobileRoleId) : null,
