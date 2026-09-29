@@ -65,6 +65,8 @@ import { AppController } from './app.controller';
     IntegrationSettingsModule,
     EmailModule,
     AuthModule,
+    // Register before CustomerModule so /customer/influencers is not captured by GET /customer/:id
+    InfluencerModule,
     CustomerModule,
     SubscriptionModule,
     PaymentModule,
@@ -102,7 +104,6 @@ import { AppController } from './app.controller';
     MarketingModule,
     SocialMediaHandlerModule,
     MarketplaceModule,
-    InfluencerModule,
     AiStudioModule,
     SocialPublishingModule,
     MasterModule,
