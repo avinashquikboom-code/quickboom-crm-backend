@@ -4,6 +4,7 @@ import {
   calculateSubscriptionDates,
   calculateDaysRemaining,
   deriveSubscriptionStatus,
+  resolvePlanSubscriptionDates,
 } from './subscription-date.util';
 
 describe('Subscription Date Calculation & Edge Cases', () => {
@@ -82,6 +83,28 @@ describe('Subscription Date Calculation & Edge Cases', () => {
       expect(start.getUTCDate()).toBe(2);
       expect(start.getUTCMonth()).toBe(0); // January
       expect(start.getUTCFullYear()).toBe(2027);
+    });
+  });
+
+  describe('resolvePlanSubscriptionDates (calendar vs default +2)', () => {
+    it('purchase 1 Oct with activation same day -> start 3 Oct', () => {
+      const purchase = new Date('2026-10-01T14:00:00.000Z');
+      const { startDate } = resolvePlanSubscriptionDates(purchase, 1, '2026-10-01');
+      expect(startDate.getUTCDate()).toBe(3);
+      expect(startDate.getUTCMonth()).toBe(9);
+    });
+
+    it('purchase 1 Oct with future calendar 5 Oct -> start 5 Oct', () => {
+      const purchase = new Date('2026-10-01T14:00:00.000Z');
+      const { startDate } = resolvePlanSubscriptionDates(purchase, 1, '2026-10-05');
+      expect(startDate.getUTCDate()).toBe(5);
+      expect(startDate.getUTCMonth()).toBe(9);
+    });
+
+    it('no activation in request -> start 3 Oct for purchase 1 Oct', () => {
+      const purchase = new Date('2026-10-01T14:00:00.000Z');
+      const { startDate } = resolvePlanSubscriptionDates(purchase, 1, null);
+      expect(startDate.getUTCDate()).toBe(3);
     });
   });
 

@@ -68,7 +68,18 @@ export function resolvePlanSubscriptionDates(
 ): { purchaseDate: Date; startDate: Date; endDate: Date } {
   const purchase = new Date(purchaseDate);
   const parsedActivation = parseCalendarDateInput(requestedActivationDate);
-  const startDate = parsedActivation ?? calculateSubscriptionStartDate(purchase);
+  let startDate: Date;
+  if (parsedActivation) {
+    const purchaseDay = utcCalendarDateKey(purchase);
+    const activationDay = utcCalendarDateKey(parsedActivation);
+    // Home calendar defaults to "today"; same-day selection still means purchase + 2 calendar days.
+    startDate =
+      activationDay > purchaseDay
+        ? parsedActivation
+        : calculateSubscriptionStartDate(purchase);
+  } else {
+    startDate = calculateSubscriptionStartDate(purchase);
+  }
   const endDate = calculatePlanExpiry(startDate, durationMonths);
   return { purchaseDate: purchase, startDate, endDate };
 }
