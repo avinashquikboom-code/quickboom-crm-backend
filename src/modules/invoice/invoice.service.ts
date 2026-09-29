@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, WorkStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
 import * as fs from 'fs';
@@ -24,6 +24,49 @@ export class InvoiceService {
     if (!notes) return null;
     const match = notes.match(/Plan activation:\s*(\d{4}-\d{2}-\d{2})/i);
     return match ? parseCalendarDateInput(match[1]) : null;
+  }
+
+  private toUtcCalendarDate(date: Date): Date {
+    const d = new Date(date);
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+  }
+
+  /**
+   * First applicable calendar/service date for a purchased plan (customer Work or monthly schedule).
+   */
+  private async resolveFirstCalendarScheduleStartDate(
+    customerId: number,
+    subscriptionId?: number | null,
+  ): Promise<Date | null> {
+    if (!subscriptionId) return null;
+
+    const firstWork = await this.prisma.work.findFirst({
+      where: {
+        customerId,
+        subscriptionId,
+        status: { not: WorkStatus.CANCELLED },
+      },
+      orderBy: { scheduledDate: 'asc' },
+      select: { scheduledDate: true },
+    });
+    if (firstWork?.scheduledDate) {
+      return this.toUtcCalendarDate(firstWork.scheduledDate);
+    }
+
+    const firstMonthly = await this.prisma.monthlySchedule.findFirst({
+      where: {
+        customerId,
+        subscriptionId,
+        deletedAt: null,
+      },
+      orderBy: { startDate: 'asc' },
+      select: { startDate: true },
+    });
+    if (firstMonthly?.startDate) {
+      return this.toUtcCalendarDate(firstMonthly.startDate);
+    }
+
+    return null;
   }
 
   /** Authoritative plan start/end for tax invoice (subscription), separate from issueDate (purchase). */
@@ -54,22 +97,33 @@ export class InvoiceService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (payment) {
+    if (payment?.subscription) {
       const sub = payment.subscription;
-      const durationMonths = sub?.billingCycle === 'YEARLY' || payment.billingCycle === 'YEARLY' ? 12 : 1;
-      const storedStart = sub?.startDate;
-      const requestedActivation =
-        storedStart &&
-        utcCalendarDateKey(storedStart) !== utcCalendarDateKey(payment.createdAt)
-          ? utcCalendarDateKey(storedStart)
-          : null;
-      const resolved = resolvePlanSubscriptionDates(
-        payment.createdAt,
-        durationMonths,
-        requestedActivation,
-      );
-      activationDate = resolved.startDate;
-      expiryDate = sub?.endDate ? new Date(sub.endDate) : resolved.endDate;
+      const durationMonths = sub.billingCycle === 'YEARLY' || payment.billingCycle === 'YEARLY' ? 12 : 1;
+
+      const calendarStart = await this.resolveFirstCalendarScheduleStartDate(inv.customerId, sub.id);
+      if (calendarStart) {
+        activationDate = calendarStart;
+      } else {
+        const storedStart = sub.startDate;
+        const requestedActivation =
+          storedStart &&
+          utcCalendarDateKey(storedStart) !== utcCalendarDateKey(payment.createdAt)
+            ? utcCalendarDateKey(storedStart)
+            : null;
+        const resolved = resolvePlanSubscriptionDates(
+          payment.createdAt,
+          durationMonths,
+          requestedActivation,
+        );
+        activationDate = resolved.startDate;
+      }
+
+      expiryDate = sub.endDate
+        ? new Date(sub.endDate)
+        : calculatePlanExpiry(activationDate!, durationMonths);
+    } else if (activationDate) {
+      expiryDate = calculatePlanExpiry(activationDate, 1);
     }
 
     if (!activationDate) {
