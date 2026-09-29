@@ -11,7 +11,7 @@ import { formatInrCurrency } from '../receipt/receipt.service';
 import {
   parseCalendarDateInput,
   resolveSubscriptionActivationDate,
-  resolvePlanSubscriptionDates,
+  resolveSubscriptionExpiryDate,
   calculatePlanExpiry,
   utcCalendarDateKey,
 } from '../../common/utils/subscription-date.util';
@@ -101,27 +101,21 @@ export class InvoiceService {
       const sub = payment.subscription;
       const durationMonths = sub.billingCycle === 'YEARLY' || payment.billingCycle === 'YEARLY' ? 12 : 1;
 
-      const calendarStart = await this.resolveFirstCalendarScheduleStartDate(inv.customerId, sub.id);
-      if (calendarStart) {
-        activationDate = calendarStart;
+      // Plan start = stored subscription activation (calendar), else earliest scheduled service, else notes/default.
+      if (sub.startDate) {
+        activationDate = this.toUtcCalendarDate(sub.startDate);
       } else {
-        const storedStart = sub.startDate;
-        const requestedActivation =
-          storedStart &&
-          utcCalendarDateKey(storedStart) !== utcCalendarDateKey(payment.createdAt)
-            ? utcCalendarDateKey(storedStart)
-            : null;
-        const resolved = resolvePlanSubscriptionDates(
-          payment.createdAt,
-          durationMonths,
-          requestedActivation,
-        );
-        activationDate = resolved.startDate;
+        const calendarStart = await this.resolveFirstCalendarScheduleStartDate(inv.customerId, sub.id);
+        if (calendarStart) {
+          activationDate = calendarStart;
+        }
       }
 
-      expiryDate = sub.endDate
-        ? new Date(sub.endDate)
-        : calculatePlanExpiry(activationDate!, durationMonths);
+      if (!activationDate) {
+        activationDate = resolveSubscriptionActivationDate(payment.createdAt, null);
+      }
+
+      expiryDate = resolveSubscriptionExpiryDate(activationDate, durationMonths, sub.endDate);
     } else if (activationDate) {
       expiryDate = calculatePlanExpiry(activationDate, 1);
     }
