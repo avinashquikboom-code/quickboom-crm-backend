@@ -25,6 +25,8 @@ import { RoleType } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Subscriptions & Plans')
 @Controller()
@@ -401,7 +403,8 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_ORDERS', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get purchase and order history for authenticated customer' })
   async getCustomerOrders(

@@ -6,6 +6,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
+import {
+  applyPermissionItems,
+  resolveCustomerAppPermissionItems,
+} from '../../common/utils/customer-app-permissions.util';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -573,6 +577,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     this.logger.log(
       `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
     );
+
+    if (!user.employee) {
+      const customerItems = await resolveCustomerAppPermissionItems(
+        this.prisma,
+        user.customerId,
+      );
+      applyPermissionItems(permissionsMap, customerItems);
+    }
 
     return {
       id: user.id,

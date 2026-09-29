@@ -30,6 +30,8 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TrendingCategory } from '@prisma/client';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Trending Content')
 @ApiBearerAuth()
@@ -172,6 +174,8 @@ export class TrendingController {
   // ── Customer Endpoint ───────────────────────────────────────────────────────
 
   @Get(['customer/trending', 'customer/marketing/trending'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_TRENDING', action: 'VIEW' })
   @ApiOperation({ summary: 'Get active published trending content for customer' })
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
   @ApiQuery({ name: 'platform', type: String, required: false })

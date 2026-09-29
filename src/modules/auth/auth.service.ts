@@ -40,6 +40,10 @@ import {
   toPermissionKey,
   fromPermissionKey,
 } from '../../common/constants/rbac.constants';
+import {
+  applyPermissionItems,
+  resolveCustomerAppPermissionItems,
+} from '../../common/utils/customer-app-permissions.util';
 
 @Injectable()
 export class AuthService {
@@ -2794,6 +2798,14 @@ export class AuthService {
           }
         }
       }
+    }
+
+    if (!user.employee) {
+      const customerItems = await resolveCustomerAppPermissionItems(
+        this.prisma,
+        user.customerId,
+      );
+      applyPermissionItems(permissionsMap, customerItems);
     }
 
     const permissions = Array.from(permissionsMap.values());

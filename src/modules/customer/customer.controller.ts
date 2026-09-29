@@ -25,6 +25,8 @@ import { WorkService } from '../work/work.service';
 import { AiCreditService } from '../ai-studio/ai-credit.service';
 import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
 import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 /** Numeric PK only — prevents /customer/:id from capturing paths like /customer/influencers */
 const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
@@ -80,6 +82,8 @@ export class CustomerController {
   }
 
   @Patch(['me', '/customer/me'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PROFILE', action: 'EDIT' })
   @ApiOperation({ summary: 'Update profile of current authenticated customer' })
   async updateMe(@CurrentUser() user: any, @Body() dto: UpdateCustomerProfileDto) {
     return this.customerService.updateMe(user, dto);

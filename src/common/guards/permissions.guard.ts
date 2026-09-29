@@ -1,7 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY, RequiredPermission } from '../decorators/permissions.decorator';
-import { RoleType } from '@prisma/client';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -34,20 +33,32 @@ export class PermissionsGuard implements CanActivate {
       ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
       : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);
 
-    if (
-      userRoles.some((r: string) =>
-        [
-          'SUPER_ADMIN',
-          'CUSTOMER_ADMIN',
-          'COMPANY_ADMIN',
-          'TENANT_ADMIN',
-          'CUSTOMER',
-          'ADMIN',
-        ].includes(r),
-      )
-    ) {
+    const isPlatformAdmin = userRoles.some((r: string) =>
+      ['SUPER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'ADMIN'].includes(r),
+    );
+    const isCustomerAccount = userRoles.some((r: string) =>
+      ['CUSTOMER', 'CUSTOMER_ADMIN'].includes(r),
+    );
+    const customerScoped = requiredPermissions.filter((p) =>
+      String(p.module || '').toUpperCase().startsWith('CUSTOMER_'),
+    );
+
+    if (isPlatformAdmin) {
       return true;
     }
+
+    // Customer-admin workspace access stays open except customer-app modules.
+    if (isCustomerAccount && customerScoped.length === 0) {
+      return true;
+    }
+
+    // Employee routes are not gated by customer-app permissions.
+    if (!isCustomerAccount && customerScoped.length === requiredPermissions.length) {
+      return true;
+    }
+
+    const permissionsToCheck =
+      isCustomerAccount && customerScoped.length > 0 ? customerScoped : requiredPermissions;
 
     const userPermissions: { module?: string; action?: string }[] = user.permissions || [];
     const checkMatch = (reqPerm: RequiredPermission, userPerm: { module?: string; action?: string }) => {
@@ -84,12 +95,12 @@ export class PermissionsGuard implements CanActivate {
       return modMatches && actMatches;
     };
 
-    const hasPermission = requiredPermissions.every((reqPerm) =>
+    const hasPermission = permissionsToCheck.every((reqPerm) =>
       userPermissions.some((userPerm) => checkMatch(reqPerm, userPerm)),
     );
 
     if (!hasPermission) {
-      const missing = requiredPermissions
+      const missing = permissionsToCheck
         .filter((reqPerm) => !userPermissions.some((userPerm) => checkMatch(reqPerm, userPerm)))
         .map((p) => `${p.module}:${p.action}`)
         .join(', ');

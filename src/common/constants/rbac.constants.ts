@@ -273,9 +273,33 @@ export function fromPermissionKey(key: string): { module: string; action: string
 // DEFAULT ROLE TEMPLATES
 // -------------------------------------------------------------
 
+/**
+ * Customer mobile app modules. Kept separate from STANDARD_PERMISSIONS so
+ * employee/admin default roles are not changed.
+ */
+export const CUSTOMER_APP_PERMISSIONS: StandardPermissionDef[] = [
+  { module: "CUSTOMER_HOME", action: "VIEW", key: "employee.customer_home.view", label: "View Home", category: "SYSTEM", description: "Show the customer home tab" },
+  { module: "CUSTOMER_PLANS", action: "VIEW", key: "employee.customer_plans.view", label: "View Plans", category: "SYSTEM", description: "Show subscription plans" },
+  { module: "CUSTOMER_PLANS", action: "CREATE", key: "employee.customer_plans.create", label: "Purchase Plan", category: "SYSTEM", description: "Start checkout for a subscription plan" },
+  { module: "CUSTOMER_TRENDING", action: "VIEW", key: "employee.customer_trending.view", label: "View Trending", category: "SYSTEM", description: "Show the trending tab" },
+  { module: "CUSTOMER_ORDERS", action: "VIEW", key: "employee.customer_orders.view", label: "View Orders", category: "SYSTEM", description: "Show the customer's own orders" },
+  { module: "CUSTOMER_INVOICES", action: "VIEW", key: "employee.customer_invoices.view", label: "View Invoices", category: "SYSTEM", description: "Show the customer's own invoices" },
+  { module: "CUSTOMER_INVOICES", action: "DOWNLOAD", key: "employee.customer_invoices.download", label: "Download Invoice", category: "SYSTEM", description: "Download invoice or receipt documents" },
+  { module: "CUSTOMER_PROFILE", action: "VIEW", key: "employee.customer_profile.view", label: "View Profile", category: "SYSTEM", description: "Show the account tab" },
+  { module: "CUSTOMER_PROFILE", action: "EDIT", key: "employee.customer_profile.edit", label: "Edit Profile", category: "SYSTEM", description: "Update the customer profile" },
+  { module: "CUSTOMER_CALENDAR", action: "VIEW", key: "employee.customer_calendar.view", label: "View Calendar", category: "SYSTEM", description: "Show the customer calendar" },
+  { module: "CUSTOMER_SSM", action: "VIEW", key: "employee.customer_ssm.view", label: "View SSM Access", category: "SYSTEM", description: "Show social media account access" },
+  { module: "CUSTOMER_INFLUENCERS", action: "VIEW", key: "employee.customer_influencers.view", label: "View Influencer Hub", category: "SYSTEM", description: "Show the influencer hub" },
+  { module: "CUSTOMER_INFLUENCER_BOOKINGS", action: "VIEW", key: "employee.customer_influencer_bookings.view", label: "View Bookings", category: "SYSTEM", description: "Show the customer's influencer bookings" },
+  { module: "CUSTOMER_NOTIFICATIONS", action: "VIEW", key: "employee.customer_notifications.view", label: "View Notifications", category: "SYSTEM", description: "Show customer notifications" },
+  { module: "CUSTOMER_SUPPORT", action: "VIEW", key: "employee.customer_support.view", label: "View Support", category: "SYSTEM", description: "Show support and help" },
+  { module: "CUSTOMER_SUPPORT", action: "CREATE", key: "employee.customer_support.create", label: "Create Support Request", category: "SYSTEM", description: "Submit a support request" },
+];
+
 export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
   SUPER_ADMIN: STANDARD_PERMISSIONS.map((p) => ({ module: p.module, action: p.action })),
   COMPANY_ADMIN: STANDARD_PERMISSIONS.map((p) => ({ module: p.module, action: p.action })),
+  CUSTOMER: CUSTOMER_APP_PERMISSIONS.map((p) => ({ module: p.module, action: p.action })),
 
   // 1. TELECALLER: Calendar = OFF, My Work = OFF, Creative Work = OFF.
   // Full CRM Lead calling, stage change, follow-ups, visits capture.

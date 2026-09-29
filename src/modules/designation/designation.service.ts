@@ -575,9 +575,70 @@ export class DesignationService {
   /**
    * Fetch all roles directly derived from Employee Designations (single source of truth).
    */
+  /**
+   * Customer mobile role, stored as a designation so the existing
+   * Roles & Permissions screen can edit it. Does not replace employee roles.
+   */
+  async ensureCustomerAppDesignation(customerId: number) {
+    let designation = await this.prisma.designation.findFirst({
+      where: { customerId, code: 'CUSTOMER' },
+    });
+
+    if (!designation) {
+      designation = await this.prisma.designation.create({
+        data: {
+          customerId,
+          name: 'Customer',
+          code: 'CUSTOMER',
+          level: 0,
+          description: 'Customer mobile app access',
+          isActive: true,
+          crmMobileAccess: false,
+        },
+      });
+    }
+
+    const existingRole = await this.prisma.role.findUnique({
+      where: { designationId: designation.id },
+      include: { rolePermissions: true },
+    });
+    if (existingRole) return designation;
+
+    const role = await this.prisma.role.create({
+      data: {
+        name: 'Customer',
+        description: designation.description || 'Customer mobile app access',
+        type: RoleType.CUSTOM,
+        customerId,
+        designationId: designation.id,
+      },
+    });
+
+    for (const p of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
+      let permRecord = await this.prisma.permission.findUnique({
+        where: { module_action: { module: p.module, action: p.action } },
+      });
+      if (!permRecord) {
+        permRecord = await this.prisma.permission.create({
+          data: {
+            module: p.module,
+            action: p.action,
+            description: `${p.action} permission for ${p.module}`,
+          },
+        });
+      }
+      await this.prisma.rolePermission.create({
+        data: { roleId: role.id, permissionId: permRecord.id },
+      }).catch(() => null);
+    }
+
+    return designation;
+  }
+
   async getDesignationRoles(customerId: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     await this.seedInitialDesignationsIfEmpty(numCustomerId);
+    await this.ensureCustomerAppDesignation(numCustomerId);
 
     const designations = await this.prisma.designation.findMany({
       where: { customerId: numCustomerId },

@@ -21,6 +21,8 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Invoices & Payments')
 @ApiBearerAuth()
@@ -30,6 +32,8 @@ export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @Get()
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INVOICES', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all invoices with filtering' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -125,6 +129,8 @@ export class InvoiceController {
   }
 
   @Get(':id/download')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INVOICES', action: 'DOWNLOAD' })
   @ApiOperation({ summary: 'Download final tax invoice PDF' })
   async downloadInvoice(
     @CurrentCustomer() customerId: string,

@@ -17,6 +17,8 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Payments & Razorpay')
 @Controller('payments')
@@ -32,7 +34,8 @@ export class PaymentController {
 
   @Post('razorpay/order')
   @Post('create-order')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create Razorpay Order for customer plan purchase' })
   async createRazorpayOrder(
