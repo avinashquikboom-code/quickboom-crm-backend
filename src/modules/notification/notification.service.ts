@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ForbiddenException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService } from './fcm.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -264,6 +264,35 @@ export class NotificationService {
       success: true,
       message: 'Device token unregistered successfully',
     };
+  }
+
+  /**
+   * Delete a single notification (ensuring ownership)
+   */
+  async deleteNotification(
+    notificationId: string,
+    customerId: string | number,
+    userId: string | number,
+  ) {
+    const numericId = parseInt(String(notificationId), 10);
+    const numCustomerId = parseInt(String(customerId), 10);
+    const numUserId = parseInt(String(userId), 10);
+
+    const notif = await this.prisma.notification.findUnique({
+      where: { id: numericId },
+    });
+
+    if (!notif) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (notif.customerId !== numCustomerId || notif.userId !== numUserId) {
+      throw new ForbiddenException('You do not have permission to delete this notification');
+    }
+
+    return this.prisma.notification.delete({
+      where: { id: numericId },
+    });
   }
 
   /**

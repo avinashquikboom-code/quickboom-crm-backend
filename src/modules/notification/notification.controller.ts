@@ -146,6 +146,17 @@ export class NotificationController {
     return this.notificationService.markAsRead(id, targetCustomerId, userId);
   }
 
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete a single notification' })
+  async deleteNotification(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: number | string,
+  ) {
+    const targetCustomerId = customerId || 1;
+    return this.notificationService.deleteNotification(id, targetCustomerId, userId);
+  }
+
   @Patch('read-all')
   @ApiOperation({ summary: 'Mark all notifications as read' })
   async markAllAsRead(

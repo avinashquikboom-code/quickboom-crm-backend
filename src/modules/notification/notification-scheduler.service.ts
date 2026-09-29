@@ -70,16 +70,36 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
 
     const subCount = await this.checkSubscriptionExpiries();
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
+    const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
       subscriptionsNotified: subCount,
       customerCalendarNotified: customerCount,
       employeeCalendarNotified: employeeCount,
+      notificationsCleaned: cleanupCount,
     };
+  }
+
+  /**
+   * Cleanup notifications older than 7 days
+   */
+  async cleanupOldNotifications(): Promise<number> {
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const res = await this.prisma.notification.deleteMany({
+        where: {
+          createdAt: { lt: sevenDaysAgo },
+        },
+      });
+      return res.count;
+    } catch (err: any) {
+      this.logger.error(`Failed to cleanup old notifications: ${err?.message}`, err?.stack);
+      return 0;
+    }
   }
 
   /**
