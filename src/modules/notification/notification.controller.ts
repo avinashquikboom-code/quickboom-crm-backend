@@ -4,6 +4,7 @@ import {
   Post,
   Delete,
   Patch,
+  Put,
   Param,
   Query,
   Body,
@@ -27,6 +28,7 @@ import {
   TestCustomerNotificationDto,
   BulkDeleteOfferCampaignsDto,
   ResendOfferCampaignDto,
+  UpdateOfferCampaignDto,
 } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -209,6 +211,62 @@ export class NotificationController {
   @ApiOperation({ summary: 'Delete a single offer notification campaign from Admin history' })
   async deleteAdminCampaign(@Param('id') id: string) {
     return this.notificationService.deleteOfferCampaigns([parseInt(id, 10)]);
+  }
+
+  @Patch('admin/campaigns/:id')
+  @ApiOperation({ summary: 'Update an existing offer notification campaign (Admin)' })
+  @ApiBody({ type: UpdateOfferCampaignDto })
+  async updateAdminCampaign(
+    @Param('id') id: string,
+    @Body() dto: UpdateOfferCampaignDto,
+  ) {
+    const campaignId = parseInt(id, 10);
+    if (isNaN(campaignId) || campaignId <= 0) {
+      throw new BadRequestException('Invalid campaign ID');
+    }
+    return this.notificationService.updateOfferCampaign(campaignId, dto);
+  }
+
+  @Put('admin/campaigns/:id')
+  @ApiOperation({ summary: 'Update an existing offer notification campaign (PUT alias)' })
+  @ApiBody({ type: UpdateOfferCampaignDto })
+  async updateAdminCampaignPut(
+    @Param('id') id: string,
+    @Body() dto: UpdateOfferCampaignDto,
+  ) {
+    const campaignId = parseInt(id, 10);
+    if (isNaN(campaignId) || campaignId <= 0) {
+      throw new BadRequestException('Invalid campaign ID');
+    }
+    return this.notificationService.updateOfferCampaign(campaignId, dto);
+  }
+
+  @Patch('admin/offer/:id')
+  @ApiOperation({ summary: 'Update an existing offer notification campaign (Offer route alias)' })
+  @ApiBody({ type: UpdateOfferCampaignDto })
+  async updateAdminOffer(
+    @Param('id') id: string,
+    @Body() dto: UpdateOfferCampaignDto,
+  ) {
+    const campaignId = parseInt(id, 10);
+    if (isNaN(campaignId) || campaignId <= 0) {
+      throw new BadRequestException('Invalid campaign ID');
+    }
+    return this.notificationService.updateOfferCampaign(campaignId, dto);
+  }
+
+  @Put('admin/offer/:id')
+  @ApiOperation({ summary: 'Update an existing offer notification campaign (Offer route PUT alias)' })
+  @ApiBody({ type: UpdateOfferCampaignDto })
+  async updateAdminOfferPut(
+    @Param('id') id: string,
+    @Body() dto: UpdateOfferCampaignDto,
+  ) {
+    const campaignId = parseInt(id, 10);
+    if (isNaN(campaignId) || campaignId <= 0) {
+      throw new BadRequestException('Invalid campaign ID');
+    }
+    return this.notificationService.updateOfferCampaign(campaignId, dto);
   }
 
   @Post('admin/upload-image')

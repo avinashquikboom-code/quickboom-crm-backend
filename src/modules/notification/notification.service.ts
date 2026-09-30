@@ -5,7 +5,7 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { S3Service } from '../s3/s3.service';
-import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto, UpdateOfferCampaignDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
   userId?: number;
@@ -1521,6 +1521,129 @@ export class NotificationService {
     };
 
     return this.sendAdminOfferNotification(dto, adminUserId);
+  }
+
+  /**
+   * Update an existing offer notification campaign (Admin).
+   * Modifies campaign configuration without altering historical recipient counts or delivery statistics.
+   * Does NOT send notifications or trigger FCM.
+   */
+  async updateOfferCampaign(campaignId: number, dto: UpdateOfferCampaignDto) {
+    const id = Number(campaignId);
+    if (!id || Number.isNaN(id) || id <= 0) {
+      throw new BadRequestException('A valid campaign ID is required.');
+    }
+
+    const existing = await this.prisma.notificationCampaign.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Offer notification campaign not found');
+    }
+
+    const data: any = {};
+
+    if (dto.title !== undefined) {
+      const trimmed = dto.title.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Title cannot be empty.');
+      }
+      data.title = trimmed;
+    }
+
+    if (dto.message !== undefined) {
+      const trimmed = dto.message.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Message cannot be empty.');
+      }
+      data.message = trimmed;
+    }
+
+    if (dto.targetType !== undefined) {
+      data.targetType = dto.targetType.toUpperCase();
+    }
+
+    if (dto.audience !== undefined) {
+      const aud = dto.audience.toUpperCase();
+      data.audience = aud;
+      if (aud === 'ALL') {
+        data.targetIds = null;
+      }
+    }
+
+    if (dto.targetIds !== undefined && (dto.audience === 'SPECIFIC' || existing.audience === 'SPECIFIC')) {
+      if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
+        const cleanIds = dto.targetIds.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
+        data.targetIds = cleanIds.length > 0 ? cleanIds : null;
+      } else {
+        data.targetIds = null;
+      }
+    }
+
+    if (dto.imageUrl !== undefined) {
+      data.imageUrl = dto.imageUrl && dto.imageUrl.trim() ? dto.imageUrl.trim() : null;
+    }
+
+    if (dto.showCta !== undefined) {
+      data.showCta = Boolean(dto.showCta);
+      if (data.showCta) {
+        if (dto.ctaText !== undefined) {
+          data.ctaText = dto.ctaText?.trim() || null;
+        }
+        if (dto.ctaActionType !== undefined) {
+          data.ctaActionType = (dto.ctaActionType || 'DEEP_LINK').toUpperCase();
+        }
+        if (dto.ctaActionValue !== undefined || dto.deepLink !== undefined) {
+          data.ctaActionValue = dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null;
+        }
+      } else {
+        data.ctaText = null;
+        data.ctaActionType = null;
+        data.ctaActionValue = null;
+      }
+    } else {
+      if (dto.ctaText !== undefined) {
+        data.ctaText = dto.ctaText?.trim() || null;
+      }
+      if (dto.ctaActionType !== undefined) {
+        data.ctaActionType = (dto.ctaActionType || 'DEEP_LINK').toUpperCase();
+      }
+      if (dto.ctaActionValue !== undefined || dto.deepLink !== undefined) {
+        data.ctaActionValue = dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null;
+      }
+    }
+
+    if (dto.scheduledAt !== undefined) {
+      if (dto.scheduledAt) {
+        const parsedDate = new Date(dto.scheduledAt);
+        if (isNaN(parsedDate.getTime())) {
+          throw new BadRequestException('Invalid scheduled date format.');
+        }
+        data.scheduledAt = parsedDate;
+      } else {
+        data.scheduledAt = null;
+      }
+    }
+
+    const updated = await this.prisma.notificationCampaign.update({
+      where: { id },
+      data,
+    });
+
+    const displayImageUrl =
+      updated.imageUrl && this.s3Service
+        ? (await this.s3Service.getPresignedUrl(updated.imageUrl, 604800)) ||
+          updated.imageUrl
+        : updated.imageUrl;
+
+    return {
+      success: true,
+      message: 'Offer notification campaign updated successfully',
+      data: {
+        ...updated,
+        imageUrl: displayImageUrl,
+      },
+    };
   }
 
   /**
