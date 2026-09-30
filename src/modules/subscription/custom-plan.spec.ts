@@ -116,6 +116,15 @@ describe('Custom Plan Service & Calculation Tests', () => {
         updateMany: jest.fn(),
       },
       paymentHistory: {
+        create: jest.fn().mockResolvedValue({ id: 88, createdAt: new Date() }),
+        update: jest.fn(),
+      },
+      contact: {
+        findFirst: jest.fn().mockResolvedValue({ id: 1 }),
+        create: jest.fn(),
+      },
+      invoice: {
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
       },
       planEntitlement: {

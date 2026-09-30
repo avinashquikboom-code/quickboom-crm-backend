@@ -36,6 +36,10 @@ import { EmailTemplateService, renderEmailTemplate } from '../email/email-templa
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
+import {
+  buildDefaultPlanLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
 
 @Injectable()
 export class PaymentService {
@@ -647,7 +651,10 @@ export class PaymentService {
               taxAmount: fullTaxAmount,
               discount: 0,
               totalAmount: fullTotalAmount,
-              notes: `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+              notes: withInvoiceItemsSnapshot(
+                `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+                buildDefaultPlanLineItems(plan.name, fullBasePrice),
+              ),
             },
           });
         }

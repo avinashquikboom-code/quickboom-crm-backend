@@ -37,6 +37,10 @@ import {
   deriveSubscriptionStatus,
   getExpiryNotificationPayload,
 } from '../../common/utils/subscription-date.util';
+import {
+  buildDefaultPlanLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
 
 @Injectable()
 export class SubscriptionService {
@@ -435,7 +439,10 @@ export class SubscriptionService {
               taxAmount: taxAmt,
               discount: 0,
               totalAmount: totAmt,
-              notes: `Subscription payment for ${p.planName || 'CRM Plan'}. Total Paid: ₹${totAmt}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+              notes: withInvoiceItemsSnapshot(
+                `Subscription payment for ${p.planName || 'CRM Plan'}. Total Paid: ₹${totAmt}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+                buildDefaultPlanLineItems(p.planName || 'CRM Plan', baseAmt),
+              ),
             },
           });
           invoices.push(newInv);
@@ -927,7 +934,10 @@ export class SubscriptionService {
           taxAmount: tax,
           discount: 0,
           totalAmount: total,
-          notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: ${(dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY}. Order: ${orderNumber}`,
+          notes: withInvoiceItemsSnapshot(
+            `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: ${(dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY}. Order: ${orderNumber}`,
+            buildDefaultPlanLineItems(plan.name, basePrice),
+          ),
         },
       });
       await tx.paymentHistory.update({
@@ -2907,7 +2917,10 @@ export class SubscriptionService {
               taxAmount: fullGstAmount,
               discount: 0,
               totalAmount: fullTotalAmount,
-              notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+              notes: withInvoiceItemsSnapshot(
+                `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
+                buildDefaultPlanLineItems(plan.name, fullBaseAmount),
+              ),
             },
           });
         }

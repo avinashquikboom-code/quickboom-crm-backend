@@ -17,6 +17,10 @@ import {
   InvoiceStatus,
 } from '@prisma/client';
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
+import {
+  buildDefaultPlanLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
 
 export const DEFAULT_BUFFER_DAYS = 0;
 
@@ -637,9 +641,17 @@ export class InstallmentService {
           taxAmount,
           discount: 0,
           totalAmount: payAmount,
-          notes: `Installment ${installment.installmentNumber} of ${installment.totalInstallments} payment for ${
-            installment.subscription?.plan?.name || 'Plan'
-          }. Method: ${paymentMethod}. Order: ${orderNumber}`,
+          notes: withInvoiceItemsSnapshot(
+            `Installment ${installment.installmentNumber} of ${installment.totalInstallments} payment for ${
+              installment.subscription?.plan?.name || 'Plan'
+            }. Method: ${paymentMethod}. Order: ${orderNumber}`,
+            buildDefaultPlanLineItems(
+              `Installment ${installment.installmentNumber} of ${installment.totalInstallments} - ${
+                installment.subscription?.plan?.name || 'Plan'
+              }`,
+              baseAmount,
+            ),
+          ),
         },
       });
 
@@ -871,7 +883,10 @@ export class InstallmentService {
           taxAmount: firstInstallmentTax,
           discount: 0,
           totalAmount: firstInstallmentTotal,
-          notes: `New Plan Purchase: Advance Payment (50%) for ${plan.name}. Order: ${orderNumber}`,
+          notes: withInvoiceItemsSnapshot(
+            `New Plan Purchase: Advance Payment (50%) for ${plan.name}. Order: ${orderNumber}`,
+            buildDefaultPlanLineItems(`${plan.name} - Advance Payment (50%)`, firstInstallmentBase),
+          ),
         },
       });
 

@@ -13,8 +13,12 @@ import {
 } from './dto/custom-plan.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { calculatePlanExpiry, calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, InvoiceStatus } from '@prisma/client';
 import * as crypto from 'crypto';
+import {
+  buildCustomPlanLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
 
 @Injectable()
 export class CustomPlanService {
@@ -588,7 +592,7 @@ export class CustomPlanService {
       });
 
       // 4. Create Payment Record
-      await tx.paymentHistory.create({
+      const paymentRecord = await tx.paymentHistory.create({
         data: {
           customerId: numCustomerId,
           subscriptionId: subscription.id,
@@ -604,6 +608,55 @@ export class CustomPlanService {
           paymentId: rzpPaymentId,
           transactionId: `TXN-CP-${Date.now()}`,
         },
+      });
+
+      let contact = await tx.contact.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null },
+      });
+      if (!contact) {
+        const customerRecord = await tx.customer.findUnique({
+          where: { id: numCustomerId },
+        });
+        contact = await tx.contact.create({
+          data: {
+            customerId: numCustomerId,
+            firstName: customerRecord?.companyName || customerRecord?.name || 'Customer',
+            lastName: 'Account',
+            email: customerRecord?.email || `billing-${numCustomerId}@quikboom.com`,
+            phone: customerRecord?.phone || 'N/A',
+          },
+        });
+      }
+
+      const customPlanLabel = `Custom Plan (${order.duration} Month${order.duration === 1 ? '' : 's'})`;
+      const invoiceNo = `INV-${startDate.getFullYear()}-${String(paymentRecord.id).padStart(6, '0')}`;
+      const existingInvoice = await tx.invoice.findFirst({
+        where: { customerId: numCustomerId, invoiceNo },
+      });
+      if (!existingInvoice) {
+        await tx.invoice.create({
+          data: {
+            customerId: numCustomerId,
+            contactId: contact.id,
+            invoiceNo,
+            status: InvoiceStatus.PAID,
+            issueDate: paymentRecord.createdAt || new Date(),
+            dueDate: paymentRecord.createdAt || new Date(),
+            subTotal: order.subtotal,
+            taxAmount: order.tax,
+            discount: order.discount || 0,
+            totalAmount: order.totalAmount,
+            notes: withInvoiceItemsSnapshot(
+              `Subscription payment for ${customPlanLabel}. Purchase: ${(paymentRecord.createdAt || new Date()).toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${order.totalAmount}, Balance: ₹0. Order: ${order.orderNumber}`,
+              buildCustomPlanLineItems(customPlanLabel, items, order.subtotal),
+            ),
+          },
+        });
+      }
+
+      await tx.paymentHistory.update({
+        where: { id: paymentRecord.id },
+        data: { invoiceUrl: invoiceNo },
       });
 
       // 5. Provision PlanEntitlements for each content deliverable

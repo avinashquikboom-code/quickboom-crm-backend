@@ -15,6 +15,12 @@ import {
   calculatePlanExpiry,
   utcCalendarDateKey,
 } from '../../common/utils/subscription-date.util';
+import {
+  buildDefaultPlanLineItems,
+  parseInvoiceItemsSnapshot,
+  resolveInvoiceLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
 
 const INVOICE_ISSUER = Object.freeze({
   brand: 'QB SUITE',
@@ -222,6 +228,11 @@ export class InvoiceService {
             reason: 'No existing invoice (live or deleted) found for this payment',
           });
 
+          const notes = withInvoiceItemsSnapshot(
+            `Subscription payment for ${planName} (${cycle} billing). Purchase: ${utcCalendarDateKey(p.createdAt)}. Plan activation: ${utcCalendarDateKey(planActivation)}. Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+            buildDefaultPlanLineItems(planName, baseAmount),
+          );
+
           await this.prisma.invoice.create({
             data: {
               customerId,
@@ -234,7 +245,7 @@ export class InvoiceService {
               taxAmount: taxAmount,
               discount: 0,
               totalAmount: totalAmount,
-              notes: `Subscription payment for ${planName} (${cycle} billing). Purchase: ${utcCalendarDateKey(p.createdAt)}. Plan activation: ${utcCalendarDateKey(planActivation)}. Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+              notes,
             },
           });
         }
@@ -348,7 +359,7 @@ export class InvoiceService {
           include: {
             contact: true,
             customer: true,
-            items: true,
+            items: { include: { product: true } },
           },
         }),
         this.prisma.invoice.count({ where }),
@@ -404,12 +415,16 @@ export class InvoiceService {
       }
 
       let planName = 'CRM Subscription Plan';
-      if (inv.notes && inv.notes.includes('Subscription payment for')) {
+      const snapshot = parseInvoiceItemsSnapshot(inv.notes);
+      if (snapshot?.planName) {
+        planName = snapshot.planName;
+      } else if (inv.notes && inv.notes.includes('Subscription payment for')) {
         const afterSub = inv.notes.split('Subscription payment for')[1];
         if (afterSub) {
           planName = afterSub.split('(')[0].trim();
         }
       }
+      const lineItems = resolveInvoiceLineItems({ ...inv, planName });
 
       return {
         id: inv.id,
@@ -442,6 +457,8 @@ export class InvoiceService {
         contact: inv.contact,
         customer: inv.customer,
         items: inv.items || [],
+        lineItems: lineItems.items,
+        planType: lineItems.planType,
       };
     }));
 
@@ -501,7 +518,7 @@ export class InvoiceService {
         where,
         include: {
           contact: true,
-          items: true,
+          items: { include: { product: true } },
           customer: true,
         },
       });
@@ -517,7 +534,7 @@ export class InvoiceService {
         where,
         include: {
           contact: true,
-          items: true,
+          items: { include: { product: true } },
           customer: true,
         },
       });
@@ -537,7 +554,7 @@ export class InvoiceService {
             where,
             include: {
               contact: true,
-              items: true,
+              items: { include: { product: true } },
               customer: true,
             },
           });
@@ -563,6 +580,10 @@ export class InvoiceService {
     const clientDisplayName = contactFullName || invoice.customer?.companyName || invoice.customer?.name || 'General Client';
     const planDates = await this.resolveInvoicePlanDates(invoice);
 
+    const snapshot = parseInvoiceItemsSnapshot(invoice.notes);
+    const planName = snapshot?.planName || this.resolveInvoicePlanName(invoice);
+    const lineItems = resolveInvoiceLineItems({ ...invoice, planName });
+
     return {
       ...invoice,
       invoiceNumber: invoice.invoiceNo,
@@ -574,6 +595,9 @@ export class InvoiceService {
       planStartDate: planDates.activationDate,
       expiryDate: planDates.expiryDate,
       planEndDate: planDates.expiryDate,
+      planName,
+      lineItems: lineItems.items,
+      planType: lineItems.planType,
     };
   }
 
@@ -872,6 +896,9 @@ export class InvoiceService {
   }
 
   private resolveInvoicePlanName(invoice: any): string {
+    const snapshot = parseInvoiceItemsSnapshot(invoice?.notes);
+    if (snapshot?.planName) return snapshot.planName;
+
     const explicitPlanName = String(invoice?.planName || '').trim();
     if (explicitPlanName) return explicitPlanName;
 
@@ -1090,54 +1117,83 @@ export class InvoiceService {
           .stroke();
 
         // Itemized Table Header
-        const tableTop = metaBottom + 12;
-        doc.rect(40, tableTop, 515, 22).fill('#F1F5F9');
-        doc.fillColor(darkColor).fontSize(8.5).font(boldFont);
-        doc.text('ITEM / SERVICE DESCRIPTION', 48, tableTop + 6, { width: 188 });
-        doc.text('SAC CODE', 240, tableTop + 6, { width: 60, align: 'center' });
-        doc.text('BASE AMT', 305, tableTop + 6, { width: 78, align: 'right' });
-        doc.text('GST', 388, tableTop + 6, { width: 78, align: 'right' });
-        doc.text('TOTAL', 471, tableTop + 6, { width: 76, align: 'right' });
+        const lineSnapshot = resolveInvoiceLineItems({
+          ...invoice,
+          planName: this.resolveInvoicePlanName(invoice),
+        });
+        let tableTop = metaBottom + 12;
+        if (lineSnapshot.planType === 'CUSTOM' && lineSnapshot.planName) {
+          doc
+            .fillColor(darkColor)
+            .fontSize(8.5)
+            .font(boldFont)
+            .text(`CUSTOM PLAN: ${lineSnapshot.planName}`, 40, tableTop, {
+              width: 515,
+            });
+          tableTop += 16;
+        }
 
-        // Itemized Table Rows
+        doc
+          .fillColor(primaryColor)
+          .fontSize(8)
+          .font(boldFont)
+          .text('ITEMS', 40, tableTop);
+        tableTop += 14;
+
+        doc.rect(40, tableTop, 515, 22).fill(primaryColor);
+        doc.fillColor('#FFFFFF').fontSize(8).font(boldFont);
+        doc.text('#', 48, tableTop + 7, { width: 22 });
+        doc.text('PLAN NAME / ITEM DESCRIPTION', 74, tableTop + 7, { width: 230 });
+        doc.text('QTY', 308, tableTop + 7, { width: 36, align: 'center' });
+        doc.text('UNIT PRICE', 348, tableTop + 7, { width: 96, align: 'right' });
+        doc.text('TOTAL', 448, tableTop + 7, { width: 98, align: 'right' });
+
         const subTotal = Number(invoice.subTotal || 0);
+        const discount = Number(invoice.discount || 0);
         const taxAmount = Number(invoice.taxAmount || 0);
-        const totalAmount = Number(invoice.totalAmount || subTotal + taxAmount);
+        const totalAmount = Number(invoice.totalAmount || subTotal - discount + taxAmount);
         const isTaxCharged = taxAmount > 0.005;
         const cgst = taxAmount / 2;
         const sgst = taxAmount / 2;
-        const rowTop = tableTop + 28;
-        const planName = this.resolveInvoicePlanName(invoice);
-        const planNameHeight = doc
-          .fontSize(9.5)
-          .font(boldFont)
-          .heightOfString(planName, { width: 188, lineGap: 1 });
-
-        doc
-          .fillColor(darkColor)
-          .fontSize(9.5)
-          .font(boldFont)
-          .text(planName, 48, rowTop, { width: 188, lineGap: 1 });
         const validityLine = planEndLabel
           ? `Validity: ${planStartLabel} → ${planEndLabel}`
           : `Invoice Reference: ${invoiceNo}`;
-        const validityY = rowTop + planNameHeight + 3;
+
+        let rowY = tableTop + 28;
+        lineSnapshot.items.forEach((item, index) => {
+          const nameHeight = doc
+            .fontSize(9)
+            .font(boldFont)
+            .heightOfString(item.name, { width: 230, lineGap: 1 });
+          const rowHeight = Math.max(22, nameHeight + 6);
+          if (index % 2 === 1) {
+            doc.rect(40, rowY - 4, 515, rowHeight).fill('#F8FAFC');
+          }
+          doc.fillColor(darkColor).fontSize(8.5).font(regularFont);
+          doc.text(String(index + 1), 48, rowY, { width: 22 });
+          doc
+            .fontSize(9)
+            .font(boldFont)
+            .text(item.name, 74, rowY, { width: 230, lineGap: 1 });
+          doc.fontSize(8.5).font(regularFont);
+          doc.text(String(item.quantity), 308, rowY, { width: 36, align: 'center' });
+          doc.text(formatInrCurrency(item.unitPrice), 348, rowY, {
+            width: 96,
+            align: 'right',
+          });
+          doc.font(boldFont).text(formatInrCurrency(item.total), 448, rowY, {
+            width: 98,
+            align: 'right',
+          });
+          rowY += rowHeight;
+        });
+
         doc
           .fontSize(8)
           .font(regularFont)
           .fillColor(grayColor)
-          .text(validityLine, 48, validityY, { width: 188 });
-
-        doc.fillColor(darkColor).fontSize(8.5).font(regularFont);
-        doc.text('998311', 240, rowTop, { width: 60, align: 'center' });
-        doc.text(formatInrCurrency(subTotal), 305, rowTop, { width: 78, align: 'right' });
-        doc.text(formatInrCurrency(taxAmount), 388, rowTop, { width: 78, align: 'right' });
-        doc.font(boldFont).text(formatInrCurrency(totalAmount), 471, rowTop, {
-          width: 76,
-          align: 'right',
-        });
-
-        const rowBottom = Math.max(rowTop + 34, validityY + 12);
+          .text(validityLine, 74, rowY + 2, { width: 230 });
+        const rowBottom = rowY + 18;
         doc
           .moveTo(40, rowBottom)
           .lineTo(555, rowBottom)
@@ -1146,10 +1202,11 @@ export class InvoiceService {
 
         // Summary & Tax Breakdown Box
         const summaryTop = rowBottom + 12;
+        const summaryHeight = discount > 0.005 ? 110 : 95;
 
         // Left Box: Tax Breakdown
-        doc.rect(40, summaryTop, 245, 95).fill(lightBg);
-        doc.rect(40, summaryTop, 245, 95).strokeColor(borderCol).stroke();
+        doc.rect(40, summaryTop, 245, summaryHeight).fill(lightBg);
+        doc.rect(40, summaryTop, 245, summaryHeight).strokeColor(borderCol).stroke();
 
         doc
           .fillColor(darkColor)
@@ -1212,35 +1269,43 @@ export class InvoiceService {
         }
 
         // Right Box: Total Settlement
-        doc.rect(310, summaryTop, 245, 95).fill(lightBg);
-        doc.rect(310, summaryTop, 245, 95).strokeColor(borderCol).stroke();
+        doc.rect(310, summaryTop, 245, summaryHeight).fill(lightBg);
+        doc.rect(310, summaryTop, 245, summaryHeight).strokeColor(borderCol).stroke();
 
         doc.fillColor(darkColor).fontSize(8.5).font(boldFont).text('PAYMENT SETTLEMENT', 320, summaryTop + 10);
+        let settleY = summaryTop + 24;
         doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text('Taxable Value:', 320, summaryTop + 24)
-          .fillColor(darkColor).text(formatInrCurrency(subTotal), 430, summaryTop + 24, { width: 115, align: 'right' });
+          .text('Subtotal:', 320, settleY)
+          .fillColor(darkColor).text(formatInrCurrency(subTotal), 430, settleY, { width: 115, align: 'right' });
+        settleY += 14;
+        if (discount > 0.005) {
+          doc.fillColor(grayColor).text('Discount:', 320, settleY)
+            .fillColor(darkColor).text(`- ${formatInrCurrency(discount)}`, 430, settleY, { width: 115, align: 'right' });
+          settleY += 14;
+        }
+        doc.fillColor(grayColor).text(isTaxCharged ? 'Total Tax (GST 18%):' : 'Total Tax:', 320, settleY)
+          .fillColor(darkColor).text(formatInrCurrency(taxAmount), 430, settleY, { width: 115, align: 'right' });
+        settleY += 10;
+        doc.moveTo(320, settleY).lineTo(545, settleY).strokeColor('#CBD5E1').stroke();
+        settleY += 8;
 
-        doc.fillColor(grayColor).text(isTaxCharged ? 'Total Tax (GST 18%):' : 'Total Tax:', 320, summaryTop + 38)
-          .fillColor(darkColor).text(formatInrCurrency(taxAmount), 430, summaryTop + 38, { width: 115, align: 'right' });
+        doc.fillColor(primaryColor).fontSize(10).font(boldFont).text('Grand Total:', 320, settleY);
+        doc.text(formatInrCurrency(totalAmount), 430, settleY, { width: 115, align: 'right' });
+        settleY += 16;
 
-        doc.moveTo(320, summaryTop + 52).lineTo(545, summaryTop + 52).strokeColor('#CBD5E1').stroke();
-
-        doc.fillColor(primaryColor).fontSize(10).font(boldFont).text('Total Paid Amount:', 320, summaryTop + 58);
-        doc.text(formatInrCurrency(isPaid ? totalAmount : 0), 430, summaryTop + 58, { width: 115, align: 'right' });
-
-        doc.fillColor(grayColor).fontSize(8).font(regularFont).text('Balance Due:', 320, summaryTop + 76);
+        doc.fillColor(grayColor).fontSize(8).font(regularFont).text(isPaid ? 'Total Paid:' : 'Balance Due:', 320, settleY);
         doc
           .fillColor(isPaid ? '#059669' : '#B45309')
           .font(boldFont)
           .text(
-            isPaid ? `${formatInrCurrency(0)} (PAID)` : formatInrCurrency(totalAmount),
+            isPaid ? `${formatInrCurrency(totalAmount)} (PAID)` : formatInrCurrency(totalAmount),
             430,
-            summaryTop + 76,
+            settleY,
             { width: 115, align: 'right' },
           );
 
         // Official Verification Stamp & Signature Section
-        const signTop = summaryTop + 110;
+        const signTop = summaryTop + summaryHeight + 15;
 
         // Paid / status stamp
         doc
