@@ -841,6 +841,24 @@ export class WorkService {
           this.logger.warn(`Failed to send level approval push to staff user #${uid} (non-fatal): ${err?.message}`);
         }
       }
+
+      // Notify customer that work is completed
+      try {
+        await this.notificationService.sendPushNotification({
+          customerId: result.customerId,
+          title: '✅ Work Completed',
+          body: `Your task "${result.title}" has been completed.`,
+          type: 'WORK_COMPLETED',
+          data: {
+            type: 'WORK',
+            workId: String(result.id),
+            status: 'COMPLETED',
+          },
+        });
+        this.logger.log(`Dispatched WORK_COMPLETED push notification to customer #${result.customerId} for work #${result.id}`);
+      } catch (err: any) {
+        this.logger.warn(`Failed to send WORK_COMPLETED push to customer #${result.customerId} (non-fatal): ${err?.message}`);
+      }
     }
 
     return result;
