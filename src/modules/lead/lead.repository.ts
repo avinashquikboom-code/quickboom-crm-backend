@@ -933,7 +933,7 @@ export class LeadRepository {
             andConditions.push({
               OR: [
                 { stageId: sId },
-                { status: normKey as LeadStatus },
+                { stageId: null, status: normKey as LeadStatus },
                 { stage: { is: { key: stageRecord.key, deletedAt: null } } },
               ],
             });
@@ -954,7 +954,29 @@ export class LeadRepository {
         } else {
           const normStatus = normalizeLeadStatus(statusStr);
           if (ALL_LEAD_STATUSES.includes(normStatus)) {
-            where.status = normStatus as LeadStatus;
+            const matchStage = await this.prisma.leadStage.findFirst({
+              where: {
+                key: normStatus,
+                deletedAt: null,
+                ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
+              },
+            });
+            if (matchStage) {
+              andConditions.push({
+                OR: [
+                  { stageId: matchStage.id },
+                  { stageId: null, status: normStatus as LeadStatus },
+                  { stage: { is: { key: normStatus, deletedAt: null } } },
+                ],
+              });
+            } else {
+              andConditions.push({
+                OR: [
+                  { stageId: null, status: normStatus as LeadStatus },
+                  { stage: { is: { key: normStatus, deletedAt: null } } },
+                ],
+              });
+            }
           } else {
             // Custom stage key or label
             const matchStage = await this.prisma.leadStage.findFirst({
