@@ -294,6 +294,7 @@ export const CUSTOMER_APP_PERMISSIONS: StandardPermissionDef[] = [
   { module: "CUSTOMER_NOTIFICATIONS", action: "VIEW", key: "employee.customer_notifications.view", label: "View Notifications", category: "SYSTEM", description: "Show customer notifications" },
   { module: "CUSTOMER_SUPPORT", action: "VIEW", key: "employee.customer_support.view", label: "View Support", category: "SYSTEM", description: "Show support and help" },
   { module: "CUSTOMER_SUPPORT", action: "CREATE", key: "employee.customer_support.create", label: "Create Support Request", category: "SYSTEM", description: "Submit a support request" },
+  { module: "CUSTOMER_MARKETING", action: "VIEW", key: "employee.customer_marketing.view", label: "View Marketing & Offers", category: "SYSTEM", description: "Show promotional banners, coupon offers and marketing videos on Customer Home" },
 ];
 
 export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {

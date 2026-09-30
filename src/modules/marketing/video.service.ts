@@ -398,7 +398,8 @@ export class VideoService {
   }
 
   /**
-   * Fetch active, customer-visible marketing videos for Customer Home Screen
+   * Fetch active, customer-visible marketing videos for Customer Home Screen.
+   * Returns empty list when customer has DENY override on CUSTOMER_MARKETING.
    */
   async findAllCustomer(user: {
     id?: number;
@@ -407,6 +408,28 @@ export class VideoService {
   }) {
     const now = new Date();
     const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
+
+    // ── RBAC: enforce CUSTOMER_MARKETING:VIEW ───────────────────────────────
+    if (resolvedCustomerId) {
+      try {
+        const marketingOverride = await (this.prisma as any).customerModuleOverride?.findFirst({
+          where: {
+            subjectCustomerId: resolvedCustomerId,
+            moduleKey: { in: ['employee.customer_marketing.view', 'CUSTOMER_MARKETING'] },
+            override: 'DENY',
+          },
+        });
+        if (marketingOverride) {
+          this.logger.log(
+            `[CUSTOMER_MARKETING_DENIED] customerId=${resolvedCustomerId} — returning empty video list`,
+          );
+          return [];
+        }
+      } catch {
+        // Graceful fallback: serve normally if override table is unavailable
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     const allVideos = await this.prisma.marketingVideo.findMany({
       where: {

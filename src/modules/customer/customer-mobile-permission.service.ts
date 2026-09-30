@@ -16,6 +16,7 @@ const CUSTOMER_MODULE_LABELS: Record<string, string> = {
   CUSTOMER_INFLUENCER_BOOKINGS: 'Bookings',
   CUSTOMER_NOTIFICATIONS: 'Notifications',
   CUSTOMER_SUPPORT: 'Support',
+  CUSTOMER_MARKETING: 'Marketing & Offers',
 };
 
 @Injectable()

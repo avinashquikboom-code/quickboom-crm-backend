@@ -450,7 +450,8 @@ export class BannerService {
   }
 
   /**
-   * Fetch active, published, scheduled banners for Customer Home Screen
+   * Fetch active, published, scheduled banners for Customer Home Screen.
+   * Returns empty list when customer has DENY override on CUSTOMER_MARKETING.
    */
   async findAllCustomer(user: {
     id?: number;
@@ -459,6 +460,28 @@ export class BannerService {
   }) {
     const now = new Date();
     const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
+
+    // ── RBAC: enforce CUSTOMER_MARKETING:VIEW ───────────────────────────────
+    if (resolvedCustomerId) {
+      try {
+        const marketingOverride = await (this.prisma as any).customerModuleOverride?.findFirst({
+          where: {
+            subjectCustomerId: resolvedCustomerId,
+            moduleKey: { in: ['employee.customer_marketing.view', 'CUSTOMER_MARKETING'] },
+            override: 'DENY',
+          },
+        });
+        if (marketingOverride) {
+          this.logger.log(
+            `[CUSTOMER_MARKETING_DENIED] customerId=${resolvedCustomerId} — returning empty banner list`,
+          );
+          return [];
+        }
+      } catch {
+        // Graceful fallback: if the override table is unavailable, serve normally
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     console.log('[BANNER_API_REQUEST]', {
       customerId: resolvedCustomerId,
