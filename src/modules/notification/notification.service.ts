@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, ForbiddenException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FcmService } from './fcm.service';
+import { FcmService, FcmSendResult } from './fcm.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
@@ -1119,77 +1119,392 @@ export class NotificationService {
   }
 
   /**
-   * Send Admin Offer Notification to targeted customer or broadcast to all active customers
+   * Send Admin Offer Notification to targeted customer(s) or employee(s), or schedule for future delivery.
    */
-  async sendAdminOfferNotification(dto: AdminOfferNotificationDto) {
-    let targetCustomers: { id: number }[] = [];
-
-    if (dto.customerId) {
-      const customer = await this.prisma.customer.findFirst({
-        where: { id: Number(dto.customerId), deletedAt: null },
-        select: { id: true },
-      });
-      if (!customer) {
-        throw new NotFoundException(`Customer with ID ${dto.customerId} not found or inactive`);
-      }
-      targetCustomers = [customer];
-    } else {
-      targetCustomers = await this.prisma.customer.findMany({
-        where: { deletedAt: null },
-        select: { id: true },
-      });
+  async sendAdminOfferNotification(dto: AdminOfferNotificationDto, adminUserId?: number) {
+    if (!dto.title || !dto.title.trim()) {
+      throw new BadRequestException('Notification title is required.');
+    }
+    if (!dto.message || !dto.message.trim()) {
+      throw new BadRequestException('Notification message is required.');
     }
 
-    if (targetCustomers.length === 0) {
+    // CTA Button validation: if showCta is enabled, button text is required
+    if (dto.showCta) {
+      if (!dto.ctaText || !dto.ctaText.trim()) {
+        throw new BadRequestException('Button text is required when CTA button is enabled.');
+      }
+      if (dto.ctaActionType === 'WEB_URL' && dto.ctaActionValue) {
+        try {
+          const parsed = new URL(dto.ctaActionValue.trim());
+          if (!['http:', 'https:'].includes(parsed.protocol)) {
+            throw new Error('Invalid protocol');
+          }
+        } catch (_) {
+          throw new BadRequestException('Please provide a valid web URL (e.g. https://example.com)');
+        }
+      }
+    }
+
+    const isScheduled = dto.scheduledAt && new Date(dto.scheduledAt).getTime() > Date.now();
+    const targetType = (dto.targetType || 'CUSTOMERS').toUpperCase();
+    const audience = (dto.audience || (dto.customerId ? 'SPECIFIC' : 'ALL')).toUpperCase();
+    let specificIds: number[] = [];
+    if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
+      specificIds = dto.targetIds.map(Number).filter((n) => !isNaN(n) && n > 0);
+    } else if (dto.customerId) {
+      specificIds = [Number(dto.customerId)];
+    }
+
+    // If future scheduled delivery is requested, save as SCHEDULED campaign
+    if (isScheduled) {
+      const scheduledDate = new Date(dto.scheduledAt!);
+      const campaign = await this.prisma.notificationCampaign.create({
+        data: {
+          title: dto.title.trim(),
+          message: dto.message.trim(),
+          notificationType: 'OFFER',
+          targetType,
+          audience,
+          targetIds: specificIds.length > 0 ? specificIds : null,
+          imageUrl: dto.imageUrl?.trim() || null,
+          showCta: Boolean(dto.showCta),
+          ctaText: dto.showCta ? dto.ctaText?.trim() || null : null,
+          ctaActionType: dto.showCta ? (dto.ctaActionType || 'DEEP_LINK').toUpperCase() : null,
+          ctaActionValue: dto.showCta ? (dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null) : null,
+          scheduledAt: scheduledDate,
+          status: 'SCHEDULED',
+          createdById: adminUserId ? Number(adminUserId) : null,
+        },
+      });
+
+      this.logger.log(
+        `[OFFER_CAMPAIGN_SCHEDULED] Campaign #${campaign.id} "${dto.title}" scheduled for ${scheduledDate.toISOString()} (Target: ${targetType}, Audience: ${audience})`,
+      );
+
+      return {
+        success: true,
+        status: 'SCHEDULED',
+        campaignId: campaign.id,
+        scheduledAt: campaign.scheduledAt,
+        message: `Offer notification successfully scheduled for ${scheduledDate.toLocaleString()}.`,
+      };
+    }
+
+    // Immediate dispatch
+    return this.dispatchOfferNotification(dto, adminUserId);
+  }
+
+  /**
+   * Core dispatcher that sends rich offer notifications and creates DB in-app history
+   */
+  async dispatchOfferNotification(
+    dto: AdminOfferNotificationDto,
+    adminUserId?: number,
+    existingCampaignId?: number,
+  ) {
+    const targetType = (dto.targetType || 'CUSTOMERS').toUpperCase();
+    const audience = (dto.audience || (dto.customerId ? 'SPECIFIC' : 'ALL')).toUpperCase();
+    let specificIds: number[] = [];
+    if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
+      specificIds = dto.targetIds.map(Number).filter((n) => !isNaN(n) && n > 0);
+    } else if (dto.customerId) {
+      specificIds = [Number(dto.customerId)];
+    }
+
+    const recipientPairs: { customerId: number; userId: number }[] = [];
+
+    if (targetType === 'EMPLOYEES') {
+      const whereClause: any = {
+        deletedAt: null,
+        status: 'ACTIVE',
+        userId: { not: null },
+      };
+      if (audience === 'SPECIFIC' && specificIds.length > 0) {
+        whereClause.id = { in: specificIds };
+      }
+
+      const employees = await this.prisma.employee.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          customerId: true,
+          userId: true,
+        },
+      });
+
+      for (const emp of employees) {
+        if (emp.userId) {
+          recipientPairs.push({
+            customerId: emp.customerId,
+            userId: emp.userId,
+          });
+        }
+      }
+    } else {
+      // Default: CUSTOMERS
+      const whereClause: any = {
+        deletedAt: null,
+        isActive: true,
+      };
+      if (audience === 'SPECIFIC' && specificIds.length > 0) {
+        whereClause.id = { in: specificIds };
+      }
+
+      const customers = await this.prisma.customer.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          name: true,
+          users: {
+            where: { deletedAt: null, isActive: true },
+            select: { id: true },
+          },
+        },
+      });
+
+      for (const cust of customers) {
+        for (const u of cust.users) {
+          recipientPairs.push({
+            customerId: cust.id,
+            userId: u.id,
+          });
+        }
+      }
+    }
+
+    if (recipientPairs.length === 0) {
+      if (existingCampaignId) {
+        await this.prisma.notificationCampaign.update({
+          where: { id: existingCampaignId },
+          data: { status: 'FAILED', recipientCount: 0, sentCount: 0, failedCount: 0 },
+        });
+      }
       return {
         success: true,
         totalTargeted: 0,
         sentCount: 0,
         failedCount: 0,
-        message: 'No active customers found to receive the offer notification.',
+        message: `No active recipients found for target ${targetType} (${audience}).`,
       };
     }
 
-    let successCount = 0;
-    let failedCount = 0;
-
-    for (const cust of targetCustomers) {
-      try {
-        const payloadData: Record<string, string> = {
-          type: 'OFFER',
-          title: dto.title,
-          message: dto.message,
-        };
-        if (dto.offerCode) payloadData.offerCode = String(dto.offerCode);
-        if (dto.imageUrl) payloadData.imageUrl = String(dto.imageUrl);
-        if (dto.deepLink) payloadData.deepLink = String(dto.deepLink);
-
-        const res = await this.sendPushNotification({
-          customerId: cust.id,
-          title: dto.title,
-          body: dto.message,
-          type: 'ADMIN_OFFER',
-          data: payloadData,
-        });
-
-        if (res) {
-          successCount++;
-        } else {
-          failedCount++;
-        }
-      } catch (err: any) {
-        failedCount++;
-        this.logger.warn(`Failed to send offer notification to customer #${cust.id}: ${err?.message}`);
-      }
+    // Build payload
+    const payloadData: Record<string, string> = {
+      type: 'OFFER',
+      title: dto.title.trim(),
+      body: dto.message.trim(),
+      message: dto.message.trim(),
+    };
+    if (dto.imageUrl?.trim()) {
+      payloadData.imageUrl = dto.imageUrl.trim();
     }
+    if (dto.showCta) {
+      payloadData.showCta = 'true';
+      if (dto.ctaText?.trim()) payloadData.ctaText = dto.ctaText.trim();
+      if (dto.ctaActionType) payloadData.ctaActionType = (dto.ctaActionType || 'DEEP_LINK').toUpperCase();
+      const actionVal = dto.ctaActionValue?.trim() || dto.deepLink?.trim();
+      if (actionVal) {
+        payloadData.ctaActionValue = actionVal;
+        if (dto.ctaActionType === 'DEEP_LINK' || (!dto.ctaActionType && actionVal.startsWith('/'))) {
+          payloadData.route = actionVal;
+        }
+      }
+    } else {
+      payloadData.showCta = 'false';
+    }
+    if (dto.offerCode?.trim()) {
+      payloadData.offerCode = dto.offerCode.trim();
+    }
+
+    // 1. Create in-app Notification records for all recipients
+    const uniqueRecipientMap = new Map<string, { customerId: number; userId: number }>();
+    for (const r of recipientPairs) {
+      uniqueRecipientMap.set(`${r.customerId}_${r.userId}`, r);
+    }
+    const deduplicatedRecipients = Array.from(uniqueRecipientMap.values());
+
+    const inAppNotifications = deduplicatedRecipients.map((r) => ({
+      customerId: r.customerId,
+      userId: r.userId,
+      title: dto.title.trim(),
+      message: dto.message.trim(),
+      type: 'ADMIN_OFFER',
+      data: payloadData as any,
+      isRead: false,
+    }));
+
+    await this.prisma.notification.createMany({
+      data: inAppNotifications,
+    });
+
+    // 2. Fetch active FCM device tokens for all recipient userIds
+    const recipientUserIds = deduplicatedRecipients.map((r) => r.userId);
+    const deviceRecords = await this.prisma.userDeviceToken.findMany({
+      where: {
+        userId: { in: recipientUserIds },
+        isActive: true,
+      },
+      select: { token: true },
+    });
+    const tokens = Array.from(new Set(deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0)));
+
+    let fcmResult: FcmSendResult = {
+      successCount: 0,
+      failureCount: 0,
+      invalidTokens: [],
+      messageIds: [],
+    };
+
+    if (tokens.length > 0) {
+      this.logger.log(
+        `[OFFER_PUSH] Dispatching rich offer push to ${tokens.length} active device(s) across ${deduplicatedRecipients.length} user(s)...`,
+      );
+      fcmResult = await this.fcmService.sendMulticast(
+        tokens,
+        dto.title.trim(),
+        dto.message.trim(),
+        payloadData,
+        { notificationType: 'OFFER' },
+      );
+    } else {
+      this.logger.warn(
+        `[OFFER_PUSH] No active device tokens found for ${deduplicatedRecipients.length} recipients. In-app notifications stored.`,
+      );
+    }
+
+    // 3. Clean up invalid tokens
+    if (fcmResult.invalidTokens && fcmResult.invalidTokens.length > 0) {
+      await this.prisma.userDeviceToken.updateMany({
+        where: { token: { in: fcmResult.invalidTokens } },
+        data: { isActive: false, updatedAt: new Date() },
+      });
+      this.logger.log(`Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`);
+    }
+
+    // 4. Update or Create NotificationCampaign record
+    let campaignId = existingCampaignId;
+    if (campaignId) {
+      await this.prisma.notificationCampaign.update({
+        where: { id: campaignId },
+        data: {
+          status: 'SENT',
+          recipientCount: deduplicatedRecipients.length,
+          sentCount: fcmResult.successCount,
+          failedCount: fcmResult.failureCount,
+        },
+      });
+    } else {
+      const createdCampaign = await this.prisma.notificationCampaign.create({
+        data: {
+          title: dto.title.trim(),
+          message: dto.message.trim(),
+          notificationType: 'OFFER',
+          targetType,
+          audience,
+          targetIds: specificIds.length > 0 ? specificIds : null,
+          imageUrl: dto.imageUrl?.trim() || null,
+          showCta: Boolean(dto.showCta),
+          ctaText: dto.showCta ? dto.ctaText?.trim() || null : null,
+          ctaActionType: dto.showCta ? (dto.ctaActionType || 'DEEP_LINK').toUpperCase() : null,
+          ctaActionValue: dto.showCta ? (dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null) : null,
+          status: 'SENT',
+          recipientCount: deduplicatedRecipients.length,
+          sentCount: fcmResult.successCount,
+          failedCount: fcmResult.failureCount,
+          createdById: adminUserId ? Number(adminUserId) : null,
+        },
+      });
+      campaignId = createdCampaign.id;
+    }
+
+    this.logger.log(
+      `[OFFER_CAMPAIGN_COMPLETE] Campaign #${campaignId} dispatched: ${fcmResult.successCount} sent, ${fcmResult.failureCount} failed, ${deduplicatedRecipients.length} in-app recipients`,
+    );
 
     return {
       success: true,
-      totalTargeted: targetCustomers.length,
-      sentCount: successCount,
-      failedCount,
-      message: `Offer notification dispatched to ${successCount} customer(s).`,
+      campaignId,
+      totalTargeted: deduplicatedRecipients.length,
+      activeDevices: tokens.length,
+      sentCount: fcmResult.successCount,
+      failedCount: fcmResult.failureCount,
+      message: `Offer notification successfully sent to ${deduplicatedRecipients.length} recipient(s) (${fcmResult.successCount} push delivered).`,
     };
+  }
+
+  /**
+   * Get paginated offer campaigns history for Admin
+   */
+  async getOfferCampaigns(page = 1, limit = 20) {
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.max(1, Math.min(100, Number(limit) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [items, total] = await Promise.all([
+      this.prisma.notificationCampaign.findMany({
+        skip,
+        take: limitNum,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.notificationCampaign.count(),
+    ]);
+
+    return {
+      items,
+      pagination: {
+        page: pageNum,
+        pageSize: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum) || 1,
+      },
+    };
+  }
+
+  /**
+   * Process all pending scheduled notifications (triggered by scheduler)
+   */
+  async processScheduledCampaigns(): Promise<number> {
+    const now = new Date();
+    const scheduled = await this.prisma.notificationCampaign.findMany({
+      where: {
+        status: 'SCHEDULED',
+        scheduledAt: { lte: now },
+      },
+    });
+
+    if (scheduled.length === 0) return 0;
+
+    let processedCount = 0;
+    for (const campaign of scheduled) {
+      try {
+        const dto: AdminOfferNotificationDto = {
+          title: campaign.title,
+          message: campaign.message,
+          targetType: campaign.targetType,
+          audience: campaign.audience,
+          targetIds: Array.isArray(campaign.targetIds) ? (campaign.targetIds as number[]) : undefined,
+          imageUrl: campaign.imageUrl || undefined,
+          showCta: campaign.showCta,
+          ctaText: campaign.ctaText || undefined,
+          ctaActionType: campaign.ctaActionType || undefined,
+          ctaActionValue: campaign.ctaActionValue || undefined,
+        };
+
+        await this.dispatchOfferNotification(dto, campaign.createdById || undefined, campaign.id);
+        processedCount++;
+      } catch (err: any) {
+        this.logger.error(`Failed to process scheduled campaign #${campaign.id}: ${err?.message}`, err?.stack);
+        await this.prisma.notificationCampaign.update({
+          where: { id: campaign.id },
+          data: { status: 'FAILED' },
+        });
+      }
+    }
+
+    return processedCount;
   }
 
   /**

@@ -976,6 +976,32 @@ model Notification {
   @@index([customerId, createdAt])
 }
 
+model NotificationCampaign {
+  id               Int       @id @default(autoincrement())
+  title            String
+  message          String
+  notificationType String    @default("OFFER")
+  targetType       String    // "CUSTOMERS" | "EMPLOYEES"
+  audience         String    // "ALL" | "SPECIFIC"
+  targetIds        Json?     // Array of target IDs when audience is SPECIFIC
+  imageUrl         String?
+  showCta          Boolean   @default(false)
+  ctaText          String?
+  ctaActionType    String?   // "DEEP_LINK" | "WEB_URL"
+  ctaActionValue   String?
+  scheduledAt      DateTime?
+  status           String    @default("SENT") // "SENT" | "SCHEDULED" | "FAILED"
+  recipientCount   Int       @default(0)
+  sentCount        Int       @default(0)
+  failedCount      Int       @default(0)
+  createdById      Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([createdAt])
+}
+
 model UserDeviceToken {
   id        Int      @id @default(autoincrement())
   userId    Int

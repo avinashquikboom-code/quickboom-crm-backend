@@ -16,6 +16,17 @@ import {
   utcCalendarDateKey,
 } from '../../common/utils/subscription-date.util';
 
+const INVOICE_ISSUER = Object.freeze({
+  brand: 'QB SUITE',
+  companyName: 'QUIK BOOM MARKETING AGENCY',
+  address: [
+    'FP 68, Gorwa Ankodia, 30MTRS, Canal Ring Road,',
+    'near Shivanta Iris, Gorwa,',
+    'Vadodara, Gujarat 391330',
+  ].join('\n'),
+  supportEmail: 'support@quikboom.in',
+});
+
 @Injectable()
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
@@ -860,6 +871,17 @@ export class InvoiceService {
     return null;
   }
 
+  private resolveInvoicePlanName(invoice: any): string {
+    const explicitPlanName = String(invoice?.planName || '').trim();
+    if (explicitPlanName) return explicitPlanName;
+
+    const notes = String(invoice?.notes || '');
+    const subscriptionMatch = notes.match(
+      /Subscription payment for\s+(.+?)(?:\s*\(|\.|$)/i,
+    );
+    return subscriptionMatch?.[1]?.trim() || 'QB Suite Plan & Growth Package';
+  }
+
   async generateInvoicePdfBuffer(invoice: any, invoiceNo: string): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
       try {
@@ -898,15 +920,50 @@ export class InvoiceService {
         const borderCol = '#E2E8F0';
         const lightBg = '#F8FAFC';
 
-        // Header & Company Info
-        doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QUIKBOOM CRM', 40, 40);
-        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text('QuikBoom Marketing Solutions Pvt Ltd', 40, 62)
-          .text('Dynasty Business Park, Andheri-Kurla Road, Mumbai, Maharashtra 400059', 40, 74)
-          .text('GSTIN: 27AABCT3518Q1Z4 | PAN: AABCT3518Q | State Code: 27', 40, 86);
+        const leftX = 40;
+        const rightX = 310;
+        const leftWidth = 245;
+        const rightWidth = 245;
 
-        doc.fillColor(darkColor).fontSize(16).font(boldFont).text('FINAL TAX INVOICE', 300, 40, { width: 255, align: 'right' });
-        doc.fillColor(primaryColor).fontSize(10).font(boldFont).text(invoiceNo, 300, 60, { width: 255, align: 'right' });
+        // Header & Company Info
+        doc
+          .fillColor(primaryColor)
+          .fontSize(20)
+          .font(boldFont)
+          .text(INVOICE_ISSUER.brand, leftX, 40, { width: leftWidth });
+        doc
+          .fillColor(darkColor)
+          .fontSize(10)
+          .font(boldFont)
+          .text(INVOICE_ISSUER.companyName, leftX, 65, {
+            width: leftWidth,
+            lineGap: 1,
+          });
+        doc
+          .fillColor(grayColor)
+          .fontSize(8.5)
+          .font(regularFont)
+          .text(INVOICE_ISSUER.address, leftX, 82, {
+            width: leftWidth,
+            lineGap: 2,
+          });
+
+        doc
+          .fillColor(darkColor)
+          .fontSize(16)
+          .font(boldFont)
+          .text('FINAL TAX INVOICE', rightX, 40, {
+            width: rightWidth,
+            align: 'right',
+          });
+        doc
+          .fillColor(primaryColor)
+          .fontSize(10)
+          .font(boldFont)
+          .text(`Invoice Number: ${invoiceNo}`, rightX, 62, {
+            width: rightWidth,
+            align: 'right',
+          });
         const purchaseDateLabel = new Date(invoice.issueDate).toLocaleDateString('en-IN');
         const planStartLabel = invoice.activationDate
           ? new Date(invoice.activationDate).toLocaleDateString('en-IN')
@@ -915,88 +972,244 @@ export class InvoiceService {
           ? new Date(invoice.expiryDate).toLocaleDateString('en-IN')
           : null;
 
-        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text('Original for Recipient', 300, 74, { width: 255, align: 'right' })
-          .text(`Purchase Date: ${purchaseDateLabel}`, 300, 86, { width: 255, align: 'right' })
-          .text(`Plan Start: ${planStartLabel}`, 300, 98, { width: 255, align: 'right' });
-        if (planEndLabel) {
-          doc.text(`Plan Validity End: ${planEndLabel}`, 300, 110, { width: 255, align: 'right' });
-        }
+        const invoiceStatus = String(invoice.status || 'ISSUED').toUpperCase();
+        const isPaid = invoiceStatus === 'PAID';
+        doc
+          .fillColor(grayColor)
+          .fontSize(8.5)
+          .font(regularFont)
+          .text(`Status / Type: ${invoiceStatus} • Original`, rightX, 77, {
+            width: rightWidth,
+            align: 'right',
+          })
+          .text(`Purchase Date: ${purchaseDateLabel}`, rightX, 90, {
+            width: rightWidth,
+            align: 'right',
+          })
+          .text(`Plan Start: ${planStartLabel}`, rightX, 103, {
+            width: rightWidth,
+            align: 'right',
+          })
+          .text(
+            `Plan Validity: ${planStartLabel}${planEndLabel ? ` → ${planEndLabel}` : ''}`,
+            rightX,
+            116,
+            { width: rightWidth, align: 'right' },
+          );
 
-        doc.moveTo(40, planEndLabel ? 114 : 102).lineTo(555, planEndLabel ? 114 : 102).strokeColor(borderCol).lineWidth(1).stroke();
+        const headerBottom = 139;
+        doc
+          .moveTo(40, headerBottom)
+          .lineTo(555, headerBottom)
+          .strokeColor(borderCol)
+          .lineWidth(1)
+          .stroke();
 
-        // Customer & Invoice Details 2-Column Section (Balanced 245pt each)
-        const metaTop = planEndLabel ? 124 : 112;
-        doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('BILLED TO (CUSTOMER)', 40, metaTop);
+        // Customer & Invoice Details 2-Column Section
+        const metaTop = headerBottom + 12;
+        doc
+          .fillColor(grayColor)
+          .fontSize(8.5)
+          .font(boldFont)
+          .text('BILLED TO (CUSTOMER)', leftX, metaTop);
         const clientName = invoice.contact
           ? `${invoice.contact.firstName || ''} ${invoice.contact.lastName || ''}`.trim()
           : ((invoice as any).customer?.name || 'Customer Account');
+        const customerEmail =
+          invoice.contact?.email || (invoice as any).customer?.email || 'N/A';
+        const customerPhone =
+          invoice.contact?.phone || (invoice as any).customer?.phone || 'N/A';
+        const placeOfSupply =
+          (invoice as any).customer?.state ||
+          (invoice as any).customer?.city ||
+          'N/A';
+        const customerRows = [
+          ['Customer Name:', clientName || 'Customer Account'],
+          ['Email:', customerEmail],
+          ['Phone:', customerPhone],
+          ['Customer ID:', `#${invoice.customerId}`],
+        ];
+        const metricRows = [
+          [
+            'Due Date:',
+            invoice.dueDate
+              ? new Date(invoice.dueDate).toLocaleDateString('en-IN')
+              : 'Settled',
+          ],
+          ['Payment Status:', invoiceStatus],
+          ['Place of Supply:', placeOfSupply],
+          ['Billing Mode:', 'Full Plan Settlement'],
+        ];
 
-        doc.fillColor(darkColor).fontSize(10).font(boldFont).text(clientName, 40, metaTop + 14, { width: 245 });
-        doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text(`Email: ${invoice.contact?.email || (invoice as any).customer?.email || 'N/A'}`, 40, metaTop + 28, { width: 245 })
-          .text(`Phone: ${invoice.contact?.phone || (invoice as any).customer?.phone || 'N/A'}`, 40, metaTop + 40, { width: 245 })
-          .text(`Customer ID: #${invoice.customerId}`, 40, metaTop + 52, { width: 245 });
+        customerRows.forEach(([label, value], index) => {
+          const y = metaTop + 16 + index * 15;
+          doc
+            .fillColor(grayColor)
+            .fontSize(8)
+            .font(regularFont)
+            .text(label, leftX, y, { width: 70 });
+          doc
+            .fillColor(darkColor)
+            .fontSize(index === 0 ? 9.5 : 8.5)
+            .font(index === 0 ? boldFont : regularFont)
+            .text(String(value), leftX + 74, y, {
+              width: leftWidth - 74,
+              ellipsis: true,
+            });
+        });
 
-        doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('INVOICE / ORDER METRICS', 310, metaTop);
-        doc.fillColor(darkColor).fontSize(8.5).font(regularFont)
-          .text(`Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('en-IN') : 'Settled'}`, 310, metaTop + 14, { width: 245 })
-          .text(`Payment Status: ${invoice.status}`, 310, metaTop + 28, { width: 245 })
-          .text(`Place of Supply: Maharashtra (27)`, 310, metaTop + 40, { width: 245 })
-          .text(`Billing Mode: Full Plan Settlement`, 310, metaTop + 52, { width: 245 });
+        doc
+          .fillColor(grayColor)
+          .fontSize(8.5)
+          .font(boldFont)
+          .text('INVOICE / ORDER METRICS', rightX, metaTop, {
+            width: rightWidth,
+          });
+        metricRows.forEach(([label, value], index) => {
+          const y = metaTop + 16 + index * 15;
+          doc
+            .fillColor(grayColor)
+            .fontSize(8)
+            .font(regularFont)
+            .text(label, rightX, y, { width: 85 });
+          doc
+            .fillColor(darkColor)
+            .fontSize(8.5)
+            .text(String(value), rightX + 89, y, {
+              width: rightWidth - 89,
+              align: 'right',
+              ellipsis: true,
+            });
+        });
 
-        doc.moveTo(40, metaTop + 70).lineTo(555, metaTop + 70).strokeColor(borderCol).stroke();
+        const metaBottom = metaTop + 82;
+        doc
+          .moveTo(40, metaBottom)
+          .lineTo(555, metaBottom)
+          .strokeColor(borderCol)
+          .stroke();
 
         // Itemized Table Header
-        const tableTop = metaTop + 82;
+        const tableTop = metaBottom + 12;
         doc.rect(40, tableTop, 515, 22).fill('#F1F5F9');
         doc.fillColor(darkColor).fontSize(8.5).font(boldFont);
-        doc.text('ITEM / SERVICE DESCRIPTION', 50, tableTop + 6, { width: 180 });
-        doc.text('SAC CODE', 240, tableTop + 6, { width: 70 });
-        doc.text('BASE AMT', 315, tableTop + 6, { width: 75, align: 'right' });
-        doc.text('GST (18%)', 395, tableTop + 6, { width: 75, align: 'right' });
-        doc.text('TOTAL (INR)', 475, tableTop + 6, { width: 75, align: 'right' });
+        doc.text('ITEM / SERVICE DESCRIPTION', 48, tableTop + 6, { width: 188 });
+        doc.text('SAC CODE', 240, tableTop + 6, { width: 60, align: 'center' });
+        doc.text('BASE AMT', 305, tableTop + 6, { width: 78, align: 'right' });
+        doc.text('GST', 388, tableTop + 6, { width: 78, align: 'right' });
+        doc.text('TOTAL', 471, tableTop + 6, { width: 76, align: 'right' });
 
         // Itemized Table Rows
         const subTotal = Number(invoice.subTotal || 0);
         const taxAmount = Number(invoice.taxAmount || 0);
         const totalAmount = Number(invoice.totalAmount || subTotal + taxAmount);
+        const isTaxCharged = taxAmount > 0.005;
         const cgst = taxAmount / 2;
         const sgst = taxAmount / 2;
         const rowTop = tableTop + 28;
+        const planName = this.resolveInvoicePlanName(invoice);
+        const planNameHeight = doc
+          .fontSize(9.5)
+          .font(boldFont)
+          .heightOfString(planName, { width: 188, lineGap: 1 });
 
-        doc.fillColor(darkColor).fontSize(9.5).font(boldFont).text('QuikBoom CRM Plan & Growth Package', 50, rowTop, { width: 180 });
+        doc
+          .fillColor(darkColor)
+          .fontSize(9.5)
+          .font(boldFont)
+          .text(planName, 48, rowTop, { width: 188, lineGap: 1 });
         const validityLine = planEndLabel
           ? `Validity: ${planStartLabel} → ${planEndLabel}`
-          : `Tax Invoice Reference: ${invoiceNo} • 100% Fully Settled`;
-        doc.fontSize(8).font(regularFont).fillColor(grayColor).text(validityLine, 50, rowTop + 13, { width: 180 });
+          : `Invoice Reference: ${invoiceNo}`;
+        const validityY = rowTop + planNameHeight + 3;
+        doc
+          .fontSize(8)
+          .font(regularFont)
+          .fillColor(grayColor)
+          .text(validityLine, 48, validityY, { width: 188 });
 
-        doc.fillColor(darkColor).fontSize(8.5).font(regularFont).text('998311', 240, rowTop, { width: 70 });
-        doc.text(formatInrCurrency(subTotal), 315, rowTop, { width: 75, align: 'right' });
-        doc.text(formatInrCurrency(taxAmount), 395, rowTop, { width: 75, align: 'right' });
-        doc.font(boldFont).text(formatInrCurrency(totalAmount), 475, rowTop, { width: 75, align: 'right' });
+        doc.fillColor(darkColor).fontSize(8.5).font(regularFont);
+        doc.text('998311', 240, rowTop, { width: 60, align: 'center' });
+        doc.text(formatInrCurrency(subTotal), 305, rowTop, { width: 78, align: 'right' });
+        doc.text(formatInrCurrency(taxAmount), 388, rowTop, { width: 78, align: 'right' });
+        doc.font(boldFont).text(formatInrCurrency(totalAmount), 471, rowTop, {
+          width: 76,
+          align: 'right',
+        });
 
-        doc.moveTo(40, rowTop + 32).lineTo(555, rowTop + 32).strokeColor(borderCol).stroke();
+        const rowBottom = Math.max(rowTop + 34, validityY + 12);
+        doc
+          .moveTo(40, rowBottom)
+          .lineTo(555, rowBottom)
+          .strokeColor(borderCol)
+          .stroke();
 
         // Summary & Tax Breakdown Box
-        const summaryTop = rowTop + 44;
+        const summaryTop = rowBottom + 12;
 
         // Left Box: Tax Breakdown
         doc.rect(40, summaryTop, 245, 95).fill(lightBg);
         doc.rect(40, summaryTop, 245, 95).strokeColor(borderCol).stroke();
 
-        doc.fillColor(darkColor).fontSize(8.5).font(boldFont).text('TAX BREAKDOWN (GST 18%)', 50, summaryTop + 10);
-        doc.fillColor(grayColor).fontSize(8).font(regularFont)
-          .text('CGST (9.0%):', 50, summaryTop + 26)
-          .text(formatInrCurrency(cgst), 160, summaryTop + 26, { width: 115, align: 'right' })
-          .text('SGST (9.0%):', 50, summaryTop + 42)
-          .text(formatInrCurrency(sgst), 160, summaryTop + 42, { width: 115, align: 'right' })
-          .text('Total Tax Payable:', 50, summaryTop + 58)
-          .text(formatInrCurrency(taxAmount), 160, summaryTop + 58, { width: 115, align: 'right' });
-
-        doc.moveTo(50, summaryTop + 72).lineTo(275, summaryTop + 72).strokeColor(borderCol).stroke();
-        doc.fillColor(primaryColor).fontSize(8.5).font(boldFont)
-          .text('Tax Status: Paid in Full', 50, summaryTop + 78);
+        doc
+          .fillColor(darkColor)
+          .fontSize(8.5)
+          .font(boldFont)
+          .text(isTaxCharged ? 'TAX BREAKDOWN (GST 18%)' : 'TAX BREAKDOWN', 50, summaryTop + 10);
+        if (isTaxCharged) {
+          doc
+            .fillColor(grayColor)
+            .fontSize(8)
+            .font(regularFont)
+            .text('CGST (9.0%):', 50, summaryTop + 26)
+            .text(formatInrCurrency(cgst), 160, summaryTop + 26, {
+              width: 115,
+              align: 'right',
+            })
+            .text('SGST (9.0%):', 50, summaryTop + 42)
+            .text(formatInrCurrency(sgst), 160, summaryTop + 42, {
+              width: 115,
+              align: 'right',
+            })
+            .text('Total Tax Payable:', 50, summaryTop + 58)
+            .text(formatInrCurrency(taxAmount), 160, summaryTop + 58, {
+              width: 115,
+              align: 'right',
+            });
+          doc
+            .moveTo(50, summaryTop + 72)
+            .lineTo(275, summaryTop + 72)
+            .strokeColor(borderCol)
+            .stroke();
+          doc
+            .fillColor(isPaid ? primaryColor : '#B45309')
+            .fontSize(8.5)
+            .font(boldFont)
+            .text(
+              isPaid ? 'Tax Status: Paid in Full' : 'Tax Status: Included in Balance Due',
+              50,
+              summaryTop + 78,
+              { width: 225 },
+            );
+        } else {
+          doc
+            .fillColor(grayColor)
+            .fontSize(8)
+            .font(regularFont)
+            .text('GST:', 50, summaryTop + 31)
+            .fillColor(darkColor)
+            .text(formatInrCurrency(0), 160, summaryTop + 31, {
+              width: 115,
+              align: 'right',
+            });
+          doc
+            .fillColor(primaryColor)
+            .fontSize(8.5)
+            .font(boldFont)
+            .text('GST is not charged or collected', 50, summaryTop + 57, {
+              width: 225,
+            });
+        }
 
         // Right Box: Total Settlement
         doc.rect(310, summaryTop, 245, 95).fill(lightBg);
@@ -1007,38 +1220,88 @@ export class InvoiceService {
           .text('Taxable Value:', 320, summaryTop + 24)
           .fillColor(darkColor).text(formatInrCurrency(subTotal), 430, summaryTop + 24, { width: 115, align: 'right' });
 
-        doc.fillColor(grayColor).text('Total Tax (GST 18%):', 320, summaryTop + 38)
+        doc.fillColor(grayColor).text(isTaxCharged ? 'Total Tax (GST 18%):' : 'Total Tax:', 320, summaryTop + 38)
           .fillColor(darkColor).text(formatInrCurrency(taxAmount), 430, summaryTop + 38, { width: 115, align: 'right' });
 
         doc.moveTo(320, summaryTop + 52).lineTo(545, summaryTop + 52).strokeColor('#CBD5E1').stroke();
 
         doc.fillColor(primaryColor).fontSize(10).font(boldFont).text('Total Paid Amount:', 320, summaryTop + 58);
-        doc.text(formatInrCurrency(totalAmount), 430, summaryTop + 58, { width: 115, align: 'right' });
+        doc.text(formatInrCurrency(isPaid ? totalAmount : 0), 430, summaryTop + 58, { width: 115, align: 'right' });
 
         doc.fillColor(grayColor).fontSize(8).font(regularFont).text('Balance Due:', 320, summaryTop + 76);
-        doc.fillColor('#059669').font(boldFont).text('₹0.00 (PAID)', 430, summaryTop + 76, { width: 115, align: 'right' });
+        doc
+          .fillColor(isPaid ? '#059669' : '#B45309')
+          .font(boldFont)
+          .text(
+            isPaid ? `${formatInrCurrency(0)} (PAID)` : formatInrCurrency(totalAmount),
+            430,
+            summaryTop + 76,
+            { width: 115, align: 'right' },
+          );
 
         // Official Verification Stamp & Signature Section
         const signTop = summaryTop + 110;
 
-        // Paid Stamp
-        doc.rect(40, signTop, 140, 48).fillAndStroke('#ECFDF5', '#10B981');
-        doc.fillColor('#065F46').fontSize(14).font(boldFont).text('PAID', 90, signTop + 12);
-        doc.fontSize(7.5).font(regularFont).text('Official Tax Invoice • Digitally Verified', 48, signTop + 32);
+        // Paid / status stamp
+        doc
+          .rect(40, signTop, 140, 48)
+          .fillAndStroke(isPaid ? '#ECFDF5' : '#F8FAFC', isPaid ? '#10B981' : '#94A3B8');
+        doc
+          .fillColor(isPaid ? '#065F46' : darkColor)
+          .fontSize(14)
+          .font(boldFont)
+          .text(isPaid ? 'PAID' : invoiceStatus, 48, signTop + 11, {
+            width: 124,
+            align: 'center',
+          });
+        doc
+          .fontSize(7.5)
+          .font(regularFont)
+          .text('Official Invoice • Digitally Verified', 48, signTop + 31, {
+            width: 124,
+            align: 'center',
+          });
 
         // Signatory
         doc.fillColor(darkColor).fontSize(8.5).font(boldFont)
-          .text('For QuikBoom Marketing Solutions Pvt Ltd', 310, signTop + 8, { width: 245, align: 'right' });
+          .text(`For ${INVOICE_ISSUER.companyName}`, 310, signTop + 8, { width: 245, align: 'right' });
         doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
           .text('Authorized Signatory', 310, signTop + 34, { width: 245, align: 'right' });
 
         // Terms & Conditions Footer
         const footerTop = signTop + 65;
         doc.moveTo(40, footerTop).lineTo(555, footerTop).strokeColor(borderCol).stroke();
-        doc.fillColor(grayColor).fontSize(7.5).font(regularFont)
-          .text('Terms & Conditions: This is a computer-generated tax invoice generated in compliance with GST Rules.', 40, footerTop + 10, { width: 515, align: 'center' })
-          .text('Payment is non-refundable. For support or queries: support@quikboom.com | https://quikboom.com', 40, footerTop + 22, { width: 515, align: 'center' })
-          .text('QuikBoom CRM • Enterprise Multi-Tenant SaaS Platform', 40, footerTop + 34, { width: 515, align: 'center' });
+        const taxTerms = isTaxCharged
+          ? 'GST is charged and collected as detailed on this invoice.'
+          : 'GST is not charged or collected on this invoice.';
+        const terms =
+          `Terms & Conditions: This is a computer-generated invoice. ${taxTerms} ` +
+          'Payment once made is non-refundable. Services are provided as per the agreed plan package and validity. ' +
+          `For support or billing queries, contact ${INVOICE_ISSUER.supportEmail}`;
+        doc
+          .fillColor(grayColor)
+          .fontSize(7.5)
+          .font(regularFont)
+          .text(terms, 48, footerTop + 10, {
+            width: 499,
+            align: 'center',
+            lineGap: 2,
+          });
+        const termsHeight = doc.heightOfString(terms, {
+          width: 499,
+          align: 'center',
+          lineGap: 2,
+        });
+        doc
+          .fillColor(grayColor)
+          .fontSize(7.5)
+          .font(boldFont)
+          .text(
+            `${INVOICE_ISSUER.brand} • ${INVOICE_ISSUER.companyName} • ${INVOICE_ISSUER.supportEmail}`,
+            48,
+            footerTop + 16 + termsHeight,
+            { width: 499, align: 'center' },
+          );
 
         doc.end();
       } catch (err: any) {

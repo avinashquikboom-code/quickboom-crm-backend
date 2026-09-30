@@ -311,11 +311,14 @@ export class FcmService implements OnModuleInit {
       }
     }
 
+    const imageUrl = data?.imageUrl ? String(data.imageUrl).trim() : undefined;
+
     const message: Message = {
       token: cleanToken,
       notification: {
         title,
         body,
+        ...(imageUrl ? { imageUrl } : {}),
       },
       data: stringifiedData,
       android: {
@@ -329,6 +332,7 @@ export class FcmService implements OnModuleInit {
           defaultSound: true,
           defaultVibrateTimings: true,
           visibility: 'public',
+          ...(imageUrl ? { imageUrl } : {}),
         },
       },
       apns: {
@@ -337,8 +341,10 @@ export class FcmService implements OnModuleInit {
             sound: 'default',
             badge: 1,
             contentAvailable: true,
+            'mutable-content': 1,
           },
         },
+        ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
       },
       webpush: {
         headers: {
@@ -349,6 +355,7 @@ export class FcmService implements OnModuleInit {
           body,
           icon: '/logo.png',
           badge: '/favicon.ico',
+          ...(imageUrl ? { image: imageUrl } : {}),
           requireInteraction: true,
         },
         fcmOptions: {
@@ -456,6 +463,8 @@ export class FcmService implements OnModuleInit {
     const batchSize = 500;
     const messaging = getMessaging(this.firebaseApp);
 
+    const imageUrl = data?.imageUrl ? String(data.imageUrl).trim() : undefined;
+
     for (let i = 0; i < validTokens.length; i += batchSize) {
       const batchTokens = validTokens.slice(i, i + batchSize);
 
@@ -464,6 +473,7 @@ export class FcmService implements OnModuleInit {
         notification: {
           title,
           body,
+          ...(imageUrl ? { imageUrl } : {}),
         },
         data: stringifiedData,
         android: {
@@ -477,6 +487,7 @@ export class FcmService implements OnModuleInit {
             defaultSound: true,
             defaultVibrateTimings: true,
             visibility: 'public',
+            ...(imageUrl ? { imageUrl } : {}),
           },
         },
         apns: {
@@ -485,8 +496,10 @@ export class FcmService implements OnModuleInit {
               sound: 'default',
               badge: 1,
               contentAvailable: true,
+              'mutable-content': 1,
             },
           },
+          ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
         },
         webpush: {
           headers: {
@@ -497,6 +510,7 @@ export class FcmService implements OnModuleInit {
             body,
             icon: '/logo.png',
             badge: '/favicon.ico',
+            ...(imageUrl ? { image: imageUrl } : {}),
             requireInteraction: true,
           },
           fcmOptions: {

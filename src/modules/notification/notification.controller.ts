@@ -8,10 +8,15 @@ import {
   Query,
   Body,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
+import { S3Service } from '../s3/s3.service';
 import {
   RegisterDeviceTokenDto,
   UnregisterDeviceTokenDto,
@@ -35,6 +40,7 @@ export class NotificationController {
   constructor(
     private readonly notificationService: NotificationService,
     private readonly notificationSchedulerService: NotificationSchedulerService,
+    private readonly s3Service: S3Service,
   ) {}
 
   @Get()
@@ -123,10 +129,47 @@ export class NotificationController {
   }
 
   @Post('admin/offer')
-  @ApiOperation({ summary: 'Send admin offer notification to customer(s) and store in-app history' })
+  @ApiOperation({ summary: 'Send admin offer notification to customer(s) or employee(s) and store in-app history' })
   @ApiBody({ type: AdminOfferNotificationDto })
-  async sendAdminOffer(@Body() dto: AdminOfferNotificationDto) {
-    return this.notificationService.sendAdminOfferNotification(dto);
+  async sendAdminOffer(
+    @CurrentUser('id') userId: string,
+    @Body() dto: AdminOfferNotificationDto,
+  ) {
+    const adminUserId = userId ? Number(userId) : undefined;
+    return this.notificationService.sendAdminOfferNotification(dto, adminUserId);
+  }
+
+  @Get('admin/campaigns')
+  @ApiOperation({ summary: 'Get paginated offer notifications history / campaigns (Admin)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  async getAdminCampaigns(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.notificationService.getOfferCampaigns(
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 20,
+    );
+  }
+
+  @Post('admin/upload-image')
+  @ApiOperation({ summary: 'Upload promotional image for offer notification (Admin)' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('image'))
+  async uploadOfferImage(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Image file is required for upload');
+    }
+    const result = await this.s3Service.uploadFile(file, 'notifications/offers');
+    return {
+      success: true,
+      message: 'Promotional image uploaded successfully',
+      data: {
+        imageUrl: result.imageUrl,
+        imageKey: result.imageKey,
+      },
+    };
   }
 
   @Post('triggers/run-scheduled-checks')

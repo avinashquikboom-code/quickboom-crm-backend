@@ -31,6 +31,7 @@ function getIstDayWindow(dayOffset: number): { start: Date; end: Date } {
 export class NotificationSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NotificationSchedulerService.name);
   private timer: NodeJS.Timeout | null = null;
+  private campaignTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -45,12 +46,19 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
       });
     }, 10000);
 
-    // Periodic check every 1 hour (3600000 ms)
+    // Periodic check every 1 hour (3600000 ms) for general reminders & cleanup
     this.timer = setInterval(() => {
       this.runAllScheduledChecks().catch((err) => {
         this.logger.error(`Periodic scheduled check error: ${err?.message}`, err?.stack);
       });
     }, 60 * 60 * 1000);
+
+    // Prompt check every 1 minute for scheduled offer campaigns
+    this.campaignTimer = setInterval(() => {
+      this.notificationService.processScheduledCampaigns().catch((err) => {
+        this.logger.error(`Scheduled offer campaign check error: ${err?.message}`);
+      });
+    }, 60 * 1000);
   }
 
   onModuleDestroy() {
@@ -58,28 +66,36 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.campaignTimer) {
+      clearInterval(this.campaignTimer);
+      this.campaignTimer = null;
+    }
   }
 
   /**
    * Run all automated notifications:
    * 1. 3-day subscription expiry reminders (Customer)
    * 2. Tomorrow's calendar activity reminders (Customer + Employee)
+   * 3. Pending scheduled offer notifications
+   * 4. 7-day notification cleanup
    */
   async runAllScheduledChecks() {
     this.logger.log('Starting automated notification scheduler cycle...');
 
     const subCount = await this.checkSubscriptionExpiries();
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
+    const scheduledOffersCount = await this.notificationService.processScheduledCampaigns();
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
       subscriptionsNotified: subCount,
       customerCalendarNotified: customerCount,
       employeeCalendarNotified: employeeCount,
+      scheduledOffersNotified: scheduledOffersCount,
       notificationsCleaned: cleanupCount,
     };
   }

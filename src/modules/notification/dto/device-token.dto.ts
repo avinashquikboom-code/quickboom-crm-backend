@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, IsIn, IsNumber, IsObject } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsIn, IsNumber, IsObject, IsBoolean, IsArray, IsDateString } from 'class-validator';
 
 export class RegisterDeviceTokenDto {
   @ApiProperty({ description: 'Firebase Cloud Messaging Device Registration Token', example: 'fcm_token_xyz...' })
@@ -94,6 +94,23 @@ export class AdminOfferNotificationDto {
   @IsNotEmpty()
   message: string;
 
+  @ApiPropertyOptional({ description: 'Target audience: CUSTOMERS or EMPLOYEES', enum: ['CUSTOMERS', 'EMPLOYEES'], default: 'CUSTOMERS' })
+  @IsOptional()
+  @IsString()
+  @IsIn(['CUSTOMERS', 'EMPLOYEES', 'customers', 'employees'])
+  targetType?: string;
+
+  @ApiPropertyOptional({ description: 'Audience selection: ALL or SPECIFIC', enum: ['ALL', 'SPECIFIC'], default: 'ALL' })
+  @IsOptional()
+  @IsString()
+  @IsIn(['ALL', 'SPECIFIC', 'all', 'specific'])
+  audience?: string;
+
+  @ApiPropertyOptional({ description: 'Array of specific Customer IDs or Employee IDs when audience is SPECIFIC', example: [1, 2, 3] })
+  @IsOptional()
+  @IsArray()
+  targetIds?: number[];
+
   @ApiPropertyOptional({ description: 'Target customer ID (optional: if omitted, broadcast to all active customers)', example: 1 })
   @IsOptional()
   @IsNumber()
@@ -109,10 +126,36 @@ export class AdminOfferNotificationDto {
   @IsString()
   imageUrl?: string;
 
+  @ApiPropertyOptional({ description: 'Whether to display customizable CTA button on notification', default: false })
+  @IsOptional()
+  @IsBoolean()
+  showCta?: boolean;
+
+  @ApiPropertyOptional({ description: 'Custom CTA button label (e.g. Claim Offer, View Plan)', example: 'Claim Offer' })
+  @IsOptional()
+  @IsString()
+  ctaText?: string;
+
+  @ApiPropertyOptional({ description: 'CTA action type', enum: ['DEEP_LINK', 'WEB_URL'], default: 'DEEP_LINK' })
+  @IsOptional()
+  @IsString()
+  @IsIn(['DEEP_LINK', 'WEB_URL', 'deep_link', 'web_url'])
+  ctaActionType?: string;
+
+  @ApiPropertyOptional({ description: 'Destination deep link or web URL for CTA action', example: '/customer/plans' })
+  @IsOptional()
+  @IsString()
+  ctaActionValue?: string;
+
   @ApiPropertyOptional({ description: 'Optional deep link route in mobile app', example: '/subscription-plans' })
   @IsOptional()
   @IsString()
   deepLink?: string;
+
+  @ApiPropertyOptional({ description: 'Optional future schedule timestamp (ISO 8601 string). If omitted, sends immediately.', example: '2026-10-01T10:00:00.000Z' })
+  @IsOptional()
+  @IsDateString()
+  scheduledAt?: string;
 }
 
 export class TestCustomerNotificationDto {
