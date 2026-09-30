@@ -356,9 +356,10 @@ export class S3Service {
         const pathname = url.pathname.replace(/^\/+/, '');
         // Matches all known S3 folder conventions:
         // marketing/banners, marketing/trending, marketing/social-media,
-        // marketing/videos, marketing/thumbnails, ai-posters, ai-studio
+        // marketing/videos, marketing/thumbnails, notifications/offers,
+        // ai-posters, ai-studio
         const match = pathname.match(
-          /((?:marketing\/(?:banners|trending|social-media|videos|thumbnails)|ai-posters(?:\/\d+)?|ai-studio(?:\/[^\/?]+)?)\/[^\/?]+)/i,
+          /((?:marketing\/(?:banners|trending|social-media|videos|thumbnails)|notifications\/offers|ai-posters(?:\/\d+)?|ai-studio(?:\/[^\/?]+)?)\/[^\/?]+)/i,
         );
         if (match) {
           return match[1];

@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
 import { S3Service } from '../s3/s3.service';
@@ -156,18 +157,28 @@ export class NotificationController {
   @Post('admin/upload-image')
   @ApiOperation({ summary: 'Upload promotional image for offer notification (Admin)' })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
   async uploadOfferImage(@UploadedFile() file?: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('Image file is required for upload');
     }
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Image file data is missing');
+    }
     const result = await this.s3Service.uploadFile(file, 'notifications/offers');
+    const previewUrl = await this.s3Service.getPresignedUrl(result.imageKey, 604800);
     return {
       success: true,
       message: 'Promotional image uploaded successfully',
       data: {
         imageUrl: result.imageUrl,
         imageKey: result.imageKey,
+        previewUrl: previewUrl || result.imageUrl,
       },
     };
   }

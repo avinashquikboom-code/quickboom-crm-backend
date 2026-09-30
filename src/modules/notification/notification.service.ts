@@ -4,6 +4,7 @@ import { FcmService, FcmSendResult } from './fcm.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
+import { S3Service } from '../s3/s3.service';
 import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
@@ -25,6 +26,7 @@ export class NotificationService {
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
+    @Optional() private readonly s3Service?: S3Service,
   ) {}
 
   async resolveCustomerEmail(customerId: number): Promise<{ email: string | null; customerName: string; companyName: string }> {
@@ -1291,6 +1293,15 @@ export class NotificationService {
       };
     }
 
+    // Keep the stable S3 reference in campaign storage, but send a fresh
+    // presigned URL so private-bucket images are accessible to FCM clients.
+    const storedImageUrl = dto.imageUrl?.trim();
+    const deliveryImageUrl =
+      storedImageUrl && this.s3Service
+        ? (await this.s3Service.getPresignedUrl(storedImageUrl, 604800)) ||
+          storedImageUrl
+        : storedImageUrl;
+
     // Build payload
     const payloadData: Record<string, string> = {
       type: 'OFFER',
@@ -1298,8 +1309,8 @@ export class NotificationService {
       body: dto.message.trim(),
       message: dto.message.trim(),
     };
-    if (dto.imageUrl?.trim()) {
-      payloadData.imageUrl = dto.imageUrl.trim();
+    if (deliveryImageUrl) {
+      payloadData.imageUrl = deliveryImageUrl;
     }
     if (dto.showCta) {
       payloadData.showCta = 'true';
@@ -1443,7 +1454,7 @@ export class NotificationService {
     const limitNum = Math.max(1, Math.min(100, Number(limit) || 20));
     const skip = (pageNum - 1) * limitNum;
 
-    const [items, total] = await Promise.all([
+    const [storedItems, total] = await Promise.all([
       this.prisma.notificationCampaign.findMany({
         skip,
         take: limitNum,
@@ -1451,6 +1462,17 @@ export class NotificationService {
       }),
       this.prisma.notificationCampaign.count(),
     ]);
+
+    const items = await Promise.all(
+      storedItems.map(async (item) => ({
+        ...item,
+        imageUrl:
+          item.imageUrl && this.s3Service
+            ? (await this.s3Service.getPresignedUrl(item.imageUrl, 604800)) ||
+              item.imageUrl
+            : item.imageUrl,
+      })),
+    );
 
     return {
       items,
