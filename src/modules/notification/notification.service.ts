@@ -568,13 +568,34 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same leave record
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: emp.customerId,
+          userId: emp.userId,
+          type: 'LEAVE_APPROVED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.leaveId) === String(leave.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const leaveTypeName = leave.leaveType?.name || 'Leave';
       const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
       const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+      const remarksText = leave.remarks || leave.approvalRemarks ? ` Remarks: ${leave.remarks || leave.approvalRemarks}` : '';
+      const approverName = leave.approvedBy ? `${leave.approvedBy.firstName || ''} ${leave.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = isHalfDay ? 'Half-Day Leave Approved' : 'Leave Request Approved';
-      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been approved.`;
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been approved${approverText}.${remarksText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
@@ -589,6 +610,7 @@ export class NotificationService {
           status: 'APPROVED',
           isHalfDay: String(isHalfDay),
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -598,7 +620,11 @@ export class NotificationService {
   }
 
   /**
-   * Send New Lead Assignment Push Notification to Employee (Requirement: Task Send Push Notification when a new Lead is assigned)
+   * Lead Assignment Push Notification (SUPPRESSED per business rules)
+   * The following must remain silent:
+   * Lead created -> Lead assigned -> NO notification
+   * Lead reassigned -> NO notification
+   * Lead owner changed -> NO notification
    */
   async sendLeadAssignedNotification(params: {
     customerId: number | string;
@@ -607,16 +633,53 @@ export class NotificationService {
     leadId: number | string;
     leadName?: string | null;
   }) {
-    const { customerId, employeeId, userId, leadId, leadName } = params;
+    // Intentionally suppressed: Lead assignment / reassignment must work normally but silently.
+    this.logger.debug?.(`[FCM] Lead assignment notification suppressed for lead #${params?.leadId}`);
+    return null;
+  }
+
+  /**
+   * 1. DATA IMPORT -> LEAD NOTIFICATION
+   * Fired ONLY after Lead data is successfully created via Data Import.
+   * Notifies the appropriate existing recipient based on existing Lead assignment/ownership.
+   */
+  async sendLeadImportedNotification(params: {
+    customerId: number | string;
+    leadId: number | string;
+    leadName?: string | null;
+    companyName?: string | null;
+    source?: string | null;
+    employeeId?: number | string | null;
+    userId?: number | string | null;
+    createdById?: number | string | null;
+  }) {
+    const { customerId, leadId, leadName, companyName, source, employeeId, userId, createdById } = params;
     const numCustomerId = Number(customerId);
     const numLeadId = Number(leadId);
 
     try {
+      // 1. Idempotency / duplicate check (within 15 minutes for this leadId)
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: numCustomerId,
+          type: 'LEAD_IMPORTED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.leadId) === String(numLeadId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve recipient using existing Lead ownership/assignment model
       let targetUserId: number | null = userId ? Number(userId) : null;
       let targetEmployeeId: number | null = employeeId ? Number(employeeId) : null;
 
-      // 1. Resolve employee and userId
-      if (targetEmployeeId && !targetUserId) {
+      if (!targetUserId && targetEmployeeId) {
         const emp = await this.prisma.employee.findUnique({
           where: { id: targetEmployeeId },
           select: { id: true, userId: true, email: true },
@@ -632,86 +695,151 @@ export class NotificationService {
             targetUserId = linkedUser.id;
           }
         }
-      } else if (targetUserId && !targetEmployeeId) {
-        const emp = await this.prisma.employee.findFirst({
-          where: { userId: targetUserId, customerId: numCustomerId },
-          select: { id: true },
-        });
-        if (emp) {
-          targetEmployeeId = emp.id;
-        }
       }
 
-      // If targetUserId is not found in User table, check if targetUserId was actually an Employee ID
-      if (targetUserId) {
-        const userExists = await this.prisma.user.findUnique({
-          where: { id: targetUserId },
+      if (!targetUserId && createdById) {
+        targetUserId = Number(createdById);
+      }
+
+      if (!targetUserId) {
+        const firstUser = await this.prisma.user.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
           select: { id: true },
         });
-        if (!userExists) {
-          const emp = await this.prisma.employee.findUnique({
-            where: { id: targetUserId },
-            select: { id: true, userId: true },
-          });
-          if (emp?.userId) {
-            targetEmployeeId = emp.id;
-            targetUserId = emp.userId;
-          }
+        if (firstUser) {
+          targetUserId = firstUser.id;
         }
       }
 
       if (!targetUserId) {
-        this.logger.warn(
-          `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: no\nSend status: skipped (no linked userId)`,
-        );
+        this.logger.warn(`[LEAD_IMPORT] No valid user found to notify for imported lead #${numLeadId}`);
         return null;
       }
 
-      // 2. Resolve lead name if not provided
-      let resolvedLeadName = (leadName || '').trim();
-      if (!resolvedLeadName) {
-        const lead = await this.prisma.lead.findUnique({
-          where: { id: numLeadId },
-          select: { id: true, firstName: true, lastName: true, companyName: true, title: true },
-        });
-        if (lead) {
-          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-          resolvedLeadName = fullName || lead.companyName || lead.title || lead.firstName || `Lead #${lead.id}`;
-        } else {
-          resolvedLeadName = `Lead #${numLeadId}`;
-        }
-      }
+      // 3. Prepare title and body
+      const resolvedName = (leadName || '').trim() || (companyName || '').trim() || `Lead #${numLeadId}`;
+      const companyPart = companyName && companyName !== resolvedName ? ` (${companyName})` : '';
+      const sourcePart = source ? ` from ${source}` : '';
 
-      const title = 'New Lead Assigned';
-      const body = `You have been assigned a new lead: ${resolvedLeadName}`;
+      const title = 'Lead Imported Successfully';
+      const body = `Lead "${resolvedName}"${companyPart}${sourcePart} has been imported successfully.`;
 
-      const res = await this.sendPushNotification({
+      return await this.sendPushNotification({
         userId: targetUserId,
         customerId: numCustomerId,
         title,
         body,
-        type: 'LEAD_ASSIGNED',
+        type: 'LEAD_IMPORTED',
         data: {
-          type: 'LEAD_ASSIGNED',
+          type: 'LEAD_IMPORTED',
           leadId: String(numLeadId),
-          customerId: String(numCustomerId),
-          channel: 'LEAD',
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          leadName: resolvedName,
+          companyName: companyName || '',
+          source: source || 'Data Import',
         },
       });
-
-      const tokenFound = (res?.status === 'NO_ACTIVE_TOKENS') ? 'no' : 'yes';
-      const sendStatus = (res?.delivered) ? 'success' : (res?.status === 'NO_ACTIVE_TOKENS' ? 'skipped (no tokens)' : 'failed');
-
-      this.logger.log(
-        `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? targetUserId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: ${tokenFound}\nSend status: ${sendStatus}`,
-      );
-
-      return res;
     } catch (err: any) {
-      this.logger.warn(
-        `[FCM] Lead assignment notification:\nEmployee ID: ${employeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: unknown\nSend status: failed (${err?.message})`,
-      );
+      this.logger.error(`Error sending lead imported notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 2. VISIT SCHEDULED -> VISITOR NOTIFICATION
+   * Fired ONLY after Visit is successfully created and visitor assigned.
+   * Recipient: ONLY the assigned Visitor/Field Officer.
+   */
+  async sendVisitScheduledNotification(params: {
+    customerId: number | string;
+    visitId: number | string;
+    employeeId: number | string;
+    customerName?: string | null;
+    purpose?: string | null;
+    date: Date | string;
+    time?: string | null;
+    location?: string | null;
+    notes?: string | null;
+    leadId?: number | string | null;
+  }) {
+    const { customerId, visitId, employeeId, customerName, purpose, date, time, location, notes, leadId } = params;
+    const numCustomerId = Number(customerId);
+    const numVisitId = Number(visitId);
+    const numEmployeeId = Number(employeeId);
+
+    try {
+      // 1. Idempotency check: prevent duplicate notification within 15 minutes for the same visitId
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: numCustomerId,
+          type: 'VISIT_SCHEDULED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.visitId) === String(numVisitId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve assigned visitor's userId
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, firstName: true, lastName: true, email: true },
+      });
+
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(`[VISIT_SCHEDULED] Visitor employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
+
+      // 3. Format date and text
+      let dateStr = '';
+      if (date) {
+        const d = new Date(date);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(date);
+      }
+      const timeStr = time ? ` at ${time}` : '';
+      const locStr = location ? ` at ${location}` : '';
+      const purposeStr = purpose ? ` for ${purpose}` : '';
+      const leadOrCustomer = customerName?.trim() || 'Customer';
+
+      const title = 'New Visit Scheduled';
+      const body = `New visit scheduled with ${leadOrCustomer}${purposeStr} on ${dateStr}${timeStr}${locStr}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+        customerId: numCustomerId,
+        title,
+        body,
+        type: 'VISIT_SCHEDULED',
+        data: {
+          type: 'VISIT_SCHEDULED',
+          visitId: String(numVisitId),
+          leadId: leadId ? String(leadId) : '',
+          customerName: leadOrCustomer,
+          purpose: purpose || '',
+          date: dateStr,
+          time: time || '',
+          location: location || '',
+          notes: notes || '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending visit scheduled notification: ${err?.message}`, err?.stack);
       return null;
     }
   }
@@ -777,22 +905,27 @@ export class NotificationService {
   async sendSubscriptionExpiringNotification(customerId: number, subscription: any, daysRemaining = 3) {
     try {
       const planName = subscription.plan?.name || 'Subscription Plan';
-      const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'soon';
+      const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'today';
 
-      const title = '⚠️ Your Plan Expires Soon';
-      const body = `Your ${planName} plan will expire in 3 days. Renew your plan to continue using QB Suite.`;
+      const isToday = daysRemaining === 0;
+      const title = isToday ? '⚠️ Your Plan Expires Today' : '⚠️ Your Plan Expires in 3 Days';
+      const body = isToday
+        ? `Your ${planName} plan expires today (${endDate}). Renew now to avoid service interruption.`
+        : `Your ${planName} plan will expire in 3 days (${endDate}). Renew your plan to continue using QB Suite.`;
+      const notifType = isToday ? 'SUBSCRIPTION_EXPIRING_TODAY' : 'SUBSCRIPTION_EXPIRING_SOON';
 
       const pushResult = await this.sendPushNotification({
         customerId,
         title,
         body,
-        type: 'SUBSCRIPTION_EXPIRING_SOON',
+        type: notifType,
         data: {
           type: 'SUBSCRIPTION',
           subscriptionId: String(subscription.id),
           customerId: String(customerId),
           planName,
           expiryDate: endDate,
+          daysRemaining: String(daysRemaining),
         },
       });
 
@@ -803,7 +936,10 @@ export class NotificationService {
           if (email) {
             const template = await this.emailTemplateService.findByKey('PLAN_EXPIRY_REMINDER', customerId);
             const rendered = renderEmailTemplate(
-              { subject: template?.subject || 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}', body: template?.body || '' },
+              {
+                subject: template?.subject || (isToday ? 'Action Required: Your {{planName}} Plan Expires Today – {{companyName}}' : 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}'),
+                body: template?.body || '',
+              },
               {
                 customerName,
                 planName,
@@ -820,10 +956,10 @@ export class NotificationService {
               text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
               recordType: 'customer',
               recordId: customerId,
-              eventType: 'PLAN_EXPIRY_REMINDER',
+              eventType: isToday ? 'PLAN_EXPIRY_TODAY' : 'PLAN_EXPIRY_REMINDER',
               templateId: template?.id,
             });
-            this.logger.log(`[EMAIL] 3-day plan expiry reminder email sent to customer #${customerId} (${email})`);
+            this.logger.log(`[EMAIL] ${daysRemaining}-day plan expiry reminder email sent to customer #${customerId} (${email})`);
           }
         }
       } catch (emailErr: any) {
@@ -839,7 +975,7 @@ export class NotificationService {
             expiryDate: endDate,
             daysRemaining,
           });
-          this.logger.log(`[WHATSAPP] 3-day plan expiry reminder WhatsApp sent to customer #${customerId}`);
+          this.logger.log(`[WHATSAPP] ${daysRemaining}-day plan expiry reminder WhatsApp sent to customer #${customerId}`);
         }
       } catch (waErr: any) {
         this.logger.warn(`[WHATSAPP] Plan expiry reminder WhatsApp notice: ${waErr?.message}`);
@@ -912,14 +1048,34 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same leave record
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: emp.customerId,
+          userId: emp.userId,
+          type: 'LEAVE_REJECTED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.leaveId) === String(leave.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const leaveTypeName = leave.leaveType?.name || 'Leave';
       const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
       const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
       const reasonText = leave.rejectionReason ? ` Reason: ${leave.rejectionReason}` : '';
+      const approverName = leave.approvedBy ? `${leave.approvedBy.firstName || ''} ${leave.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = isHalfDay ? 'Half-Day Leave Rejected' : 'Leave Request Rejected';
-      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been rejected.${reasonText}`;
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been rejected${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
@@ -934,6 +1090,7 @@ export class NotificationService {
           status: 'REJECTED',
           isHalfDay: String(isHalfDay),
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -943,6 +1100,7 @@ export class NotificationService {
   }
 
   /**
+   * 6. REMOTE WORK REQUEST APPROVAL / REJECTION
    * Send Remote Work Approval/Rejection Notification to Employee
    */
   async sendRemoteWorkNotification(employeeId: number, remoteRequest: any, approved: boolean) {
@@ -957,6 +1115,25 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same remote request
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const notifType = approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED';
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: emp.customerId,
+          userId: emp.userId,
+          type: notifType,
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.remoteRequestId) === String(remoteRequest.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const fromStr = remoteRequest.fromDate
         ? new Date(remoteRequest.fromDate).toISOString().split('T')[0]
         : '';
@@ -966,21 +1143,24 @@ export class NotificationService {
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
       const reasonText =
         !approved && remoteRequest.rejectionReason ? ` Reason: ${remoteRequest.rejectionReason}` : '';
+      const approverName = remoteRequest.approvedBy ? `${remoteRequest.approvedBy.firstName || ''} ${remoteRequest.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = approved ? 'Remote Work Request Approved' : 'Remote Work Request Rejected';
-      const body = `Your remote work request for ${dateText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+      const body = `Your remote work request for ${dateText} has been ${approved ? 'approved' : 'rejected'}${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
         customerId: emp.customerId,
         title,
         body,
-        type: approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED',
+        type: notifType,
         data: {
           type: 'REMOTE_WORK',
           remoteRequestId: String(remoteRequest.id),
           status: approved ? 'APPROVED' : 'REJECTED',
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -990,7 +1170,8 @@ export class NotificationService {
   }
 
   /**
-   * Send Claim Approval/Rejection Notification to Employee
+   * 7. EXPENSE APPROVAL / REJECTION
+   * Send Expense/Claim Approval/Rejection Notification to Employee
    */
   async sendClaimNotification(employeeId: number, claim: any, approved: boolean) {
     try {
@@ -1004,6 +1185,25 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same claim
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const notifType = approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED';
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: emp.customerId,
+          userId: emp.userId,
+          type: notifType,
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.claimId) === String(claim.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const category = claim.category || 'Expense';
       const amountStr =
         claim.approvedAmount != null
@@ -1012,26 +1212,279 @@ export class NotificationService {
             ? `₹${Number(claim.amount).toLocaleString('en-IN')}`
             : '';
       const amountText = amountStr ? ` (${amountStr})` : '';
-      const reasonText = !approved && claim.rejectionReason ? ` Reason: ${claim.rejectionReason}` : '';
+      const approverName = claim.approvedBy ? `${claim.approvedBy.firstName || ''} ${claim.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
+      const reasonText = !approved && (claim.rejectionReason || claim.remarks) ? ` Reason: ${claim.rejectionReason || claim.remarks}` : '';
 
-      const title = approved ? 'Claim Request Approved' : 'Claim Request Rejected';
-      const body = `Your ${category} claim request #${claim.id}${amountText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+      const title = approved ? 'Expense Approved' : 'Expense Rejected';
+      const body = `Your ${category} expense request #${claim.id}${amountText} has been ${approved ? 'approved' : 'rejected'}${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
         customerId: emp.customerId,
         title,
         body,
-        type: approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED',
+        type: notifType,
         data: {
           type: 'CLAIM',
           claimId: String(claim.id),
           category,
           status: approved ? 'APPROVED' : 'REJECTED',
+          approver: approverName,
         },
       });
     } catch (err: any) {
       this.logger.error(`Error sending claim notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 8. SALARY GENERATED -> EMPLOYEE NOTIFICATION
+   * Fired when salary/payslip is successfully generated for an employee.
+   * Does NOT expose sensitive salary amount in the push notification body.
+   * "Your salary for September 2026 has been generated."
+   */
+  async sendSalaryGeneratedNotification(params: {
+    customerId: number | string;
+    employeeId: number | string;
+    payPeriod: string;
+    month?: number;
+    year?: number;
+    slipId?: number | string;
+  }) {
+    const { customerId, employeeId, payPeriod, month, year, slipId } = params;
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
+
+    try {
+      // 1. Idempotency: check if notification for this employee & payPeriod was already sent in last 30 days
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: numCustomerId,
+          type: 'SALARY_GENERATED',
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.employeeId) === String(numEmployeeId) && data.payPeriod === payPeriod) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve employee user
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, firstName: true, email: true },
+      });
+
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(`[SALARY_GENERATED] Employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
+
+      const title = 'Salary Generated';
+      const body = `Your salary for ${payPeriod} has been generated.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+        customerId: numCustomerId,
+        title,
+        body,
+        type: 'SALARY_GENERATED',
+        data: {
+          type: 'SALARY',
+          employeeId: String(numEmployeeId),
+          payPeriod,
+          month: month ? String(month) : '',
+          year: year ? String(year) : '',
+          slipId: slipId ? String(slipId) : '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending salary generated notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 9. CUSTOMER CALENDAR SCHEDULE -> CUSTOMER NOTIFICATION
+   * Fired when a customer calendar task/appointment/schedule is successfully created.
+   * Recipient is ONLY the relevant customer.
+   */
+  async sendCalendarScheduledNotification(params: {
+    customerId: number | string;
+    workId: number | string;
+    title: string;
+    scheduledDate?: Date | string | null;
+    scheduledTime?: string | null;
+    location?: string | null;
+    employeeName?: string | null;
+    serviceName?: string | null;
+  }) {
+    const { customerId, workId, title, scheduledDate, scheduledTime, location, employeeName, serviceName } = params;
+    const numCustomerId = Number(customerId);
+    const numWorkId = Number(workId);
+
+    try {
+      // 1. Idempotency: duplicate check within 15 minutes for this workId
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: numCustomerId,
+          type: 'CALENDAR_SCHEDULE_CREATED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.workId) === String(numWorkId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      let dateStr = '';
+      if (scheduledDate) {
+        const d = new Date(scheduledDate);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(scheduledDate);
+      }
+      const timeStr = scheduledTime ? ` at ${scheduledTime}` : '';
+      const empStr = employeeName ? ` with ${employeeName}` : '';
+      const locStr = location ? ` at ${location}` : '';
+
+      const notifTitle = 'New Calendar Schedule Created';
+      const body = `Your schedule "${title}" has been scheduled for ${dateStr}${timeStr}${empStr}${locStr}.`;
+
+      return await this.sendPushNotification({
+        customerId: numCustomerId,
+        title: notifTitle,
+        body,
+        type: 'CALENDAR_SCHEDULE_CREATED',
+        data: {
+          type: 'CALENDAR',
+          workId: String(numWorkId),
+          title,
+          scheduledDate: dateStr,
+          scheduledTime: scheduledTime || '',
+          serviceName: serviceName || '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending calendar schedule notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 12. TASK RESCHEDULE -> PARTICULAR EMPLOYEE NOTIFICATION
+   * Fired when a task assigned to an employee is rescheduled.
+   * Recipient is ONLY the particular employee currently assigned to that task.
+   */
+  async sendTaskRescheduledNotification(params: {
+    customerId: number | string;
+    employeeId: number | string;
+    workId: number | string;
+    taskName: string;
+    newDate?: Date | string | null;
+    newTime?: string | null;
+    customerName?: string | null;
+  }) {
+    const { customerId, employeeId, workId, taskName, newDate, newTime, customerName } = params;
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
+    const numWorkId = Number(workId);
+
+    try {
+      let dateStr = '';
+      if (newDate) {
+        const d = new Date(newDate);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(newDate);
+      }
+      const timeStr = newTime ? String(newTime).trim() : '';
+
+      // 1. Idempotency: duplicate check within 15 minutes for this workId & newDate & newTime
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+          customerId: numCustomerId,
+          type: 'TASK_RESCHEDULED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (
+          String(data.workId) === String(numWorkId) &&
+          String(data.employeeId) === String(numEmployeeId) &&
+          data.newDate === dateStr &&
+          data.newTime === timeStr
+        ) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve employee userId
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, email: true },
+      });
+
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(`[TASK_RESCHEDULED] Employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
+
+      const formattedTimeStr = timeStr ? ` at ${timeStr}` : '';
+      const custStr = customerName ? ` for ${customerName}` : '';
+
+      const title = 'Task Rescheduled';
+      const body = `Task "${taskName}"${custStr} has been rescheduled to ${dateStr}${formattedTimeStr}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+        customerId: numCustomerId,
+        title,
+        body,
+        type: 'TASK_RESCHEDULED',
+        data: {
+          type: 'WORK',
+          workId: String(numWorkId),
+          employeeId: String(numEmployeeId),
+          taskName,
+          newDate: dateStr,
+          newTime: timeStr,
+          customerName: customerName || '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending task rescheduled notification: ${err?.message}`, err?.stack);
       return null;
     }
   }
@@ -1952,8 +2405,10 @@ export class NotificationService {
     leadId?: number | null;
     visitorName?: string | null;
     leadName?: string | null;
+    purpose?: string | null;
+    completedAt?: Date | string | null;
   }) {
-    const { customerId, visitId, leadId, visitorName, leadName } = params;
+    const { customerId, visitId, leadId, visitorName, leadName, purpose, completedAt } = params;
     try {
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
@@ -2007,8 +2462,11 @@ export class NotificationService {
       }
 
       const visitorLabel = (visitorName || '').trim() || 'Visitor';
+      const purposePart = purpose ? ` (${purpose})` : '';
       const title = 'Visit Completed';
-      const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}.`;
+      const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}${purposePart}. Status: Completed.`;
+
+      const completionTimeStr = completedAt ? new Date(completedAt).toISOString() : new Date().toISOString();
 
       return await this.sendPushNotification({
         userId: targetUserId,
@@ -2022,6 +2480,9 @@ export class NotificationService {
           leadId: leadId ? String(leadId) : '',
           leadName: resolvedLeadName,
           visitorName: visitorLabel,
+          status: 'COMPLETED',
+          purpose: purpose || '',
+          completedAt: completionTimeStr,
         },
       });
     } catch (err: any) {

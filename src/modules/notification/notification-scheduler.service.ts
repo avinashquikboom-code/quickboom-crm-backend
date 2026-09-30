@@ -75,24 +75,27 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   /**
    * Run all automated notifications:
    * 1. 3-day subscription expiry reminders (Customer)
-   * 2. Tomorrow's calendar activity reminders (Customer + Employee)
-   * 3. Pending scheduled offer notifications
-   * 4. 7-day notification cleanup
+   * 2. Same-day subscription expiry reminders (Customer)
+   * 3. Tomorrow's calendar activity reminders (Customer + Employee)
+   * 4. Pending scheduled offer notifications
+   * 5. 7-day notification cleanup
    */
   async runAllScheduledChecks() {
     this.logger.log('Starting automated notification scheduler cycle...');
 
-    const subCount = await this.checkSubscriptionExpiries();
+    const subCount3Days = await this.checkSubscriptionExpiries(3);
+    const subCountToday = await this.checkSubscriptionExpiries(0);
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
     const scheduledOffersCount = await this.notificationService.processScheduledCampaigns();
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
-      subscriptionsNotified: subCount,
+      subscriptionsNotified3Days: subCount3Days,
+      subscriptionsNotifiedToday: subCountToday,
       customerCalendarNotified: customerCount,
       employeeCalendarNotified: employeeCount,
       scheduledOffersNotified: scheduledOffersCount,
@@ -119,11 +122,15 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   }
 
   /**
-   * Check for active subscriptions expiring in exactly 3 days
+   * Check for active subscriptions expiring (dayOffset = 3 for 3-day reminder, dayOffset = 0 for same-day reminder)
    */
   async checkSubscriptionExpiries(dayOffset = 3): Promise<number> {
     const { start, end } = getIstDayWindow(dayOffset);
     let notifiedCount = 0;
+    const isToday = dayOffset === 0;
+    const notifType = isToday ? 'SUBSCRIPTION_EXPIRING_TODAY' : 'SUBSCRIPTION_EXPIRING_SOON';
+    // 24 hours lookback for same-day, 7 days for 3-day reminder
+    const lookbackThreshold = new Date(Date.now() - (isToday ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000));
 
     try {
       const expiringSubs = await this.prisma.customerSubscription.findMany({
@@ -145,15 +152,13 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
         },
       });
 
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
       for (const sub of expiringSubs) {
-        // Prevent duplicate notification within 7 days
+        // Prevent duplicate notification
         const alreadyNotified = await this.prisma.notification.findFirst({
           where: {
             customerId: sub.customerId,
-            type: 'SUBSCRIPTION_EXPIRING_SOON',
-            createdAt: { gte: sevenDaysAgo },
+            type: notifType,
+            createdAt: { gte: lookbackThreshold },
           },
         });
 
@@ -170,12 +175,12 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
         if (res) {
           notifiedCount++;
           this.logger.log(
-            `Sent 3-day subscription expiry notification to customer #${sub.customerId} for plan "${sub.plan?.name}"`,
+            `Sent ${isToday ? 'same-day' : '3-day'} subscription expiry notification to customer #${sub.customerId} for plan "${sub.plan?.name}"`,
           );
         }
       }
     } catch (err: any) {
-      this.logger.error(`Error in checkSubscriptionExpiries: ${err?.message}`, err?.stack);
+      this.logger.error(`Error in checkSubscriptionExpiries(offset=${dayOffset}): ${err?.message}`, err?.stack);
     }
 
     return notifiedCount;

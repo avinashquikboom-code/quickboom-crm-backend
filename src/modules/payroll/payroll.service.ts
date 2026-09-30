@@ -1,9 +1,15 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class PayrollService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PayrollService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     const parsed = Number(customerId);
@@ -697,7 +703,7 @@ export class PayrollService {
       ? payroll.items.filter((it: any) => it.employeeId === Number(options.employeeId))
       : payroll.items;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       for (const item of targetItems) {
         const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
 
@@ -756,6 +762,29 @@ export class PayrollService {
         data: updated,
       };
     });
+
+    // 8. SALARY GENERATED -> EMPLOYEE NOTIFICATION
+    if (this.notificationService && result?.data?.items) {
+      for (const item of result.data.items) {
+        if (item.employeeId) {
+          const slip = item.salarySlips?.[0];
+          this.notificationService
+            .sendSalaryGeneratedNotification({
+              customerId: numCustomerId,
+              employeeId: item.employeeId,
+              payPeriod,
+              month: payroll.month,
+              year: payroll.year,
+              slipId: slip?.id,
+            })
+            .catch((err: any) => {
+              this.logger.warn(`Failed to dispatch SALARY_GENERATED notification: ${err?.message}`);
+            });
+        }
+      }
+    }
+
+    return result;
   }
 
   async disbursePayroll(customerId: number | string | undefined, payrollId?: number | string) {

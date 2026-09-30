@@ -520,6 +520,26 @@ export class WorkService {
       date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
     });
 
+    // 9. CUSTOMER CALENDAR SCHEDULE -> CUSTOMER NOTIFICATION
+    if (this.notificationService && result.customerId) {
+      const assignedEmployeeName = result.assignedTo
+        ? `${result.assignedTo.firstName || ''} ${result.assignedTo.lastName || ''}`.trim()
+        : null;
+      this.notificationService
+        .sendCalendarScheduledNotification({
+          customerId: result.customerId,
+          workId: result.id,
+          title: result.title || serviceName || 'Scheduled Activity',
+          scheduledDate: result.scheduledDate,
+          scheduledTime: result.scheduledTime,
+          employeeName: assignedEmployeeName,
+          serviceName,
+        })
+        .catch((err) => {
+          this.logger.warn(`Failed to dispatch CALENDAR_SCHEDULE_CREATED push: ${err?.message}`);
+        });
+    }
+
     // Immediate Push Notification to Assigned Employee
     if (this.notificationService && result.assignedToId) {
       this.notificationService
@@ -638,7 +658,7 @@ export class WorkService {
       date: result.scheduledDate ? new Date(result.scheduledDate).toISOString().split('T')[0] : undefined,
     });
 
-    // Notification 4: Employee Starts Work
+    // 11. EMPLOYEE START WORK -> CUSTOMER NOTIFICATION
     if (
       this.notificationService &&
       existing.status !== WorkStatus.IN_PROGRESS &&
@@ -662,11 +682,12 @@ export class WorkService {
               ? `${result.assignedTo.firstName || ''} ${result.assignedTo.lastName || ''}`.trim() || 'Assigned Specialist'
               : 'Our specialist';
           const workTitle = result.title || 'Work Task';
+          const startDateTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
           await this.notificationService.sendPushNotification({
             customerId: result.customerId,
             title: '🚀 Work Started',
-            body: `${employeeName} has started working on ${workTitle}.`,
+            body: `${employeeName} has started working on "${workTitle}". Status: In Progress (${startDateTime}).`,
             type: 'WORK_STARTED',
             data: {
               type: 'WORK',
@@ -674,6 +695,8 @@ export class WorkService {
               customerId: String(result.customerId),
               employeeName,
               workTitle,
+              status: 'IN_PROGRESS',
+              startDateTime,
             },
           });
           this.logger.log(`Dispatched WORK_STARTED notification to customer #${result.customerId} for work #${result.id}`);
@@ -681,6 +704,32 @@ export class WorkService {
       } catch (err: any) {
         this.logger.warn(`Failed to dispatch WORK_STARTED notification (non-fatal): ${err?.message}`);
       }
+    }
+
+    // 12. TASK RESCHEDULE -> PARTICULAR EMPLOYEE NOTIFICATION (via update)
+    const oldDateStr = existing.scheduledDate ? new Date(existing.scheduledDate).toISOString().split('T')[0] : '';
+    const newDateStr = dto.scheduledDate ? new Date(dto.scheduledDate).toISOString().split('T')[0] : oldDateStr;
+    const oldTimeStr = (existing.scheduledTime || '').trim();
+    const newTimeStr = dto.scheduledTime !== undefined ? (dto.scheduledTime || '').trim() : oldTimeStr;
+
+    const isRescheduled = (dto.scheduledDate !== undefined && newDateStr !== oldDateStr) ||
+                          (dto.scheduledTime !== undefined && newTimeStr !== oldTimeStr);
+
+    if (this.notificationService && isRescheduled && result.assignedToId) {
+      const customerName = result.customer?.companyName || result.customer?.name || null;
+      this.notificationService
+        .sendTaskRescheduledNotification({
+          customerId: result.customerId,
+          employeeId: result.assignedToId,
+          workId: result.id,
+          taskName: result.title || 'Task',
+          newDate: result.scheduledDate,
+          newTime: result.scheduledTime,
+          customerName,
+        })
+        .catch((err) => {
+          this.logger.warn(`Failed to dispatch TASK_RESCHEDULED push: ${err?.message}`);
+        });
     }
 
     // Notification 5: Level / Work Approved via update
@@ -2814,6 +2863,24 @@ assignedEmployee: ${item.assignedEmployee}`);
           data: { workId: result.id, newDate: result.scheduledDate },
         },
       });
+    }
+
+    // 12. TASK RESCHEDULE -> PARTICULAR EMPLOYEE NOTIFICATION (via customer rescheduleWork)
+    if (this.notificationService && result.assignedToId) {
+      const customerName = result.customer?.companyName || result.customer?.name || null;
+      this.notificationService
+        .sendTaskRescheduledNotification({
+          customerId: result.customerId,
+          employeeId: result.assignedToId,
+          workId: result.id,
+          taskName: result.title || 'Task',
+          newDate: result.scheduledDate,
+          newTime: result.scheduledTime,
+          customerName,
+        })
+        .catch((err) => {
+          this.logger.warn(`Failed to dispatch TASK_RESCHEDULED push: ${err?.message}`);
+        });
     }
 
     return {

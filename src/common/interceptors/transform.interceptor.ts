@@ -48,6 +48,13 @@ export class TransformInterceptor<T>
             total: data.total ?? data.pagination?.total,
             totalPages: data.totalPages ?? data.pagination?.totalPages,
             meta: data.meta,
+            // Preserve sibling subscription fields. Wrapping `{ data }` must not
+            // drop upcomingPlan / currentPlan or Flutter cannot see a purchased plan
+            // whose startDate is still in the future.
+            upcomingPlan: data.upcomingPlan,
+            subscription: data.subscription,
+            currentPlan: data.currentPlan,
+            effectivePlan: data.effectivePlan,
           };
         }
 

@@ -364,6 +364,27 @@ export class VisitService {
       },
     });
 
+    // 2. VISIT SCHEDULED -> VISITOR NOTIFICATION
+    if (this.notificationService && visit.employeeId) {
+      const customerLabel = visit.customerName || (visit.contact ? `${visit.contact.firstName || ''} ${visit.contact.lastName || ''}`.trim() : null);
+      this.notificationService
+        .sendVisitScheduledNotification({
+          customerId: numCustomerId,
+          visitId: visit.id,
+          employeeId: visit.employeeId,
+          customerName: customerLabel,
+          purpose: visit.purpose,
+          date: visit.date,
+          time: visit.time,
+          location: visit.location,
+          notes: visit.notes,
+          leadId: visit.leadId,
+        })
+        .catch((err: any) => {
+          this.logger.warn(`Failed to dispatch VISIT_SCHEDULED notification: ${err?.message}`);
+        });
+    }
+
     // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
     if (dto.leadId) {
       try {
@@ -646,6 +667,8 @@ export class VisitService {
             ? `${updated.employee?.firstName || ''} ${updated.employee?.lastName || ''}`.trim()
             : null,
           leadName,
+          purpose: updated.purpose || existingVisit?.purpose || null,
+          completedAt: new Date(),
         });
       } catch (notifErr: any) {
         this.logger.warn(`[FCM] Visit completed push skipped: ${notifErr?.message}`);

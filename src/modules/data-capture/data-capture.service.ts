@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadService } from '../lead/lead.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   ExtractPlacesDto,
   ImportToLeadsDto,
@@ -452,6 +453,8 @@ export class DataCaptureService implements OnModuleInit {
     @Optional()
     @Inject(forwardRef(() => LeadService))
     private readonly leadService?: LeadService,
+    @Optional()
+    private readonly notificationService?: NotificationService,
   ) {}
 
   async onModuleInit() {
@@ -2980,33 +2983,31 @@ export class DataCaptureService implements OnModuleInit {
         await Promise.allSettled([emailPromise, whatsappPromise]);
       }
 
-      // Trigger Lead Assignment push notification if assigned to an employee and created directly via tx
-      if (
-        createdViaDirectTx &&
-        this.leadService &&
-        freshLead &&
-        (candEmployeeId || employeeId || candAssignedToUserId || (assignedToUserId && assignedToUserId !== validCreatedById))
-      ) {
-        const assignedEmpId = candEmployeeId || employeeId || null;
+      // Trigger DATA IMPORT -> LEAD NOTIFICATION upon successful Lead creation
+      if (freshLead && this.notificationService) {
+        const assignedEmpId = candEmployeeId || employeeId || freshLead.employeeId || null;
         const assignedUsrId =
-          candAssignedToUserId || (assignedToUserId !== validCreatedById ? assignedToUserId : null);
+          candAssignedToUserId || (assignedToUserId !== validCreatedById ? assignedToUserId : freshLead.assignedToId) || null;
         const displayName =
           freshLead.companyName ||
           freshLead.title ||
           [freshLead.firstName, freshLead.lastName].filter(Boolean).join(' ').trim() ||
           `Lead #${freshLead.id}`;
 
-        await (this.leadService as any)
-          .sendLeadAssignedNotification?.({
+        await this.notificationService
+          .sendLeadImportedNotification({
             customerId: numCustomerId,
-            employeeId: assignedEmpId,
-            userId: assignedUsrId,
             leadId: freshLead.id,
             leadName: displayName,
+            companyName: freshLead.companyName || null,
+            source: freshLead.source || 'Data Capture Import',
+            employeeId: assignedEmpId,
+            userId: assignedUsrId,
+            createdById: validCreatedById || freshLead.createdById || null,
           })
           ?.catch?.((err: any) => {
             this.logger.warn(
-              `Failed to dispatch LEAD_ASSIGNED push for data-capture lead #${freshLead.id}: ${err?.message}`,
+              `Failed to dispatch LEAD_IMPORTED push for data-capture lead #${freshLead.id}: ${err?.message}`,
             );
           });
       }

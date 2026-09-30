@@ -1170,23 +1170,6 @@ export class LeadService {
 
     await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
 
-    if (assignment?.assignedToId || assignment?.employeeId) {
-      const displayName =
-        [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() ||
-        lead.companyName ||
-        lead.title ||
-        lead.firstName ||
-        `Lead #${lead.id}`;
-
-      await this.sendLeadAssignedNotification({
-        customerId: Number(customerId),
-        employeeId: assignment.employeeId,
-        userId: assignment.assignedToId,
-        leadId: lead.id,
-        leadName: displayName,
-      }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
-    }
-
     return createdLead ?? lead;
   }
 
@@ -1471,23 +1454,6 @@ export class LeadService {
       (hasExplicitAssignment ||
         assignment?.assignedToId !== lead.assignedToId ||
         (assignment?.employeeId && assignment.employeeId !== (lead as any).employeeId));
-
-    if (isNewlyAssigned) {
-      const leadDisplayName =
-        [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() ||
-        lead.companyName ||
-        lead.title ||
-        lead.firstName ||
-        `Lead #${id}`;
-
-      await this.sendLeadAssignedNotification({
-        customerId: Number(customerId),
-        employeeId: assignment?.employeeId,
-        userId: assignment?.assignedToId,
-        leadId: id,
-        leadName: leadDisplayName,
-      }).catch((err) => this.logger.warn(`Failed to dispatch LEAD_ASSIGNED push: ${err?.message}`));
-    }
 
     const updatedLead = await this.getLeadById(customerId, id);
 

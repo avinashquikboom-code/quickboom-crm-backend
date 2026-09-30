@@ -332,8 +332,18 @@ export class SubscriptionController {
       const plan = await this.planAccessService.getEffectivePlan(customerId);
       const upcomingPlan = plan?.upcomingPlan || null;
       const isCurrentActive = Boolean(plan && plan.isActive && plan.status === 'ACTIVE' && !plan.isExpired && plan.subscriptionId);
+      // Purchased subscription whose startDate is still in the future is not
+      // entitlement-active, but it is the customer's current plan record and must
+      // be returned in `data` so Plans/Calendar share this same source.
+      const isPurchasedUpcoming = Boolean(
+        !isCurrentActive &&
+        plan &&
+        plan.subscriptionId &&
+        upcomingPlan &&
+        !plan.isExpired,
+      );
 
-      const currentPlanData = isCurrentActive
+      const currentPlanData = (isCurrentActive || isPurchasedUpcoming) && plan
         ? {
             id: String(plan.subscriptionId || plan.planId),
             subscriptionId: plan.subscriptionId ? String(plan.subscriptionId) : null,
@@ -342,7 +352,9 @@ export class SubscriptionController {
             planName: plan.planName,
             code: plan.planCode,
             planCode: plan.planCode,
-            status: plan.status || (plan.isActive ? 'ACTIVE' : 'INACTIVE'),
+            status: isCurrentActive
+              ? (plan.status || 'ACTIVE')
+              : 'UPCOMING',
             customerId: String(plan.customerId || customerId),
             workspaceId: String(plan.customerId || customerId),
             billingCycle: plan.billingCycle || 'MONTHLY',
@@ -351,7 +363,7 @@ export class SubscriptionController {
             endDate: plan.endDate,
             expiryDate: plan.endDate,
             purchaseDate: plan.startDate,
-            isActive: plan.isActive,
+            isActive: Boolean(isCurrentActive),
             isExpired: plan.isExpired,
             remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
             usedDays: Math.max(0, Math.floor((Date.now() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
@@ -372,6 +384,7 @@ export class SubscriptionController {
               currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
               scheduledWorks: plan.usage?.scheduledWorks || 0,
             },
+            upcomingPlan,
           }
         : null;
 
