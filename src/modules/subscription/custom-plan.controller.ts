@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,7 +12,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import { CustomPlanService } from './custom-plan.service';
+import { CustomPlanService, parseCustomPlanOrderId } from './custom-plan.service';
 import {
   CreateCustomPlanOptionDto,
   UpdateCustomPlanOptionDto,
@@ -73,8 +74,15 @@ export class CustomPlanController {
     @Query('orderId') orderIdQuery?: string,
   ) {
     const customerId = req?.customerId || user?.customerId;
-    const orderId = dto.orderId || orderIdQuery || dto.razorpay_order_id;
-    return this.customPlanService.verifyAndActivateCustomPlan(customerId, orderId!, dto);
+    const parsedOrderId = parseCustomPlanOrderId(
+      dto.customPlanOrderId ?? dto.quoteId ?? dto.orderId ?? orderIdQuery,
+    );
+    if (parsedOrderId == null) {
+      throw new BadRequestException(
+        'Invalid Custom Plan order ID. Unable to verify payment.',
+      );
+    }
+    return this.customPlanService.verifyAndActivateCustomPlan(customerId, parsedOrderId, dto);
   }
 
   @Get('custom-plan/history')

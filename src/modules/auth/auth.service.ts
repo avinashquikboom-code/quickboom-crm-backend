@@ -291,6 +291,7 @@ export class AuthService {
           customerId: createdResult.customer.id,
           userId: createdResult.user.id,
           customerName: createdResult.customer.name,
+          isNewAccount: true,
         });
       }
     } catch (notifErr: any) {

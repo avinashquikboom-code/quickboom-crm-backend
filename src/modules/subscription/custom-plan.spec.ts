@@ -288,6 +288,30 @@ describe('Custom Plan Service & Calculation Tests', () => {
 
       expect(res.success).toBe(true);
       expect(workService.generatePlanSchedules).toHaveBeenCalledWith(101, 201);
+      expect(prisma.customPlanOrder.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 501,
+            customerId: 101,
+            deletedAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('returns 400 without querying Prisma when order id is null/"null"/Razorpay id', async () => {
+      prisma.customPlanOrder.findFirst.mockClear();
+      await expect(
+        customPlanService.verifyAndActivateCustomPlan(101, 'null', {
+          paymentId: 'pay_test_123',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        customPlanService.verifyAndActivateCustomPlan(101, 'order_ABC', {
+          paymentId: 'pay_test_123',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.customPlanOrder.findFirst).not.toHaveBeenCalled();
     });
   });
 

@@ -174,29 +174,59 @@ export class NotificationService {
 
     this.logger.log(`Registered device token for userId ${userId} (platform: ${platform}, length: ${cleanToken.length})`);
 
-    // Check if user has an unread recent WELCOME notification and deliver it to this newly registered device
+    // For genuinely brand-new accounts where FCM token was registered shortly after creation,
+    // deliver any pending un-delivered welcome push once.
+    // Existing customers logging in, refreshing session, or changing devices must NEVER receive "Account Created".
     try {
-      const pendingWelcome = await this.prisma.notification.findFirst({
-        where: {
-          userId,
-          type: 'WELCOME',
-          isRead: false,
-          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        },
-        orderBy: { createdAt: 'desc' },
+      const authUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, createdAt: true, deletedAt: true },
       });
 
-      if (pendingWelcome) {
-        this.logger.log(`[WELCOME] Delivering pending welcome push to newly registered token for userId=${userId}`);
-        const payload: Record<string, string> = {
-          type: 'WELCOME',
-          customerId: String(pendingWelcome.customerId || ''),
-          notificationId: String(pendingWelcome.id),
-        };
-        await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
-          customerId: pendingWelcome.customerId || undefined,
-          notificationType: 'WELCOME',
+      // If authUser was created more than 2 minutes ago, it is an existing account -> strictly skip
+      const isExistingUser = Boolean(
+        authUser?.createdAt && Date.now() - new Date(authUser.createdAt).getTime() > 2 * 60 * 1000,
+      );
+
+      if (!isExistingUser) {
+        const pendingWelcome = await this.prisma.notification.findFirst({
+          where: {
+            userId,
+            type: 'WELCOME',
+            isRead: false,
+            createdAt: { gte: new Date(Date.now() - 2 * 60 * 1000) },
+          },
+          orderBy: { createdAt: 'desc' },
         });
+
+        if (pendingWelcome) {
+          const welcomeData = (pendingWelcome.data as any) || {};
+          // Only deliver if never delivered to any device yet
+          if (!welcomeData.fcmDelivered && welcomeData.fcmDelivered !== 'true') {
+            this.logger.log(`[WELCOME] Delivering initial welcome push to first registered token for brand-new userId=${userId}`);
+            const payload: Record<string, string> = {
+              type: 'WELCOME',
+              customerId: String(pendingWelcome.customerId || ''),
+              notificationId: String(pendingWelcome.id),
+            };
+            await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
+              customerId: pendingWelcome.customerId || undefined,
+              notificationType: 'WELCOME',
+            });
+
+            // Mark delivered so no subsequent token registration or login ever triggers it again
+            await this.prisma.notification.updateMany({
+              where: { id: pendingWelcome.id },
+              data: {
+                data: {
+                  ...welcomeData,
+                  fcmDelivered: true,
+                  fcmDeliveredAt: new Date().toISOString(),
+                },
+              },
+            });
+          }
+        }
       }
 
       // Check if user has an unread recent PLAN_PURCHASE_SUCCESS notification to deliver
@@ -210,7 +240,7 @@ export class NotificationService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (pendingPlan) {
+      if (pendingPlan && pendingPlan.type === 'PLAN_PURCHASE_SUCCESS') {
         this.logger.log(`[PLAN] Delivering pending plan purchase push to newly registered token for userId=${userId}`);
         const planData = (pendingPlan.data as any) || {};
         const payload: Record<string, string> = {
@@ -2191,6 +2221,7 @@ export class NotificationService {
     customerId: number;
     userId?: number;
     customerName?: string;
+    isNewAccount?: boolean;
   }) {
     const { customerId } = params;
     let targetUserId = params.userId;
@@ -2200,11 +2231,23 @@ export class NotificationService {
     this.logger.log(`[FCM] Notification recipient customerId: ${customerId}`);
 
     try {
-      // 1. Resolve userId if not explicitly provided
+      // 1. Explicit skip if caller indicates this is an existing customer auth account
+      if (params.isNewAccount === false) {
+        this.logger.log(
+          `[NOTIFICATION] Customer #${customerId} auth account already existed (isNewAccount=false). Skipping 'Account Created' notification.`,
+        );
+        return {
+          success: true,
+          skippedExistingAccount: true,
+          fcmSent: false,
+        };
+      }
+
+      // 2. Resolve userId if not explicitly provided
       if (!targetUserId) {
         const firstUser = await this.prisma.user.findFirst({
           where: { customerId, deletedAt: null },
-          select: { id: true },
+          select: { id: true, createdAt: true },
         });
         if (firstUser) {
           targetUserId = firstUser.id;
@@ -2218,13 +2261,60 @@ export class NotificationService {
         return null;
       }
 
-      // 2. Idempotency Check: prevent duplicate welcome notifications for same customer
+      // 3. Verify actual auth account state using database relationship (Tenant & Account check)
+      // If the caller didn't explicitly flag isNewAccount: true, inspect auth account creation age & history
+      if (params.isNewAccount !== true) {
+        const authUser = await this.prisma.user.findFirst({
+          where: {
+            id: targetUserId,
+            customerId,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            customerId: true,
+            createdAt: true,
+            deletedAt: true,
+          },
+        });
+
+        if (authUser?.createdAt) {
+          const accountAgeMs = Date.now() - new Date(authUser.createdAt).getTime();
+          // If auth account was created more than 5 minutes ago, it's an existing login account
+          if (accountAgeMs > 5 * 60 * 1000) {
+            this.logger.log(
+              `[NOTIFICATION] Auth account #${targetUserId} for customer #${customerId} was created at ${authUser.createdAt.toISOString()} (age ${Math.round(accountAgeMs / 1000)}s). Skipping 'Account Created' notification for existing account.`,
+            );
+            return {
+              success: true,
+              skippedExistingAccount: true,
+              fcmSent: false,
+            };
+          }
+        }
+      }
+
+      // 4. Idempotency Check: prevent duplicate welcome notifications for same customer/user
       const existingNotif = await this.prisma.notification.findFirst({
         where: {
-          customerId,
-          type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] },
+          OR: [
+            { customerId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } },
+            ...(targetUserId ? [{ userId: targetUserId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } }] : []),
+          ],
         },
       });
+
+      if (existingNotif) {
+        this.logger.log(
+          `[NOTIFICATION] Welcome notification already exists for customerId=${customerId}, userId=${targetUserId}. Skipping duplicate dispatch.`,
+        );
+        return {
+          success: true,
+          skippedDuplicate: true,
+          fcmSent: false,
+          notification: existingNotif,
+        };
+      }
 
       const title = 'Welcome to QuikBoom! 🎉';
       const body = 'Your account has been created successfully. Welcome to QuikBoom!';
@@ -2233,24 +2323,17 @@ export class NotificationService {
         customerId: String(customerId),
       };
 
-      let dbNotification = existingNotif;
-      if (!dbNotification) {
-        dbNotification = await this.prisma.notification.create({
-          data: {
-            customerId,
-            userId: targetUserId,
-            title,
-            message: body,
-            type: 'WELCOME',
-            isRead: false,
-            data: payloadData as any,
-          },
-        });
-      } else {
-        this.logger.log(
-          `[NOTIFICATION] Welcome notification already exists for customerId=${customerId}. Skipping DB duplicate.`,
-        );
-      }
+      const dbNotification = await this.prisma.notification.create({
+        data: {
+          customerId,
+          userId: targetUserId,
+          title,
+          message: body,
+          type: 'WELCOME',
+          isRead: false,
+          data: payloadData as any,
+        },
+      });
 
       this.logger.log(`[NOTIFICATION] WELCOME created`);
       this.logger.log(`[FCM] Customer ID found`);
@@ -2307,6 +2390,17 @@ export class NotificationService {
 
         if (fcmResult.successCount > 0) {
           fcmSent = true;
+          await this.prisma.notification.updateMany({
+            where: { id: dbNotification.id },
+            data: {
+              data: {
+                ...payloadData,
+                fcmDelivered: true,
+                fcmDeliveredAt: new Date().toISOString(),
+                notificationId: String(dbNotification.id),
+              },
+            },
+          });
         }
 
         // 5. Clean up any invalid or expired tokens

@@ -20,6 +20,38 @@ import {
   withInvoiceItemsSnapshot,
 } from '../../common/utils/invoice-items.util';
 
+/** Internal CustomPlanOrder.id only — never a Razorpay order_/pay_ id or the string "null". */
+export function parseCustomPlanOrderId(raw: unknown): number | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  if (typeof raw === 'number') {
+    if (!Number.isInteger(raw) || raw <= 0 || !Number.isFinite(raw)) {
+      return null;
+    }
+    return raw;
+  }
+  const text = String(raw).trim();
+  if (
+    !text ||
+    text === 'null' ||
+    text === 'undefined' ||
+    text === 'NaN' ||
+    text.startsWith('order_') ||
+    text.startsWith('pay_')
+  ) {
+    return null;
+  }
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+  const parsed = Number(text);
+  if (!Number.isInteger(parsed) || parsed <= 0 || !Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
 @Injectable()
 export class CustomPlanService {
   private readonly logger = new Logger(CustomPlanService.name);
@@ -482,7 +514,19 @@ export class CustomPlanService {
     paymentDto: VerifyCustomPlanPaymentDto,
   ) {
     const numCustomerId = Number(customerId);
-    const numOrderId = Number(orderId);
+    const numOrderId = parseCustomPlanOrderId(
+      paymentDto.customPlanOrderId ?? paymentDto.quoteId ?? orderId,
+    );
+
+    if (!Number.isInteger(numCustomerId) || numCustomerId <= 0) {
+      throw new BadRequestException('Invalid customer context.');
+    }
+
+    if (numOrderId == null) {
+      throw new BadRequestException(
+        'Invalid Custom Plan order ID. Unable to verify payment.',
+      );
+    }
 
     const order = await this.prisma.customPlanOrder.findFirst({
       where: {
@@ -508,7 +552,8 @@ export class CustomPlanService {
     const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
     const keySecret = rzpConfig.keySecret;
     const rzpPaymentId = paymentDto.paymentId || paymentDto.razorpay_payment_id;
-    const rzpOrderId = paymentDto.orderId || paymentDto.razorpay_order_id || order.orderId;
+    // dto.orderId is the internal CustomPlanOrder.id, not the Razorpay order id.
+    const rzpOrderId = paymentDto.razorpay_order_id || order.orderId;
     const signature = paymentDto.signature || paymentDto.razorpay_signature;
 
     if (keySecret && rzpOrderId && rzpPaymentId && signature) {
