@@ -194,6 +194,72 @@ export class InstallmentService {
   }
 
   /**
+   * If SUCCESS payments exist but installment rows are still unpaid (or were
+   * auto-generated as DUE by a GET), mark the corresponding installments PAID.
+   * Does not create extra subscriptions or change unpaid-first-installment PENDING.
+   */
+  private async applySuccessfulPaymentsToInstallments(
+    sub: {
+      id: number;
+      payments?: Array<{ id: number; totalAmount?: number | null; createdAt?: Date }>;
+    },
+    installments: Array<{
+      id: number;
+      installmentNumber: number;
+      totalAmount: number;
+      status: InstallmentStatus;
+    }>,
+  ): Promise<boolean> {
+    if (!installments.length) return false;
+
+    const payments = sub.payments || [];
+    const totalPaidFromPayments = payments.reduce(
+      (sum, payment) => sum + Number(payment.totalAmount || 0),
+      0,
+    );
+    if (totalPaidFromPayments <= 0) return false;
+    if (installments.some((item) => item.status === InstallmentStatus.PAID)) {
+      return false;
+    }
+
+    const installmentTotal = installments.reduce(
+      (sum, item) => sum + Number(item.totalAmount || 0),
+      0,
+    );
+    const latestPayment = payments[0];
+    const paidAt = latestPayment?.createdAt || new Date();
+    const paymentHistoryId = latestPayment?.id ?? null;
+
+    if (totalPaidFromPayments + 0.5 >= installmentTotal) {
+      await this.prisma.subscriptionInstallment.updateMany({
+        where: { subscriptionId: sub.id, deletedAt: null },
+        data: {
+          status: InstallmentStatus.PAID,
+          paidAt,
+          paymentHistoryId,
+        },
+      });
+    } else {
+      const first =
+        installments.find((item) => item.installmentNumber === 1) || installments[0];
+      await this.prisma.subscriptionInstallment.update({
+        where: { id: first.id },
+        data: {
+          status: InstallmentStatus.PAID,
+          paidAt,
+          paymentHistoryId,
+        },
+      });
+    }
+
+    this.logger.log(
+      `[INSTALLMENT_RECONCILE] subscriptionId: ${sub.id} paymentTotal: ${totalPaidFromPayments} installmentTotal: ${installmentTotal}`,
+    );
+
+    return true;
+  }
+
+  /**
    * Retrieves complete installment summary with accurate outstanding calculations, buffer state, and failure handling.
    */
   async getCustomerInstallmentSummary(customerId: number | string): Promise<CustomerInstallmentSummary> {
@@ -267,12 +333,26 @@ export class InstallmentService {
       installments = reloaded;
     }
 
+    // A successful plan payment may exist without installment rows (webhook
+    // activation) or with unpaid rows created by the GET fallback above.
+    // Reconcile from SUCCESS payments so a paid purchase is not PENDING.
+    const reconciled = await this.applySuccessfulPaymentsToInstallments(sub, installments);
+    if (reconciled) {
+      installments = await this.prisma.subscriptionInstallment.findMany({
+        where: { subscriptionId: sub.id },
+        orderBy: { installmentNumber: 'asc' },
+      });
+    }
+
     // Compute total plan amount and paid amount
     const totalPlanAmount = installments.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
     const paidInstallments = installments.filter((item) => item.status === InstallmentStatus.PAID);
     const totalPaidAmount = paidInstallments.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
     const outstandingAmount = Math.max(0, totalPlanAmount - totalPaidAmount);
-    const isFullyPaid = outstandingAmount === 0 && paidInstallments.length === installments.length;
+    const isFullyPaid =
+      installments.length > 0 &&
+      outstandingAmount === 0 &&
+      paidInstallments.length === installments.length;
 
     const breakdownItems: InstallmentBreakdownItem[] = installments.map((inst) => {
       const isPaid = inst.status === InstallmentStatus.PAID;
@@ -973,7 +1053,16 @@ export class InstallmentService {
       include: { plan: true },
     });
 
-    if (!activeSub || activeSub.status !== SubscriptionStatus.ACTIVE || summary.planStatus === 'PENDING') {
+    const hasPaidPurchase =
+      summary.isFullyPaid ||
+      (summary.totalPaidAmount || 0) > 0 ||
+      summary.planStatus === 'FULLY_PAID' ||
+      summary.planStatus === 'ACTIVE';
+    if (
+      !activeSub ||
+      activeSub.status !== SubscriptionStatus.ACTIVE ||
+      (summary.planStatus === 'PENDING' && !hasPaidPurchase)
+    ) {
       this.logger.log(
         `[SUBSCRIPTION_DEBUG] customerId: ${numCustomerId}, no active subscription found (planStatus: ${summary.planStatus})`,
       );

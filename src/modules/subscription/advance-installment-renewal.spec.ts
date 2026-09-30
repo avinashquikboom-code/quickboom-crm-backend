@@ -400,6 +400,44 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
     expect(result.remindersSent).toBeGreaterThanOrEqual(0);
   });
 
+  it('does not treat a fully paid purchase as PENDING when installment rows were never created', async () => {
+    mockPayments.push({
+      id: 1,
+      subscriptionId: 101,
+      customerId: 1,
+      totalAmount: 30000,
+      status: 'SUCCESS',
+      createdAt: new Date(),
+    });
+
+    const summary = await installmentService.getCustomerInstallmentSummary(1);
+    expect(summary.planStatus).toBe('FULLY_PAID');
+    expect(summary.isFullyPaid).toBe(true);
+    expect(summary.isAccessAllowed).toBe(true);
+    expect(mockInstallments.some((item) => item.status === InstallmentStatus.PAID)).toBe(true);
+
+    const current = await installmentService.getCurrentSubscription(1);
+    expect(current.data).not.toBeNull();
+    expect(current.data.subscriptionId).toBe('101');
+  });
+
+  it('heals unpaid auto-generated installments when payment already succeeded', async () => {
+    await installmentService.createInstallmentsForSubscription(1, 101, 30000, 2, new Date());
+    mockPayments.push({
+      id: 1,
+      subscriptionId: 101,
+      customerId: 1,
+      totalAmount: 30000,
+      status: 'SUCCESS',
+      createdAt: new Date(),
+    });
+
+    const summary = await installmentService.getCustomerInstallmentSummary(1);
+    expect(summary.planStatus).toBe('FULLY_PAID');
+    expect(summary.isFullyPaid).toBe(true);
+    expect(summary.outstandingAmount).toBe(0);
+  });
+
   describe('GET /subscriptions/renewal-status edge cases and safety', () => {
     // Case A: Customer with active subscription + renewal record
     it('Case A: Customer with active subscription + renewal record returns correct renewal status', async () => {
