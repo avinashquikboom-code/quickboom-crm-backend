@@ -165,6 +165,12 @@ export class BulkDeleteOfferCampaignsDto {
   ids: number[];
 }
 
+export class ResendOfferCampaignDto {
+  @ApiProperty({ description: 'Existing offer campaign ID to resend as a new broadcast', example: 2 })
+  @IsNumber()
+  campaignId: number;
+}
+
 export class TestCustomerNotificationDto {
   @ApiProperty({ description: 'Customer ID whose active devices should receive the test push', example: 1 })
   @IsNotEmpty()

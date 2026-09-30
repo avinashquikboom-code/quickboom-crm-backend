@@ -26,6 +26,7 @@ import {
   AdminOfferNotificationDto,
   TestCustomerNotificationDto,
   BulkDeleteOfferCampaignsDto,
+  ResendOfferCampaignDto,
 } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -141,6 +142,31 @@ export class NotificationController {
     return this.notificationService.sendAdminOfferNotification(dto, adminUserId);
   }
 
+  @Post('admin/offer/resend')
+  @ApiOperation({ summary: 'Resend an existing offer campaign as a new broadcast' })
+  @ApiBody({ type: ResendOfferCampaignDto })
+  async resendAdminOffer(
+    @CurrentUser('id') userId: string,
+    @Body() dto: ResendOfferCampaignDto,
+  ) {
+    const adminUserId = userId ? Number(userId) : undefined;
+    return this.notificationService.resendOfferCampaign(Number(dto.campaignId), adminUserId);
+  }
+
+  @Post('admin/offer/delete')
+  @ApiOperation({ summary: 'Delete offer notification campaign history records' })
+  @ApiBody({ type: BulkDeleteOfferCampaignsDto })
+  async deleteAdminOfferHistory(@Body() dto: BulkDeleteOfferCampaignsDto) {
+    return this.notificationService.deleteOfferCampaigns(dto?.ids || []);
+  }
+
+  @Delete('admin/offer/delete')
+  @ApiOperation({ summary: 'Delete offer notification campaign history records (DELETE alias)' })
+  @ApiBody({ type: BulkDeleteOfferCampaignsDto })
+  async deleteAdminOfferHistoryAlias(@Body() dto: BulkDeleteOfferCampaignsDto) {
+    return this.notificationService.deleteOfferCampaigns(dto?.ids || []);
+  }
+
   @Get('admin/campaigns')
   @ApiOperation({ summary: 'Get paginated offer notifications history / campaigns (Admin)' })
   @ApiQuery({ name: 'page', required: false })
@@ -159,6 +185,13 @@ export class NotificationController {
   @ApiOperation({ summary: 'Bulk delete offer notification campaigns from Admin history' })
   @ApiBody({ type: BulkDeleteOfferCampaignsDto })
   async bulkDeleteAdminCampaigns(@Body() dto: BulkDeleteOfferCampaignsDto) {
+    return this.notificationService.deleteOfferCampaigns(dto?.ids || []);
+  }
+
+  @Delete('admin/campaigns/bulk-delete')
+  @ApiOperation({ summary: 'Bulk delete offer notification campaigns (DELETE alias)' })
+  @ApiBody({ type: BulkDeleteOfferCampaignsDto })
+  async bulkDeleteAdminCampaignsAlias(@Body() dto: BulkDeleteOfferCampaignsDto) {
     return this.notificationService.deleteOfferCampaigns(dto?.ids || []);
   }
 
@@ -231,6 +264,9 @@ export class NotificationController {
     @CurrentCustomer() customerId: number | string | undefined,
     @CurrentUser('id') userId: number | string,
   ) {
+    if (id === 'admin' || id === 'campaigns' || id === 'bulk-delete' || Number.isNaN(parseInt(id, 10))) {
+      throw new BadRequestException('Invalid notification ID');
+    }
     const targetCustomerId = customerId || 1;
     return this.notificationService.deleteNotification(id, targetCustomerId, userId);
   }
