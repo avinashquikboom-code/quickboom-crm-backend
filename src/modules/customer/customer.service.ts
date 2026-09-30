@@ -20,6 +20,7 @@ import { WorkService } from '../work/work.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
 import { isUserSuperAdmin, isUserAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
+import { userHasModulePermission } from '../../common/guards/permissions.guard';
 import { ResetCustomerDataDto } from './dto/reset-customer.dto';
 
 /**
@@ -991,6 +992,7 @@ export class CustomerService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     excludeAdmins?: boolean;
+    forCalendar?: boolean;
   }, user?: any) {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
@@ -1044,12 +1046,18 @@ export class CustomerService {
 
     const andConditions: any[] = [];
 
+    const skipAssignmentScope =
+      query.forCalendar === true &&
+      (userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
+        userHasModulePermission(user, 'CALENDAR', 'CREATE'));
+
     // Strict Employee Scoping & Tenant Isolation (Requirements 1, 3, 4, 7, 8)
     // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see:
     // 1. customer.assignedEmployeeId == loggedInEmployeeId
     // 2. Or linked originLead / leads assigned to that employee (assignedToId == userId OR employeeId == loggedInEmployeeId)
     // Exclude unassigned, other employee's customers, and do NOT use createdById as replacement for assignedToId!
-    if (effectiveEmployeeId && !isPrivilegedAdmin) {
+    // Calendar customer picker (forCalendar + Calendar VIEW/CREATE) lists all active tenant customers.
+    if (effectiveEmployeeId && !isPrivilegedAdmin && !skipAssignmentScope) {
       andConditions.push({
         OR: [
           // 1. Directly assigned to this employee
@@ -1090,6 +1098,10 @@ export class CustomerService {
           },
         ],
       });
+    }
+
+    if (skipAssignmentScope && where.isActive === undefined) {
+      where.isActive = true;
     }
 
     if (query.assignedEmployee && query.assignedEmployee !== 'ALL' && query.assignedEmployee.trim() !== '') {

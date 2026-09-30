@@ -41,7 +41,7 @@ import {
   fromPermissionKey,
 } from '../../common/constants/rbac.constants';
 import {
-  applyPermissionItems,
+  applyCustomerEffectivePermissions,
   resolveCustomerAppPermissionItems,
 } from '../../common/utils/customer-app-permissions.util';
 
@@ -2645,6 +2645,8 @@ export class AuthService {
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
+          } else if (upper.includes('PRODUCTION')) {
+            matchedKey = 'PRODUCTION_TEAM_MEMBER';
           } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
             matchedKey = 'VISITOR';
           } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
@@ -2708,30 +2710,32 @@ export class AuthService {
       // For CRM / calling / sales designations (BPO, Telecaller, Sales Executive, etc.),
       // ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
       const isCrmDesignation = Boolean(
-        (desigUpper && (
-          desigUpper.includes('BPO') ||
-          desigUpper.includes('TELE') ||
-          desigUpper.includes('SALES') ||
-          desigUpper.includes('CALL') ||
-          desigUpper.includes('MANAGER') ||
-          desigUpper.includes('FIELD') ||
-          desigUpper.includes('CRM') ||
-          desigUpper.includes('LEAD') ||
-          desigUpper.includes('EXECUTIVE') ||
-          desigUpper.includes('BD') ||
-          desigUpper.includes('OFFICER') ||
-          desigUpper.includes('AGENT') ||
-          desigUpper.includes('COORDINATOR') ||
-          desigUpper.includes('MARKETING') ||
-          desigUpper.includes('CONSULTANT')
-        )) ||
-        user.employee?.designation?.crmMobileAccess === true ||
-        permissionsMap.has('LEADS:VIEW') ||
-        permissionsMap.has('LEADS:CREATE') ||
-        permissionsMap.has('LEADS:CHANGE_STAGE') ||
-        permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
-        permissionsMap.has('LEADS:CALL') ||
-        (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
+        !desigUpper.includes('PRODUCTION') && (
+          (desigUpper && (
+            desigUpper.includes('BPO') ||
+            desigUpper.includes('TELE') ||
+            desigUpper.includes('SALES') ||
+            desigUpper.includes('CALL') ||
+            desigUpper.includes('MANAGER') ||
+            desigUpper.includes('FIELD') ||
+            desigUpper.includes('CRM') ||
+            desigUpper.includes('LEAD') ||
+            desigUpper.includes('EXECUTIVE') ||
+            desigUpper.includes('BD') ||
+            desigUpper.includes('OFFICER') ||
+            desigUpper.includes('AGENT') ||
+            desigUpper.includes('COORDINATOR') ||
+            desigUpper.includes('MARKETING') ||
+            desigUpper.includes('CONSULTANT')
+          )) ||
+          user.employee?.designation?.crmMobileAccess === true ||
+          permissionsMap.has('LEADS:VIEW') ||
+          permissionsMap.has('LEADS:CREATE') ||
+          permissionsMap.has('LEADS:CHANGE_STAGE') ||
+          permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
+          permissionsMap.has('LEADS:CALL') ||
+          (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
+        )
       );
 
       if (isCrmDesignation) {
@@ -2806,7 +2810,7 @@ export class AuthService {
         this.prisma,
         user.customerId,
       );
-      applyPermissionItems(permissionsMap, customerItems);
+      applyCustomerEffectivePermissions(permissionsMap, customerItems);
     }
 
     const permissions = Array.from(permissionsMap.values());
@@ -3138,6 +3142,8 @@ export class AuthService {
         let defaultKeys: { module: string; action: string }[] = [];
         if (ROLE_PERMISSION_DEFAULTS[upperName]) {
           defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
+        } else if (upperName.includes('PRODUCTION')) {
+          defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
         } else if (upperName.includes('DESIGNER')) {
           defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
         } else if (upperName.includes('EDITOR')) {

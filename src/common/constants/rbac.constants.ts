@@ -682,6 +682,49 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "SETTINGS", action: "VIEW" },
     { module: "SETTINGS", action: "SETTING_PROFILE" },
   ],
+
+  // 10. PRODUCTION TEAM MEMBER: Calendar = ON (VIEW only, no CREATE), My Work = ON, Creative Work = ON. CRM = OFF.
+  PRODUCTION_TEAM_MEMBER: [
+    { module: "DASHBOARD", action: "VIEW" },
+    { module: "DASHBOARD", action: "CARD_STATS" },
+    { module: "DASHBOARD", action: "CARD_WORK" },
+    { module: "CALENDAR", action: "VIEW" },
+    { module: "CALENDAR", action: "VIEW_ASSIGNED" },
+    { module: "CALENDAR", action: "VIEW_TEAM" },
+    { module: "MY_WORK", action: "VIEW" },
+    { module: "MY_WORK", action: "OPEN" },
+    { module: "MY_WORK", action: "START" },
+    { module: "MY_WORK", action: "UPDATE_PROGRESS" },
+    { module: "MY_WORK", action: "UPLOAD" },
+    { module: "MY_WORK", action: "SUBMIT" },
+    { module: "MY_WORK", action: "COMPLETE" },
+    { module: "CREATIVE_WORK", action: "VIEW" },
+    { module: "CREATIVE_WORK", action: "OPEN" },
+    { module: "CREATIVE_WORK", action: "START" },
+    { module: "CREATIVE_WORK", action: "UPDATE" },
+    { module: "CREATIVE_WORK", action: "UPLOAD" },
+    { module: "CREATIVE_WORK", action: "SUBMIT" },
+    { module: "CREATIVE_WORK", action: "COMPLETE" },
+    { module: "WORK_EXECUTION", action: "VIEW" },
+    { module: "ATTENDANCE", action: "VIEW" },
+    { module: "ATTENDANCE", action: "PUNCH_IN" },
+    { module: "ATTENDANCE", action: "PUNCH_OUT" },
+    { module: "LEAVE", action: "VIEW" },
+    { module: "LEAVE", action: "CREATE" },
+    { module: "TASKS", action: "VIEW" },
+    { module: "TASKS", action: "START" },
+    { module: "TASKS", action: "UPDATE" },
+    { module: "TASKS", action: "SUBMIT_PROOF" },
+    { module: "TASKS", action: "COMPLETE" },
+    { module: "SALARY", action: "VIEW" },
+    { module: "SALARY", action: "DOWNLOAD" },
+    { module: "NOTIFICATIONS", action: "VIEW" },
+    { module: "NOTIFICATIONS", action: "READ" },
+    { module: "PROFILE", action: "VIEW" },
+    { module: "PROFILE", action: "EDIT" },
+    { module: "SETTINGS", action: "VIEW" },
+    { module: "SETTINGS", action: "SETTING_PROFILE" },
+  ],
 };
 
 // Aliases for matching
@@ -690,6 +733,10 @@ ROLE_PERMISSION_DEFAULTS.VIDEO_EDITOR = ROLE_PERMISSION_DEFAULTS.EDITOR;
 ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_EXECUTIVE = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER;
 ROLE_PERMISSION_DEFAULTS.REEL_SHOOTER = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER;
 ROLE_PERMISSION_DEFAULTS.VIDEOGRAPHER = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER;
+ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER;
+ROLE_PERMISSION_DEFAULTS.PRODUCTION = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER;
+ROLE_PERMISSION_DEFAULTS.PRODUCTION_MEMBER = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER;
+ROLE_PERMISSION_DEFAULTS.PRODUCTION_EXECUTIVE = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER;
 ROLE_PERMISSION_DEFAULTS.TELESALES_EXECUTIVE = ROLE_PERMISSION_DEFAULTS.TELECALLER;
 ROLE_PERMISSION_DEFAULTS.TELESALES = ROLE_PERMISSION_DEFAULTS.TELECALLER;
 ROLE_PERMISSION_DEFAULTS.TELESELLER = ROLE_PERMISSION_DEFAULTS.TELECALLER;

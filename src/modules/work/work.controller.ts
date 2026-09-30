@@ -11,6 +11,7 @@ import {
   Logger,
   UseGuards,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
@@ -21,6 +22,9 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
+import { PermissionsGuard, userHasModulePermission } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 function mapWorkTypeToModule(workType?: WorkType | string): string {
   if (!workType) return 'video_edit';
@@ -340,7 +344,8 @@ export class WorkController {
   }
 
   @Get('calendar/month')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get month calendar view' })
   @ApiQuery({ name: 'year', required: true })
@@ -390,6 +395,11 @@ export class WorkController {
     if (!authEmpId) {
       return [];
     }
+    if (!userHasModulePermission(user, 'CALENDAR', 'VIEW')) {
+      throw new ForbiddenException(
+        'Access denied: Missing required permission [CALENDAR:VIEW]',
+      );
+    }
 
     return this.workService.getEmployeeCalendar(authEmpId, {
       date: date || startDate,
@@ -402,7 +412,7 @@ export class WorkController {
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
-    });
+    }, { allTenantCustomers: true });
   }
 
   @Get('production/metrics')
@@ -451,7 +461,8 @@ export class WorkController {
   @Get('calendar')
   @Get('customer/calendar')
   @Get('admin/calendar')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get scheduled calendar events' })
   @ApiQuery({ name: 'employeeId', required: false })
@@ -488,6 +499,11 @@ export class WorkController {
     if (isEmployeeRole && !req?.query?.customerId && !headerCustId) {
       const resolvedEmpId = employeeId ? Number(employeeId) : await this.workService.resolveEmployeeIdForUser(req?.user);
       if (resolvedEmpId) {
+        if (!userHasModulePermission(req?.user, 'CALENDAR', 'VIEW')) {
+          throw new ForbiddenException(
+            'Access denied: Missing required permission [CALENDAR:VIEW]',
+          );
+        }
         return this.workService.getEmployeeCalendar(resolvedEmpId, {
           date: date || startDate,
           dateFrom: dateFrom || startDate,
@@ -495,7 +511,7 @@ export class WorkController {
           month: month ? parseInt(month, 10) : undefined,
           year: year ? parseInt(year, 10) : undefined,
           status,
-        });
+        }, { allTenantCustomers: true });
       }
     }
 
@@ -579,8 +595,37 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
   @ApiOperation({ summary: 'Create new scheduled work deliverable' })
   async create(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Body() dto: CreateWorkDto,
   ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    const isAdmin = isUserAdmin(user) || isUserSuperAdmin(user);
+
+    if (employeeId && !isAdmin) {
+      if (!userHasModulePermission(user, 'CALENDAR', 'CREATE')) {
+        throw new ForbiddenException(
+          'Access denied: Missing required permission [CALENDAR:CREATE]',
+        );
+      }
+
+      const targetCustomerId = dto.customerId ?? customerId;
+      const parsedTarget = Number(targetCustomerId);
+      if (!Number.isInteger(parsedTarget) || parsedTarget <= 0) {
+        throw new BadRequestException(
+          'A valid customer is required to schedule this calendar event.',
+        );
+      }
+      await this.workService.assertEmployeeCanScheduleForCustomer(
+        employeeId,
+        parsedTarget,
+        { allowTenantCustomers: true },
+      );
+      return this.workService.create(parsedTarget, {
+        ...dto,
+        assignedToId: employeeId,
+      });
+    }
+
     return this.workService.create(customerId, dto);
   }
 

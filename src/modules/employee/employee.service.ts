@@ -3011,6 +3011,8 @@ export class EmployeeService {
       let matchedKey: string | null = null;
       if (ROLE_PERMISSION_DEFAULTS[upper]) {
         matchedKey = upper;
+      } else if (upper.includes('PRODUCTION')) {
+        matchedKey = 'PRODUCTION_TEAM_MEMBER';
       } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
         matchedKey = 'VISITOR';
       } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
@@ -3062,30 +3064,31 @@ export class EmployeeService {
       // For CRM / calling / sales designations (BPO, Telecaller, Sales Executive, etc.),
       // ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
       const isCrmDesignation = Boolean(
-        (desigUpper && (
-          desigUpper.includes('BPO') ||
-          desigUpper.includes('TELE') ||
-          desigUpper.includes('SALES') ||
-          desigUpper.includes('CALL') ||
-          desigUpper.includes('MANAGER') ||
-          desigUpper.includes('FIELD') ||
-          desigUpper.includes('CRM') ||
-          desigUpper.includes('LEAD') ||
-          desigUpper.includes('EXECUTIVE') ||
-          desigUpper.includes('BD') ||
-          desigUpper.includes('OFFICER') ||
-          desigUpper.includes('AGENT') ||
-          desigUpper.includes('COORDINATOR') ||
-          desigUpper.includes('MARKETING') ||
-          desigUpper.includes('CONSULTANT')
-        )) ||
-        employee.designation?.crmMobileAccess === true ||
+        !desigUpper.includes('PRODUCTION') && (
+          (desigUpper && (
+            desigUpper.includes('BPO') ||
+            desigUpper.includes('TELE') ||
+            desigUpper.includes('SALES') ||
+            desigUpper.includes('CALL') ||
+            desigUpper.includes('MANAGER') ||
+            desigUpper.includes('FIELD') ||
+            desigUpper.includes('CRM') ||
+            desigUpper.includes('LEAD') ||
+            desigUpper.includes('EXECUTIVE') ||
+            desigUpper.includes('BD') ||
+            desigUpper.includes('OFFICER') ||
+            desigUpper.includes('AGENT') ||
+            desigUpper.includes('COORDINATOR') ||
+            desigUpper.includes('MARKETING') ||
+            desigUpper.includes('CONSULTANT')
+          )) ||
+          employee.designation?.crmMobileAccess === true ||
         rolePermissionsSet.has('LEADS:VIEW') ||
         rolePermissionsSet.has('LEADS:CREATE') ||
         rolePermissionsSet.has('LEADS:CHANGE_STAGE') ||
         rolePermissionsSet.has('LEADS:SCHEDULE_VISIT') ||
         rolePermissionsSet.has('LEADS:CALL')
-      );
+      ));
 
       if (isCrmDesignation) {
         rolePermissionsSet.add('VISITS:CREATE');

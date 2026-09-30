@@ -2,6 +2,39 @@ import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY, RequiredPermission } from '../decorators/permissions.decorator';
 
+export function userHasModulePermission(
+  user: any,
+  module: string,
+  action: string,
+): boolean {
+  const userPermissions: { module?: string; action?: string }[] = user?.permissions || [];
+  const rMod = String(module || '')
+    .toUpperCase()
+    .replace(/^EMPLOYEE\./, '')
+    .replace(/\./g, '_');
+  const rAct = String(action || '').toUpperCase();
+  const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
+
+  return userPermissions.some((userPerm) => {
+    const uMod = String(userPerm.module || '')
+      .toUpperCase()
+      .replace(/^EMPLOYEE\./, '')
+      .replace(/\./g, '_');
+    const uAct = String(userPerm.action || '').toUpperCase();
+    const modMatches =
+      uMod === rMod ||
+      uMod === rMod.replace(/_/g, '') ||
+      normalizeMod(uMod) === normalizeMod(rMod);
+    const actMatches =
+      uAct === rAct ||
+      uAct === 'MANAGE' ||
+      uAct === 'ALL' ||
+      (rAct === 'VIEW' && (uAct === 'READ' || uAct === 'VIEW')) ||
+      (rAct === 'CREATE' && (uAct === 'CREATE' || uAct === 'SCHEDULE' || uAct === 'ADD'));
+    return modMatches && actMatches;
+  });
+}
+
 @Injectable()
 export class PermissionsGuard implements CanActivate {
   constructor(private reflector: Reflector) {}

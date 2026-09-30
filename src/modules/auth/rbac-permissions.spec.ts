@@ -368,5 +368,48 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.VISITS.create).toBe(true);
       expect(result.permissions.some((p: any) => p.module === 'VISITS' && p.action === 'CREATE')).toBe(true);
     });
+
+    it('resolves Production Team Member designation with CALENDAR:VIEW = true, but CALENDAR:CREATE = false', async () => {
+      const mockProduction = {
+        id: 27,
+        email: 'prod@company.com',
+        employee: {
+          id: 27,
+          designation: { name: 'Production Team Member' },
+        },
+        userRoles: [{ role: { name: 'PRODUCTION_TEAM_MEMBER', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(27, mockProduction);
+      expect(result.effectivePermissions.CALENDAR.view).toBe(true);
+      expect(result.effectivePermissions.CALENDAR.create).toBe(false);
+      expect(result.effectivePermissions.CALENDAR.edit).toBe(false);
+      expect(result.effectivePermissions.CALENDAR.delete).toBe(false);
+      expect(result.permissions.some((p: any) => p.module === 'CALENDAR' && p.action === 'VIEW')).toBe(true);
+      expect(result.permissions.some((p: any) => p.module === 'CALENDAR' && p.action === 'CREATE')).toBe(false);
+      expect(result.permissionKeys).toContain('employee.calendar.view');
+      expect(result.permissionKeys).not.toContain('employee.calendar.create');
+    });
+
+    it('enforces CALENDAR DENY override for Production Team Member when explicitly configured', async () => {
+      const mockRestrictedProduction = {
+        id: 28,
+        email: 'prod_blocked@company.com',
+        employee: {
+          id: 28,
+          designation: { name: 'Production Team' },
+          employeeModuleOverrides: [
+            { moduleKey: 'CALENDAR', override: 'DENY' },
+          ],
+        },
+        userRoles: [{ role: { name: 'PRODUCTION_TEAM_MEMBER', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(28, mockRestrictedProduction);
+      expect(result.effectivePermissions.CALENDAR.view).toBe(false);
+      expect(result.permissions.some((p: any) => p.module === 'CALENDAR')).toBe(false);
+      expect(result.permissionKeys).not.toContain('employee.calendar.view');
+    });
   });
 });
+

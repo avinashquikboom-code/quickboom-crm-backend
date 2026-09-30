@@ -42,6 +42,7 @@ export async function seedRbac() {
     { name: 'HR', type: RoleType.CUSTOM, desc: 'HR Manager/Executive' },
     { name: 'EMPLOYEE', type: RoleType.CUSTOM, desc: 'General Employee role' },
     { name: 'MANAGER', type: RoleType.CUSTOM, desc: 'Department/Team Manager' },
+    { name: 'PRODUCTION_TEAM_MEMBER', type: RoleType.CUSTOM, desc: 'Production Team Member for creative shoots, editing, and calendar schedules' },
   ];
 
   for (const r of rolesToEnsure) {

@@ -52,6 +52,8 @@ export class CustomerController {
   ) {}
 
   @Get(['calendar', '/customer/calendar'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
   @ApiOperation({ summary: 'Get customer scheduled activities from Work table' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'date', required: false })
@@ -208,6 +210,7 @@ export class CustomerController {
   @ApiQuery({ name: 'sortBy', required: false })
   @ApiQuery({ name: 'sortOrder', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
+  @ApiQuery({ name: 'forCalendar', required: false, description: 'When true and user has Calendar VIEW/CREATE, skip assignment-only customer filter' })
   async findAll(
     @CurrentUser() user: any,
     @Query('search') search?: string,
@@ -226,6 +229,7 @@ export class CustomerController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
     @Query('excludeAdmins') excludeAdmins?: string,
+    @Query('forCalendar') forCalendar?: string,
   ) {
     const activeBool = isActive !== undefined ? isActive === 'true' : undefined;
     return this.customerService.findAll({
@@ -244,6 +248,7 @@ export class CustomerController {
       sortBy,
       sortOrder,
       excludeAdmins: excludeAdmins !== 'false',
+      forCalendar: forCalendar === 'true' || forCalendar === '1',
     }, user);
   }
 

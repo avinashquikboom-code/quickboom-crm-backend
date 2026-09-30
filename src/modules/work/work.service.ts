@@ -299,6 +299,77 @@ export class WorkService {
   }
 
   /**
+   * Employee may schedule only against an authorized tenant customer.
+   * Calendar CREATE with allowTenantCustomers skips assignment ownership.
+   */
+  async assertEmployeeCanScheduleForCustomer(
+    employeeId: number,
+    targetCustomerId: number,
+    options?: { allowTenantCustomers?: boolean },
+  ): Promise<void> {
+    const numEmployeeId = Number(employeeId);
+    const numCustomerId = Number(targetCustomerId);
+    if (!numEmployeeId || !numCustomerId) {
+      throw new BadRequestException('Valid employee and customer are required to schedule.');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: numEmployeeId },
+      select: { id: true, customerId: true },
+    });
+    if (!employee) {
+      throw new ForbiddenException('Employee profile not found');
+    }
+
+    if (options?.allowTenantCustomers) {
+      const tenantCustomer = await this.prisma.customer.findFirst({
+        where: { id: numCustomerId, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      if (!tenantCustomer) {
+        throw new NotFoundException('Customer/resource not found');
+      }
+      return;
+    }
+
+    if (employee.customerId === numCustomerId) {
+      return;
+    }
+
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: numCustomerId, deletedAt: null },
+      select: { id: true, assignedEmployeeId: true, assignedTeamId: true },
+    });
+    if (!customer) {
+      throw new NotFoundException('Customer/resource not found');
+    }
+
+    if (customer.assignedEmployeeId === numEmployeeId) {
+      return;
+    }
+
+    if (customer.assignedTeamId) {
+      const [member, leader] = await Promise.all([
+        this.prisma.teamMember.findFirst({
+          where: { teamId: customer.assignedTeamId, employeeId: numEmployeeId },
+          select: { id: true },
+        }),
+        this.prisma.team.findFirst({
+          where: { id: customer.assignedTeamId, leaderId: numEmployeeId },
+          select: { id: true },
+        }),
+      ]);
+      if (member || leader) {
+        return;
+      }
+    }
+
+    throw new ForbiddenException(
+      'You are not authorized to schedule calendar events for this customer.',
+    );
+  }
+
+  /**
    * Customer Create Schedule with atomic plan quota verification and reservation.
    */
   async create(scopedCustomerId: number | string, dto: CreateWorkDto) {
@@ -1650,6 +1721,7 @@ status: ${item.status}`);
       workType?: string;
       search?: string;
     } = {},
+    options?: { allTenantCustomers?: boolean },
   ) {
     const startTime = Date.now();
     const numEmployeeId = Number(employeeId);
@@ -1712,18 +1784,69 @@ status: ${item.status}`);
           : null);
 
     // Resolve employee role and allowed activity types for role-based visibility
-    const { role: empRole, allowedTypes, isFullAccess, isProductionManager } =
-      await this.workPermissionService.getAllowedActivityTypesForEmployee(
-        numEmployeeId,
-        (empRecord as any)?.customerId,
-      );
+    let empRole = 'UNKNOWN';
+    let allowedTypes = new Set<string>();
+    let isFullAccess = true;
+    let isProductionManager = false;
+    try {
+      if (this.workPermissionService?.getAllowedActivityTypesForEmployee) {
+        const resolvedTypes = await this.workPermissionService.getAllowedActivityTypesForEmployee(
+          numEmployeeId,
+          (empRecord as any)?.customerId,
+        );
+        empRole = resolvedTypes.role;
+        allowedTypes = resolvedTypes.allowedTypes;
+        isFullAccess = resolvedTypes.isFullAccess;
+        isProductionManager = resolvedTypes.isProductionManager;
+      }
+    } catch (permErr: any) {
+      this.logger.warn(`getAllowedActivityTypesForEmployee warning: ${permErr?.message}`);
+    }
 
     const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
     const tenantCustomerId = (empRecord as any)?.customerId;
+    const allTenantCustomers = options?.allTenantCustomers === true;
 
     let where: any;
 
-    if (isProductionManager) {
+    if (allTenantCustomers) {
+      where = {
+        status: { not: WorkStatus.CANCELLED },
+        customer: {
+          deletedAt: null,
+          isActive: true,
+          ...(tenantCustomerId ? { id: tenantCustomerId } : {}),
+        },
+      };
+
+      if (query.customerId) {
+        where.customerId = Number(query.customerId);
+      }
+
+      if (query.employeeId) {
+        const filterEmpId = Number(query.employeeId);
+        where.OR = [
+          { assignedToId: filterEmpId },
+          { editorId: filterEmpId },
+          { tasks: { some: { assignedToId: filterEmpId } } },
+        ];
+      }
+
+      if (query.teamId) {
+        const filterTeamId = Number(query.teamId);
+        const teamCond = [
+          { teamId: filterTeamId },
+          { customer: { assignedTeamId: filterTeamId } },
+          { team: { members: { some: { teamId: filterTeamId } } } },
+        ];
+        if (where.OR) {
+          where.AND = [{ OR: where.OR }, { OR: teamCond }];
+          delete where.OR;
+        } else {
+          where.OR = teamCond;
+        }
+      }
+    } else if (isProductionManager) {
       // Production Manager is a supervisory role!
       // Must be able to see and manage production work across ALL employees and teams under the permitted organization/workspace.
       // Do NOT give Production Manager the same restricted task visibility as a normal Employee.
@@ -2101,8 +2224,8 @@ status: ${item.status}`);
       };
     });
 
-    // Enforce role-based activity visibility: only activities supported by the employee's role/permissions
-    const result = isFullAccess
+    // Calendar VIEW across all tenant customers must not drop other customers' work types.
+    const result = isFullAccess || allTenantCustomers
       ? mapped
       : mapped.filter((item) => allowedTypes.has(item.activityType));
 

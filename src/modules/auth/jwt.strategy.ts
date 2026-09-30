@@ -7,7 +7,7 @@ import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
 import {
-  applyPermissionItems,
+  applyCustomerEffectivePermissions,
   resolveCustomerAppPermissionItems,
 } from '../../common/utils/customer-app-permissions.util';
 
@@ -343,6 +343,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           const upper = String(candidate).toUpperCase().replace(/\s+/g, '_');
           let matched: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
+          else if (upper.includes('PRODUCTION')) matched = 'PRODUCTION_TEAM_MEMBER';
           else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) matched = 'VISITOR';
           else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) matched = 'TELECALLER';
           else if (upper.includes('DESIGN')) matched = 'DESIGNER';
@@ -394,20 +395,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // For CRM / calling / sales designations (BPO, Telecaller, Sales Executive, etc.),
       // ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
       const isCrmDesignation = Boolean(
-        (desigUpper && (
-          desigUpper.includes('BPO') ||
-          desigUpper.includes('TELE') ||
-          desigUpper.includes('SALES') ||
-          desigUpper.includes('CALL') ||
-          desigUpper.includes('MANAGER') ||
-          desigUpper.includes('FIELD') ||
-          desigUpper.includes('CRM') ||
-          desigUpper.includes('LEAD') ||
-          desigUpper.includes('EXECUTIVE') ||
-          desigUpper.includes('BD') ||
-          desigUpper.includes('OFFICER') ||
-          desigUpper.includes('AGENT') ||
-          desigUpper.includes('COORDINATOR') ||
+        !desigUpper.includes('PRODUCTION') && (
+          (desigUpper && (
+            desigUpper.includes('BPO') ||
+            desigUpper.includes('TELE') ||
+            desigUpper.includes('SALES') ||
+            desigUpper.includes('CALL') ||
+            desigUpper.includes('MANAGER') ||
+            desigUpper.includes('FIELD') ||
+            desigUpper.includes('CRM') ||
+            desigUpper.includes('LEAD') ||
+            desigUpper.includes('EXECUTIVE') ||
+            desigUpper.includes('BD') ||
+            desigUpper.includes('OFFICER') ||
+            desigUpper.includes('AGENT') ||
+            desigUpper.includes('COORDINATOR') ||
           desigUpper.includes('MARKETING') ||
           desigUpper.includes('CONSULTANT')
         )) ||
@@ -418,7 +420,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
         permissionsMap.has('LEADS:CALL') ||
         (user.employee && !user.employee.designationId && !permissionsMap.has('MY_WORK:VIEW'))
-      );
+      ));
 
       if (isCrmDesignation) {
         if (!permissionsMap.has('VISITS:CREATE')) {
@@ -581,9 +583,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user.employee) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
-        user.customerId,
+        customerId || user.customerId,
       );
-      applyPermissionItems(permissionsMap, customerItems);
+      applyCustomerEffectivePermissions(permissionsMap, customerItems);
     }
 
     return {

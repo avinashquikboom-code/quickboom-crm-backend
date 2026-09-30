@@ -93,3 +93,19 @@ export function applyPermissionItems(
     permissionsMap.set(`${module}:${action}`, { module, action });
   }
 }
+
+/**
+ * Replace CUSTOMER_* entries with the effective customer-app set.
+ * Add-only merge would keep role-default ALLOW after an explicit DENY.
+ */
+export function applyCustomerEffectivePermissions(
+  permissionsMap: Map<string, PermissionItem>,
+  items: PermissionItem[],
+) {
+  for (const key of Array.from(permissionsMap.keys())) {
+    if (key.startsWith('CUSTOMER_')) {
+      permissionsMap.delete(key);
+    }
+  }
+  applyPermissionItems(permissionsMap, items);
+}

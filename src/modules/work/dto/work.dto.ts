@@ -61,6 +61,13 @@ export class CreateWorkDto {
   @IsString()
   @IsOptional()
   purchaseId?: string;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Target customer for employee-created calendar schedules',
+  })
+  @IsOptional()
+  customerId?: number | string;
 }
 
 export class UpdateWorkDto {

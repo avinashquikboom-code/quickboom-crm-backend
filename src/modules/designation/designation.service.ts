@@ -534,6 +534,8 @@ export class DesignationService {
     let defaultKeys: { module: string; action: string }[] = [];
     if (ROLE_PERMISSION_DEFAULTS[upperName]) {
       defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
+    } else if (upperName.includes('PRODUCTION')) {
+      defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
     } else if (upperName.includes('DESIGNER')) {
       defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
     } else if (upperName.includes('EDITOR')) {

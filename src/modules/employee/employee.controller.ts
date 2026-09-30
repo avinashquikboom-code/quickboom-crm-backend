@@ -22,6 +22,7 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
+import { userHasModulePermission } from '../../common/guards/permissions.guard';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -165,6 +166,11 @@ export class EmployeeController {
     if (!employeeId) {
       return [];
     }
+    if (!userHasModulePermission(user, 'CALENDAR', 'VIEW')) {
+      throw new ForbiddenException(
+        'Access denied: Missing required permission [CALENDAR:VIEW]',
+      );
+    }
 
     return this.workService.getEmployeeCalendar(employeeId, {
       date: date || startDate,
@@ -174,7 +180,7 @@ export class EmployeeController {
       year: year ? parseInt(year, 10) : undefined,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
-    });
+    }, { allTenantCustomers: true });
   }
 
   @Get('hrm/offices')
