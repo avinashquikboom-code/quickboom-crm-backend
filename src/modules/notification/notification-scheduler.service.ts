@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
-import { SubscriptionStatus, WorkStatus } from '@prisma/client';
+import { SubscriptionStatus, WorkStatus, LeadStatus } from '@prisma/client';
 
 /**
  * Returns UTC Date range matching start and end of day in Indian Standard Time (IST: UTC+5:30)
@@ -87,10 +87,11 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
     const subCountToday = await this.checkSubscriptionExpiries(0);
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
     const scheduledOffersCount = await this.notificationService.processScheduledCampaigns();
+    const followUpRemindersCount = await this.checkLeadFollowUpReminders();
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
@@ -99,6 +100,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
       customerCalendarNotified: customerCount,
       employeeCalendarNotified: employeeCount,
       scheduledOffersNotified: scheduledOffersCount,
+      followUpRemindersNotified: followUpRemindersCount,
       notificationsCleaned: cleanupCount,
     };
   }
@@ -269,5 +271,189 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
     }
 
     return { customerCount, employeeCount };
+  }
+
+  /**
+   * 3-Day Follow-Up Reminder for Leads
+   * Scans leads currently in FOLLOW_UP status whose latest transition to FOLLOW_UP
+   * occurred >= 3 days ago, and sends a reminder to the responsible BPO.
+   */
+  async checkLeadFollowUpReminders(): Promise<number> {
+    let notifiedCount = 0;
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    try {
+      const followUpLeads = await this.prisma.lead.findMany({
+        where: {
+          status: LeadStatus.FOLLOW_UP,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          customerId: true,
+          title: true,
+          firstName: true,
+          lastName: true,
+          companyName: true,
+          status: true,
+          stageId: true,
+          assignedToId: true,
+          employeeId: true,
+          createdAt: true,
+          employee: {
+            select: {
+              id: true,
+              userId: true,
+            },
+          },
+        },
+      });
+
+      for (const lead of followUpLeads) {
+        // 1. Resolve latest transition into FOLLOW_UP
+        const latestHistory = await this.prisma.leadStatusHistory.findFirst({
+          where: { leadId: lead.id },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        // If the lead transitioned away from FOLLOW_UP according to history, skip
+        if (latestHistory && latestHistory.toStatus !== LeadStatus.FOLLOW_UP) {
+          continue;
+        }
+
+        const transitionTimestamp: Date =
+          latestHistory?.toStatus === LeadStatus.FOLLOW_UP
+            ? latestHistory.createdAt
+            : lead.createdAt;
+
+        // 2. Exact 3-day calculation: must be >= 3 days from the latest transition to FOLLOW_UP
+        const eligibleAtMs = transitionTimestamp.getTime() + THREE_DAYS_MS;
+        if (now < eligibleAtMs) {
+          continue;
+        }
+
+        // 3. Resolve responsible BPO recipient using existing Lead ownership/assignment relationship
+        let bpoUserId: number | null = lead.assignedToId ? Number(lead.assignedToId) : null;
+        if (!bpoUserId && lead.employee?.userId) {
+          bpoUserId = Number(lead.employee.userId);
+        }
+        if (!bpoUserId && lead.employeeId) {
+          const emp = await this.prisma.employee.findUnique({
+            where: { id: lead.employeeId },
+            select: { userId: true },
+          });
+          if (emp?.userId) {
+            bpoUserId = Number(emp.userId);
+          }
+        }
+
+        if (!bpoUserId) {
+          this.logger.warn(
+            `[FOLLOW_UP_REMINDER] Lead #${lead.id} is in Follow-Up for 3+ days but has no assigned BPO recipient. Skipping.`,
+          );
+          continue;
+        }
+
+        // 4. Duplicate notification protection (Idempotency)
+        // Check if an in-app notification of type LEAD_FOLLOW_UP_REMINDER was already sent for this lead during this cycle
+        const existingNotifications = await this.prisma.notification.findMany({
+          where: {
+            customerId: lead.customerId,
+            userId: bpoUserId,
+            type: 'LEAD_FOLLOW_UP_REMINDER',
+            createdAt: { gte: transitionTimestamp },
+          },
+          select: { id: true, data: true },
+        });
+
+        const alreadySent = existingNotifications.some((n: any) => {
+          const d = (n.data as any) || {};
+          return String(d.leadId) === String(lead.id);
+        });
+
+        if (alreadySent) {
+          continue;
+        }
+
+        // Also check if existing LeadReminder record is already marked completed for this cycle
+        const existingReminder = await this.prisma.leadReminder.findFirst({
+          where: {
+            leadId: lead.id,
+            title: '3_DAY_FOLLOW_UP_REMINDER',
+            createdAt: { gte: transitionTimestamp },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (existingReminder?.isCompleted) {
+          continue;
+        }
+
+        // 5. Send notification to the responsible BPO
+        const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+        const leadDisplayName = lead.title || leadFullName || lead.companyName || `Lead #${lead.id}`;
+
+        const res = await this.notificationService.sendLeadFollowUpReminderNotification({
+          customerId: lead.customerId,
+          leadId: lead.id,
+          leadName: leadDisplayName,
+          companyName: lead.companyName,
+          transitionDate: transitionTimestamp,
+          bpoUserId,
+        });
+
+        if (res) {
+          notifiedCount++;
+          this.logger.log(
+            `[FOLLOW_UP_REMINDER] Sent 3-day reminder to BPO user #${bpoUserId} for lead #${lead.id} (${leadDisplayName})`,
+          );
+
+          // 6. Record the event as processed (mark LeadReminder as completed)
+          try {
+            if (existingReminder) {
+              await this.prisma.leadReminder.update({
+                where: { id: existingReminder.id },
+                data: { isCompleted: true },
+              });
+            } else {
+              await this.prisma.leadReminder.create({
+                data: {
+                  leadId: lead.id,
+                  remindAt: new Date(eligibleAtMs),
+                  title: '3_DAY_FOLLOW_UP_REMINDER',
+                  isCompleted: true,
+                },
+              });
+            }
+          } catch (remErr: any) {
+            this.logger.warn(`[FOLLOW_UP_REMINDER] Failed to update leadReminder record: ${remErr?.message}`);
+          }
+
+          // 7. Record timeline activity
+          try {
+            await this.prisma.leadActivityTimeline.create({
+              data: {
+                leadId: lead.id,
+                action: 'FOLLOW_UP_REMINDER_SENT',
+                description: '3-Day Follow-Up reminder sent to responsible BPO',
+                metadata: {
+                  bpoUserId,
+                  leadId: lead.id,
+                  transitionDate: transitionTimestamp.toISOString(),
+                  notifiedAt: new Date().toISOString(),
+                },
+              },
+            });
+          } catch (tlErr: any) {
+            this.logger.warn(`[FOLLOW_UP_REMINDER] Failed to log timeline activity: ${tlErr?.message}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Error in checkLeadFollowUpReminders: ${err?.message}`, err?.stack);
+    }
+
+    return notifiedCount;
   }
 }

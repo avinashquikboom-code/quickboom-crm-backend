@@ -775,6 +775,56 @@ export class NotificationService {
   }
 
   /**
+   * 3-DAY FOLLOW-UP REMINDER NOTIFICATION
+   * Fired ONLY after 3 days from the Follow-Up transition if the Lead is still eligible for follow-up.
+   * Notifies ONLY the responsible BPO for that Lead.
+   */
+  async sendLeadFollowUpReminderNotification(params: {
+    customerId: number | string;
+    leadId: number | string;
+    leadName?: string | null;
+    companyName?: string | null;
+    transitionDate: Date;
+    bpoUserId: number | string;
+  }) {
+    const { customerId, leadId, leadName, companyName, transitionDate, bpoUserId } = params;
+    const numCustomerId = Number(customerId);
+    const numLeadId = Number(leadId);
+    const numBpoUserId = Number(bpoUserId);
+
+    if (!numBpoUserId || isNaN(numBpoUserId)) {
+      this.logger.warn(`[FOLLOW_UP_REMINDER] No valid BPO userId provided for lead #${numLeadId}. Skipping notification.`);
+      return null;
+    }
+
+    try {
+      const resolvedName = (leadName || '').trim() || (companyName || '').trim() || `Lead #${numLeadId}`;
+      const title = 'Follow-Up Reminder';
+      const body = `Follow-up is pending for Lead ${resolvedName}. Please review the lead and take the required action.`;
+
+      return await this.sendPushNotification({
+        userId: numBpoUserId,
+        customerId: numCustomerId,
+        title,
+        body,
+        type: 'LEAD_FOLLOW_UP_REMINDER',
+        data: {
+          type: 'LEAD_FOLLOW_UP_REMINDER',
+          leadId: String(numLeadId),
+          leadName: resolvedName,
+          companyName: companyName || '',
+          followUpDate: transitionDate.toISOString(),
+          route: `/leads/${numLeadId}`,
+          channel: 'LEAD',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending 3-day follow-up reminder notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
    * 2. VISIT SCHEDULED -> VISITOR NOTIFICATION
    * Fired ONLY after Visit is successfully created and visitor assigned.
    * Recipient: ONLY the assigned Visitor/Field Officer.

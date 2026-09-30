@@ -381,6 +381,24 @@ export class LeadRepository {
       },
     });
 
+    if (status === LeadStatus.FOLLOW_UP || (status as string) === 'FOLLOW_UP') {
+      try {
+        if (client.leadReminder?.create) {
+          const remindAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+          await client.leadReminder.create({
+            data: {
+              leadId: lead.id,
+              remindAt,
+              title: '3_DAY_FOLLOW_UP_REMINDER',
+              isCompleted: false,
+            },
+          });
+        }
+      } catch (remErr: any) {
+        this.logger.warn(`[create] Failed to track 3-day follow-up reminder: ${remErr?.message}`);
+      }
+    }
+
     return lead;
   }
 
@@ -1820,6 +1838,39 @@ export class LeadRepository {
       { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
     );
 
+    // 3-Day Follow-Up Reminder tracking
+    if (toStatus === LeadStatus.FOLLOW_UP || (toStatus as string) === 'FOLLOW_UP') {
+      try {
+        if (this.prisma.leadReminder?.deleteMany) {
+          await this.prisma.leadReminder.deleteMany({
+            where: { leadId: numId, title: '3_DAY_FOLLOW_UP_REMINDER' },
+          });
+          const remindAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+          await this.prisma.leadReminder.create({
+            data: {
+              leadId: numId,
+              remindAt,
+              title: '3_DAY_FOLLOW_UP_REMINDER',
+              isCompleted: false,
+            },
+          });
+        }
+      } catch (remErr: any) {
+        this.logger.warn(`[updateStatus] Failed to track 3-day follow-up reminder: ${remErr?.message}`);
+      }
+    } else {
+      // Transitioning away from Follow-Up resets / clears any pending 3-day reminder
+      try {
+        if (this.prisma.leadReminder?.deleteMany) {
+          await this.prisma.leadReminder.deleteMany({
+            where: { leadId: numId, title: '3_DAY_FOLLOW_UP_REMINDER', isCompleted: false },
+          });
+        }
+      } catch (remErr: any) {
+        this.logger.warn(`[updateStatus] Failed to clear 3-day follow-up reminder: ${remErr?.message}`);
+      }
+    }
+
     if (toStatus === LeadStatus.VISIT_DONE || (toStatus as string) === 'VISIT_DONE' || (toStatus as string) === 'VISIT') {
       try {
         const leadObj = await this.prisma.lead.findUnique({
@@ -2077,6 +2128,25 @@ export class LeadRepository {
           notes: `Follow-up call logged: ${dto.outcome}`,
         },
       });
+
+      try {
+        if (this.prisma.leadReminder?.deleteMany) {
+          await this.prisma.leadReminder.deleteMany({
+            where: { leadId: numLeadId, title: '3_DAY_FOLLOW_UP_REMINDER' },
+          });
+          const remindAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+          await this.prisma.leadReminder.create({
+            data: {
+              leadId: numLeadId,
+              remindAt,
+              title: '3_DAY_FOLLOW_UP_REMINDER',
+              isCompleted: false,
+            },
+          });
+        }
+      } catch (remErr: any) {
+        this.logger.warn(`[logFollowUp] Failed to track 3-day follow-up reminder: ${remErr?.message}`);
+      }
     }
 
     await this.logTimeline(
