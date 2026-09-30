@@ -250,6 +250,100 @@ export class FcmService implements OnModuleInit {
   }
 
   /**
+   * Builds FCM notification/data/platform blocks.
+   * Android promotional images must be data-only so Flutter can download a
+   * private/presigned image and attach Big Picture. FCM's native Android
+   * image fetch cannot load private S3 objects or signed query-string URLs.
+   */
+  private buildPushMessageParts(
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ): {
+    data: Record<string, string>;
+    imageUrl?: string;
+    notification?: { title: string; body: string; imageUrl?: string };
+    android: Message['android'];
+    apns: Message['apns'];
+    webpush: Message['webpush'];
+  } {
+    const stringifiedData: Record<string, string> = {
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    };
+    if (data) {
+      for (const [key, value] of Object.entries(data)) {
+        stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
+      }
+    }
+
+    const rawImage = (stringifiedData.imageUrl || stringifiedData.image || '').trim();
+    const imageUrl = rawImage || undefined;
+    if (!stringifiedData.title) stringifiedData.title = title;
+    if (!stringifiedData.body) stringifiedData.body = body;
+    if (imageUrl) stringifiedData.imageUrl = imageUrl;
+
+    const apns: Message['apns'] = {
+      payload: {
+        aps: {
+          sound: 'default',
+          badge: 1,
+          contentAvailable: true,
+          'mutable-content': 1,
+          ...(imageUrl ? { alert: { title, body } } : {}),
+        },
+      },
+      ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
+    };
+
+    const webpush: Message['webpush'] = {
+      headers: {
+        Urgency: 'high',
+      },
+      notification: {
+        title,
+        body,
+        icon: '/logo.png',
+        badge: '/favicon.ico',
+        ...(imageUrl ? { image: imageUrl } : {}),
+        requireInteraction: true,
+      },
+      fcmOptions: {
+        link: data?.route || '/notifications',
+      },
+    };
+
+    if (imageUrl) {
+      return {
+        data: stringifiedData,
+        imageUrl,
+        android: { priority: 'high' },
+        apns,
+        webpush,
+      };
+    }
+
+    return {
+      data: stringifiedData,
+      notification: { title, body },
+      android: {
+        priority: 'high',
+        notification: {
+          sound: 'default',
+          channelId: 'quikboom_notifications',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          icon: 'ic_notification',
+          color: '#23C45E',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          visibility: 'public',
+        },
+      },
+      apns,
+      webpush,
+    };
+  }
+
+  /**
    * Send push notification directly to a single device token (used for verification & test delivery)
    */
   async sendToSingleToken(
@@ -302,66 +396,16 @@ export class FcmService implements OnModuleInit {
     this.logger.log('[FCM] Sending push');
     this.logger.log('[FCM] Sending notification');
 
-    const stringifiedData: Record<string, string> = {
-      click_action: 'FLUTTER_NOTIFICATION_CLICK',
-    };
-    if (data) {
-      for (const [key, value] of Object.entries(data)) {
-        stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
-      }
-    }
-
-    const imageUrl = data?.imageUrl ? String(data.imageUrl).trim() : undefined;
+    const { data: stringifiedData, android, apns, webpush, notification } =
+      this.buildPushMessageParts(title, body, data);
 
     const message: Message = {
       token: cleanToken,
-      notification: {
-        title,
-        body,
-        ...(imageUrl ? { imageUrl } : {}),
-      },
+      ...(notification ? { notification } : {}),
       data: stringifiedData,
-      android: {
-        priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'quikboom_notifications',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-          icon: 'ic_notification',
-          color: '#23C45E',
-          defaultSound: true,
-          defaultVibrateTimings: true,
-          visibility: 'public',
-          ...(imageUrl ? { imageUrl } : {}),
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            badge: 1,
-            contentAvailable: true,
-            'mutable-content': 1,
-          },
-        },
-        ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
-      },
-      webpush: {
-        headers: {
-          Urgency: 'high',
-        },
-        notification: {
-          title,
-          body,
-          icon: '/logo.png',
-          badge: '/favicon.ico',
-          ...(imageUrl ? { image: imageUrl } : {}),
-          requireInteraction: true,
-        },
-        fcmOptions: {
-          link: data?.route || '/notifications',
-        },
-      },
+      android,
+      apns,
+      webpush,
     };
 
     const messaging = getMessaging(this.firebaseApp);
@@ -409,16 +453,6 @@ export class FcmService implements OnModuleInit {
     // Ensure Firebase is initialized dynamically before checking readiness
     await this.ensureInitialized();
 
-    // Stringify all values in data payload for Firebase compliance
-    const stringifiedData: Record<string, string> = {
-      click_action: 'FLUTTER_NOTIFICATION_CLICK',
-    };
-    if (data) {
-      for (const [key, value] of Object.entries(data)) {
-        stringifiedData[key] = typeof value === 'string' ? value : JSON.stringify(value);
-      }
-    }
-
     try {
       if (this.integrationSettingsService) {
         const fbConfig = await this.integrationSettingsService.getFirebaseConfig();
@@ -463,60 +497,19 @@ export class FcmService implements OnModuleInit {
     const batchSize = 500;
     const messaging = getMessaging(this.firebaseApp);
 
-    const imageUrl = data?.imageUrl ? String(data.imageUrl).trim() : undefined;
+    const { data: stringifiedData, android, apns, webpush, notification } =
+      this.buildPushMessageParts(title, body, data);
 
     for (let i = 0; i < validTokens.length; i += batchSize) {
       const batchTokens = validTokens.slice(i, i + batchSize);
 
       const message: MulticastMessage = {
         tokens: batchTokens,
-        notification: {
-          title,
-          body,
-          ...(imageUrl ? { imageUrl } : {}),
-        },
+        ...(notification ? { notification } : {}),
         data: stringifiedData,
-        android: {
-          priority: 'high',
-          notification: {
-            sound: 'default',
-            channelId: 'quikboom_notifications',
-            clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-            icon: 'ic_notification',
-            color: '#23C45E',
-            defaultSound: true,
-            defaultVibrateTimings: true,
-            visibility: 'public',
-            ...(imageUrl ? { imageUrl } : {}),
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: 'default',
-              badge: 1,
-              contentAvailable: true,
-              'mutable-content': 1,
-            },
-          },
-          ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
-        },
-        webpush: {
-          headers: {
-            Urgency: 'high',
-          },
-          notification: {
-            title,
-            body,
-            icon: '/logo.png',
-            badge: '/favicon.ico',
-            ...(imageUrl ? { image: imageUrl } : {}),
-            requireInteraction: true,
-          },
-          fcmOptions: {
-            link: data?.route || '/notifications',
-          },
-        },
+        android,
+        apns,
+        webpush,
       };
 
       try {

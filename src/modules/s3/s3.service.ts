@@ -364,6 +364,10 @@ export class S3Service {
         if (match) {
           return match[1];
         }
+        const segments = pathname.split('/').filter(Boolean);
+        if (segments.length > 1 && segments[0].includes('.')) {
+          return segments.slice(1).join('/');
+        }
         return pathname;
       } catch (_) {
         return trimmed;
