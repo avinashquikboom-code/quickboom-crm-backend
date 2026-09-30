@@ -158,6 +158,13 @@ export class AdminOfferNotificationDto {
   scheduledAt?: string;
 }
 
+export class BulkDeleteOfferCampaignsDto {
+  @ApiProperty({ description: 'Notification campaign IDs to delete', type: [Number], example: [1, 2, 3] })
+  @IsArray()
+  @IsNumber({}, { each: true })
+  ids: number[];
+}
+
 export class TestCustomerNotificationDto {
   @ApiProperty({ description: 'Customer ID whose active devices should receive the test push', example: 1 })
   @IsNotEmpty()

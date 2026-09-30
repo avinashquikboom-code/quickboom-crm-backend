@@ -1486,6 +1486,84 @@ export class NotificationService {
   }
 
   /**
+   * Resend an existing offer campaign as a NEW broadcast.
+   * Loads stored campaign configuration and reuses sendAdminOfferNotification.
+   * Does not modify the original campaign record.
+   */
+  async resendOfferCampaign(campaignId: number, adminUserId?: number) {
+    const id = Number(campaignId);
+    if (!id || Number.isNaN(id)) {
+      throw new BadRequestException('A valid campaign ID is required.');
+    }
+
+    const campaign = await this.prisma.notificationCampaign.findUnique({
+      where: { id },
+    });
+    if (!campaign) {
+      throw new NotFoundException('Offer notification campaign not found');
+    }
+
+    const rawIds = campaign.targetIds;
+    const targetIds = Array.isArray(rawIds)
+      ? rawIds.map(Number).filter((n) => !Number.isNaN(n) && n > 0)
+      : undefined;
+
+    const dto: AdminOfferNotificationDto = {
+      title: campaign.title,
+      message: campaign.message,
+      targetType: campaign.targetType,
+      audience: campaign.audience,
+      targetIds: targetIds && targetIds.length > 0 ? targetIds : undefined,
+      imageUrl: campaign.imageUrl || undefined,
+      showCta: Boolean(campaign.showCta),
+      ctaText: campaign.ctaText || undefined,
+      ctaActionType: campaign.ctaActionType || undefined,
+      ctaActionValue: campaign.ctaActionValue || undefined,
+    };
+
+    return this.sendAdminOfferNotification(dto, adminUserId);
+  }
+
+  /**
+   * Delete offer campaign history records by ID.
+   * Follows existing in-app notification delete semantics (hard delete of the history row).
+   * Does not modify FCM delivery or recipient in-app notifications.
+   */
+  async deleteOfferCampaigns(ids: number[]) {
+    const uniqueIds = Array.from(
+      new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0)),
+    );
+
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('At least one valid campaign ID is required.');
+    }
+
+    const existing = await this.prisma.notificationCampaign.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true },
+    });
+    const foundIds = existing.map((item) => item.id);
+    const failedIds = uniqueIds.filter((id) => !foundIds.includes(id));
+
+    if (foundIds.length > 0) {
+      await this.prisma.notificationCampaign.deleteMany({
+        where: { id: { in: foundIds } },
+      });
+    }
+
+    const success = failedIds.length === 0;
+    return {
+      success,
+      deletedCount: foundIds.length,
+      requestedCount: uniqueIds.length,
+      failedIds,
+      message: success
+        ? `Deleted ${foundIds.length} offer notification campaign(s).`
+        : `Deleted ${foundIds.length} of ${uniqueIds.length} campaign(s). ${failedIds.length} not found.`,
+    };
+  }
+
+  /**
    * Process all pending scheduled notifications (triggered by scheduler)
    */
   async processScheduledCampaigns(): Promise<number> {

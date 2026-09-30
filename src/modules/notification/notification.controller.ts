@@ -25,6 +25,7 @@ import {
   TestTokenDto,
   AdminOfferNotificationDto,
   TestCustomerNotificationDto,
+  BulkDeleteOfferCampaignsDto,
 } from './dto/device-token.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -152,6 +153,29 @@ export class NotificationController {
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 20,
     );
+  }
+
+  @Post('admin/campaigns/bulk-delete')
+  @ApiOperation({ summary: 'Bulk delete offer notification campaigns from Admin history' })
+  @ApiBody({ type: BulkDeleteOfferCampaignsDto })
+  async bulkDeleteAdminCampaigns(@Body() dto: BulkDeleteOfferCampaignsDto) {
+    return this.notificationService.deleteOfferCampaigns(dto?.ids || []);
+  }
+
+  @Post('admin/campaigns/:id/resend')
+  @ApiOperation({ summary: 'Resend an offer notification campaign as a new broadcast' })
+  async resendAdminCampaign(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    const adminUserId = userId ? Number(userId) : undefined;
+    return this.notificationService.resendOfferCampaign(parseInt(id, 10), adminUserId);
+  }
+
+  @Delete('admin/campaigns/:id')
+  @ApiOperation({ summary: 'Delete a single offer notification campaign from Admin history' })
+  async deleteAdminCampaign(@Param('id') id: string) {
+    return this.notificationService.deleteOfferCampaigns([parseInt(id, 10)]);
   }
 
   @Post('admin/upload-image')
