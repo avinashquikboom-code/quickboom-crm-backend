@@ -1218,7 +1218,6 @@ export class NotificationService {
 
     if (targetType === 'EMPLOYEES') {
       const whereClause: any = {
-        deletedAt: null,
         status: 'ACTIVE',
         userId: { not: null },
       };
