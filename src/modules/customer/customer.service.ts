@@ -9,7 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, RoleType, CommissionStatus } from '@prisma/client';
+import { Prisma, RoleType, CommissionStatus, LeadStatus } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -466,6 +466,79 @@ export function extractUpcomingCall(
     status: 'SCHEDULED',
     notes: earliest.notes,
   };
+}
+
+const WON_LEAD_STATUSES: LeadStatus[] = [
+  LeadStatus.WON,
+  LeadStatus.CONVERTED,
+  LeadStatus.WORK_STARTED,
+];
+
+const WON_LEAD_STAGE_KEYS = ['WON', 'CONVERTED', 'WORK_STARTED'];
+
+/**
+ * Lead-derived Customer eligibility uses the current Lead stage, not a stale
+ * conversion flag. Only WON (and equivalent closed statuses) qualify.
+ */
+export function isLeadWonForCustomerEligibility(
+  lead: any,
+  wonStageIds?: Set<number>,
+): boolean {
+  if (!lead) return false;
+
+  const st = String(lead.status || '').trim().toUpperCase();
+  if (WON_LEAD_STATUSES.includes(st as LeadStatus)) {
+    return true;
+  }
+
+  const stageKey = String(lead.stage?.key || '').trim().toUpperCase();
+  if (WON_LEAD_STAGE_KEYS.includes(stageKey)) {
+    return true;
+  }
+
+  const stageId =
+    lead.stageId != null
+      ? Number(lead.stageId)
+      : lead.stage?.id != null
+        ? Number(lead.stage.id)
+        : NaN;
+  if (wonStageIds && !Number.isNaN(stageId) && wonStageIds.has(stageId)) {
+    return true;
+  }
+
+  const stageName = String(lead.stage?.name || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+  return WON_LEAD_STAGE_KEYS.includes(stageName);
+}
+
+function customerHasCompletedPurchase(customer: any): boolean {
+  const subscriptions = customer?.subscriptions || [];
+  return subscriptions.some((s: any) => {
+    const status = String(s?.status || '').toUpperCase();
+    return status === 'ACTIVE' || status === 'EXPIRED' || status === 'CANCELLED';
+  });
+}
+
+/**
+ * Persisted Customer rows stay visible when they are not Lead-derived, when
+ * the origin Lead is currently WON, or when a real purchase already exists.
+ * Non-WON Lead-derived rows are omitted from the list without deleting them.
+ */
+export function isPersistedCustomerEligibleForList(
+  customer: any,
+  wonStageIds?: Set<number>,
+): boolean {
+  if (!customer) return false;
+  if (customerHasCompletedPurchase(customer)) return true;
+
+  const originLead = customer.originLead;
+  const hasOriginLink = Boolean(customer.leadId) || Boolean(originLead);
+  if (!hasOriginLink) return true;
+  if (originLead) return isLeadWonForCustomerEligibility(originLead, wonStageIds);
+
+  return true;
 }
 
 @Injectable()
@@ -1259,6 +1332,7 @@ export class CustomerService {
       where: countsWhere,
       select: {
         id: true,
+        leadId: true,
         isActive: true,
         subscriptions: {
           where: { deletedAt: null },
@@ -1317,6 +1391,10 @@ export class CustomerService {
     const completedCustomerIds: number[] = [];
 
     for (const c of allCustomersForCounts) {
+      if (!isPersistedCustomerEligibleForList(c, wonStageIds)) {
+        continue;
+      }
+
       // Priority 1: ACTIVE (valid, actually activated purchased plan)
       const activeSub = c.subscriptions?.find(
         (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
@@ -1416,12 +1494,22 @@ export class CustomerService {
           leadAndConditions.push({ OR: stageConditions });
         }
 
+        const wonStageIdList = Array.from(wonStageIds || []);
+        leadAndConditions.push({
+          OR: [
+            { status: { in: WON_LEAD_STATUSES } },
+            { stage: { key: { in: WON_LEAD_STAGE_KEYS } } },
+            ...(wonStageIdList.length > 0 ? [{ stageId: { in: wonStageIdList } }] : []),
+          ],
+        });
+
         if (leadAndConditions.length > 0) {
           leadWhere.AND = leadAndConditions;
         }
 
         const leads = await this.prisma.lead.findMany({
           where: leadWhere,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           include: {
             stage: true,
             employee: true,
@@ -1441,6 +1529,13 @@ export class CustomerService {
         }
 
         for (const l of leads) {
+          if (!isLeadWonForCustomerEligibility(l, wonStageIds)) {
+            this.logger.log(
+              `[CUSTOMER_ELIGIBILITY_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.status}\nreason=lead_stage_is_not_won`,
+            );
+            continue;
+          }
+
           // If already converted to or linked with a Customer, skip to prevent duplicates
           if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
             this.logger.log(
@@ -1475,14 +1570,21 @@ export class CustomerService {
     if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
       const targetStatus = query.status.trim().toUpperCase();
       if (targetStatus === 'UPCOMING') {
-        where.id = { in: upcomingCustomerIds };
+        where.id = { in: upcomingCustomerIds.length > 0 ? upcomingCustomerIds : [-1] };
       } else if (targetStatus === 'ACTIVE') {
-        where.id = { in: activeCustomerIds };
+        where.id = { in: activeCustomerIds.length > 0 ? activeCustomerIds : [-1] };
       } else if (targetStatus === 'INACTIVE') {
-        where.id = { in: inactiveCustomerIds };
+        where.id = { in: inactiveCustomerIds.length > 0 ? inactiveCustomerIds : [-1] };
       } else if (targetStatus === 'COMPLETED') {
-        where.id = { in: completedCustomerIds };
+        where.id = { in: completedCustomerIds.length > 0 ? completedCustomerIds : [-1] };
       }
+    } else {
+      const eligiblePersistedIds = [
+        ...activeCustomerIds,
+        ...upcomingCustomerIds,
+        ...inactiveCustomerIds,
+      ];
+      where.id = { in: eligiblePersistedIds.length > 0 ? eligiblePersistedIds : [-1] };
     }
 
     const items = await this.prisma.customer.findMany({
@@ -1591,7 +1693,11 @@ export class CustomerService {
       },
     });
 
-    let formatted = items.map((c) => {
+    const eligibleItems = items.filter((c) =>
+      isPersistedCustomerEligibleForList(c, wonStageIds),
+    );
+
+    let formatted = eligibleItems.map((c) => {
       const primaryUser = (c as any).users?.[0];
       // Find latest valid active subscription strictly
       const activeSub =

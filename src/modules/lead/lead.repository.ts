@@ -1013,7 +1013,7 @@ export class LeadRepository {
           where,
           skip,
           take: limit,
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           include: {
             stage: true,
             assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -1033,7 +1033,7 @@ export class LeadRepository {
             where,
             skip,
             take: limit,
-            orderBy: { createdAt: 'desc' },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             include: {
               stage: true,
               assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },

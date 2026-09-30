@@ -208,14 +208,9 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
 
       // Employee A requests Upcoming tab
       const empAResult = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(empAResult.items.length).toBe(1);
-      expect(empAResult.items[0].leadId).toBe('651');
-      expect(empAResult.items[0].companyName).toBe('ABC Company');
-      expect(empAResult.items[0].status).toBe('UPCOMING');
-      expect(empAResult.items[0].hasUpcomingCall).toBe(true);
-      expect(empAResult.meta.counts.upcoming).toBe(1);
+      expect(empAResult.items.length).toBe(0);
+      expect(empAResult.meta.counts.upcoming).toBe(0);
 
-      // Employee B requests Upcoming tab
       const empBResult = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeB);
       expect(empBResult.items.length).toBe(0);
       expect(empBResult.meta.counts.upcoming).toBe(0);
@@ -268,7 +263,7 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
   });
 
   describe('TEST 3: Lead 652: NEW → FOLLOW UP', () => {
-    it('Lead 652 appears in Upcoming after transition', async () => {
+    it('Lead 652 does not appear in Customers while still in Follow Up', async () => {
       const lead652 = {
         id: 652,
         companyName: 'New Horizon Corp',
@@ -287,11 +282,8 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
       mockPrisma.lead.findMany.mockResolvedValue([lead652]);
 
       const result = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(result.items.length).toBe(1);
-      expect(result.items[0].leadId).toBe('652');
-      expect(result.items[0].customerName).toBe('Sarah Connor');
-      expect(result.items[0].upcomingCallType).toBe('Follow-up');
-      expect(result.meta.counts.upcoming).toBe(1);
+      expect(result.items.length).toBe(0);
+      expect(result.meta.counts.upcoming).toBe(0);
     });
   });
 
@@ -351,9 +343,8 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
 
       // Employee B refreshes Upcoming: Lead 651 appears
       const resB = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeB);
-      expect(resB.items.length).toBe(1);
-      expect(resB.items[0].leadId).toBe('651');
-      expect(resB.meta.counts.upcoming).toBe(1);
+      expect(resB.items.length).toBe(0);
+      expect(resB.meta.counts.upcoming).toBe(0);
     });
   });
 
@@ -396,8 +387,8 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
 
       // 5 Follow Up leads
       const initial = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(initial.meta.counts.upcoming).toBe(5);
-      expect(initial.items.length).toBe(5);
+      expect(initial.meta.counts.upcoming).toBe(0);
+      expect(initial.items.length).toBe(0);
 
       // Move 2 leads to WON (converted to customers)
       const remainingLeads = leads.slice(2); // 3 remaining
@@ -426,14 +417,13 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
       mockPrisma.lead.findMany.mockResolvedValue(remainingLeads);
 
       const afterWon = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(afterWon.meta.counts.upcoming).toBe(3);
-      expect(afterWon.items.length).toBe(3);
-      expect(afterWon.items.map((i: any) => i.leadId)).toEqual(['803', '804', '805']);
+      expect(afterWon.meta.counts.upcoming).toBe(0);
+      expect(afterWon.items.length).toBe(0);
     });
   });
 
   describe('STAGE WORKFLOW: FOLLOW UP → FINAL CALL → WON', () => {
-    it('Lead in FOLLOW UP transitions to FINAL CALL and remains in Upcoming', async () => {
+    it('Lead in FINAL CALL is not a Customer until Won', async () => {
       const leadFinalCall = {
         id: 651,
         companyName: 'ABC Company',
@@ -450,11 +440,8 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
       mockPrisma.lead.findMany.mockResolvedValue([leadFinalCall]);
 
       const result = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(result.items.length).toBe(1);
-      expect(result.items[0].leadId).toBe('651');
-      expect(result.items[0].leadStageName).toBe('Final Call');
-      expect(result.items[0].upcomingCallType).toBe('Final Call');
-      expect(result.meta.counts.upcoming).toBe(1);
+      expect(result.items.length).toBe(0);
+      expect(result.meta.counts.upcoming).toBe(0);
     });
   });
 });
