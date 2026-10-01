@@ -33,6 +33,7 @@ import * as crypto from 'crypto';
 const Razorpay = require('razorpay');
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
+import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
@@ -1249,6 +1250,68 @@ export class PaymentService {
           this.logger.warn(`[INVOICE_COMMUNICATION_WARN] ${invErr?.message}`);
         }
       }
+
+      // 4. Agreement PDF Generation & Email
+      if (customerEmail && this.emailService) {
+        try {
+          // Idempotency check: see if agreement was already sent for this transaction
+          const existingAgreementLog = await this.prisma.emailLog.findFirst({
+            where: {
+              eventType: 'AGREEMENT_GENERATED',
+              identifierKey: String(transactionId || paymentId),
+              status: 'SENT',
+            }
+          });
+
+          if (!existingAgreementLog) {
+            // Fetch payment & subscription details
+            const paymentInfo = await this.prisma.paymentHistory.findFirst({
+              where: { transactionId: String(transactionId || paymentId) },
+              include: { subscription: { include: { plan: true } } }
+            });
+
+            if (paymentInfo && paymentInfo.subscription && paymentInfo.subscription.plan) {
+              const sub = paymentInfo.subscription;
+              const plan = sub.plan;
+              
+              const agreementPdfBuffer = await generateAgreementPdfBuffer({
+                customerName,
+                companyName,
+                purchaseDate: paymentInfo.createdAt,
+                activationDate: sub.startDate,
+                planName: plan.name,
+                planFeatures: plan.features as any[],
+                amount: Number(paymentInfo.amount),
+                taxAmount: Number(paymentInfo.taxAmount || 0),
+                totalAmount: Number(paymentInfo.totalAmount || paymentInfo.amount),
+                startDate: sub.startDate,
+                endDate: sub.endDate,
+                orderNumber: paymentInfo.orderNumber || String(paymentInfo.orderId),
+                invoiceNumber: invoiceNo || null,
+              });
+
+              const agreementSubject = `Your Social Media Marketing Service Agreement – ${companyName}`;
+              const agreementBody = `Hello ${customerName},<br/><br/>Thank you for your purchase.<br/><br/>Your Social Media Marketing Service Agreement has been generated successfully.<br/><br/>Plan: ${plan.name}<br/>Company: ${companyName}<br/>Purchase Date: ${paymentInfo.createdAt.toLocaleDateString('en-IN')}<br/>Activation Date: ${sub.startDate.toLocaleDateString('en-IN')}<br/>Amount Paid: ₹${Number(paymentInfo.totalAmount || paymentInfo.amount).toLocaleString('en-IN')}<br/><br/>The agreement is attached to this email.<br/><br/>Regards,<br/>QUIK BOOM MARKETING AGENCY`;
+
+              await this.emailService.sendEmail({
+                to: customerEmail,
+                subject: agreementSubject,
+                html: agreementBody,
+                text: agreementBody.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+                recordType: 'customer',
+                recordId: customerId,
+                eventType: 'AGREEMENT_GENERATED',
+                identifierKey: String(transactionId || paymentId),
+                attachments: [{ filename: `Agreement-${companyName}.pdf`, content: agreementPdfBuffer, contentType: 'application/pdf' }],
+              });
+              
+              this.logger.log(`[EMAIL] Agreement PDF email sent to ${customerEmail}`);
+            }
+          }
+        } catch (agrErr: any) {
+          this.logger.warn(`[AGREEMENT_COMMUNICATION_WARN] ${agrErr?.message}`);
+        }
+      }
     } catch (err: any) {
       this.logger.warn(`[PAYMENT_COMMUNICATION_ERROR] ${err?.message}`);
     }
@@ -1331,6 +1394,51 @@ export class PaymentService {
     return {
       success: true,
       data: mapped,
+    };
+  }
+
+  async downloadAgreementPdf(paymentId: number | string): Promise<{ buffer: Buffer; filename: string }> {
+    const paymentInfo = await this.prisma.paymentHistory.findFirst({
+      where: {
+        OR: [
+          { id: Number(paymentId) || -1 },
+          { orderNumber: String(paymentId) },
+        ],
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } }
+      }
+    });
+
+    if (!paymentInfo || !paymentInfo.subscription || !paymentInfo.subscription.plan) {
+      throw new NotFoundException('Agreement not found for this payment or subscription is invalid');
+    }
+
+    const sub = paymentInfo.subscription;
+    const plan = sub.plan;
+    const customer = paymentInfo.customer;
+    const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+
+    const buffer = await generateAgreementPdfBuffer({
+      customerName: customer.name || customer.companyName || 'Valued Customer',
+      companyName,
+      purchaseDate: paymentInfo.createdAt,
+      activationDate: sub.startDate,
+      planName: plan.name,
+      planFeatures: plan.features as any[],
+      amount: Number(paymentInfo.amount),
+      taxAmount: Number(paymentInfo.taxAmount || 0),
+      totalAmount: Number(paymentInfo.totalAmount || paymentInfo.amount),
+      startDate: sub.startDate,
+      endDate: sub.endDate,
+      orderNumber: paymentInfo.orderNumber || String(paymentInfo.orderId),
+      invoiceNumber: paymentInfo.invoiceUrl || null,
+    });
+
+    return {
+      buffer,
+      filename: `Agreement-${companyName}.pdf`,
     };
   }
 

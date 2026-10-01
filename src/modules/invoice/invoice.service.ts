@@ -21,6 +21,7 @@ import {
   resolveInvoiceLineItems,
   withInvoiceItemsSnapshot,
 } from '../../common/utils/invoice-items.util';
+import { generateAgreementPdf } from '../../common/utils/agreement-pdf.util';
 
 const INVOICE_ISSUER = Object.freeze({
   brand: 'QB SUITE',
@@ -1411,5 +1412,46 @@ export class InvoiceService {
         });
       }
     }
+  }
+
+  async downloadAgreementPdf(customerId: string | number, id: string | number, user?: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    
+    let paymentId;
+    if (invoice.notes) {
+      const match = invoice.notes.match(/Order:\s*(\d+)/);
+      if (match) {
+        paymentId = Number(match[1]);
+      }
+    }
+    
+    if (!paymentId) {
+      const payment = await this.prisma.paymentHistory.findFirst({
+        where: {
+          customerId: Number(customerId),
+          OR: [
+            { orderNumber: invoice.invoiceNo },
+            { invoiceUrl: invoice.invoiceNo }
+          ],
+          status: { in: ['SUCCESS', 'PAID'] }
+        }
+      });
+      if (payment) paymentId = payment.id;
+    }
+    
+    if (!paymentId) {
+       throw new BadRequestException('Cannot generate agreement: No associated payment found for this invoice.');
+    }
+
+    const paymentData = await this.prisma.paymentHistory.findUnique({
+      where: { id: paymentId },
+      include: { customer: true },
+    });
+    
+    if (!paymentData || !paymentData.customer) {
+      throw new BadRequestException('Payment or customer not found for this invoice');
+    }
+
+    return await generateAgreementPdf(paymentData, paymentData.customer);
   }
 }

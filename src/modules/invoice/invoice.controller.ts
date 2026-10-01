@@ -128,6 +128,25 @@ export class InvoiceController {
     return this.invoiceService.findOne(customerId, id, user);
   }
 
+  @Get(':id/agreement/download')
+  @ApiOperation({ summary: 'Download agreement PDF for invoice' })
+  async downloadAgreement(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const pdfBuffer = await this.invoiceService.downloadAgreementPdf(customerId, id, user);
+    const invoice = await this.invoiceService.findOne(customerId, id, user);
+    
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Agreement_${invoice.invoiceNo}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.end(pdfBuffer);
+  }
+
   @Get(':id/download')
   @UseGuards(PermissionsGuard)
   @RequirePermissions({ module: 'CUSTOMER_INVOICES', action: 'DOWNLOAD' })

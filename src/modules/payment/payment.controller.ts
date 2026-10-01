@@ -6,6 +6,8 @@ import {
   Headers,
   UseGuards,
   Req,
+  Res,
+  Param,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
@@ -84,6 +86,23 @@ export class PaymentController {
   ) {
     const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
     return this.paymentService.handleWebhook(rawBody, signature);
+  }
+
+  @Get(':id/agreement/download')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Download Service Agreement PDF' })
+  async downloadAgreement(
+    @Param('id') paymentId: string,
+    @Res() res: any,
+  ) {
+    const { buffer, filename } = await this.paymentService.downloadAgreementPdf(paymentId);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
   }
 
   @Get('history')
