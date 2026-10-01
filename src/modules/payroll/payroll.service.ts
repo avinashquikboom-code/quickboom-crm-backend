@@ -1127,15 +1127,16 @@ export class PayrollService {
       }
 
       if (basic > 0) {
-        const hra = activeStructure?.hra ?? Math.round(basic * 0.4);
-        const allowances = activeStructure?.allowances ?? Math.round(basic * 0.1);
-        const specialAllowance = activeStructure?.specialAllowance ?? 0;
-        const pf = activeStructure?.pf ?? Math.round(basic * 0.12);
-        const esi = activeStructure?.esi ?? Math.round(basic * 0.0075);
-        const professionalTax = activeStructure?.professionalTax ?? 200;
-        const grossSalary = activeStructure?.grossSalary ?? (basic + hra + allowances + specialAllowance);
-        const totalDeductions = activeStructure?.totalDeductions ?? (pf + esi + professionalTax);
-        const netSalary = activeStructure?.netSalary ?? Math.max(0, grossSalary - totalDeductions);
+        const hra = activeStructure?.hra !== undefined ? activeStructure.hra : Math.round(basic * 0.4);
+        const allowances = activeStructure?.allowances !== undefined ? activeStructure.allowances : Math.round(basic * 0.1);
+        const specialAllowance = activeStructure?.specialAllowance !== undefined ? activeStructure.specialAllowance : 0;
+        const pf = activeStructure?.pf !== undefined ? activeStructure.pf : Math.round(basic * 0.12);
+        const esi = activeStructure?.esi !== undefined ? activeStructure.esi : Math.round(basic * 0.0075);
+        const professionalTax = activeStructure?.professionalTax !== undefined ? activeStructure.professionalTax : 200;
+        const tds = activeStructure?.tds !== undefined ? activeStructure.tds : 0;
+        const grossSalary = activeStructure?.grossSalary !== undefined ? activeStructure.grossSalary : (basic + hra + allowances + specialAllowance);
+        const totalDeductions = activeStructure?.totalDeductions !== undefined ? activeStructure.totalDeductions : (pf + esi + professionalTax + tds);
+        const netSalary = activeStructure?.netSalary !== undefined ? activeStructure.netSalary : Math.max(0, grossSalary - totalDeductions);
 
         const now = new Date();
         const curMonth = now.getMonth() + 1;
@@ -1156,6 +1157,7 @@ export class PayrollService {
             pf,
             esi,
             professionalTax,
+            tds,
             grossSalary,
             totalDeductions,
             netSalary,
@@ -1168,6 +1170,7 @@ export class PayrollService {
               pf,
               esi,
               professionalTax,
+              tds,
               grossSalary,
               totalDeductions,
               netSalary,
@@ -1192,6 +1195,7 @@ export class PayrollService {
             pf,
             esi,
             professionalTax,
+            tds,
             status: 'ACTIVE',
             employee: {
               id: currentEmployee.id,
@@ -1209,6 +1213,7 @@ export class PayrollService {
               pf,
               esi,
               professionalTax,
+              tds,
               grossSalary,
               totalDeductions,
               netSalary,
@@ -1341,11 +1346,11 @@ export class PayrollService {
     const overtime = Number(data.overtime) || 0;
     const otherEarnings = Number(data.otherEarnings) || 0;
 
-    const pf = Number(data.pf) || Math.round(basicSalary * 0.12);
-    const esi = Number(data.esi) || Math.round(basicSalary * 0.0075);
-    const professionalTax = Number(data.professionalTax) || 200;
-    const tds = Number(data.tds) || 0;
-    const otherDeductions = Number(data.otherDeductions) || 0;
+    const pf = data.pf !== undefined && data.pf !== null && data.pf !== '' ? Number(data.pf) : Math.round(basicSalary * 0.12);
+    const esi = data.esi !== undefined && data.esi !== null && data.esi !== '' ? Number(data.esi) : Math.round(basicSalary * 0.0075);
+    const professionalTax = data.professionalTax !== undefined && data.professionalTax !== null && data.professionalTax !== '' ? Number(data.professionalTax) : 200;
+    const tds = data.tds !== undefined && data.tds !== null && data.tds !== '' ? Number(data.tds) : 0;
+    const otherDeductions = data.otherDeductions !== undefined && data.otherDeductions !== null && data.otherDeductions !== '' ? Number(data.otherDeductions) : 0;
 
     const grossSalary = basicSalary + hra + allowances + specialAllowance + bonus + commission + overtime + otherEarnings;
     const totalDeductions = pf + esi + professionalTax + tds + otherDeductions;

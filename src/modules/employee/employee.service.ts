@@ -471,6 +471,11 @@ export class EmployeeService {
           include: { leaveType: true },
         },
         works: { take: 10, orderBy: { scheduledDate: 'desc' } },
+        salaryStructures: {
+          where: { status: 'ACTIVE' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -624,6 +629,10 @@ export class EmployeeService {
         };
       }),
       works: employee.works || [],
+      bankDetails: employee.bankDetails,
+      documents: employee.documents,
+      emergencyContact: employee.emergencyContact,
+      salaryStructure: employee.salaryStructures?.[0] || null,
     };
   }
 
@@ -1687,23 +1696,26 @@ export class EmployeeService {
           }).catch(() => null);
         }
 
-        // Synchronize active SalaryStructure from bankDetails if provided
+        // Synchronize active SalaryStructure from salaryStructure or bankDetails if provided
+        const rawStruct = dto.salaryStructure || (typeof dto.bankDetails === 'object' ? dto.bankDetails?.salaryStructure : null) || {};
         let parsedBank = dto.bankDetails;
         if (typeof parsedBank === 'string') {
           try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
         }
-        const rawSalary = parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
+        const rawSalary = rawStruct.basicSalary ?? parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
         if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
           const basicSalary = Number(rawSalary) || 0;
           if (basicSalary > 0) {
-            const hra = Math.round(basicSalary * 0.4);
-            const allowances = Math.round(basicSalary * 0.1);
-            const specialAllowance = 0;
-            const pf = Math.round(basicSalary * 0.12);
-            const esi = Math.round(basicSalary * 0.0075);
-            const professionalTax = 200;
+            const hra = rawStruct.hra !== undefined && rawStruct.hra !== null && rawStruct.hra !== '' ? Number(rawStruct.hra) : (parsedBank?.hra !== undefined ? Number(parsedBank.hra) : 0);
+            const allowances = rawStruct.allowances !== undefined && rawStruct.allowances !== null && rawStruct.allowances !== '' ? Number(rawStruct.allowances) : (parsedBank?.allowances !== undefined ? Number(parsedBank.allowances) : 0);
+            const specialAllowance = rawStruct.specialAllowance !== undefined && rawStruct.specialAllowance !== null && rawStruct.specialAllowance !== '' ? Number(rawStruct.specialAllowance) : (parsedBank?.specialAllowance !== undefined ? Number(parsedBank.specialAllowance) : 0);
+            const pf = rawStruct.pf !== undefined && rawStruct.pf !== null && rawStruct.pf !== '' ? Number(rawStruct.pf) : (parsedBank?.pf !== undefined ? Number(parsedBank.pf) : Math.round(basicSalary * 0.12));
+            const esi = rawStruct.esi !== undefined && rawStruct.esi !== null && rawStruct.esi !== '' ? Number(rawStruct.esi) : (parsedBank?.esi !== undefined ? Number(parsedBank.esi) : Math.round(basicSalary * 0.0075));
+            const professionalTax = rawStruct.professionalTax !== undefined && rawStruct.professionalTax !== null && rawStruct.professionalTax !== '' ? Number(rawStruct.professionalTax) : (parsedBank?.professionalTax !== undefined ? Number(parsedBank.professionalTax) : 200);
+            const tds = rawStruct.tds !== undefined && rawStruct.tds !== null && rawStruct.tds !== '' ? Number(rawStruct.tds) : (parsedBank?.tds !== undefined ? Number(parsedBank.tds) : 0);
+
             const grossSalary = basicSalary + hra + allowances + specialAllowance;
-            const totalDeductions = pf + esi + professionalTax;
+            const totalDeductions = pf + esi + professionalTax + tds;
             const netSalary = Math.max(0, grossSalary - totalDeductions);
 
             await tx.salaryStructure.create({
@@ -1720,8 +1732,28 @@ export class EmployeeService {
                 pf,
                 esi,
                 professionalTax,
+                tds,
                 status: 'ACTIVE',
               },
+            });
+
+            const syncBank = (typeof createdEmployee.bankDetails === 'object' && createdEmployee.bankDetails !== null)
+              ? { ...(createdEmployee.bankDetails as any) }
+              : (typeof parsedBank === 'object' && parsedBank !== null ? { ...parsedBank } : {});
+            syncBank.basicSalary = basicSalary;
+            syncBank.hra = hra;
+            syncBank.allowances = allowances;
+            syncBank.specialAllowance = specialAllowance;
+            syncBank.pf = pf;
+            syncBank.esi = esi;
+            syncBank.professionalTax = professionalTax;
+            syncBank.tds = tds;
+            syncBank.grossSalary = grossSalary;
+            syncBank.totalDeductions = totalDeductions;
+            syncBank.netSalary = netSalary;
+            await tx.employee.update({
+              where: { id: createdEmployee.id },
+              data: { bankDetails: syncBank },
             });
           }
         }
@@ -2225,23 +2257,26 @@ export class EmployeeService {
         }
       }
 
-      // Synchronize active SalaryStructure & current salary slips from bankDetails
+      // Synchronize active SalaryStructure & current salary slips from salaryStructure or bankDetails
+      const rawStruct = dto.salaryStructure || (typeof dto.bankDetails === 'object' ? dto.bankDetails?.salaryStructure : null) || {};
       let parsedBank = dto.bankDetails;
       if (typeof parsedBank === 'string') {
         try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
       }
-      const rawSalary = parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
+      const rawSalary = rawStruct.basicSalary ?? parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
       if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
         const basicSalary = Number(rawSalary) || 0;
         if (basicSalary > 0) {
-          const hra = Math.round(basicSalary * 0.4);
-          const allowances = Math.round(basicSalary * 0.1);
-          const specialAllowance = 0;
-          const pf = Math.round(basicSalary * 0.12);
-          const esi = Math.round(basicSalary * 0.0075);
-          const professionalTax = 200;
+          const hra = rawStruct.hra !== undefined && rawStruct.hra !== null && rawStruct.hra !== '' ? Number(rawStruct.hra) : (parsedBank?.hra !== undefined ? Number(parsedBank.hra) : 0);
+          const allowances = rawStruct.allowances !== undefined && rawStruct.allowances !== null && rawStruct.allowances !== '' ? Number(rawStruct.allowances) : (parsedBank?.allowances !== undefined ? Number(parsedBank.allowances) : 0);
+          const specialAllowance = rawStruct.specialAllowance !== undefined && rawStruct.specialAllowance !== null && rawStruct.specialAllowance !== '' ? Number(rawStruct.specialAllowance) : (parsedBank?.specialAllowance !== undefined ? Number(parsedBank.specialAllowance) : 0);
+          const pf = rawStruct.pf !== undefined && rawStruct.pf !== null && rawStruct.pf !== '' ? Number(rawStruct.pf) : (parsedBank?.pf !== undefined ? Number(parsedBank.pf) : Math.round(basicSalary * 0.12));
+          const esi = rawStruct.esi !== undefined && rawStruct.esi !== null && rawStruct.esi !== '' ? Number(rawStruct.esi) : (parsedBank?.esi !== undefined ? Number(parsedBank.esi) : Math.round(basicSalary * 0.0075));
+          const professionalTax = rawStruct.professionalTax !== undefined && rawStruct.professionalTax !== null && rawStruct.professionalTax !== '' ? Number(rawStruct.professionalTax) : (parsedBank?.professionalTax !== undefined ? Number(parsedBank.professionalTax) : 200);
+          const tds = rawStruct.tds !== undefined && rawStruct.tds !== null && rawStruct.tds !== '' ? Number(rawStruct.tds) : (parsedBank?.tds !== undefined ? Number(parsedBank.tds) : 0);
+
           const grossSalary = basicSalary + hra + allowances + specialAllowance;
-          const totalDeductions = pf + esi + professionalTax;
+          const totalDeductions = pf + esi + professionalTax + tds;
           const netSalary = Math.max(0, grossSalary - totalDeductions);
 
           const existingStructure = await tx.salaryStructure.findFirst({
@@ -2263,6 +2298,7 @@ export class EmployeeService {
                 pf,
                 esi,
                 professionalTax,
+                tds,
               },
             });
           } else {
@@ -2280,12 +2316,33 @@ export class EmployeeService {
                 pf,
                 esi,
                 professionalTax,
+                tds,
                 status: 'ACTIVE',
               },
             });
           }
 
-          // Update any existing salary slips for this employee so they reflect immediately
+          // Also keep updatedEmployee bankDetails in sync so any bankDetails readers are consistent
+          const currentBank = (typeof updatedEmployee.bankDetails === 'object' && updatedEmployee.bankDetails !== null)
+            ? { ...(updatedEmployee.bankDetails as any) }
+            : (typeof parsedBank === 'object' && parsedBank !== null ? { ...parsedBank } : {});
+          currentBank.basicSalary = basicSalary;
+          currentBank.hra = hra;
+          currentBank.allowances = allowances;
+          currentBank.specialAllowance = specialAllowance;
+          currentBank.pf = pf;
+          currentBank.esi = esi;
+          currentBank.professionalTax = professionalTax;
+          currentBank.tds = tds;
+          currentBank.grossSalary = grossSalary;
+          currentBank.totalDeductions = totalDeductions;
+          currentBank.netSalary = netSalary;
+          await tx.employee.update({
+            where: { id: updatedEmployee.id },
+            data: { bankDetails: currentBank },
+          });
+
+          // Update any existing non-final salary slips for this employee so they reflect immediately, preserving historical final/paid slips
           const slips = await tx.salarySlip.findMany({
             where: {
               employeeId: updatedEmployee.id,
@@ -2315,6 +2372,7 @@ export class EmployeeService {
                     pf,
                     esi,
                     professionalTax,
+                    tds,
                     grossSalary,
                     totalDeductions,
                     netSalary,
