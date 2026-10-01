@@ -118,15 +118,6 @@ export class InvoiceController {
     return this.findAll(custId, user, status, search, page, limit, custId);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get single invoice details' })
-  async findOne(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Param('id') id: string,
-  ) {
-    return this.invoiceService.findOne(customerId, id, user);
-  }
 
   @Get(':id/agreement/download')
   @ApiOperation({ summary: 'Download agreement PDF for invoice' })
@@ -158,6 +149,16 @@ export class InvoiceController {
     @Res() res: Response,
   ) {
     return this.invoiceService.downloadInvoicePdf(customerId, id, user, res);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get single invoice details' })
+  async findOne(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.invoiceService.findOne(customerId, id, user);
   }
 
   @Post()
