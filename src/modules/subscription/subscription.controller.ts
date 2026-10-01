@@ -10,10 +10,15 @@ import {
   UseGuards,
   Query,
   Req,
+  Res,
   Headers,
   ForbiddenException,
+  NotFoundException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { Response } from 'express';
+import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SubscriptionService } from './subscription.service';
 import { PlanAccessService } from './plan-access.service';
@@ -27,6 +32,7 @@ import { InstallmentService } from './installment.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @ApiTags('Subscriptions & Plans')
 @Controller()
@@ -37,6 +43,7 @@ export class SubscriptionController {
     private readonly subscriptionService: SubscriptionService,
     private readonly planAccessService: PlanAccessService,
     private readonly installmentService: InstallmentService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ==========================================
@@ -430,6 +437,80 @@ export class SubscriptionController {
       return { success: true, data: [] };
     }
     return this.subscriptionService.getCustomerOrders(customerId);
+  }
+
+  @Get('subscriptions/orders/:paymentId/agreement/download')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Download Service Agreement PDF for a paid order' })
+  async downloadOrderAgreement(
+    @Param('paymentId') paymentId: string,
+    @CurrentCustomer() customerIdStr: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const customerId = Number(customerIdStr || req?.customerId || user?.customerId);
+    const numPaymentId = Number(paymentId);
+
+    if (!numPaymentId || isNaN(numPaymentId)) {
+      throw new BadRequestException('Invalid payment ID');
+    }
+
+    const paymentData = await this.prisma.paymentHistory.findFirst({
+      where: {
+        id: numPaymentId,
+        ...(customerId ? { customerId } : {}),
+        status: { in: ['SUCCESS', 'PAID'] },
+      },
+      include: {
+        customer: true,
+        subscription: { include: { plan: true } },
+      },
+    });
+
+    if (!paymentData || !paymentData.customer) {
+      throw new NotFoundException('No paid order found with this ID for your account');
+    }
+
+    const sub = paymentData.subscription;
+    const plan = sub?.plan;
+    const customer = paymentData.customer;
+
+    const planName = plan?.name || paymentData.planName || 'Custom Plan';
+    const planFeatures = (plan?.features as any[]) || [];
+    const activationDate = sub?.startDate || paymentData.createdAt;
+
+    let endDate = sub?.endDate;
+    if (!endDate) {
+      const durationMonths = paymentData.billingCycle === 'YEARLY' ? 12 : 1;
+      endDate = new Date(activationDate);
+      endDate.setMonth(endDate.getMonth() + durationMonths);
+    }
+
+    const pdfBuffer = await generateAgreementPdfBuffer({
+      customerName: customer.name || customer.companyName || 'Valued Customer',
+      companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
+      purchaseDate: paymentData.createdAt,
+      activationDate,
+      planName,
+      planFeatures,
+      amount: Number(paymentData.amount),
+      taxAmount: Number(paymentData.taxAmount || 0),
+      totalAmount: Number(paymentData.totalAmount || paymentData.amount),
+      startDate: activationDate,
+      endDate,
+      orderNumber: paymentData.orderNumber || `ORD-PAY-${paymentData.id}`,
+      invoiceNumber: paymentData.invoiceUrl || null,
+    });
+
+    const safeCompany = (customer.companyName || customer.name || 'Agreement').replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Agreement_${safeCompany}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.end(pdfBuffer);
   }
 
   // ==========================================
