@@ -580,12 +580,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
     );
 
-    if (!user.employee) {
+    const isCustomerUser = primaryRole === 'CUSTOMER' || !user.employee;
+    if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
         customerId || user.customerId,
       );
-      applyCustomerEffectivePermissions(permissionsMap, customerItems);
+      applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee || primaryRole === 'CUSTOMER');
     }
 
     return {

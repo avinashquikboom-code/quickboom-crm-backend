@@ -32,30 +32,69 @@ export async function resolveCustomerAppPermissionItems(
   if (!customer) return defaults;
 
   let items: PermissionItem[] = [];
+  let roleResolved = false;
+
   const roleRows = customer.mobileRole?.role?.rolePermissions || [];
-  if (roleRows.length > 0) {
+  if (customer.mobileRole?.role) {
+    roleResolved = true;
     items = roleRows
       .filter((rp: any) => String(rp.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
       .map((rp: any) => ({
         module: String(rp.permission.module).toUpperCase(),
         action: String(rp.permission.action).toUpperCase(),
       }));
-  } else if (!customer.mobileRoleId) {
-    const ownRole = await prisma.designation.findFirst({
+  } else if (!customer.mobileRoleId && prisma?.designation?.findFirst) {
+    // 1. Try finding customer-scoped Customer designation
+    let ownRole = await prisma.designation.findFirst({
       where: { customerId: id, code: 'CUSTOMER', audience: 'CUSTOMER' },
       include: {
         role: { include: { rolePermissions: { include: { permission: true } } } },
       },
     });
-    const ownRows = ownRole?.role?.rolePermissions || [];
-    items = ownRows.length
-      ? ownRows
-          .filter((rp: any) => String(rp.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
-          .map((rp: any) => ({
-            module: String(rp.permission.module).toUpperCase(),
-            action: String(rp.permission.action).toUpperCase(),
-          }))
-      : defaults.map((p) => ({ module: p.module, action: p.action }));
+
+    // 2. Fall back to master/tenant Customer designation (e.g. customerId: 1 or null)
+    if (!ownRole) {
+      ownRole = await prisma.designation.findFirst({
+        where: {
+          code: 'CUSTOMER',
+          audience: 'CUSTOMER',
+          OR: [{ customerId: 1 }, { customerId: null }],
+        },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+        },
+        orderBy: { id: 'asc' },
+      });
+    }
+
+    // 3. Fall back to any designation with audience: 'CUSTOMER'
+    if (!ownRole) {
+      ownRole = await prisma.designation.findFirst({
+        where: {
+          audience: 'CUSTOMER',
+        },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+        },
+        orderBy: { id: 'asc' },
+      });
+    }
+
+    if (ownRole?.role) {
+      roleResolved = true;
+      const ownRows = ownRole.role.rolePermissions || [];
+      items = ownRows
+        .filter((rp: any) => String(rp.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
+        .map((rp: any) => ({
+          module: String(rp.permission.module).toUpperCase(),
+          action: String(rp.permission.action).toUpperCase(),
+        }));
+    }
+  }
+
+  // Only fall back to code defaults if no Customer role/designation was ever configured in the database
+  if (!roleResolved && !customer.mobileRoleId) {
+    items = defaults.map((p) => ({ module: p.module, action: p.action }));
   }
 
   const map = new Map<string, PermissionItem>();
@@ -96,15 +135,20 @@ export function applyPermissionItems(
 
 /**
  * Replace CUSTOMER_* entries with the effective customer-app set.
- * Add-only merge would keep role-default ALLOW after an explicit DENY.
+ * If clearNonCustomer is true (for pure customer sessions), removes all non-customer permissions too.
  */
 export function applyCustomerEffectivePermissions(
   permissionsMap: Map<string, PermissionItem>,
   items: PermissionItem[],
+  clearNonCustomer = false,
 ) {
-  for (const key of Array.from(permissionsMap.keys())) {
-    if (key.startsWith('CUSTOMER_')) {
-      permissionsMap.delete(key);
+  if (clearNonCustomer) {
+    permissionsMap.clear();
+  } else {
+    for (const key of Array.from(permissionsMap.keys())) {
+      if (key.startsWith('CUSTOMER_')) {
+        permissionsMap.delete(key);
+      }
     }
   }
   applyPermissionItems(permissionsMap, items);

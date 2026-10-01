@@ -35,6 +35,7 @@ import { NotificationService } from '../notification/notification.service';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 import {
   ALL_STANDARD_MODULES,
+  CUSTOMER_APP_PERMISSIONS,
   ROLE_PERMISSION_DEFAULTS,
   STANDARD_PERMISSIONS,
   toPermissionKey,
@@ -2805,12 +2806,16 @@ export class AuthService {
       }
     }
 
-    if (!user.employee) {
+    const isCustomerUser =
+      !user.employee ||
+      user.userRoles?.some((ur: any) => String(ur.role?.name || '').toUpperCase().includes('CUSTOMER'));
+
+    if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
         user.customerId,
       );
-      applyCustomerEffectivePermissions(permissionsMap, customerItems);
+      applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee);
     }
 
     const permissions = Array.from(permissionsMap.values());
@@ -2834,6 +2839,22 @@ export class AuthService {
 
       effectivePermissions[lowerMod] = modPerms;
       effectivePermissions[mod] = modPerms;
+    });
+
+    // Also populate explicit customer app permissions
+    CUSTOMER_APP_PERMISSIONS.forEach((def) => {
+      const lowerMod = def.module.toLowerCase();
+      if (!effectivePermissions[lowerMod]) {
+        effectivePermissions[lowerMod] = {
+          view: permissionsMap.has(`${def.module}:VIEW`),
+          create: permissionsMap.has(`${def.module}:CREATE`),
+          edit: permissionsMap.has(`${def.module}:EDIT`),
+          delete: permissionsMap.has(`${def.module}:DELETE`),
+        };
+        effectivePermissions[def.module] = effectivePermissions[lowerMod];
+      }
+      const act = def.action.toLowerCase();
+      effectivePermissions[lowerMod][act] = permissionsMap.has(`${def.module}:${def.action}`);
     });
 
     // Also capture any custom or dynamic module permissions in permissionsMap
@@ -2863,6 +2884,8 @@ export class AuthService {
       specificRoleName = 'SUPER_ADMIN';
     } else if (isCustomerAdmin) {
       specificRoleName = 'COMPANY_ADMIN';
+    } else if (isCustomerUser) {
+      specificRoleName = 'CUSTOMER';
     } else {
       const candidate =
         (user.userRoles || []).find(
