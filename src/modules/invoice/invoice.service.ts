@@ -1419,7 +1419,7 @@ export class InvoiceService {
     
     let paymentId;
     if (invoice.notes) {
-      const match = invoice.notes.match(/Order:\s*(\d+)/);
+      const match = invoice.notes.match(/Order:?\s*#?\s*(?:ORD-(?:PAY|CUST)-)?(\d+)/i);
       if (match) {
         paymentId = Number(match[1]);
       }
@@ -1451,27 +1451,40 @@ export class InvoiceService {
       },
     });
     
-    if (!paymentData || !paymentData.customer || !paymentData.subscription || !paymentData.subscription.plan) {
-      throw new BadRequestException('Payment, customer, or subscription not found for this invoice');
+    if (!paymentData || !paymentData.customer) {
+      throw new BadRequestException('Payment or customer not found for this invoice');
     }
 
     const sub = paymentData.subscription;
-    const plan = sub.plan;
+    const plan = sub?.plan;
     const customer = paymentData.customer;
+    
+    // For custom plans or payments without a standard subscription:
+    const planName = plan?.name || paymentData.planName || 'Custom/Customized Plan';
+    const planFeatures = plan?.features as any[] || [];
+    const activationDate = sub?.startDate || paymentData.createdAt;
+    
+    // Calculate endDate if not present
+    let endDate = sub?.endDate;
+    if (!endDate) {
+      const durationMonths = paymentData.billingCycle === 'YEARLY' ? 12 : 1;
+      endDate = new Date(activationDate);
+      endDate.setMonth(endDate.getMonth() + durationMonths);
+    }
 
     return await generateAgreementPdfBuffer({
       customerName: customer.name || customer.companyName || 'Valued Customer',
       companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
       purchaseDate: paymentData.createdAt,
-      activationDate: sub.startDate,
-      planName: plan.name,
-      planFeatures: plan.features as any[],
+      activationDate: activationDate,
+      planName: planName,
+      planFeatures: planFeatures,
       amount: Number(paymentData.amount),
       taxAmount: Number(paymentData.taxAmount || 0),
       totalAmount: Number(paymentData.totalAmount || paymentData.amount),
-      startDate: sub.startDate,
-      endDate: sub.endDate,
-      orderNumber: paymentData.orderNumber || String(paymentData.orderId),
+      startDate: activationDate,
+      endDate: endDate,
+      orderNumber: paymentData.orderNumber || String(paymentData.orderId || paymentData.id),
       invoiceNumber: paymentData.invoiceUrl || invoice.invoiceNo,
     });
   }
