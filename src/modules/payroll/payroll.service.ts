@@ -186,6 +186,24 @@ export class PayrollService {
     const formattedDate = slip.generatedAt
       ? slip.generatedAt.toISOString().split('T')[0]
       : (month && year ? `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}` : new Date().toISOString().split('T')[0]);
+    const basicSalary = pi?.basicSalary ?? slip.basicSalary ?? slip.grossSalary;
+    const hra = pi?.hra ?? slip.hra ?? 0;
+    const specialAllowance = pi?.specialAllowance ?? slip.specialAllowance ?? 0;
+    const allowances = (pi?.allowances ?? slip.allowances ?? 0) + specialAllowance;
+    const bonus = pi?.bonus ?? slip.bonus ?? 0;
+    const commission = pi?.commission ?? slip.commission ?? 0;
+    const overtime = pi?.overtime ?? slip.overtime ?? 0;
+    const reimbursement = pi?.reimbursement ?? slip.reimbursement ?? 0;
+    const pf = pi?.pf ?? slip.pf ?? 0;
+    const esi = pi?.esi ?? slip.esi ?? 0;
+    const professionalTax = pi?.professionalTax ?? slip.professionalTax ?? 0;
+    const tds = pi?.tds ?? slip.tds ?? 0;
+    const otherDeductions = pi?.otherDeductions ?? slip.otherDeductions ?? 0;
+    const loanDeduction = pi?.loanDeduction ?? slip.loanDeduction ?? 0;
+    const unpaidLeaveDeduction = pi?.unpaidLeaveDeduction ?? slip.unpaidLeaveDeduction ?? 0;
+    const totalDeductions = slip.totalDeductions ?? (pf + esi + professionalTax + tds + otherDeductions + loanDeduction + unpaidLeaveDeduction);
+    const grossSalary = slip.grossSalary ?? (basicSalary + hra + allowances);
+    const netSalary = slip.netSalary ?? Math.max(0, grossSalary - totalDeductions);
 
     return {
       ...slip,
@@ -201,21 +219,45 @@ export class PayrollService {
       paidLeaveDays: pi?.paidLeaveDays ?? 0,
       unpaidLeaveDays: pi?.unpaidLeaveDays ?? 0,
       wfhDays: pi?.wfhDays ?? 0,
-      basicSalary: pi?.basicSalary ?? slip.grossSalary,
-      hra: pi?.hra ?? 0,
-      allowances: (pi?.allowances ?? 0) + (pi?.specialAllowance ?? 0),
-      specialAllowance: pi?.specialAllowance ?? 0,
-      bonus: pi?.bonus ?? 0,
-      commission: pi?.commission ?? 0,
-      overtime: pi?.overtime ?? 0,
-      reimbursement: pi?.reimbursement ?? 0,
-      pf: pi?.pf ?? 0,
-      esi: pi?.esi ?? 0,
-      professionalTax: pi?.professionalTax ?? 0,
-      tds: pi?.tds ?? 0,
-      otherDeductions: pi?.otherDeductions ?? 0,
-      loanDeduction: pi?.loanDeduction ?? 0,
-      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? 0,
+      basicSalary,
+      hra,
+      allowances,
+      specialAllowance,
+      bonus,
+      commission,
+      overtime,
+      reimbursement,
+      pf,
+      esi,
+      professionalTax,
+      tds,
+      otherDeductions,
+      loanDeduction,
+      unpaidLeaveDeduction,
+      grossSalary,
+      totalDeductions,
+      netSalary,
+      payrollItem: {
+        ...(pi || {}),
+        basicSalary,
+        hra,
+        allowances,
+        specialAllowance,
+        bonus,
+        commission,
+        overtime,
+        reimbursement,
+        pf,
+        esi,
+        professionalTax,
+        tds,
+        otherDeductions,
+        loanDeduction,
+        unpaidLeaveDeduction,
+        grossSalary,
+        totalDeductions,
+        netSalary,
+      },
     };
   }
 
@@ -292,10 +334,15 @@ export class PayrollService {
 
       for (const emp of employees) {
         const structure = emp.salaryStructures[0];
-        const basic = structure ? structure.basicSalary : 35000;
+        let basic = structure ? structure.basicSalary : 0;
+        if (!basic && emp.bankDetails) {
+          const b = typeof emp.bankDetails === 'string' ? JSON.parse(emp.bankDetails) : emp.bankDetails;
+          basic = Number(b?.basicSalary || b?.monthlySalary || 0);
+        }
+        if (!basic) basic = 35000;
         const hra = structure ? structure.hra : Math.round(basic * 0.4);
-        const allowances = structure ? structure.allowances : 5000;
-        const specialAllowance = structure ? structure.specialAllowance : 5000;
+        const allowances = structure ? structure.allowances : Math.round(basic * 0.1);
+        const specialAllowance = structure ? structure.specialAllowance : 0;
         const bonus = structure ? structure.bonus : 0;
         const overtime = structure ? structure.overtime : 0;
         const otherEarnings = structure ? structure.otherEarnings : 0;
@@ -979,18 +1026,41 @@ export class PayrollService {
     const skip = (page - 1) * limit;
 
     const where: any = { customerId: numCustomerId };
+    let currentEmployee: any = null;
 
-    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
-      const emp = await this.prisma.employee.findFirst({
-        where: {
-          OR: [
-            { userId: query.user.id },
-            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
-          ],
-        },
-      });
-      if (emp) {
-        where.employeeId = emp.id;
+    if (query?.user) {
+      if (query.user.employee?.id) {
+        currentEmployee = query.user.employee;
+      } else {
+        currentEmployee = await this.prisma.employee.findFirst({
+          where: {
+            customerId: numCustomerId,
+            OR: [
+              { userId: query.user.id },
+              { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+            ],
+          },
+          include: {
+            salaryStructures: {
+              where: { status: 'ACTIVE' },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+            department: true,
+            designation: true,
+          },
+        });
+      }
+
+      const isSuperOrAdmin =
+        String(query.user.role).toUpperCase() === 'SUPER_ADMIN' ||
+        String(query.user.role).toUpperCase() === 'COMPANY_ADMIN' ||
+        String(query.user.roleType).toUpperCase() === 'SUPER_ADMIN' ||
+        String(query.user.roleType).toUpperCase() === 'CUSTOMER_ADMIN' ||
+        String(query.user.roleType).toUpperCase() === 'TENANT_ADMIN';
+
+      if (!isSuperOrAdmin && currentEmployee) {
+        where.employeeId = currentEmployee.id;
       }
     }
 
@@ -1025,6 +1095,11 @@ export class PayrollService {
             include: {
               department: true,
               designation: true,
+              salaryStructures: {
+                where: { status: 'ACTIVE' },
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+              },
             },
           },
           payrollItem: {
@@ -1037,22 +1112,96 @@ export class PayrollService {
       this.prisma.salarySlip.count({ where }),
     ]);
 
-    const items = rawItems.map((slip) => this.formatSalarySlip(slip));
-    const totalPages = Math.ceil(total / limit) || 1;
+    let items = rawItems.map((slip) => this.formatSalarySlip(slip));
+
+    // If an employee queries their slips and no slips exist yet, synthesize an active salary slip
+    // from their active salary structure or bankDetails so Mobile immediately reflects their latest salary!
+    if (where.employeeId && items.length === 0 && currentEmployee) {
+      const activeStructure = currentEmployee.salaryStructures?.[0];
+      let basic = activeStructure ? activeStructure.basicSalary : 0;
+      if (!basic && currentEmployee.bankDetails) {
+        const b = typeof currentEmployee.bankDetails === 'string'
+          ? JSON.parse(currentEmployee.bankDetails)
+          : currentEmployee.bankDetails;
+        basic = Number(b?.basicSalary || b?.monthlySalary || 0);
+      }
+
+      if (basic > 0) {
+        const hra = activeStructure?.hra ?? Math.round(basic * 0.4);
+        const allowances = activeStructure?.allowances ?? Math.round(basic * 0.1);
+        const specialAllowance = activeStructure?.specialAllowance ?? 0;
+        const pf = activeStructure?.pf ?? Math.round(basic * 0.12);
+        const esi = activeStructure?.esi ?? Math.round(basic * 0.0075);
+        const professionalTax = activeStructure?.professionalTax ?? 200;
+        const grossSalary = activeStructure?.grossSalary ?? (basic + hra + allowances + specialAllowance);
+        const totalDeductions = activeStructure?.totalDeductions ?? (pf + esi + professionalTax);
+        const netSalary = activeStructure?.netSalary ?? Math.max(0, grossSalary - totalDeductions);
+
+        const now = new Date();
+        const curMonth = now.getMonth() + 1;
+        const curYear = now.getFullYear();
+        const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const monthName = FULL_MONTH_NAMES[curMonth] || `Month ${curMonth}`;
+
+        items = [{
+          id: `active-${currentEmployee.id}`,
+          slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${currentEmployee.id}`,
+          payPeriod: `${monthName} ${curYear}`,
+          month: curMonth,
+          year: curYear,
+          monthName,
+          date: now.toISOString().split('T')[0],
+          grossSalary,
+          totalDeductions,
+          netSalary,
+          basicSalary: basic,
+          hra,
+          allowances,
+          specialAllowance,
+          pf,
+          esi,
+          professionalTax,
+          status: 'ACTIVE',
+          employee: {
+            id: currentEmployee.id,
+            firstName: currentEmployee.firstName,
+            lastName: currentEmployee.lastName,
+            employeeCode: currentEmployee.employeeCode,
+            department: currentEmployee.department,
+            designation: currentEmployee.designation,
+          },
+          payrollItem: {
+            basicSalary: basic,
+            hra,
+            allowances,
+            specialAllowance,
+            pf,
+            esi,
+            professionalTax,
+            grossSalary,
+            totalDeductions,
+            netSalary,
+          },
+        }];
+      }
+    }
+
+    const totalPages = Math.ceil((total || (items.length ? 1 : 0)) / limit) || 1;
 
     return {
       data: items,
       items,
+      slips: items,
       pagination: {
         page,
         pageSize: limit,
-        total,
+        total: total || items.length,
         totalPages,
       },
       meta: {
         page,
         limit,
-        total,
+        total: total || items.length,
         totalPages,
       },
     };
@@ -1170,8 +1319,9 @@ export class PayrollService {
     const totalDeductions = pf + esi + professionalTax + tds + otherDeductions;
     const netSalary = Math.max(0, grossSalary - totalDeductions);
 
+    let savedStructure: any;
     if (data.id) {
-      return this.prisma.salaryStructure.update({
+      savedStructure = await this.prisma.salaryStructure.update({
         where: { id: Number(data.id) },
         data: {
           basicSalary,
@@ -1193,31 +1343,90 @@ export class PayrollService {
           status: data.status || 'ACTIVE',
         },
       });
+    } else {
+      savedStructure = await this.prisma.salaryStructure.create({
+        data: {
+          customerId: numCustomerId,
+          employeeId: Number(data.employeeId),
+          basicSalary,
+          hra,
+          allowances,
+          specialAllowance,
+          bonus,
+          commission,
+          overtime,
+          otherEarnings,
+          pf,
+          esi,
+          professionalTax,
+          tds,
+          otherDeductions,
+          grossSalary,
+          totalDeductions,
+          netSalary,
+          status: 'ACTIVE',
+        },
+      });
     }
 
-    return this.prisma.salaryStructure.create({
-      data: {
-        customerId: numCustomerId,
-        employeeId: Number(data.employeeId),
-        basicSalary,
-        hra,
-        allowances,
-        specialAllowance,
-        bonus,
-        commission,
-        overtime,
-        otherEarnings,
-        pf,
-        esi,
-        professionalTax,
-        tds,
-        otherDeductions,
-        grossSalary,
-        totalDeductions,
-        netSalary,
-        status: 'ACTIVE',
-      },
-    });
+    // Sync bankDetails on Employee record & update any current generated slips
+    const empId = Number(data.employeeId || savedStructure?.employeeId);
+    if (empId) {
+      const emp = await this.prisma.employee.findUnique({ where: { id: empId } });
+      if (emp) {
+        let b: any = emp.bankDetails;
+        if (typeof b === 'string') {
+          try { b = JSON.parse(b); } catch (e) { b = {}; }
+        } else if (!b || typeof b !== 'object') {
+          b = {};
+        }
+        b.basicSalary = String(basicSalary);
+        b.monthlySalary = String(grossSalary);
+        await this.prisma.employee.update({
+          where: { id: emp.id },
+          data: { bankDetails: b },
+        });
+
+        // Update existing generated / draft slips for this employee so they reflect immediately
+        const slips = await this.prisma.salarySlip.findMany({
+          where: {
+            employeeId: empId,
+            customerId: numCustomerId,
+            status: { in: ['GENERATED', 'CALCULATED', 'DRAFT'] },
+          },
+          include: { payrollItem: true },
+        });
+        for (const slip of slips) {
+          await this.prisma.salarySlip.update({
+            where: { id: slip.id },
+            data: {
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            },
+          });
+          if (slip.payrollItemId) {
+            await this.prisma.payrollItem.update({
+              where: { id: slip.payrollItemId },
+              data: {
+                basicSalary,
+                hra,
+                allowances,
+                specialAllowance,
+                pf,
+                esi,
+                professionalTax,
+                grossSalary,
+                totalDeductions,
+                netSalary,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    return savedStructure;
   }
 
   async deleteSalaryStructure(customerId: number | string | undefined, id: number | string) {

@@ -1687,6 +1687,45 @@ export class EmployeeService {
           }).catch(() => null);
         }
 
+        // Synchronize active SalaryStructure from bankDetails if provided
+        let parsedBank = dto.bankDetails;
+        if (typeof parsedBank === 'string') {
+          try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
+        }
+        const rawSalary = parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
+        if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
+          const basicSalary = Number(rawSalary) || 0;
+          if (basicSalary > 0) {
+            const hra = Math.round(basicSalary * 0.4);
+            const allowances = Math.round(basicSalary * 0.1);
+            const specialAllowance = 0;
+            const pf = Math.round(basicSalary * 0.12);
+            const esi = Math.round(basicSalary * 0.0075);
+            const professionalTax = 200;
+            const grossSalary = basicSalary + hra + allowances + specialAllowance;
+            const totalDeductions = pf + esi + professionalTax;
+            const netSalary = Math.max(0, grossSalary - totalDeductions);
+
+            await tx.salaryStructure.create({
+              data: {
+                customerId: numCustomerId,
+                employeeId: createdEmployee.id,
+                basicSalary,
+                hra,
+                allowances,
+                specialAllowance,
+                grossSalary,
+                totalDeductions,
+                netSalary,
+                pf,
+                esi,
+                professionalTax,
+                status: 'ACTIVE',
+              },
+            });
+          }
+        }
+
         return createdEmployee;
       } catch (error) {
         if (
@@ -2183,6 +2222,106 @@ export class EmployeeService {
           await tx.userRole.create({
             data: { userId: updatedEmployee.userId, roleId: targetRole.id },
           });
+        }
+      }
+
+      // Synchronize active SalaryStructure & current salary slips from bankDetails
+      let parsedBank = dto.bankDetails;
+      if (typeof parsedBank === 'string') {
+        try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
+      }
+      const rawSalary = parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
+      if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
+        const basicSalary = Number(rawSalary) || 0;
+        if (basicSalary > 0) {
+          const hra = Math.round(basicSalary * 0.4);
+          const allowances = Math.round(basicSalary * 0.1);
+          const specialAllowance = 0;
+          const pf = Math.round(basicSalary * 0.12);
+          const esi = Math.round(basicSalary * 0.0075);
+          const professionalTax = 200;
+          const grossSalary = basicSalary + hra + allowances + specialAllowance;
+          const totalDeductions = pf + esi + professionalTax;
+          const netSalary = Math.max(0, grossSalary - totalDeductions);
+
+          const existingStructure = await tx.salaryStructure.findFirst({
+            where: { employeeId: updatedEmployee.id, customerId: targetCustId, status: 'ACTIVE' },
+            orderBy: { createdAt: 'desc' },
+          });
+
+          if (existingStructure) {
+            await tx.salaryStructure.update({
+              where: { id: existingStructure.id },
+              data: {
+                basicSalary,
+                hra,
+                allowances,
+                specialAllowance,
+                grossSalary,
+                totalDeductions,
+                netSalary,
+                pf,
+                esi,
+                professionalTax,
+              },
+            });
+          } else {
+            await tx.salaryStructure.create({
+              data: {
+                customerId: targetCustId,
+                employeeId: updatedEmployee.id,
+                basicSalary,
+                hra,
+                allowances,
+                specialAllowance,
+                grossSalary,
+                totalDeductions,
+                netSalary,
+                pf,
+                esi,
+                professionalTax,
+                status: 'ACTIVE',
+              },
+            });
+          }
+
+          // Update any existing draft / generated salary slip for this employee so it reflects immediately
+          const slips = await tx.salarySlip.findMany({
+            where: {
+              employeeId: updatedEmployee.id,
+              customerId: targetCustId,
+              status: { in: ['GENERATED', 'CALCULATED', 'DRAFT'] },
+            },
+            include: { payrollItem: true },
+          });
+
+          for (const slip of slips) {
+            await tx.salarySlip.update({
+              where: { id: slip.id },
+              data: {
+                grossSalary,
+                totalDeductions,
+                netSalary,
+              },
+            });
+            if (slip.payrollItemId) {
+              await tx.payrollItem.update({
+                where: { id: slip.payrollItemId },
+                data: {
+                  basicSalary,
+                  hra,
+                  allowances,
+                  specialAllowance,
+                  pf,
+                  esi,
+                  professionalTax,
+                  grossSalary,
+                  totalDeductions,
+                  netSalary,
+                },
+              });
+            }
+          }
         }
       }
 
