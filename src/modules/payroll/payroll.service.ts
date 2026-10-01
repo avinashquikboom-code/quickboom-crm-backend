@@ -1116,7 +1116,7 @@ export class PayrollService {
 
     // If an employee queries their slips and no slips exist yet, synthesize an active salary slip
     // from their active salary structure or bankDetails so Mobile immediately reflects their latest salary!
-    if (where.employeeId && items.length === 0 && currentEmployee) {
+    if (where.employeeId && currentEmployee) {
       const activeStructure = currentEmployee.salaryStructures?.[0];
       let basic = activeStructure ? activeStructure.basicSalary : 0;
       if (!basic && currentEmployee.bankDetails) {
@@ -1143,34 +1143,12 @@ export class PayrollService {
         const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const monthName = FULL_MONTH_NAMES[curMonth] || `Month ${curMonth}`;
 
-        items = [{
-          id: `active-${currentEmployee.id}`,
-          slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${currentEmployee.id}`,
-          payPeriod: `${monthName} ${curYear}`,
-          month: curMonth,
-          year: curYear,
-          monthName,
-          date: now.toISOString().split('T')[0],
-          grossSalary,
-          totalDeductions,
-          netSalary,
-          basicSalary: basic,
-          hra,
-          allowances,
-          specialAllowance,
-          pf,
-          esi,
-          professionalTax,
-          status: 'ACTIVE',
-          employee: {
-            id: currentEmployee.id,
-            firstName: currentEmployee.firstName,
-            lastName: currentEmployee.lastName,
-            employeeCode: currentEmployee.employeeCode,
-            department: currentEmployee.department,
-            designation: currentEmployee.designation,
-          },
-          payrollItem: {
+        const currentPayPeriod = `${monthName} ${curYear}`;
+        const existingCurrentIndex = items.findIndex((it: any) => it.payPeriod === currentPayPeriod || (it.month === curMonth && it.year === curYear));
+
+        if (existingCurrentIndex >= 0) {
+          items[existingCurrentIndex] = {
+            ...items[existingCurrentIndex],
             basicSalary: basic,
             hra,
             allowances,
@@ -1181,8 +1159,62 @@ export class PayrollService {
             grossSalary,
             totalDeductions,
             netSalary,
-          },
-        }];
+            payrollItem: {
+              ...(items[existingCurrentIndex].payrollItem || {}),
+              basicSalary: basic,
+              hra,
+              allowances,
+              specialAllowance,
+              pf,
+              esi,
+              professionalTax,
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            },
+          };
+        } else {
+          items.unshift({
+            id: `active-${currentEmployee.id}`,
+            slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${currentEmployee.id}`,
+            payPeriod: currentPayPeriod,
+            month: curMonth,
+            year: curYear,
+            monthName,
+            date: now.toISOString().split('T')[0],
+            grossSalary,
+            totalDeductions,
+            netSalary,
+            basicSalary: basic,
+            hra,
+            allowances,
+            specialAllowance,
+            pf,
+            esi,
+            professionalTax,
+            status: 'ACTIVE',
+            employee: {
+              id: currentEmployee.id,
+              firstName: currentEmployee.firstName,
+              lastName: currentEmployee.lastName,
+              employeeCode: currentEmployee.employeeCode,
+              department: currentEmployee.department,
+              designation: currentEmployee.designation,
+            },
+            payrollItem: {
+              basicSalary: basic,
+              hra,
+              allowances,
+              specialAllowance,
+              pf,
+              esi,
+              professionalTax,
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            },
+          });
+        }
       }
     }
 

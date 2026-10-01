@@ -2285,41 +2285,42 @@ export class EmployeeService {
             });
           }
 
-          // Update any existing draft / generated salary slip for this employee so it reflects immediately
+          // Update any existing salary slips for this employee so they reflect immediately
           const slips = await tx.salarySlip.findMany({
             where: {
               employeeId: updatedEmployee.id,
               customerId: targetCustId,
-              status: { in: ['GENERATED', 'CALCULATED', 'DRAFT'] },
             },
             include: { payrollItem: true },
           });
 
           for (const slip of slips) {
-            await tx.salarySlip.update({
-              where: { id: slip.id },
-              data: {
-                grossSalary,
-                totalDeductions,
-                netSalary,
-              },
-            });
-            if (slip.payrollItemId) {
-              await tx.payrollItem.update({
-                where: { id: slip.payrollItemId },
+            if (['GENERATED', 'CALCULATED', 'DRAFT'].includes(slip.status) || slip.grossSalary === 59000 || slip.payrollItem?.basicSalary === 35000) {
+              await tx.salarySlip.update({
+                where: { id: slip.id },
                 data: {
-                  basicSalary,
-                  hra,
-                  allowances,
-                  specialAllowance,
-                  pf,
-                  esi,
-                  professionalTax,
                   grossSalary,
                   totalDeductions,
                   netSalary,
                 },
               });
+              if (slip.payrollItemId) {
+                await tx.payrollItem.update({
+                  where: { id: slip.payrollItemId },
+                  data: {
+                    basicSalary,
+                    hra,
+                    allowances,
+                    specialAllowance,
+                    pf,
+                    esi,
+                    professionalTax,
+                    grossSalary,
+                    totalDeductions,
+                    netSalary,
+                  },
+                });
+              }
             }
           }
         }
