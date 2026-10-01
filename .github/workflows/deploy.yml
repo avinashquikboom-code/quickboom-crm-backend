@@ -79,7 +79,31 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy summary
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            set -e
+            cd ${{ env.DEPLOY_DIR }}
+
+            # Login to ECR from the server
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+              docker login --username AWS --password-stdin \
+              $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+            # Pull the latest image
+            docker pull ${{ steps.meta.outputs.image_latest }}
+
+            # Restart only the API container with the new image
+            docker stop quikboom_api 2>/dev/null || true
+            docker rm quikboom_api 2>/dev/null || true
+            docker-compose up -d api
+
+            # Wait for health check
+            sleep 10
+            docker ps | grep quikboom_api
+            echo "Deploy complete!"
+          ENDSSH
+
         if: always()
         run: |
           echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
