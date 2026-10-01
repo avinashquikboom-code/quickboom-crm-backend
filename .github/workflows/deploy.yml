@@ -68,10 +68,6 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ---- Deploy over SSH --------------------------------------------------
-      # Rewrite the API_IMAGE_TAG line in the server's already-present
-      # config.sh (deploy/ is copied there by hand, not synced by CI — see
-      # deploy/README.md), then run backend.sh — ONLY the API container.
-      # admin.sh (admin panel) is untouched by this workflow.
       - name: Add SSH key
         run: |
           mkdir -p ~/.ssh
@@ -80,30 +76,44 @@ jobs:
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy to EC2
+        env:
+          IMAGE_LATEST: ${{ steps.meta.outputs.image_latest }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} << 'ENDSSH'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ubuntu@${{ secrets.EC2_HOST }} \
+            IMAGE="${IMAGE_LATEST}" \
+            DEPLOY_DIR="${{ env.DEPLOY_DIR }}" \
+            AWS_REGION="${{ env.AWS_REGION }}" \
+            bash << 'ENDSSH'
             set -e
-            cd ${{ env.DEPLOY_DIR }}
+            echo "=== Deploying image: ${IMAGE} ==="
 
-            # Login to ECR from the server
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            # Login to ECR
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            aws ecr get-login-password --region "${AWS_REGION}" | \
               docker login --username AWS --password-stdin \
-              $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+              "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
             # Pull the latest image
-            docker pull ${{ steps.meta.outputs.image_latest }}
+            docker pull "${IMAGE}"
 
-            # Restart only the API container with the new image
+            cd "${DEPLOY_DIR}"
+
+            # Restart ONLY the API container with the new image
             docker stop quikboom_api 2>/dev/null || true
             docker rm quikboom_api 2>/dev/null || true
-            docker-compose up -d api
 
-            # Wait for health check
-            sleep 10
-            docker ps | grep quikboom_api
-            echo "Deploy complete!"
+            # Re-up with new image
+            IMAGE_OVERRIDE="${IMAGE}" docker-compose up -d api
+
+            # Wait and confirm running
+            sleep 15
+            docker ps | grep quikboom_api \
+              && echo "=== Deploy successful! ===" \
+              || (echo "=== Deploy FAILED ===" && exit 1)
           ENDSSH
 
+      - name: Deploy summary
         if: always()
         run: |
           echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
