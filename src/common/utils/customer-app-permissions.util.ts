@@ -52,13 +52,12 @@ export async function resolveCustomerAppPermissionItems(
       },
     });
 
-    // 2. Fall back to master/tenant Customer designation (e.g. customerId: 1 or null)
+    // 2. Fall back to master/tenant Customer designation (e.g. customerId: 1)
     if (!ownRole) {
       ownRole = await prisma.designation.findFirst({
         where: {
           code: 'CUSTOMER',
           audience: 'CUSTOMER',
-          OR: [{ customerId: 1 }, { customerId: null }],
         },
         include: {
           role: { include: { rolePermissions: { include: { permission: true } } } },
