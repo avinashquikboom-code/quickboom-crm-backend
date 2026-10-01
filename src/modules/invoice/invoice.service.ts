@@ -21,7 +21,7 @@ import {
   resolveInvoiceLineItems,
   withInvoiceItemsSnapshot,
 } from '../../common/utils/invoice-items.util';
-import { generateAgreementPdf } from '../../common/utils/agreement-pdf.util';
+import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
 
 const INVOICE_ISSUER = Object.freeze({
   brand: 'QB SUITE',
@@ -1445,13 +1445,34 @@ export class InvoiceService {
 
     const paymentData = await this.prisma.paymentHistory.findUnique({
       where: { id: paymentId },
-      include: { customer: true },
+      include: { 
+        customer: true,
+        subscription: { include: { plan: true } }
+      },
     });
     
-    if (!paymentData || !paymentData.customer) {
-      throw new BadRequestException('Payment or customer not found for this invoice');
+    if (!paymentData || !paymentData.customer || !paymentData.subscription || !paymentData.subscription.plan) {
+      throw new BadRequestException('Payment, customer, or subscription not found for this invoice');
     }
 
-    return await generateAgreementPdf(paymentData, paymentData.customer);
+    const sub = paymentData.subscription;
+    const plan = sub.plan;
+    const customer = paymentData.customer;
+
+    return await generateAgreementPdfBuffer({
+      customerName: customer.name || customer.companyName || 'Valued Customer',
+      companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
+      purchaseDate: paymentData.createdAt,
+      activationDate: sub.startDate,
+      planName: plan.name,
+      planFeatures: plan.features as any[],
+      amount: Number(paymentData.amount),
+      taxAmount: Number(paymentData.taxAmount || 0),
+      totalAmount: Number(paymentData.totalAmount || paymentData.amount),
+      startDate: sub.startDate,
+      endDate: sub.endDate,
+      orderNumber: paymentData.orderNumber || String(paymentData.orderId),
+      invoiceNumber: paymentData.invoiceUrl || invoice.invoiceNo,
+    });
   }
 }
