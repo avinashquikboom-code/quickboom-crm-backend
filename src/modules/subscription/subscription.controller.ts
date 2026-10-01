@@ -451,17 +451,26 @@ export class SubscriptionController {
     @Res() res: Response,
   ) {
     const customerId = Number(customerIdStr || req?.customerId || user?.customerId);
-    const numPaymentId = Number(paymentId);
-
-    if (!numPaymentId || isNaN(numPaymentId)) {
-      throw new BadRequestException('Invalid payment ID');
-    }
+    const numPaymentId = Number(String(paymentId).replace(/[^0-9]/g, ''));
 
     const paymentData = await this.prisma.paymentHistory.findFirst({
       where: {
-        id: numPaymentId,
+        ...(numPaymentId && !isNaN(numPaymentId)
+          ? {
+              OR: [
+                { id: numPaymentId },
+                { orderNumber: String(paymentId) },
+                { orderId: String(paymentId) },
+              ],
+            }
+          : {
+              OR: [
+                { orderNumber: String(paymentId) },
+                { orderId: String(paymentId) },
+              ],
+            }),
         ...(customerId ? { customerId } : {}),
-        status: { in: ['SUCCESS', 'PAID'] },
+        status: { in: ['SUCCESS', 'PAID', 'success', 'paid'] },
       },
       include: {
         customer: true,

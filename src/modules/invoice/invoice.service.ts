@@ -1417,24 +1417,63 @@ export class InvoiceService {
   async downloadAgreementPdf(customerId: string | number, id: string | number, user?: any) {
     const invoice = await this.findOne(customerId, id, user);
     
-    let paymentId;
+    let paymentId: number | undefined;
     if (invoice.notes) {
       const match = invoice.notes.match(/Order:?\s*#?\s*(?:ORD-(?:PAY|CUST)-)?(\d+)/i);
       if (match) {
         paymentId = Number(match[1]);
+      } else {
+        const orderMatch = invoice.notes.match(/Order:\s*([^\s,]+)/i);
+        if (orderMatch) {
+          const rawOrder = orderMatch[1].trim();
+          const p = await this.prisma.paymentHistory.findFirst({
+            where: {
+              customerId: Number(customerId),
+              orderNumber: rawOrder,
+              status: { in: ['SUCCESS', 'PAID'] },
+            },
+          });
+          if (p) paymentId = p.id;
+        }
       }
     }
     
+    if (!paymentId) {
+      const numFromInv = invoice.invoiceNo?.match(/(\d+)$/);
+      if (numFromInv) {
+        const testId = Number(numFromInv[1]);
+        const p = await this.prisma.paymentHistory.findFirst({
+          where: {
+            id: testId,
+            customerId: Number(customerId),
+            status: { in: ['SUCCESS', 'PAID'] },
+          },
+        });
+        if (p) paymentId = p.id;
+      }
+    }
+
     if (!paymentId) {
       const payment = await this.prisma.paymentHistory.findFirst({
         where: {
           customerId: Number(customerId),
           OR: [
             { orderNumber: invoice.invoiceNo },
-            { invoiceUrl: invoice.invoiceNo }
+            { invoiceUrl: invoice.invoiceNo },
           ],
-          status: { in: ['SUCCESS', 'PAID'] }
-        }
+          status: { in: ['SUCCESS', 'PAID'] },
+        },
+      });
+      if (payment) paymentId = payment.id;
+    }
+
+    if (!paymentId) {
+      const payment = await this.prisma.paymentHistory.findFirst({
+        where: {
+          customerId: Number(customerId),
+          status: { in: ['SUCCESS', 'PAID'] },
+        },
+        orderBy: { createdAt: 'desc' },
       });
       if (payment) paymentId = payment.id;
     }
