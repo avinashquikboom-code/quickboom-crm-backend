@@ -200,21 +200,32 @@ export class NotificationService {
         });
 
         if (pendingWelcome) {
-          const welcomeData = (pendingWelcome.data as any) || {};
+          let welcomeData: any = pendingWelcome.data;
+          if (typeof welcomeData === 'string') {
+            try {
+              welcomeData = JSON.parse(welcomeData);
+            } catch (_) {
+              welcomeData = {};
+            }
+          }
+          welcomeData = welcomeData || {};
+
           // Only deliver if never delivered to any device yet
-          if (!welcomeData.fcmDelivered && welcomeData.fcmDelivered !== 'true') {
+          const alreadyDelivered = Boolean(
+            welcomeData.fcmDelivered === true ||
+            welcomeData.fcmDelivered === 'true' ||
+            welcomeData.fcmDeliveredAt,
+          );
+
+          if (!alreadyDelivered) {
             this.logger.log(`[WELCOME] Delivering initial welcome push to first registered token for brand-new userId=${userId}`);
             const payload: Record<string, string> = {
               type: 'WELCOME',
               customerId: String(pendingWelcome.customerId || ''),
               notificationId: String(pendingWelcome.id),
             };
-            await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
-              customerId: pendingWelcome.customerId || undefined,
-              notificationType: 'WELCOME',
-            });
 
-            // Mark delivered so no subsequent token registration or login ever triggers it again
+            // Atomically mark delivered FIRST so concurrent/immediate calls (app startup, session restore) will never re-trigger
             await this.prisma.notification.updateMany({
               where: { id: pendingWelcome.id },
               data: {
@@ -224,6 +235,11 @@ export class NotificationService {
                   fcmDeliveredAt: new Date().toISOString(),
                 },
               },
+            });
+
+            await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
+              customerId: pendingWelcome.customerId || undefined,
+              notificationType: 'WELCOME',
             });
           }
         }
@@ -2345,11 +2361,13 @@ export class NotificationService {
       }
 
       // 4. Idempotency Check: prevent duplicate welcome notifications for same customer/user
+      const numCustomerId = Number(customerId);
+      const numTargetUserId = targetUserId ? Number(targetUserId) : undefined;
       const existingNotif = await this.prisma.notification.findFirst({
         where: {
           OR: [
-            { customerId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } },
-            ...(targetUserId ? [{ userId: targetUserId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } }] : []),
+            { customerId: numCustomerId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } },
+            ...(numTargetUserId ? [{ userId: numTargetUserId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } }] : []),
           ],
         },
       });
