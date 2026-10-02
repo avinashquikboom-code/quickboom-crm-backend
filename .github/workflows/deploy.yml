@@ -83,10 +83,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "set -e
-             cd '${DEPLOY_DIR}'
+            "cd '${DEPLOY_DIR}'
              chmod +x ./*.sh
              sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
+             echo '=== BACKEND.SH ==='
+             cat backend.sh
+             echo '=== DOCKER PS ==='
+             docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+             echo '=== RUNNING BACKEND.SH ==='
              ./backend.sh"
 
       - name: Deploy summary
