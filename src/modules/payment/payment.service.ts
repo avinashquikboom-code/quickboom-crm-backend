@@ -1551,6 +1551,19 @@ export class PaymentService {
         ? PaymentMethod.OTHER
         : PaymentMethod.BANK_TRANSFER;
 
+    const refText = (dto.referenceNumber || '').trim();
+    const notesText = (dto.notes || '').trim();
+    let txId = refText;
+    if (refText && notesText) {
+      txId = `${refText} (${notesText})`;
+    } else if (!refText && notesText) {
+      txId = notesText;
+    } else if (!refText && !notesText) {
+      txId = 'OFFLINE_PENDING';
+    }
+
+    const proof = dto.proofUrl || dto.receiptUrl || dto.attachmentUrl || null;
+
     const payment = await this.prisma.paymentHistory.create({
       data: {
         customerId,
@@ -1560,14 +1573,15 @@ export class PaymentService {
         totalAmount,
         currency: 'INR',
         paymentMethod: paymentMethodEnum,
-        paymentId: dto.referenceNumber || `OFFLINE-${Date.now()}`,
+        paymentId: refText || `OFFLINE-${Date.now()}`,
         orderId: orderNumber,
         status: 'PENDING',
         orderNumber,
         planId: plan.id,
         planName: plan.name,
         billingCycle: cycle,
-        transactionId: dto.referenceNumber || dto.notes || 'OFFLINE_PENDING',
+        transactionId: txId,
+        invoiceUrl: proof,
       },
     });
 
@@ -1713,10 +1727,14 @@ export class PaymentService {
     return {
       success: true,
       data: {
-        razorpayEnabled: data.razorpayEnabled,
-        enableRazorpay: data.razorpayEnabled,
-        offlinePaymentEnabled: data.offlinePaymentEnabled,
-        enableOfflinePayment: data.offlinePaymentEnabled,
+        paymentMethods: {
+          online: Boolean(data.razorpayEnabled),
+          offline: Boolean(data.offlinePaymentEnabled),
+        },
+        razorpayEnabled: Boolean(data.razorpayEnabled),
+        enableRazorpay: Boolean(data.razorpayEnabled),
+        offlinePaymentEnabled: Boolean(data.offlinePaymentEnabled),
+        enableOfflinePayment: Boolean(data.offlinePaymentEnabled),
         paymentMode: data.paymentMode,
         razorpayKeyId: data.razorpayEnabled
           ? (data.paymentMode === 'LIVE' ? data.razorpayLiveKeyId : data.razorpayTestKeyId)
@@ -1730,6 +1748,18 @@ export class PaymentService {
           instructions: 'Transfer the amount to the bank account above and enter the UTR / Transaction Reference below.',
         },
         source: data.source,
+      },
+      paymentMethods: {
+        online: Boolean(data.razorpayEnabled),
+        offline: Boolean(data.offlinePaymentEnabled),
+      },
+      bankDetails: (data as any).bankDetails || {
+        bankName: process.env.OFFLINE_BANK_NAME || 'HDFC Bank',
+        accountNumber: process.env.OFFLINE_ACCOUNT_NUMBER || '50200088991122',
+        ifscCode: process.env.OFFLINE_IFSC_CODE || 'HDFC0000240',
+        accountHolderName: process.env.OFFLINE_ACCOUNT_HOLDER || 'QuickBoom Technologies Pvt Ltd',
+        upiId: process.env.OFFLINE_UPI_ID || 'quickboom@upi',
+        instructions: 'Transfer the amount to the bank account above and enter the UTR / Transaction Reference below.',
       },
     };
   }

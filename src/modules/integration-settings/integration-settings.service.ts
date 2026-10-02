@@ -1144,6 +1144,45 @@ export class IntegrationSettingsService {
       },
     });
 
+    // 3b. If provider is RAZORPAY, also sync payment_settings table to keep them consistent
+    if (normProvider === IntegrationProvider.RAZORPAY) {
+      try {
+        if ((this.prisma as any).paymentSetting) {
+          const enableOffline = mergedConfig.enableOfflinePayment !== undefined
+            ? Boolean(mergedConfig.enableOfflinePayment)
+            : true;
+          const env = dto.environment || (String(encryptedCreds.keyId || '').startsWith('rzp_live') ? 'LIVE' : 'TEST');
+          const existingPs = await (this.prisma as any).paymentSetting.findFirst();
+          if (existingPs) {
+            await (this.prisma as any).paymentSetting.update({
+              where: { id: existingPs.id },
+              data: {
+                razorpayEnabled: isEnabled,
+                paymentMode: env,
+                offlinePaymentEnabled: enableOffline,
+                razorpayTestKeyId: encryptedCreds.testKeyId || existingPs.razorpayTestKeyId || '',
+                razorpayLiveKeyId: encryptedCreds.liveKeyId || existingPs.razorpayLiveKeyId || '',
+                updatedByUserId: adminUserId,
+              },
+            });
+          } else {
+            await (this.prisma as any).paymentSetting.create({
+              data: {
+                razorpayEnabled: isEnabled,
+                paymentMode: env,
+                offlinePaymentEnabled: enableOffline,
+                razorpayTestKeyId: encryptedCreds.testKeyId || '',
+                razorpayLiveKeyId: encryptedCreds.liveKeyId || '',
+                updatedByUserId: adminUserId,
+              },
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to sync payment_settings table: ${err}`);
+      }
+    }
+
     // 4. Invalidate in-memory cache immediately
     this.clearCache(normProvider);
 
@@ -1283,13 +1322,24 @@ export class IntegrationSettingsService {
     const testSecretPresent = Boolean(testKeySecret && !testKeySecret.includes('***'));
     const liveSecretPresent = Boolean(liveKeySecret && !liveKeySecret.includes('***'));
 
-    const offlinePaymentEnabled = psRecord?.offlinePaymentEnabled !== undefined
-      ? Boolean(psRecord.offlinePaymentEnabled)
-      : Boolean(config.enableOfflinePayment ?? true);
+    // Priority: If Admin Panel explicitly configured enableOfflinePayment in integration_settings config, that takes precedence.
+    let offlinePaymentEnabled: boolean;
+    if (config.enableOfflinePayment !== undefined) {
+      offlinePaymentEnabled = Boolean(config.enableOfflinePayment);
+    } else if (psRecord?.offlinePaymentEnabled !== undefined) {
+      offlinePaymentEnabled = Boolean(psRecord.offlinePaymentEnabled);
+    } else {
+      offlinePaymentEnabled = true;
+    }
 
-    const razorpayEnabled = psRecord?.razorpayEnabled !== undefined
-      ? Boolean(psRecord.razorpayEnabled)
-      : Boolean(conf?.isEnabled ?? true);
+    let razorpayEnabled: boolean;
+    if (conf?.isEnabled !== undefined) {
+      razorpayEnabled = Boolean(conf.isEnabled);
+    } else if (psRecord?.razorpayEnabled !== undefined) {
+      razorpayEnabled = Boolean(psRecord.razorpayEnabled);
+    } else {
+      razorpayEnabled = true;
+    }
 
     const paymentMode = (psRecord?.paymentMode || conf?.environment || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
 
@@ -1303,9 +1353,16 @@ export class IntegrationSettingsService {
         razorpayTestKeySecretConfigured: testSecretPresent,
         razorpayLiveKeyId: psRecord?.razorpayLiveKeyId || creds.liveKeyId || (creds.keyId?.startsWith('rzp_live_') ? creds.keyId : '') || '',
         razorpayLiveKeySecret: liveSecretPresent ? 'Configured' : '',
-        razorpayLiveKeySecretConfigured: liveSecretPresent,
         offlinePaymentEnabled,
         webhookSecret: creds.webhookSecret || '',
+        bankDetails: {
+          bankName: psRecord?.bankName || config?.bankName || process.env.OFFLINE_BANK_NAME || 'HDFC Bank',
+          accountNumber: psRecord?.accountNumber || config?.accountNumber || process.env.OFFLINE_ACCOUNT_NUMBER || '50200088991122',
+          ifscCode: psRecord?.ifscCode || config?.ifscCode || process.env.OFFLINE_IFSC_CODE || 'HDFC0000240',
+          accountHolderName: psRecord?.accountHolderName || config?.accountHolderName || process.env.OFFLINE_ACCOUNT_HOLDER || 'QuickBoom Technologies Pvt Ltd',
+          upiId: psRecord?.upiId || config?.upiId || process.env.OFFLINE_UPI_ID || 'quickboom@upi',
+          instructions: psRecord?.instructions || config?.instructions || 'Transfer the amount to the bank account above and enter the UTR / Transaction Reference below.',
+        },
         source: 'DATABASE',
       },
     };

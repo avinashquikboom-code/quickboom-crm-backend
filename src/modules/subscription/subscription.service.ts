@@ -161,6 +161,8 @@ export class SubscriptionService {
 
     this.logger.log(`[PLAN_API_DEBUG]\ndatabaseResult count: ${plans.length}`);
 
+    const paymentMethods = await this.resolvePaymentMethodsConfig();
+
     const mapped = plans.map((p) => {
       let subtitle = 'Custom Plan';
       if (p.code === 'BASIC') subtitle = 'Starter Plan';
@@ -182,6 +184,9 @@ export class SubscriptionService {
         features: p.features,
         isActive: p.isActive,
         isRecommended: p.code === 'STANDARD',
+        paymentMethods,
+        onlinePaymentEnabled: paymentMethods.online,
+        offlinePaymentEnabled: paymentMethods.offline,
       };
     });
 
@@ -214,6 +219,8 @@ export class SubscriptionService {
     else if (plan.code === 'PREMIUM') subtitle = 'Scale Plan';
     else if (plan.description) subtitle = plan.description;
 
+    const paymentMethods = await this.resolvePaymentMethodsConfig();
+
     return {
       id: plan.id,
       name: plan.name,
@@ -228,7 +235,39 @@ export class SubscriptionService {
       features: plan.features,
       isActive: plan.isActive,
       isRecommended: plan.code === 'STANDARD',
+      paymentMethods,
+      onlinePaymentEnabled: paymentMethods.online,
+      offlinePaymentEnabled: paymentMethods.offline,
     };
+  }
+
+  private async resolvePaymentMethodsConfig(): Promise<{ online: boolean; offline: boolean }> {
+    try {
+      const [psRecord, intRecord] = await Promise.all([
+        (this.prisma as any).paymentSetting?.findFirst().catch(() => null),
+        this.prisma.integrationSetting?.findUnique({ where: { provider: 'RAZORPAY' } }).catch(() => null),
+      ]);
+
+      const config = (intRecord?.config as any) || {};
+
+      let offline = true;
+      if (config.enableOfflinePayment !== undefined) {
+        offline = Boolean(config.enableOfflinePayment);
+      } else if (psRecord?.offlinePaymentEnabled !== undefined) {
+        offline = Boolean(psRecord.offlinePaymentEnabled);
+      }
+
+      let online = Boolean(process.env.RAZORPAY_KEY_ID);
+      if (intRecord?.isEnabled !== undefined) {
+        online = Boolean(intRecord.isEnabled);
+      } else if (psRecord?.razorpayEnabled !== undefined) {
+        online = Boolean(psRecord.razorpayEnabled);
+      }
+
+      return { online, offline };
+    } catch (_) {
+      return { online: true, offline: true };
+    }
   }
 
   async getCurrentSubscription(customerId: number | string) {
