@@ -4,7 +4,7 @@ import { MetaTemplateService } from './meta-template.service';
 import { ValidationPipe } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { QueryMetaTemplateDto, CreateMetaTemplateDto } from './dto/meta-template.dto';
+import { QueryMetaTemplateDto, CreateMetaTemplateDto, TestSendMetaTemplateDto } from './dto/meta-template.dto';
 
 describe('MetaTemplateController & DTO Validation', () => {
   let controller: MetaTemplateController;
@@ -165,6 +165,55 @@ describe('MetaTemplateController & DTO Validation', () => {
       expect(propertyErrors).toContain('bodyText');
       expect(propertyErrors).toContain('footerText');
       expect(propertyErrors).toContain('isActive');
+    });
+
+    it('successfully validates TestSendMetaTemplateDto with canonical fields and numeric templateId', async () => {
+      const rawPayload = {
+        templateId: 1,
+        templateName: 'lead_stage_new',
+        to: '+91 98200 10000',
+        language: 'en_US',
+        variables: { leadName: 'John Doe', companyName: 'Acme' },
+      };
+      const dto = plainToInstance(TestSendMetaTemplateDto, rawPayload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.templateId).toBe(1);
+      expect(dto.to).toBe('+91 98200 10000');
+    });
+
+    it('transforms string templateId and trims to phone in TestSendMetaTemplateDto', async () => {
+      const rawPayload = {
+        templateId: '15',
+        to: ' +91 98765 43210 ',
+      };
+      const dto = plainToInstance(TestSendMetaTemplateDto, rawPayload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.templateId).toBe(15);
+      expect(dto.to).toBe('+91 98765 43210');
+    });
+
+    it('supports phoneNumber alias in TestSendMetaTemplateDto without failing validation', async () => {
+      const rawPayload = {
+        templateId: 15,
+        phoneNumber: '+91 98765 43210',
+      };
+      const dto = plainToInstance(TestSendMetaTemplateDto, rawPayload);
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+      expect(dto.phoneNumber).toBe('+91 98765 43210');
+    });
+
+    it('rejects TestSendMetaTemplateDto when recipient phone number is missing or empty', async () => {
+      const rawPayload = {
+        templateId: 1,
+        to: '   ',
+      };
+      const dto = plainToInstance(TestSendMetaTemplateDto, rawPayload);
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('to');
     });
   });
 

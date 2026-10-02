@@ -661,11 +661,12 @@ export class MetaTemplateService {
    * - Captures message ID on success
    */
   async testSend(dto: TestSendMetaTemplateDto, user: any) {
-    if (!dto.to || !dto.to.trim()) {
+    const rawTo = (dto.to || dto.phoneNumber || dto.phone || '').trim();
+    if (!rawTo) {
       throw new BadRequestException('Recipient WhatsApp number is required');
     }
 
-    const normalizedPhone = this.whatsappService.normalizePhoneNumber(dto.to);
+    const normalizedPhone = this.whatsappService.normalizePhoneNumber(rawTo);
     if (!normalizedPhone) {
       throw new BadRequestException(
         'Invalid WhatsApp phone number format. Please provide a valid 10-15 digit phone number (e.g. +91 98200 10000).',
@@ -754,6 +755,21 @@ export class MetaTemplateService {
       4: '11:30 AM',
     };
 
+    // If variables were provided by caller, validate that all required template variables have values
+    if (orderedVars.length > 0 && dto.variables && Object.keys(dto.variables).length > 0) {
+      for (const varName of orderedVars) {
+        const val =
+          userVars[varName] !== undefined
+            ? userVars[varName]
+            : userVars[String(orderedVars.indexOf(varName) + 1)];
+        if (val === undefined || val === null || String(val).trim() === '') {
+          throw new BadRequestException(
+            `Template variable "${varName}" is required. Please provide a value for {{${varName}}}.`,
+          );
+        }
+      }
+    }
+
     const parameters: Array<{ type: 'text'; text: string }> = orderedVars.map((varName, idx) => {
       const val =
         userVars[varName] !== undefined && userVars[varName] !== null && String(userVars[varName]).trim() !== ''
@@ -768,7 +784,7 @@ export class MetaTemplateService {
       };
     });
 
-    const resolvedLang = template.language || dto.language || 'en';
+    const resolvedLang = template.language || dto.language || 'en_US';
 
     this.logger.log(
       `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${resolvedLang}) ` +
