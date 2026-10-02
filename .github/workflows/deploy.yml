@@ -83,15 +83,10 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "cd '${DEPLOY_DIR}'
-             echo '=== _LIB.SH ==='
-             cat _lib.sh
-             echo '=== CONFIG.SH (FILTERED) ==='
-             grep -i -E 'DB_|POSTGRES|DATABASE|HOST|PORT' config.sh || true
-             echo '=== .ENV (FILTERED) ==='
-             grep -i -E 'DB_|POSTGRES|DATABASE' .env | sed -E 's/:[^@]+@/:***@/g' || true
-             echo '=== POSTGRES SYSTEMD ==='
-             systemctl list-units --type=service | grep -i -E 'postgre|sql' || true"
+            "echo '=== ALL DOCKER CONTAINER PORTS ==='
+             docker ps -a --format 'table {{.Names}}\t{{.Ports}}\t{{.Status}}'
+             echo '=== QBSHIP-POSTGRES INSPECT ==='
+             docker inspect qbship-postgres --format '{{json .HostConfig.PortBindings}} {{json .NetworkSettings.Ports}}' || true"
 
       - name: Deploy summary
         if: always()
