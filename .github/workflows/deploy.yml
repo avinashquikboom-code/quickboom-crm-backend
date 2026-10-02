@@ -79,15 +79,6 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Pin image tag and deploy to EC2
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "echo '=== ASTROLOGY-POSTGRES INSPECT ==='
-             docker inspect astrology-postgres --format '{{json .HostConfig.PortBindings}} {{json .Config.Env}}' || true
-             echo '=== COMPOSE FILES ==='
-             find /var/www -maxdepth 4 -name '*compose*' || true"
-
       - name: Deploy summary
         if: always()
         run: |
