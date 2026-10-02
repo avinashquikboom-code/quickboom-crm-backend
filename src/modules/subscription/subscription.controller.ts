@@ -453,35 +453,123 @@ export class SubscriptionController {
     @Res() res: Response,
   ) {
     const customerId = Number(customerIdStr || req?.customerId || user?.customerId);
-    const numPaymentId = Number(String(paymentId).replace(/[^0-9]/g, ''));
+    const rawKey = String(paymentId ?? '').trim();
+    const ordPay = rawKey.match(/^ORD-PAY-(\d+)$/i);
+    const ordCust = rawKey.match(/^ORD-CUST-(\d+)$/i);
+    const digitsOnly = /^\d+$/.test(rawKey) ? Number(rawKey) : NaN;
+    const paidStatuses = ['SUCCESS', 'PAID', 'success', 'paid'];
+    const scope = !isNaN(customerId) && customerId > 0 ? { customerId } : {};
 
-    const paymentData = await this.prisma.paymentHistory.findFirst({
-      where: {
-        ...(numPaymentId && !isNaN(numPaymentId)
-          ? {
-              OR: [
-                { id: numPaymentId },
-                { orderNumber: String(paymentId) },
-                { orderId: String(paymentId) },
-              ],
-            }
-          : {
-              OR: [
-                { orderNumber: String(paymentId) },
-                { orderId: String(paymentId) },
-              ],
-            }),
-        ...(customerId ? { customerId } : {}),
-        status: { in: ['SUCCESS', 'PAID', 'success', 'paid'] },
-      },
-      include: {
-        customer: true,
-        subscription: { include: { plan: true } },
-      },
-    });
+    const paymentInclude = {
+      customer: true,
+      subscription: { include: { plan: true } },
+    } as const;
+
+    let paymentData: any = null;
+
+    if (ordPay) {
+      paymentData = await this.prisma.paymentHistory.findFirst({
+        where: {
+          id: Number(ordPay[1]),
+          ...scope,
+          deletedAt: null,
+          status: { in: paidStatuses },
+        },
+        include: paymentInclude,
+      });
+    }
+
+    const customOrderId = ordCust
+      ? Number(ordCust[1])
+      : !isNaN(digitsOnly) && digitsOnly >= 100000
+        ? digitsOnly - 100000
+        : null;
+
+    if (!paymentData && customOrderId && customOrderId > 0) {
+      const customOrder = await this.prisma.customPlanOrder.findFirst({
+        where: {
+          id: customOrderId,
+          ...scope,
+          deletedAt: null,
+          status: { in: ['PAID', 'ACTIVATED', 'SUCCESS'] },
+        },
+      });
+      if (customOrder) {
+        paymentData = await this.prisma.paymentHistory.findFirst({
+          where: {
+            orderNumber: customOrder.orderNumber,
+            ...scope,
+            deletedAt: null,
+            status: { in: paidStatuses },
+          },
+          include: paymentInclude,
+        });
+        if (!paymentData) {
+          const customer = await this.prisma.customer.findFirst({
+            where: { id: customOrder.customerId },
+          });
+          if (!customer) {
+            throw new NotFoundException('Agreement is not available for this order.');
+          }
+          const activationDate = customOrder.startDate || customOrder.createdAt;
+          let endDate = customOrder.expiryDate;
+          if (!endDate) {
+            endDate = new Date(activationDate);
+            endDate.setMonth(endDate.getMonth() + (customOrder.duration || 1));
+          }
+          const pdfBuffer = await generateAgreementPdfBuffer({
+            customerName: customer.name || customer.companyName || 'Valued Customer',
+            companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
+            purchaseDate: customOrder.createdAt,
+            activationDate,
+            planName: `Custom Plan (${customOrder.duration} ${customOrder.durationUnit || 'MONTH'})`,
+            planFeatures: [],
+            amount: Number(customOrder.subtotal),
+            taxAmount: Number(customOrder.tax || 0),
+            totalAmount: Number(customOrder.totalAmount),
+            startDate: activationDate,
+            endDate,
+            orderNumber: customOrder.orderNumber || `ORD-CUST-${customOrder.id}`,
+            invoiceNumber: null,
+          });
+          const safeCompany = (customer.companyName || customer.name || 'Agreement').replace(/[^a-zA-Z0-9_-]/g, '_');
+          res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="Agreement_${safeCompany}.pdf"`,
+            'Content-Length': pdfBuffer.length,
+          });
+          res.end(pdfBuffer);
+          return;
+        }
+      }
+    }
+
+    if (!paymentData && !isNaN(digitsOnly) && digitsOnly > 0 && digitsOnly < 100000) {
+      paymentData = await this.prisma.paymentHistory.findFirst({
+        where: {
+          id: digitsOnly,
+          ...scope,
+          deletedAt: null,
+          status: { in: paidStatuses },
+        },
+        include: paymentInclude,
+      });
+    }
+
+    if (!paymentData && rawKey) {
+      paymentData = await this.prisma.paymentHistory.findFirst({
+        where: {
+          OR: [{ orderNumber: rawKey }, { orderId: rawKey }],
+          ...scope,
+          deletedAt: null,
+          status: { in: paidStatuses },
+        },
+        include: paymentInclude,
+      });
+    }
 
     if (!paymentData || !paymentData.customer) {
-      throw new NotFoundException('No paid order found with this ID for your account');
+      throw new NotFoundException('Agreement is not available for this order.');
     }
 
     const sub = paymentData.subscription;
