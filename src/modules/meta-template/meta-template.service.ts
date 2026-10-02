@@ -450,37 +450,25 @@ export class MetaTemplateService {
     const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
 
+    const apiVersion = creds.apiVersion || 'v21.0';
+
     if (!apiKey) {
       throw new BadRequestException(
         'WhatsApp / Meta integration is not configured. Please configure Access Token in Settings → Integrations → WhatsApp.',
       );
     }
 
-    let resolvedWabaId = wabaId;
-    if (!resolvedWabaId && phoneNumberId) {
-      try {
-        const phoneLookup = await axios.get(`https://graph.facebook.com/v21.0/${phoneNumberId}?fields=whatsapp_business_account`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          timeout: 10000,
-        });
-        resolvedWabaId = phoneLookup.data?.whatsapp_business_account?.id || '';
-      } catch (err: any) {
-        this.logger.warn(`[MetaTemplateService] Could not resolve WABA ID from phoneNumberId: ${err?.message}`);
-      }
-    }
-
-    const targetAccount = resolvedWabaId || phoneNumberId;
-    if (!targetAccount) {
+    if (!wabaId) {
       throw new BadRequestException(
-        'WhatsApp Business Account ID (WABA ID) or Phone Number ID is missing in Settings → Integrations → WhatsApp.',
+        'WhatsApp Business Account ID (WABA ID) is required to manage and sync message templates. Please configure Business Account ID in Settings → Integrations → WhatsApp.',
       );
     }
 
-    this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for account: ${targetAccount}`);
+    this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for WABA: ${wabaId}`);
 
     let metaTemplates: any[] = [];
     try {
-      const metaUrl = `https://graph.facebook.com/v21.0/${targetAccount}/message_templates?limit=100`;
+      const metaUrl = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?limit=100`;
       const response = await axios.get(metaUrl, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -492,9 +480,25 @@ export class MetaTemplateService {
         metaTemplates = response.data.data;
       }
     } catch (err: any) {
-      const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta API communication error';
-      this.logger.error(`[MetaTemplateService] Meta Graph API sync failed: ${errMsg}`);
-      throw new BadRequestException(`Meta Graph API error: ${errMsg}`);
+      const fbError = err?.response?.data?.error;
+      const metaCode = fbError?.code || err?.code;
+      const metaMessage = fbError?.message || err?.message || 'Meta API communication error';
+      const metaType = fbError?.type;
+      const metaSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
+      const httpStatus = err?.response?.status;
+
+      this.logger.error(
+        `[MetaTemplateService] Meta Graph API sync failed: httpStatus=${httpStatus || 'N/A'} code=${metaCode || 'N/A'} type=${metaType || 'N/A'} subcode=${metaSubcode || 'N/A'} trace=${fbtraceId || 'N/A'} message="${metaMessage}"`
+      );
+      throw new BadRequestException({
+        statusCode: httpStatus || 400,
+        message: `Meta Graph API error: ${metaMessage}`,
+        metaErrorCode: metaCode,
+        metaErrorType: metaType,
+        metaErrorSubcode: metaSubcode,
+        fbtraceId: fbtraceId,
+      });
     }
 
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;

@@ -420,10 +420,6 @@ export class WhatsappService {
         timeout: 8000,
       });
       const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
-      const liveWabaId = resourceRes?.data?.whatsapp_business_account?.id;
-      if (liveWabaId && !configuredWabaId) {
-        this.logger.debug(`[WHATSAPP DEBUG] Discovered live WABA ID: ${liveWabaId}`);
-      }
       this.logger.log(
         `[WHATSAPP DEBUG] Pre-flight phone number check SUCCEEDED for Phone Number ID: ${phoneNumberId} (verified name: ${verifiedName}). Token: ${maskAccessToken(apiKey)}`
       );
