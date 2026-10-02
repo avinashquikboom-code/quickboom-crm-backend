@@ -220,7 +220,8 @@ export class SubscriptionController {
   @Post('customer/subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
   @Post('customer/start-new-plan')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Start a completely new plan (full price) when prior renewal has failed' })
   async startNewPlanCustomer(
@@ -319,7 +320,8 @@ export class SubscriptionController {
   @Get('subscriptions/effective-plan')
   @Get('customer/subscription')
   @Get('customer/usage')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active effective plan and usage for authenticated customer' })
   async getEffectivePlan(

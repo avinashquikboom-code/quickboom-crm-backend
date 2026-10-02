@@ -39,6 +39,8 @@ import {
 } from './dto/influencer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Influencer Hub')
 @Controller()
@@ -66,6 +68,9 @@ export class InfluencerController {
   // =========================================================================
 
   @Get(['influencers/categories', 'customer/influencer-categories'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get active influencer categories with creator counts' })
   async getCategories() {
     const data = await this.influencerService.getCategories();
@@ -73,6 +78,9 @@ export class InfluencerController {
   }
 
   @Get(['influencers', 'customer/influencers'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get active influencers for Customer Home and Listing screen' })
   async getActiveInfluencers(@Query() query: FilterInfluencersQueryDto) {
     const data = await this.influencerService.getActiveInfluencers(query);
@@ -95,6 +103,9 @@ export class InfluencerController {
   }
 
   @Get(['influencers/:id', 'customer/influencers/:id'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single influencer details with packages and availability' })
   async getInfluencerById(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getInfluencerById(id);
@@ -102,6 +113,9 @@ export class InfluencerController {
   }
 
   @Get(['influencers/:id/packages', 'customer/influencers/:id/packages'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get active packages for an influencer' })
   async getPackages(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getPackages(id);
@@ -109,6 +123,9 @@ export class InfluencerController {
   }
 
   @Get(['influencers/:id/availability', 'customer/influencers/:id/availability'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get available dates and time slots for an influencer' })
   async getAvailability(
     @Param('id', ParseIntPipe) id: number,
@@ -120,6 +137,9 @@ export class InfluencerController {
   }
 
   @Post(['influencers/:id/favorite', 'customer/influencers/:id/favorite'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' })
   @ApiOperation({ summary: 'Toggle favorite status for an influencer' })
   async toggleFavorite(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const customerId = req.user?.customerId || req.user?.id;
@@ -166,7 +186,8 @@ export class InfluencerController {
 
   @Post(['influencer-bookings', 'customer/influencer-bookings'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCER_BOOKINGS', action: 'VIEW' })
   @ApiOperation({ summary: 'Create a new influencer booking and initialize payment' })
   async createBooking(@Req() req: any, @Body() dto: CreateInfluencerBookingDto) {
     const customerId = this.resolveCustomerId(req);
@@ -187,7 +208,8 @@ export class InfluencerController {
     'customer/influencer-bookings/:id/verify-payment',
   ])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCER_BOOKINGS', action: 'VIEW' })
   @ApiOperation({ summary: 'Verify server-side Razorpay payment and confirm booking' })
   async verifyPayment(
     @Req() req: any,
@@ -210,7 +232,8 @@ export class InfluencerController {
 
   @Get(['influencer-bookings/my', 'customer/influencer-bookings/my'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCER_BOOKINGS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get current customer bookings with isolation and status filter' })
   async getMyBookings(@Req() req: any, @Query('status') status?: string) {
     const customerId = this.resolveCustomerId(req);
@@ -220,7 +243,8 @@ export class InfluencerController {
 
   @Get(['influencer-bookings/:id', 'customer/influencer-bookings/:id'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCER_BOOKINGS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get booking details by ID (enforcing customer isolation)' })
   async getBookingById(@Req() req: any, @Param('id') id: string) {
     const customerId = this.resolveCustomerId(req);
@@ -230,7 +254,8 @@ export class InfluencerController {
 
   @Post(['influencer-bookings/:id/cancel', 'customer/influencer-bookings/:id/cancel'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_INFLUENCER_BOOKINGS', action: 'VIEW' })
   @ApiOperation({ summary: 'Cancel an upcoming booking' })
   async cancelBooking(
     @Req() req: any,

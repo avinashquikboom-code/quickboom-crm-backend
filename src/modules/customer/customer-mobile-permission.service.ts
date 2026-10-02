@@ -57,10 +57,24 @@ export class CustomerMobilePermissionService {
     if (customer.mobileRoleId) {
       collect(customer.mobileRole?.role?.rolePermissions || []);
     } else {
-      const ownRole = await this.prisma.designation.findFirst({
+      let ownRole = await this.prisma.designation.findFirst({
         where: { customerId, code: 'CUSTOMER', audience: 'CUSTOMER' },
         include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
       });
+      if (!ownRole) {
+        ownRole = await this.prisma.designation.findFirst({
+          where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
+          include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
+          orderBy: { id: 'asc' },
+        });
+      }
+      if (!ownRole) {
+        ownRole = await this.prisma.designation.findFirst({
+          where: { audience: 'CUSTOMER' },
+          include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
+          orderBy: { id: 'asc' },
+        });
+      }
       if (ownRole?.role?.rolePermissions?.length) {
         collect(ownRole.role.rolePermissions);
       } else {
