@@ -83,16 +83,15 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "echo '=== EC2 PUBLIC IP ==='
-             curl -s https://checkip.amazonaws.com || true
-             echo '=== APACHE VHOSTS ==='
-             grep -rn 'ProxyPass' /etc/apache2/sites-enabled/ || true
-             echo '=== PM2 LIST ==='
-             pm2 list || true
-             echo '=== SYSTEMCTL NODE/NEST ==='
-             systemctl list-units --type=service --state=running | grep -i -E 'node|api|nest|crm' || true
-             echo '=== ALL NODE PROCESSES ==='
-             ps aux | grep -i node | grep -v 'code-server' | grep -v 'grep' || true"
+            "cd '${DEPLOY_DIR}'
+             echo '=== _LIB.SH ==='
+             cat _lib.sh
+             echo '=== CONFIG.SH (FILTERED) ==='
+             grep -i -E 'DB_|POSTGRES|DATABASE|HOST|PORT' config.sh || true
+             echo '=== .ENV (FILTERED) ==='
+             grep -i -E 'DB_|POSTGRES|DATABASE' .env | sed -E 's/:[^@]+@/:***@/g' || true
+             echo '=== POSTGRES SYSTEMD ==='
+             systemctl list-units --type=service | grep -i -E 'postgre|sql' || true"
 
       - name: Deploy summary
         if: always()
