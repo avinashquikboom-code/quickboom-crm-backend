@@ -73,14 +73,6 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-      - name: Pin image tag and deploy to EC2
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "cd '${DEPLOY_DIR}'
-             chmod +x ./*.sh
-             sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-             ./backend.sh"
 
       - name: Deploy summary
         if: always()
