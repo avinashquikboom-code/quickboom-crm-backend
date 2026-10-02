@@ -83,15 +83,16 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "cd '${DEPLOY_DIR}'
-             echo '=== MIGRATE.SH ==='
-             cat migrate.sh
-             echo '=== START-API.SH ==='
-             cat start-api.sh
-             echo '=== LISTENING PORTS ==='
-             sudo ss -tulpn || netstat -tlpn || true
-             echo '=== DOCKER CONTAINERS ALL ==='
-             docker ps -a"
+            "echo '=== EC2 PUBLIC IP ==='
+             curl -s https://checkip.amazonaws.com || true
+             echo '=== APACHE VHOSTS ==='
+             grep -rn 'ProxyPass' /etc/apache2/sites-enabled/ || true
+             echo '=== PM2 LIST ==='
+             pm2 list || true
+             echo '=== SYSTEMCTL NODE/NEST ==='
+             systemctl list-units --type=service --state=running | grep -i -E 'node|api|nest|crm' || true
+             echo '=== ALL NODE PROCESSES ==='
+             ps aux | grep -i node | grep -v 'code-server' | grep -v 'grep' || true"
 
       - name: Deploy summary
         if: always()
