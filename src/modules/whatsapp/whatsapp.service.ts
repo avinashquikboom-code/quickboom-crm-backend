@@ -416,7 +416,7 @@ export class WhatsappService {
     try {
       const resourceRes = await axios.get(resourceUrl, {
         headers,
-        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status,whatsapp_business_account' },
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status' },
         timeout: 8000,
       });
       const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
@@ -459,22 +459,38 @@ export class WhatsappService {
       );
 
       const typedErrorCode = classifyWhatsAppError(httpStatus, metaCode, metaType, metaMessage);
-      const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
-      return {
-        success: false,
-        provider: 'WHATSAPP',
-        errorCode: typedErrorCode,
-        providerStatus: httpStatus || 500,
-        message: friendlyMsg,
-        providerMessage: metaMessage,
-        details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
-        reason: typedErrorCode,
-        error: metaCode ? String(metaCode) : typedErrorCode,
-        metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
-        metaErrorType: metaType,
-        metaErrorMessage: metaMessage,
-        fbtraceId: fbtraceId,
-      };
+      const isAuthFailure =
+        metaCode === 190 ||
+        String(metaCode) === '190' ||
+        httpStatus === 401 ||
+        httpStatus === 403 ||
+        typedErrorCode === WHATSAPP_ERROR_CODES.AUTH_ERROR ||
+        typedErrorCode === WHATSAPP_ERROR_CODES.PERMISSION_ERROR ||
+        String(metaMessage).toLowerCase().includes('access token') ||
+        String(metaMessage).toLowerCase().includes('session has expired');
+
+      if (isAuthFailure) {
+        const friendlyMsg = friendlyWhatsAppErrorMessage(typedErrorCode, metaMessage);
+        return {
+          success: false,
+          provider: 'WHATSAPP',
+          errorCode: typedErrorCode,
+          providerStatus: httpStatus || 500,
+          message: friendlyMsg,
+          providerMessage: metaMessage,
+          details: metaMessage ? `${friendlyMsg}: ${metaMessage}` : friendlyMsg,
+          reason: typedErrorCode,
+          error: metaCode ? String(metaCode) : typedErrorCode,
+          metaErrorCode: typeof metaCode === 'number' ? metaCode : Number(metaCode) || undefined,
+          metaErrorType: metaType,
+          metaErrorMessage: metaMessage,
+          fbtraceId: fbtraceId,
+        };
+      }
+
+      this.logger.warn(
+        `[WHATSAPP DEBUG] Pre-flight phone number check returned non-fatal warning: ${metaMessage}. Continuing to message dispatch.`
+      );
     }
 
     // Step 2: Build & Dispatch Meta Cloud API template payload (TEST B: Send Message)
