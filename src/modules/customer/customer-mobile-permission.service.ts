@@ -84,6 +84,14 @@ export class CustomerMobilePermissionService {
       }
     }
 
+    if (!customer.mobileRoleId) {
+      for (const item of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
+        if (!rolePermissions.has(`${item.module}:${item.action}`)) {
+          rolePermissions.add(`${item.module}:${item.action}`);
+        }
+      }
+    }
+
     const overrideMap = new Map<string, string>();
     for (const ov of customer.moduleOverrides || []) {
       overrideMap.set(String(ov.moduleKey).toLowerCase(), String(ov.override).toUpperCase());

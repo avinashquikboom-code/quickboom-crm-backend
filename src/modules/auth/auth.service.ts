@@ -2813,7 +2813,7 @@ export class AuthService {
     if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
-        user.customerId,
+        user.customerId || user.customer?.id,
       );
       applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee);
     }
