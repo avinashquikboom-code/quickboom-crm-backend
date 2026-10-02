@@ -1398,48 +1398,127 @@ export class PaymentService {
   }
 
   async downloadAgreementPdf(paymentId: number | string): Promise<{ buffer: Buffer; filename: string }> {
-    const paymentInfo = await this.prisma.paymentHistory.findFirst({
-      where: {
-        OR: [
-          { id: Number(paymentId) || -1 },
-          { orderNumber: String(paymentId) },
-        ],
-      },
-      include: {
-        customer: true,
-        subscription: { include: { plan: true } }
-      }
-    });
+    const raw = String(paymentId ?? '').trim();
+    const ordPay = raw.match(/^ORD-PAY-(\d+)$/i);
+    const ordCust = raw.match(/^ORD-CUST-(\d+)$/i);
+    const digits = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    const include = {
+      customer: true,
+      subscription: { include: { plan: true } },
+    } as const;
 
-    if (!paymentInfo || !paymentInfo.subscription || !paymentInfo.subscription.plan) {
-      throw new NotFoundException('Agreement not found for this payment or subscription is invalid');
+    let paymentInfo: any = null;
+
+    if (ordPay) {
+      paymentInfo = await this.prisma.paymentHistory.findFirst({
+        where: { id: Number(ordPay[1]), deletedAt: null },
+        include,
+      });
     }
 
-    const sub = paymentInfo.subscription;
-    const plan = sub.plan;
-    const customer = paymentInfo.customer;
-    const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+    const customOrderId = ordCust
+      ? Number(ordCust[1])
+      : !Number.isNaN(digits) && digits >= 100000
+        ? digits - 100000
+        : null;
 
-    const buffer = await generateAgreementPdfBuffer({
-      customerName: customer.name || customer.companyName || 'Valued Customer',
-      companyName,
-      purchaseDate: paymentInfo.createdAt,
-      activationDate: sub.startDate,
-      planName: plan.name,
-      planFeatures: plan.features as any[],
-      amount: Number(paymentInfo.amount),
-      taxAmount: Number(paymentInfo.taxAmount || 0),
-      totalAmount: Number(paymentInfo.totalAmount || paymentInfo.amount),
-      startDate: sub.startDate,
-      endDate: sub.endDate,
-      orderNumber: paymentInfo.orderNumber || String(paymentInfo.orderId),
-      invoiceNumber: paymentInfo.invoiceUrl || null,
-    });
+    let customOrder: any = null;
+    if (!paymentInfo && customOrderId && customOrderId > 0) {
+      customOrder = await this.prisma.customPlanOrder.findFirst({
+        where: { id: customOrderId, deletedAt: null },
+        include: { customer: true },
+      });
+      if (customOrder?.orderNumber) {
+        paymentInfo = await this.prisma.paymentHistory.findFirst({
+          where: { orderNumber: customOrder.orderNumber, deletedAt: null },
+          include,
+        });
+      }
+    }
 
-    return {
-      buffer,
-      filename: `Agreement-${companyName}.pdf`,
-    };
+    if (!paymentInfo && !Number.isNaN(digits) && digits > 0 && digits < 100000) {
+      paymentInfo = await this.prisma.paymentHistory.findFirst({
+        where: { id: digits, deletedAt: null },
+        include,
+      });
+    }
+
+    if (!paymentInfo && raw) {
+      paymentInfo = await this.prisma.paymentHistory.findFirst({
+        where: {
+          deletedAt: null,
+          OR: [{ orderNumber: raw }, { orderId: raw }],
+        },
+        include,
+      });
+    }
+
+    if (paymentInfo?.customer) {
+      const sub = paymentInfo.subscription;
+      const plan = sub?.plan;
+      const customer = paymentInfo.customer;
+      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+      const activationDate = sub?.startDate || paymentInfo.createdAt;
+      let endDate = sub?.endDate;
+      if (!endDate) {
+        const durationMonths = paymentInfo.billingCycle === 'YEARLY' ? 12 : 1;
+        endDate = new Date(activationDate);
+        endDate.setMonth(endDate.getMonth() + durationMonths);
+      }
+
+      const buffer = await generateAgreementPdfBuffer({
+        customerName: customer.name || customer.companyName || 'Valued Customer',
+        companyName,
+        purchaseDate: paymentInfo.createdAt,
+        activationDate,
+        planName: plan?.name || paymentInfo.planName || 'Custom Plan',
+        planFeatures: (plan?.features as any[]) || [],
+        amount: Number(paymentInfo.amount),
+        taxAmount: Number(paymentInfo.taxAmount || 0),
+        totalAmount: Number(paymentInfo.totalAmount || paymentInfo.amount),
+        startDate: activationDate,
+        endDate,
+        orderNumber: paymentInfo.orderNumber || `ORD-PAY-${paymentInfo.id}`,
+        invoiceNumber: paymentInfo.invoiceUrl || null,
+      });
+
+      return {
+        buffer,
+        filename: `Agreement-${companyName}.pdf`,
+      };
+    }
+
+    if (customOrder?.customer) {
+      const customer = customOrder.customer;
+      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
+      const activationDate = customOrder.startDate || customOrder.createdAt;
+      let endDate = customOrder.expiryDate;
+      if (!endDate) {
+        endDate = new Date(activationDate);
+        endDate.setMonth(endDate.getMonth() + (customOrder.duration || 1));
+      }
+      const buffer = await generateAgreementPdfBuffer({
+        customerName: customer.name || customer.companyName || 'Valued Customer',
+        companyName,
+        purchaseDate: customOrder.createdAt,
+        activationDate,
+        planName: `Custom Plan (${customOrder.duration} ${customOrder.durationUnit || 'MONTH'})`,
+        planFeatures: [],
+        amount: Number(customOrder.subtotal),
+        taxAmount: Number(customOrder.tax || 0),
+        totalAmount: Number(customOrder.totalAmount),
+        startDate: activationDate,
+        endDate,
+        orderNumber: customOrder.orderNumber || `ORD-CUST-${customOrder.id}`,
+        invoiceNumber: null,
+      });
+      return {
+        buffer,
+        filename: `Agreement-${companyName}.pdf`,
+      };
+    }
+
+    throw new NotFoundException('Agreement is not available for this order.');
   }
 
   /**
