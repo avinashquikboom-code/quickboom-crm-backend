@@ -41,6 +41,7 @@ import {
   buildDefaultPlanLineItems,
   withInvoiceItemsSnapshot,
 } from '../../common/utils/invoice-items.util';
+import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
 
 @Injectable()
 export class SubscriptionService {
@@ -3216,7 +3217,52 @@ export class SubscriptionService {
               this.logger.warn(`[PDF_GEN_WARN] Invoice PDF generation notice: ${pdfErr?.message}`);
             }
 
-            // Invoice Email with PDF attachment
+            // Generate Agreement PDF buffer to attach alongside the invoice
+            let agreementPdfBuffer: Buffer | null = null;
+            try {
+              const paymentInfo = await this.prisma.paymentHistory.findFirst({
+                where: {
+                  OR: [
+                    ...(transactionId ? [{ transactionId: String(transactionId) }] : []),
+                    { id: typeof paymentId === 'number' ? paymentId : undefined },
+                    ...(orderId ? [{ orderNumber: String(orderId) }] : []),
+                  ].filter(Boolean) as any[],
+                },
+                include: { subscription: { include: { plan: true } } },
+              });
+
+              if (paymentInfo && paymentInfo.subscription && paymentInfo.subscription.plan) {
+                const sub = paymentInfo.subscription;
+                const plan = sub.plan;
+                agreementPdfBuffer = await generateAgreementPdfBuffer({
+                  customerName,
+                  companyName,
+                  purchaseDate: paymentInfo.createdAt,
+                  activationDate: sub.startDate,
+                  planName: plan.name,
+                  planFeatures: plan.features as any[],
+                  amount: Number(paymentInfo.amount),
+                  taxAmount: Number(paymentInfo.taxAmount || 0),
+                  totalAmount: Number(paymentInfo.totalAmount || paymentInfo.amount),
+                  startDate: sub.startDate,
+                  endDate: sub.endDate,
+                  orderNumber: paymentInfo.orderNumber || String(paymentInfo.orderId || paymentInfo.id),
+                  invoiceNumber: invoiceNo || null,
+                });
+              }
+            } catch (agrErr: any) {
+              this.logger.warn(`[OFFLINE_AGREEMENT_PDF_GEN_WARN] ${agrErr?.message}`);
+            }
+
+            const emailAttachments: any[] = [];
+            if (pdfBuffer) {
+              emailAttachments.push({ filename: `Invoice-${invoiceNo}.pdf`, content: pdfBuffer, contentType: 'application/pdf' });
+            }
+            if (agreementPdfBuffer) {
+              emailAttachments.push({ filename: `Agreement-${companyName}.pdf`, content: agreementPdfBuffer, contentType: 'application/pdf' });
+            }
+
+            // Invoice Email with PDF attachment(s)
             if (customerEmail && this.emailService && this.emailTemplateService) {
               const invTemplate = await this.emailTemplateService.findByKey('INVOICE_GENERATED', customerId);
               const invRendered = renderEmailTemplate(
@@ -3240,19 +3286,29 @@ export class SubscriptionService {
                 recordId: invoice.id,
                 eventType: 'INVOICE_GENERATED',
                 templateId: invTemplate?.id,
-                attachments: pdfBuffer ? [{ filename: `Invoice-${invoiceNo}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] : undefined,
+                attachments: emailAttachments.length ? emailAttachments : undefined,
               });
-              this.logger.log(`[EMAIL] Offline invoice PDF email sent to ${customerEmail}`);
+              this.logger.log(`[EMAIL] Offline invoice & agreement PDF email sent to ${customerEmail}`);
             }
 
-            // Invoice WhatsApp with Document
+            // Invoice & Agreement WhatsApp with Document(s)
             if (this.whatsappService && customerPhone) {
-              await this.whatsappService.sendDocumentMessage({
-                to: customerPhone,
-                pdfBuffer: pdfBuffer || undefined,
-                filename: `Invoice-${invoiceNo}.pdf`,
-                caption: `Invoice #${invoiceNo} for ₹${amount} from ${companyName}.`,
-              });
+              if (pdfBuffer) {
+                await this.whatsappService.sendDocumentMessage({
+                  to: customerPhone,
+                  pdfBuffer: pdfBuffer,
+                  filename: `Invoice-${invoiceNo}.pdf`,
+                  caption: `Invoice #${invoiceNo} for ₹${amount} from ${companyName}.`,
+                });
+              }
+              if (agreementPdfBuffer) {
+                await this.whatsappService.sendDocumentMessage({
+                  to: customerPhone,
+                  pdfBuffer: agreementPdfBuffer,
+                  filename: `Agreement-${companyName}.pdf`,
+                  caption: `Service Agreement for ${planName} from ${companyName}.`,
+                });
+              }
             }
           }
         } catch (invErr: any) {
