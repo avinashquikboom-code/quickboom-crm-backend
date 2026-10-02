@@ -19,6 +19,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
@@ -89,14 +90,22 @@ export class PaymentController {
   }
 
   @Get(':id/agreement/download')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Download Service Agreement PDF' })
   async downloadAgreement(
     @Param('id') paymentId: string,
+    @CurrentCustomer() customerIdStr: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
     @Res() res: any,
   ) {
-    const { buffer, filename } = await this.paymentService.downloadAgreementPdf(paymentId);
+    const customerId = Number(customerIdStr ?? req?.customerId ?? user?.customerId);
+    const { buffer, filename } = await this.paymentService.downloadAgreementPdf(
+      paymentId,
+      Number.isFinite(customerId) && customerId > 0 ? customerId : undefined,
+      user,
+    );
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,

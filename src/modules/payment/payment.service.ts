@@ -34,6 +34,7 @@ const Razorpay = require('razorpay');
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
+import { isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.util';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
@@ -1451,7 +1452,19 @@ export class PaymentService {
     };
   }
 
-  async downloadAgreementPdf(paymentId: number | string): Promise<{ buffer: Buffer; filename: string }> {
+  private assertAgreementCustomerAccess(ownerCustomerId: number, customerId?: number, user?: any) {
+    if (isUserSuperAdmin(user)) return;
+    if (isUserAdminOrStaff(user) && !(Number(user?.customerId) > 0)) return;
+    if (!customerId || Number(ownerCustomerId) !== Number(customerId)) {
+      throw new ForbiddenException('Access to this agreement is forbidden');
+    }
+  }
+
+  async downloadAgreementPdf(
+    paymentId: number | string,
+    customerId?: number,
+    user?: any,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     const raw = String(paymentId ?? '').trim();
     const ordPay = raw.match(/^ORD-PAY-(\d+)$/i);
     const ordCust = raw.match(/^ORD-CUST-(\d+)$/i);
@@ -1508,6 +1521,7 @@ export class PaymentService {
     }
 
     if (paymentInfo?.customer) {
+      this.assertAgreementCustomerAccess(paymentInfo.customerId, customerId, user);
       const sub = paymentInfo.subscription;
       const plan = sub?.plan;
       const customer = paymentInfo.customer;
@@ -1543,6 +1557,7 @@ export class PaymentService {
     }
 
     if (customOrder?.customer) {
+      this.assertAgreementCustomerAccess(customOrder.customerId, customerId, user);
       const customer = customOrder.customer;
       const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
       const activationDate = customOrder.startDate || customOrder.createdAt;
