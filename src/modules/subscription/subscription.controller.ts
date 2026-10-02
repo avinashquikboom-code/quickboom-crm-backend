@@ -569,8 +569,14 @@ export class SubscriptionController {
     }
 
     if (!paymentData || !paymentData.customer) {
+      this.logger.warn(
+        `[AGREEMENT_DEBUG] method: GET path: /api/v1/subscriptions/orders/${rawKey}/agreement/download customerId: ${isNaN(customerId) ? '' : customerId} result: NOT_FOUND`,
+      );
       throw new NotFoundException('Agreement is not available for this order.');
     }
+    this.logger.log(
+      `[AGREEMENT_DEBUG] method: GET path: /api/v1/subscriptions/orders/${rawKey}/agreement/download customerId: ${paymentData.customerId} paymentId: ${paymentData.id} status: ${paymentData.status}`,
+    );
 
     const sub = paymentData.subscription;
     const plan = sub?.plan;
