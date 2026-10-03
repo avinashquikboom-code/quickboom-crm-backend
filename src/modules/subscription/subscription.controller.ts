@@ -26,7 +26,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { RoleType } from '@prisma/client';
+import { RoleType, SubscriptionStatus } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -351,8 +351,15 @@ export class SubscriptionController {
         upcomingPlan &&
         !plan.isExpired,
       );
+      const isPurchasedPending = Boolean(
+        !isCurrentActive &&
+        plan &&
+        plan.subscriptionId &&
+        String(plan.status) === 'PENDING' &&
+        !plan.isExpired,
+      );
 
-      const currentPlanData = (isCurrentActive || isPurchasedUpcoming) && plan
+      const currentPlanData = (isCurrentActive || isPurchasedUpcoming || isPurchasedPending) && plan
         ? {
             id: String(plan.subscriptionId || plan.planId),
             subscriptionId: plan.subscriptionId ? String(plan.subscriptionId) : null,
@@ -363,7 +370,9 @@ export class SubscriptionController {
             planCode: plan.planCode,
             status: isCurrentActive
               ? (plan.status || 'ACTIVE')
-              : 'UPCOMING',
+              : (String(plan.status) === 'PENDING'
+                  ? 'PENDING'
+                  : 'UPCOMING'),
             customerId: String(plan.customerId || customerId),
             workspaceId: String(plan.customerId || customerId),
             billingCycle: plan.billingCycle || 'MONTHLY',

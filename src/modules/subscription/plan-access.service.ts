@@ -33,7 +33,7 @@ export interface UpcomingPlanSummary {
   planCode: string;
   startDate: Date | string;
   endDate: Date | string;
-  status: 'UPCOMING';
+  status: 'UPCOMING' | 'PENDING';
   billingCycle: string;
   price: number;
 }
@@ -44,7 +44,7 @@ export interface EffectivePlan {
   planId: number;
   planName: string;
   planCode: string;
-  status: SubscriptionStatus;
+  status: SubscriptionStatus | string;
   isExpired: boolean;
   isActive: boolean;
   billingCycle: string;
@@ -169,7 +169,7 @@ export class PlanAccessService {
           planCode: upcomingSub.plan.code,
           startDate: upcomingSub.startDate,
           endDate: upcomingSub.endDate,
-          status: 'UPCOMING',
+          status: upcomingSub.status === SubscriptionStatus.PENDING ? 'PENDING' : 'UPCOMING',
           billingCycle: upcomingSub.billingCycle || 'MONTHLY',
           price:
             upcomingSub.customPrice !== null && upcomingSub.customPrice !== undefined
@@ -195,7 +195,7 @@ export class PlanAccessService {
         planId: upcomingPlan.planId,
         planName: upcomingPlan.planName,
         planCode: upcomingPlan.planCode,
-        status: SubscriptionStatus.PENDING,
+        status: upcomingSub?.status === SubscriptionStatus.PENDING ? SubscriptionStatus.PENDING : SubscriptionStatus.ACTIVE,
         isExpired: false,
         isActive: false,
         billingCycle: upcomingPlan.billingCycle,
@@ -205,13 +205,13 @@ export class PlanAccessService {
         basePrice: upcomingPlan.price,
         customPrice: null,
         isCustomized: false,
-        userLimit: 5,
-        leadLimit: 500,
-        storageLimitBytes: 0,
+        userLimit: upcomingSub?.customUserLimit || upcomingSub?.plan?.userLimit || 5,
+        leadLimit: upcomingSub?.customLeadLimit || upcomingSub?.plan?.leadLimit || 500,
+        storageLimitBytes: upcomingSub?.customStorageLimit ? BigInt(upcomingSub.customStorageLimit.toString()) : BigInt(upcomingSub?.plan?.storageLimit?.toString() || '0'),
         scheduleLimit: 0,
         usedSchedules: 0,
         remainingSchedules: 0,
-        features: [],
+        features: Array.isArray(upcomingSub?.plan?.features) ? (upcomingSub!.plan.features as string[]) : [],
         services: [],
         usage: {
           currentUsers: 0,
@@ -220,6 +220,53 @@ export class PlanAccessService {
           scheduledWorks: 0,
         },
         upcomingPlan,
+      };
+    }
+
+    // 6. If no active or upcoming subscription found, check for a pending subscription (e.g. offline orders awaiting approval)
+    const pendingSub = subs.find(
+      (s) => s.status === SubscriptionStatus.PENDING && s.plan,
+    );
+    if (!activeSub && !upcomingPlan && pendingSub && pendingSub.plan) {
+      const pPlan = pendingSub.plan;
+      const price =
+        pendingSub.customPrice !== null && pendingSub.customPrice !== undefined
+          ? Number(pendingSub.customPrice)
+          : pendingSub.billingCycle === 'YEARLY'
+          ? Number(pPlan.yearlyPrice)
+          : Number(pPlan.monthlyPrice);
+
+      return {
+        customerId: numCustomerId,
+        subscriptionId: pendingSub.id,
+        planId: pPlan.id,
+        planName: pPlan.name,
+        planCode: pPlan.code,
+        status: SubscriptionStatus.PENDING,
+        isExpired: false,
+        isActive: false,
+        billingCycle: pendingSub.billingCycle || 'MONTHLY',
+        startDate: new Date(pendingSub.startDate),
+        endDate: new Date(pendingSub.endDate),
+        price,
+        basePrice: price,
+        customPrice: pendingSub.customPrice !== null ? Number(pendingSub.customPrice) : null,
+        isCustomized: Boolean(pendingSub.customPrice),
+        userLimit: pendingSub.customUserLimit || pPlan.userLimit || 5,
+        leadLimit: pendingSub.customLeadLimit || pPlan.leadLimit || 500,
+        storageLimitBytes: pendingSub.customStorageLimit ? BigInt(pendingSub.customStorageLimit.toString()) : BigInt(pPlan.storageLimit?.toString() || '0'),
+        scheduleLimit: 0,
+        usedSchedules: 0,
+        remainingSchedules: 0,
+        features: Array.isArray(pPlan.features) ? (pPlan.features as string[]) : [],
+        services: [],
+        usage: {
+          currentUsers: 0,
+          currentLeads: 0,
+          currentStorageBytes: 0,
+          scheduledWorks: 0,
+        },
+        upcomingPlan: null,
       };
     }
 
