@@ -368,16 +368,33 @@ export class NotificationService {
       targetCustomerId = user.customerId;
     }
 
-    // If customerId is given without userId, find customer owner/first user
+    // If customerId is given without userId, find customer owner/active user
     if (!targetUserId && targetCustomerId) {
-      const firstUser = await this.prisma.user.findFirst({
-        where: { customerId: targetCustomerId, deletedAt: null },
-        select: { id: true },
+      const activeTokenUser = await this.prisma.userDeviceToken.findFirst({
+        where: {
+          isActive: true,
+          user: { customerId: targetCustomerId, deletedAt: null },
+        },
+        select: { userId: true },
       });
-      if (firstUser) {
-        targetUserId = firstUser.id;
+
+      if (activeTokenUser) {
+        targetUserId = activeTokenUser.userId;
       } else {
-        throw new BadRequestException('The customer has no active user to receive this notification.');
+        const firstUser =
+          (await this.prisma.user.findFirst({
+            where: { customerId: targetCustomerId, deletedAt: null, isActive: true },
+            select: { id: true },
+          })) ||
+          (await this.prisma.user.findFirst({
+            where: { customerId: targetCustomerId, deletedAt: null },
+            select: { id: true },
+          }));
+        if (firstUser) {
+          targetUserId = firstUser.id;
+        } else {
+          throw new BadRequestException('The customer has no active user to receive this notification.');
+        }
       }
     }
 
@@ -399,7 +416,15 @@ export class NotificationService {
 
     // 2. Fetch all active device tokens for the recipient(s)
     const tokenQuery: any = { isActive: true };
-    if (targetUserId) {
+    if (targetCustomerId && !userId) {
+      // Caller explicitly targeted a customer: retrieve all active tokens across devices of this customer
+      tokenQuery.user = { customerId: targetCustomerId, deletedAt: null };
+    } else if (targetUserId && targetCustomerId) {
+      tokenQuery.OR = [
+        { userId: targetUserId },
+        { user: { customerId: targetCustomerId, deletedAt: null } },
+      ];
+    } else if (targetUserId) {
       tokenQuery.userId = targetUserId;
     } else if (targetCustomerId) {
       tokenQuery.user = { customerId: targetCustomerId, deletedAt: null };
@@ -410,7 +435,8 @@ export class NotificationService {
       select: { token: true },
     });
 
-    const tokens = deviceRecords.map((d) => d.token);
+    const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
+    const tokens = Array.from(new Set(rawTokens));
 
     if (tokens.length === 0) {
       this.logger.warn(

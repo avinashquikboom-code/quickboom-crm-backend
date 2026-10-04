@@ -803,12 +803,12 @@ export class WorkService {
         });
     }
 
-    // Notification 5: Level / Work Approved via update
-    if (
-      this.notificationService &&
+    // Notification 5: Level / Work Approved via update & Customer Work Completed
+    const isStatusChangingToCompleted =
       existing.status !== WorkStatus.COMPLETED &&
-      dto.status === WorkStatus.COMPLETED
-    ) {
+      (dto.status === WorkStatus.COMPLETED || String(dto.status).toUpperCase() === 'COMPLETED');
+
+    if (this.notificationService && isStatusChangingToCompleted) {
       const staffUserIds = [result.assignedTo?.userId, result.editor?.userId].filter(Boolean) as number[];
       for (const uid of staffUserIds) {
         try {
@@ -842,20 +842,47 @@ export class WorkService {
         }
       }
 
-      // Notify customer that work is completed
+      // Notify customer that work is completed (with idempotency guard to prevent duplicates)
       try {
-        await this.notificationService.sendPushNotification({
-          customerId: result.customerId,
-          title: '✅ Work Completed',
-          body: `Your task "${result.title}" has been completed.`,
-          type: 'WORK_COMPLETED',
-          data: {
-            type: 'WORK',
-            workId: String(result.id),
-            status: 'COMPLETED',
+        const recentWorkNotifs = await this.prisma.notification.findMany({
+          where: {
+            customerId: result.customerId,
+            type: 'WORK_COMPLETED',
+            createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
           },
+          select: { data: true },
+          take: 10,
+          orderBy: { id: 'desc' },
         });
-        this.logger.log(`Dispatched WORK_COMPLETED push notification to customer #${result.customerId} for work #${result.id}`);
+        const alreadyNotifiedCustomer = recentWorkNotifs.some((n: any) => {
+          const d = (n.data as any) || {};
+          return String(d.workId) === String(result.id);
+        });
+
+        if (!alreadyNotifiedCustomer) {
+          const cleanTitle = result.title?.trim();
+          const notifBody = cleanTitle && cleanTitle.length > 0
+            ? `Your "${cleanTitle}" production work has been completed successfully.`
+            : 'Your production work has been completed successfully.';
+
+          await this.notificationService.sendPushNotification({
+            customerId: result.customerId,
+            title: 'Production Work Completed',
+            body: notifBody,
+            type: 'WORK_COMPLETED',
+            data: {
+              type: 'WORK_COMPLETED',
+              workId: String(result.id),
+              orderId: String(result.subscriptionId || ''),
+              purchaseId: String(result.planId || ''),
+              status: 'COMPLETED',
+              route: '/customer/work-requests',
+            },
+          });
+          this.logger.log(`Dispatched WORK_COMPLETED push notification to customer #${result.customerId} for work #${result.id}`);
+        } else {
+          this.logger.log(`[WORK_COMPLETED] Customer #${result.customerId} already notified for work #${result.id}. Skipping duplicate push.`);
+        }
       } catch (err: any) {
         this.logger.warn(`Failed to send WORK_COMPLETED push to customer #${result.customerId} (non-fatal): ${err?.message}`);
       }
