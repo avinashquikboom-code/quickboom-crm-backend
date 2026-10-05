@@ -169,6 +169,7 @@ authorization: ALLOWED (ADMIN)`);
         if (
           path.includes('/employees/me') ||
           path.includes('/employees/permissions/me') ||
+          path.includes('/permissions/me') ||
           path.includes('/lead-generation-limits/me')
         ) {
           this.logger.warn(
@@ -194,6 +195,7 @@ authorization: ALLOWED (ADMIN)`);
         if (
           path.includes('/employees/me') ||
           path.includes('/employees/permissions/me') ||
+          path.includes('/permissions/me') ||
           path.includes('/lead-generation-limits/me')
         ) {
           this.logger.warn(

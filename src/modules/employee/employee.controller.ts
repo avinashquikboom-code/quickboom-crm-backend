@@ -492,3 +492,22 @@ export class EmployeeController {
   }
 }
 
+@ApiTags('Permissions')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, CustomerGuard)
+@Controller('permissions')
+export class PermissionsController {
+  constructor(private readonly employeeService: EmployeeService) {}
+
+  @Get('me')
+  @ApiOperation({ summary: 'Get current authenticated employee canonical effective permissions' })
+  async getMyPermissions(@CurrentUser() user: any) {
+    const userId = user?.id || user?.userId;
+    if (!userId) {
+      throw new ForbiddenException('User session invalid');
+    }
+    return this.employeeService.getMyEffectivePermissions(userId);
+  }
+}
+
+

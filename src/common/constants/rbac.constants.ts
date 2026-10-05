@@ -306,6 +306,7 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
   // Full CRM Lead calling, stage change, follow-ups, visits capture.
   TELECALLER: [
     { module: "DASHBOARD", action: "VIEW" },
+    { module: "DASHBOARD", action: "ATTENDANCE_VIEW" },
     { module: "DASHBOARD", action: "CARD_STATS" },
     { module: "DASHBOARD", action: "CARD_LEADS" },
     { module: "LEADS", action: "VIEW" },
@@ -332,6 +333,9 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "DATA_CAPTURE", action: "VIEW" },
     { module: "DATA_CAPTURE", action: "CREATE" },
     { module: "DATA_CAPTURE", action: "EDIT" },
+    { module: "ATTENDANCE", action: "VIEW" },
+    { module: "ATTENDANCE", action: "PUNCH_IN" },
+    { module: "ATTENDANCE", action: "PUNCH_OUT" },
     { module: "LEAVE", action: "VIEW" },
     { module: "LEAVE", action: "CREATE" },
     { module: "NOTIFICATIONS", action: "VIEW" },

@@ -341,6 +341,16 @@ export class DesignationService {
       },
     });
 
+    if (dto.isActive !== undefined || dto.name) {
+      await this.prisma.role.updateMany({
+        where: { designationId: id },
+        data: {
+          name: dto.name ? dto.name.trim() : undefined,
+          deletedAt: dto.isActive !== undefined ? (dto.isActive ? null : new Date()) : undefined,
+        },
+      }).catch(() => null);
+    }
+
     return {
       id: updated.id,
       name: updated.name,
@@ -490,47 +500,56 @@ export class DesignationService {
       },
     });
 
-    if (role) return role;
+    if (role && role.rolePermissions && role.rolePermissions.length > 0) return role;
 
-    // Check if a role exists with matching name that has no designation attached
-    const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
-    const existingUnlinked = await this.prisma.role.findFirst({
-      where: {
-        OR: [
-          { name: { equals: designation.name, mode: 'insensitive' } },
-          { name: { equals: upperName, mode: 'insensitive' } },
-        ],
-        designationId: null,
-        name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-      },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
-
-    if (existingUnlinked) {
-      role = await this.prisma.role.update({
-        where: { id: existingUnlinked.id },
-        data: { designationId: designation.id },
+    if (!role) {
+      // Check if a role exists with matching name that has no designation attached
+      const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
+      const existingUnlinked = await this.prisma.role.findFirst({
+        where: {
+          OR: [
+            { name: { equals: designation.name, mode: 'insensitive' } },
+            { name: { equals: upperName, mode: 'insensitive' } },
+          ],
+          designationId: null,
+          name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
+        },
         include: {
           rolePermissions: { include: { permission: true } },
         },
       });
+
+      if (existingUnlinked) {
+        role = await this.prisma.role.update({
+          where: { id: existingUnlinked.id },
+          data: { designationId: designation.id },
+          include: {
+            rolePermissions: { include: { permission: true } },
+          },
+        });
+      } else {
+        // Otherwise create a new Role for this designation
+        role = await this.prisma.role.create({
+          data: {
+            name: designation.name,
+            description: designation.description || `${designation.name} role`,
+            type: RoleType.CUSTOM,
+            customerId: designation.customerId,
+            designationId: designation.id,
+          },
+          include: {
+            rolePermissions: { include: { permission: true } },
+          },
+        });
+      }
+    }
+
+    if (role.rolePermissions && role.rolePermissions.length > 0) {
       return role;
     }
 
-    // Otherwise create a new Role for this designation
-    const newRole = await this.prisma.role.create({
-      data: {
-        name: designation.name,
-        description: designation.description || `${designation.name} role`,
-        type: RoleType.CUSTOM,
-        customerId: designation.customerId,
-        designationId: designation.id,
-      },
-    });
-
     // Seed default permissions for this role
+    const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
     let defaultKeys: { module: string; action: string }[] = [];
     if (ROLE_PERMISSION_DEFAULTS[upperName]) {
       defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
@@ -565,13 +584,13 @@ export class DesignationService {
       }
       if (permRecord) {
         await this.prisma.rolePermission.create({
-          data: { roleId: newRole.id, permissionId: permRecord.id },
+          data: { roleId: role.id, permissionId: permRecord.id },
         }).catch(() => null);
       }
     }
 
     return this.prisma.role.findUnique({
-      where: { id: newRole.id },
+      where: { id: role.id },
       include: {
         rolePermissions: { include: { permission: true } },
       },
