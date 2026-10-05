@@ -1476,21 +1476,35 @@ export class EmployeeService {
       }
 
       // Assign functional designation-specific role if one exists, otherwise default to TELECALLER
-      const targetRoleName =
-        designation?.name && designation.name.toUpperCase() !== 'STAFF'
-          ? designation.name.trim()
-          : 'TELECALLER';
+      let assignedRole: any = null;
+      if (designation?.id) {
+        assignedRole = await tx.role.findFirst({
+          where: { designationId: designation.id, deletedAt: null },
+        });
+      }
+      if (!assignedRole) {
+        const targetRoleName =
+          designation?.name && designation.name.toUpperCase() !== 'STAFF'
+            ? designation.name.trim()
+            : 'TELECALLER';
 
-      let assignedRole = await tx.role.findFirst({
-        where: {
-          OR: [
-            { customerId: numCustomerId, name: { equals: targetRoleName, mode: 'insensitive' } },
-            { customerId: null, name: { equals: targetRoleName, mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-          name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-        },
-      });
+        assignedRole = await tx.role.findFirst({
+          where: {
+            OR: [
+              { customerId: numCustomerId, name: { equals: targetRoleName, mode: 'insensitive' } },
+              { customerId: null, name: { equals: targetRoleName, mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+          },
+        });
+        if (assignedRole && designation?.id && !assignedRole.designationId) {
+          await tx.role.update({
+            where: { id: assignedRole.id },
+            data: { designationId: designation.id },
+          }).catch(() => null);
+        }
+      }
 
       if (!assignedRole) {
         assignedRole = await tx.role.findFirst({
@@ -2213,16 +2227,33 @@ export class EmployeeService {
       // Synchronize UserRole with updated Designation
       if (updatedEmployee.userId && updatedEmployee.designation?.name) {
         const desigName = updatedEmployee.designation.name.trim();
-        let targetRole = await tx.role.findFirst({
-          where: {
-            OR: [
-              { customerId: targetCustId, name: { equals: desigName, mode: 'insensitive' } },
-              { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
-            ],
-            deletedAt: null,
-            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-          },
-        });
+        let targetRole: any = null;
+        if (updatedEmployee.designationId) {
+          targetRole = await tx.role.findFirst({
+            where: {
+              designationId: updatedEmployee.designationId,
+              deletedAt: null,
+            },
+          });
+        }
+        if (!targetRole) {
+          targetRole = await tx.role.findFirst({
+            where: {
+              OR: [
+                { customerId: targetCustId, name: { equals: desigName, mode: 'insensitive' } },
+                { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+              name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+            },
+          });
+          if (targetRole && updatedEmployee.designationId && !targetRole.designationId) {
+            await tx.role.update({
+              where: { id: targetRole.id },
+              data: { designationId: updatedEmployee.designationId },
+            }).catch(() => null);
+          }
+        }
         if (!targetRole) {
           targetRole = await tx.role.create({
             data: {
@@ -2230,6 +2261,7 @@ export class EmployeeService {
               description: `${desigName} role`,
               type: RoleType.CUSTOM,
               customerId: targetCustId,
+              designationId: updatedEmployee.designationId,
             },
           });
         }
@@ -3136,7 +3168,7 @@ export class EmployeeService {
     }
 
     if (effectiveDesigId) {
-      const linkedRole = await this.prisma.role.findFirst({
+      let linkedRole = await this.prisma.role.findFirst({
         where: { designationId: effectiveDesigId },
         include: {
           rolePermissions: {
@@ -3144,6 +3176,90 @@ export class EmployeeService {
           },
         },
       });
+
+      // Auto-heal Role linkage and default permissions for this designation if missing or empty
+      if (!linkedRole || !linkedRole.rolePermissions || linkedRole.rolePermissions.length === 0) {
+        try {
+          const upperName = (employee.designation?.name || desigName || 'TELECALLER').toUpperCase().replace(/\s+/g, '_');
+          if (!linkedRole) {
+            const existingUnlinked = await this.prisma.role.findFirst({
+              where: {
+                customerId: employee.customerId,
+                OR: [
+                  { name: { equals: employee.designation?.name || desigName, mode: 'insensitive' } },
+                  { name: { equals: upperName, mode: 'insensitive' } },
+                ],
+                designationId: null,
+                name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
+              },
+            });
+            if (existingUnlinked) {
+              linkedRole = await this.prisma.role.update({
+                where: { id: existingUnlinked.id },
+                data: { designationId: effectiveDesigId },
+                include: { rolePermissions: { include: { permission: true } } },
+              });
+            } else {
+              linkedRole = await this.prisma.role.create({
+                data: {
+                  name: employee.designation?.name || desigName,
+                  description: `${employee.designation?.name || desigName} role`,
+                  type: RoleType.CUSTOM,
+                  customerId: employee.customerId,
+                  designationId: effectiveDesigId,
+                },
+                include: { rolePermissions: { include: { permission: true } } },
+              });
+            }
+          }
+
+          if (linkedRole && (!linkedRole.rolePermissions || linkedRole.rolePermissions.length === 0)) {
+            let defaultKeys: { module: string; action: string }[] = [];
+            if (ROLE_PERMISSION_DEFAULTS[upperName]) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
+            } else if (upperName.includes('PRODUCTION')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
+            } else if (upperName.includes('DESIGNER')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
+            } else if (upperName.includes('EDITOR')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
+            } else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
+            } else if (upperName.includes('PHOTO')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
+            } else if (upperName.includes('SALES')) {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.SALES_EXECUTIVE || [];
+            } else {
+              defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
+            }
+
+            for (const p of defaultKeys) {
+              let permRecord = await this.prisma.permission.findUnique({
+                where: { module_action: { module: p.module, action: p.action } },
+              });
+              if (!permRecord) {
+                permRecord = await this.prisma.permission.create({
+                  data: {
+                    module: p.module,
+                    action: p.action,
+                    description: `${p.action} permission for ${p.module}`,
+                  },
+                });
+              }
+              if (permRecord) {
+                await this.prisma.rolePermission.create({
+                  data: { roleId: linkedRole.id, permissionId: permRecord.id },
+                }).catch(() => null);
+              }
+            }
+
+            linkedRole = await this.prisma.role.findUnique({
+              where: { id: linkedRole.id },
+              include: { rolePermissions: { include: { permission: true } } },
+            });
+          }
+        } catch (_) {}
+      }
 
       if (linkedRole && linkedRole.rolePermissions && linkedRole.rolePermissions.length > 0) {
         hasDbPermissions = true;

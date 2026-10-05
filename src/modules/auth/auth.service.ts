@@ -2767,7 +2767,7 @@ export class AuthService {
         for (const ov of overrides) {
           const modKey = (ov.moduleKey || '').trim();
           const ovType = String(ov.override).toUpperCase();
-          if (ovType === 'DEFAULT') continue;
+          if (ovType === 'DEFAULT' || ovType === 'INHERIT') continue;
 
           // Granular permission key check (e.g. employee.calendar.view)
           if (modKey.startsWith('employee.') || modKey.includes(':')) {
@@ -2787,7 +2787,7 @@ export class AuthService {
               );
               if (stdModPerms.length > 0) {
                 stdModPerms.forEach((p) => {
-                  permissionsMap.set(`${p.module}:${p.action}`, { module: p.module, action: p.action });
+                  permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, { module: p.module.toUpperCase(), action: p.action.toUpperCase() });
                 });
               } else {
                 permissionsMap.set(`${modUpper}:VIEW`, { module: modUpper, action: 'VIEW' });

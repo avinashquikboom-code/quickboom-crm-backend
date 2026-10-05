@@ -197,25 +197,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const permissionsMap = new Map();
 
-    // 1. First, load user's system roles permissions
-    (user.userRoles || []).forEach((ur) => {
-      if (ur.role?.rolePermissions) {
-        const rNameUpper = ur.role.name ? String(ur.role.name).toUpperCase() : '';
-        const rTypeUpper = ur.role.type ? String(ur.role.type).toUpperCase() : '';
-        if (user.employee && (rNameUpper === 'EMPLOYEE' || rTypeUpper === 'EMPLOYEE')) {
-          return;
+    // 1. First, load user's system roles permissions (for system admins or non-employees)
+    if (isSuperAdmin || isCustomerAdmin || isCompanyAdmin || !user.employee) {
+      (user.userRoles || []).forEach((ur) => {
+        if (ur.role?.rolePermissions) {
+          ur.role.rolePermissions.forEach((rp) => {
+            if (rp.permission) {
+              const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
+              permissionsMap.set(key, {
+                module: rp.permission.module.toUpperCase(),
+                action: rp.permission.action.toUpperCase(),
+              });
+            }
+          });
         }
-        ur.role.rolePermissions.forEach((rp) => {
-          if (rp.permission) {
-            const key = `${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`;
-            permissionsMap.set(key, {
-              module: rp.permission.module.toUpperCase(),
-              action: rp.permission.action.toUpperCase(),
-            });
-          }
-        });
-      }
-    });
+      });
+    }
 
     let designationPermissionCount = 0;
     let desigId = user.employee?.designationId;
@@ -239,7 +236,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     // 2. If user is an employee with a designation, load Designation Role permissions (Single Source of Truth)
     if (desigId) {
-      const desigRole = await this.prisma.role.findFirst({
+      let desigRole = await this.prisma.role.findFirst({
         where: {
           designationId: desigId,
           OR: [
@@ -255,6 +252,80 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         },
         orderBy: { customerId: 'desc' },
       });
+
+      if (!desigRole || !desigRole.rolePermissions || desigRole.rolePermissions.length === 0) {
+        try {
+          const upperName = (user.employee?.designation?.name || desigName || 'TELECALLER').toUpperCase().replace(/\s+/g, '_');
+          if (!desigRole) {
+            const existingUnlinked = await this.prisma.role.findFirst({
+              where: {
+                customerId: user.employee?.customerId,
+                OR: [
+                  { name: { equals: user.employee?.designation?.name || desigName, mode: 'insensitive' } },
+                  { name: { equals: upperName, mode: 'insensitive' } },
+                ],
+                designationId: null,
+                name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
+              },
+            });
+            if (existingUnlinked) {
+              desigRole = await this.prisma.role.update({
+                where: { id: existingUnlinked.id },
+                data: { designationId: desigId },
+                include: { rolePermissions: { include: { permission: true } } },
+              });
+            } else {
+              desigRole = await this.prisma.role.create({
+                data: {
+                  name: user.employee?.designation?.name || desigName,
+                  description: `${user.employee?.designation?.name || desigName} role`,
+                  type: RoleType.CUSTOM,
+                  customerId: user.employee?.customerId,
+                  designationId: desigId,
+                },
+                include: { rolePermissions: { include: { permission: true } } },
+              });
+            }
+          }
+
+          if (desigRole && (!desigRole.rolePermissions || desigRole.rolePermissions.length === 0)) {
+            let defaultKeys: { module: string; action: string }[] = [];
+            if (ROLE_PERMISSION_DEFAULTS[upperName]) defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
+            else if (upperName.includes('PRODUCTION')) defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
+            else if (upperName.includes('DESIGNER')) defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
+            else if (upperName.includes('EDITOR')) defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
+            else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
+            else if (upperName.includes('PHOTO')) defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
+            else if (upperName.includes('SALES')) defaultKeys = ROLE_PERMISSION_DEFAULTS.SALES_EXECUTIVE || [];
+            else defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
+
+            for (const p of defaultKeys) {
+              let permRecord = await this.prisma.permission.findUnique({
+                where: { module_action: { module: p.module, action: p.action } },
+              });
+              if (!permRecord) {
+                permRecord = await this.prisma.permission.create({
+                  data: {
+                    module: p.module,
+                    action: p.action,
+                    description: `${p.action} permission for ${p.module}`,
+                  },
+                });
+              }
+              if (permRecord) {
+                await this.prisma.rolePermission.create({
+                  data: { roleId: desigRole.id, permissionId: permRecord.id },
+                }).catch(() => null);
+              }
+            }
+
+            desigRole = await this.prisma.role.findUnique({
+              where: { id: desigRole.id },
+              include: { rolePermissions: { include: { permission: true } } },
+            });
+          }
+        } catch (_) {}
+      }
 
       if (desigRole?.rolePermissions && desigRole.rolePermissions.length > 0) {
         designationPermissionCount = desigRole.rolePermissions.length;
