@@ -91,15 +91,21 @@ jobs:
              export AWS_DEFAULT_REGION='${{ secrets.AWS_REGION || 'ap-south-1' }}'
              export AWS_REGION='${{ secrets.AWS_REGION || 'ap-south-1' }}'
              cd '${{ env.DEPLOY_DIR }}'
+             sed -i "s|546941058055|211107604014|g" config.sh backend.sh 2>/dev/null || true
              if [ -f config.sh ]; then
                chmod +x ./*.sh
                sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
+               sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
                sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' config.sh
+               sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' config.sh
                ./backend.sh
              elif [ -f deploy/docker/config.sh ]; then
+               sed -i "s|546941058055|211107604014|g" deploy/docker/config.sh deploy/docker/backend.sh 2>/dev/null || true
                chmod +x deploy/docker/*.sh
                sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
+               sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
                sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' deploy/docker/config.sh
+               sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' deploy/docker/config.sh
                bash deploy/docker/backend.sh
              fi"
 
