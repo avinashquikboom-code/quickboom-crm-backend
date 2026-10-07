@@ -327,10 +327,11 @@ export class AuthService {
     if (!dto.employeeType || !['COMPANY', 'FREELANCER'].includes(dto.employeeType)) {
       throw new BadRequestException('Please select employee type.');
     }
-    if (!dto.password || dto.password.length < 6) {
+    const effectivePassword = (dto.password && dto.password.trim()) || '123456';
+    if (effectivePassword.length < 6) {
       throw new BadRequestException('Password must be at least 6 characters');
     }
-    if (dto.confirmPassword && dto.password !== dto.confirmPassword) {
+    if (dto.password && dto.confirmPassword && dto.password !== dto.confirmPassword) {
       throw new BadRequestException('Passwords do not match');
     }
 
@@ -380,7 +381,7 @@ export class AuthService {
       throw new ConflictException('An account with these details already exists.');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const hashedPassword = await bcrypt.hash(effectivePassword, 10);
 
     let createdResult: any;
     try {

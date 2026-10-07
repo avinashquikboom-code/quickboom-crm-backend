@@ -612,9 +612,26 @@ export class TaskService {
   async getMyTasks(user: any, customerId: number | string | undefined, query: { status?: string; priority?: string; search?: string }) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
 
+    // Support team leaders seeing tasks of members in their led teams
+    const ledTeams = await this.prisma.team.findMany({
+      where: { leaderId: employee.id },
+      include: { members: { select: { employeeId: true } } },
+    });
+    const ledMemberEmployeeIds = ledTeams
+      .flatMap((t) => t.members.map((m) => m.employeeId))
+      .filter((id): id is number => typeof id === 'number' && id > 0);
+
+    const orOwnership: any[] = [
+      { employeeId: employee.id },
+      ...(employee.userId ? [{ assignedToId: employee.userId }] : []),
+    ];
+    if (ledMemberEmployeeIds.length > 0) {
+      orOwnership.push({ employeeId: { in: ledMemberEmployeeIds } });
+    }
+
     const where: any = {
       customerId: employee.customerId,
-      employeeId: employee.id,
+      OR: orOwnership,
       deletedAt: null,
     };
 
@@ -631,17 +648,50 @@ export class TaskService {
     }
 
     if (query.search) {
-      where.OR = [
+      const searchCond = [
         { title: { contains: query.search, mode: 'insensitive' } },
         { taskNumber: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
+        { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+        { customer: { companyName: { contains: query.search, mode: 'insensitive' } } },
       ];
+      where.AND = [{ OR: searchCond }];
     }
 
     const tasks = await this.prisma.task.findMany({
       where,
       orderBy: { dueAt: 'asc' },
       include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            companyName: true,
+            phone: true,
+            email: true,
+            city: true,
+            address: true,
+            isActive: true,
+            customerType: true,
+          },
+        },
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            designation: { select: { id: true, name: true } },
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
         department: { select: { id: true, name: true } },
         designation: { select: { id: true, name: true } },
         proofs: { orderBy: { uploadedAt: 'desc' } },
@@ -660,14 +710,48 @@ export class TaskService {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const numId = Number(id);
 
+    const ledTeams = await this.prisma.team.findMany({
+      where: { leaderId: employee.id },
+      include: { members: { select: { employeeId: true } } },
+    });
+    const ledMemberEmployeeIds = ledTeams
+      .flatMap((t) => t.members.map((m) => m.employeeId))
+      .filter((empId): empId is number => typeof empId === 'number' && empId > 0);
+
+    const orOwnership: any[] = [
+      { employeeId: employee.id },
+      ...(employee.userId ? [{ assignedToId: employee.userId }] : []),
+    ];
+    if (ledMemberEmployeeIds.length > 0) {
+      orOwnership.push({ employeeId: { in: ledMemberEmployeeIds } });
+    }
+
     const task = await this.prisma.task.findFirst({
       where: {
         id: numId,
         customerId: employee.customerId,
-        employeeId: employee.id,
+        OR: orOwnership,
         deletedAt: null,
       },
       include: {
+        customer: true,
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            designation: { select: { id: true, name: true } },
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
         department: true,
         designation: true,
         proofs: { orderBy: { uploadedAt: 'desc' } },
