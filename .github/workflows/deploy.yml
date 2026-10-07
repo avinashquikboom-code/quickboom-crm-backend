@@ -94,10 +94,12 @@ jobs:
              if [ -f config.sh ]; then
                chmod +x ./*.sh
                sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
+               sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' config.sh
                ./backend.sh
              elif [ -f deploy/docker/config.sh ]; then
                chmod +x deploy/docker/*.sh
                sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
+               sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' deploy/docker/config.sh
                bash deploy/docker/backend.sh
              fi"
 
