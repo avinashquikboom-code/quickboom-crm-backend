@@ -98,6 +98,7 @@ handledBy: NestJS`);
       'x-customer-id',
       'x-tenant-id',
       'x-client-type',
+      'x-portal-type',
       'x-refresh-token',
       // Browser-generated preflight meta-headers
       'Access-Control-Request-Method',

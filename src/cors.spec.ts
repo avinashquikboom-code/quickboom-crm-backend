@@ -65,6 +65,7 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         'x-customer-id',
         'x-tenant-id',
         'x-client-type',
+        'x-portal-type',
         'x-refresh-token',
         'Access-Control-Request-Method',
         'Access-Control-Request-Headers',
@@ -172,11 +173,12 @@ describe('NestJS Production CORS & Preflight Verification Suite', () => {
         .options('/api/v1/employees')
         .set('Origin', 'https://admin.qbapp.online')
         .set('Access-Control-Request-Method', 'GET')
-        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type');
+        .set('Access-Control-Request-Headers', 'authorization,content-type,x-customer-id,x-client-type,x-portal-type');
 
       expect(res.status).toBe(204);
       expect(res.headers['access-control-allow-origin']).toBe('https://admin.qbapp.online');
       expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(String(res.headers['access-control-allow-headers']).toLowerCase()).toContain('x-portal-type');
     });
 
     it('handles OPTIONS /api/v1/shifts preflight from https://admin.qbapp.online', async () => {
