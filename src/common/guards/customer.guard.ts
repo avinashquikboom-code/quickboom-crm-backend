@@ -30,15 +30,6 @@ export class CustomerGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    if (user.role === 'EMPLOYEE') {
-      const portalType = request.headers?.['x-portal-type'] || request.headers?.['X-Portal-Type'];
-      const clientType = request.headers?.['x-client-type'] || request.headers?.['X-Client-Type'];
-      const isEmployeeWeb = portalType === 'employee-web' || (clientType === 'admin' && user.role === 'EMPLOYEE');
-      if (isEmployeeWeb && !user.isBpo) {
-        throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
-      }
-    }
-
     const headerCustomerId = request.headers['x-customer-id'] || request.headers['x-target-customer-id'];
     const queryCustomerId = request.query?.customerId || request.query?.clientId;
     const requestedIdentifier = queryCustomerId || headerCustomerId;

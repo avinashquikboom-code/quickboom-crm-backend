@@ -63,13 +63,6 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Access denied');
     }
 
-    const portalType = req.headers?.['x-portal-type'] || req.headers?.['X-Portal-Type'];
-    const clientType = req.headers?.['x-client-type'] || req.headers?.['X-Client-Type'];
-    const isEmployeeWeb = portalType === 'employee-web' || (clientType === 'admin' && user.role === 'EMPLOYEE');
-    if (isEmployeeWeb && user.role === 'EMPLOYEE' && !user.isBpo) {
-      throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
-    }
-
     const userRoles: string[] = Array.isArray(user.roles)
       ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
       : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);

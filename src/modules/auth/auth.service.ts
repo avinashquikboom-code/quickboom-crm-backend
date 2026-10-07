@@ -1238,14 +1238,6 @@ export class AuthService {
         throw new UnauthorizedException('Your company account is suspended.');
       }
 
-      // Check Employee Website access: ONLY BPO employees can access the Employee Website
-      const isWebEmployeeLogin = upperExpectedRole === 'EMPLOYEE_WEB' || upperExpectedRole === 'EMPLOYEE';
-      if (isWebEmployeeLogin) {
-        const isBpo = await this.checkIsBpoEmployee(user.employee);
-        if (!isBpo) {
-          throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
-        }
-      }
     } else if (rawApp === 'mobile') {
       const allowedRoles = ['CUSTOMER', 'CUSTOMER_ADMIN', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
       if (!allowedRoles.includes(userRole)) {
@@ -1960,10 +1952,6 @@ export class AuthService {
       const isCrmEligible = this.determineCrmEligibility(emp);
       isBpo = await this.checkIsBpoEmployee(emp);
 
-      if (((dto as any).appType || '').trim().toUpperCase() === 'EMPLOYEE_WEB' && !isBpo) {
-        throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
-      }
-
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -2250,10 +2238,6 @@ export class AuthService {
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       const isCrmEligible = this.determineCrmEligibility(emp);
       isBpo = await this.checkIsBpoEmployee(emp);
-
-      if (((dto as any).appType || '').trim().toUpperCase() === 'EMPLOYEE_WEB' && !isBpo) {
-        throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
-      }
 
       employeeData = {
         id: emp.id,
