@@ -78,6 +78,22 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Pin image tag and deploy API container
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
+            "set -euo pipefail
+             cd '${{ env.DEPLOY_DIR }}'
+             if [ -f deploy/docker/config.sh ]; then
+               sed -i 's/^API_IMAGE_TAG=.*/API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}/' deploy/docker/config.sh
+             fi
+             if [ -f deploy/docker/backend.sh ]; then
+               bash deploy/docker/backend.sh
+             else
+               echo 'deploy/docker/backend.sh not found under ${{ env.DEPLOY_DIR }}'
+               exit 1
+             fi"
+
       - name: Deploy summary
         if: always()
         run: |
