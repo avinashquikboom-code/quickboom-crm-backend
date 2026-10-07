@@ -2056,7 +2056,9 @@ status: ${item.status}`);
             city: true,
             state: true,
             assignedEmployeeId: true,
-            assignedEmployee: true,
+            assignedEmployeeRel: {
+              select: { id: true, firstName: true, lastName: true },
+            },
             assignedTeamId: true,
             assignedTeam: {
               select: { id: true, name: true },
@@ -2092,7 +2094,16 @@ status: ${item.status}`);
           },
         },
         tasks: {
-          select: { id: true, title: true, status: true, stepOrder: true, assignedToId: true, notes: true, createdAt: true },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            stepOrder: true,
+            assignedToId: true,
+            notes: true,
+            createdAt: true,
+            assignedTo: { select: { id: true, firstName: true, lastName: true } },
+          },
           orderBy: { stepOrder: 'asc' },
         },
       },
@@ -2186,29 +2197,23 @@ status: ${item.status}`);
         .filter(Boolean)
         .join(', ') || null;
 
-      const assignedEmpList: string[] = [];
-      if (w.assignedTo) {
-        const atName = `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim();
-        if (atName) assignedEmpList.push(atName);
+      const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
+        `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
+
+      const taskAssignee = (w.tasks || []).map((task) => task.assignedTo).find((person) => personName(person));
+      const workAssignee = w.assignedTo || taskAssignee || null;
+      let assignedEmpName = personName(workAssignee);
+      if (!assignedEmpName) {
+        assignedEmpName = personName(w.editor);
       }
-      if (w.editor) {
-        const edName = `${w.editor.firstName} ${w.editor.lastName}`.trim();
-        if (edName && !assignedEmpList.includes(edName)) assignedEmpList.push(edName);
-      }
-      if (w.team?.members) {
-        for (const tm of w.team.members) {
-          if (tm.employee) {
-            const memberName = `${tm.employee.firstName} ${tm.employee.lastName}`.trim();
-            if (memberName && !assignedEmpList.includes(memberName)) assignedEmpList.push(memberName);
-          }
-        }
+      if (!assignedEmpName && !w.team && !w.customer?.assignedTeam) {
+        assignedEmpName = personName(w.customer?.assignedEmployeeRel);
       }
 
-      const assignedEmpName = w.assignedTo
-        ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
-        : (w.editor
-            ? `${w.editor.firstName} ${w.editor.lastName}`.trim()
-            : (w.customer?.assignedEmployee || (empRecord && w.customer?.assignedEmployeeId === numEmployeeId ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : 'Staff')));
+      const assignedEmpList: string[] = [];
+      if (assignedEmpName) assignedEmpList.push(assignedEmpName);
+      const editorName = personName(w.editor);
+      if (editorName && !assignedEmpList.includes(editorName)) assignedEmpList.push(editorName);
 
       const smHandler = w.customer?.socialMediaHandlers?.[0];
       const platform = smHandler?.platform || 'Instagram';
@@ -2249,7 +2254,7 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedToId: w.assignedToId || (w.customer?.assignedEmployeeId === numEmployeeId ? numEmployeeId : null),
+        assignedToId: w.assignedToId || taskAssignee?.id || (!w.team && !w.customer?.assignedTeam ? w.customer?.assignedEmployeeRel?.id || null : null),
         assignedEmployee: assignedEmpName,
         assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
