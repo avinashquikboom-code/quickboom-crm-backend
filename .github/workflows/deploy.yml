@@ -80,8 +80,11 @@ jobs:
 
       - name: Pin image tag and deploy API container
         run: |
-          ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+          TARGET_USER=$(echo "${{ secrets.EC2_USER }}" | tr -d '[:space:]')
+          TARGET_HOST=$(echo "${{ secrets.EC2_HOST }}" | tr -d '[:space:]')
+          ssh-keyscan -H "${TARGET_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "${TARGET_USER}@${TARGET_HOST}" \
             "set -e
              cd '${{ env.DEPLOY_DIR }}'
              if [ -f config.sh ]; then
