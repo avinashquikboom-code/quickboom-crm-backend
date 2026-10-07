@@ -80,18 +80,18 @@ jobs:
 
       - name: Pin image tag and deploy API container
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER || 'ubuntu' }}@${{ secrets.EC2_HOST }}" \
-            "set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "set -e
              cd '${{ env.DEPLOY_DIR }}'
-             if [ -f deploy/docker/config.sh ]; then
-               sed -i 's/^API_IMAGE_TAG=.*/API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}/' deploy/docker/config.sh
-             fi
-             if [ -f deploy/docker/backend.sh ]; then
+             if [ -f config.sh ]; then
+               chmod +x ./*.sh
+               sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
+               ./backend.sh
+             elif [ -f deploy/docker/config.sh ]; then
+               chmod +x deploy/docker/*.sh
+               sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
                bash deploy/docker/backend.sh
-             else
-               echo 'deploy/docker/backend.sh not found under ${{ env.DEPLOY_DIR }}'
-               exit 1
              fi"
 
       - name: Deploy summary
