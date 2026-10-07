@@ -136,9 +136,9 @@ export class AuthController {
   @Public()
   @Post('login/employee')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Employee mobile application login alias' })
+  @ApiOperation({ summary: 'Employee web portal login' })
   async loginEmployee(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'EMPLOYEE');
+    return this.authService.login(dto, dto.appType || 'EMPLOYEE_WEB');
   }
 
   @Public()

@@ -588,7 +588,7 @@ export class AuthService {
     }
 
     const upperExpectedRole = (appType || '').trim().toUpperCase();
-    const isEmployeeLogin = ['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole);
+    const isEmployeeLogin = ['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE', 'EMPLOYEE_WEB'].includes(upperExpectedRole);
 
     const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
@@ -651,6 +651,8 @@ export class AuthService {
             include: {
               department: true,
               designation: true,
+              teamMembers: { include: { team: true } },
+              ledTeams: true,
             },
           },
           userRoles: {
@@ -676,6 +678,8 @@ export class AuthService {
                   include: {
                     department: true,
                     designation: true,
+                    teamMembers: { include: { team: true } },
+                    ledTeams: true,
                   },
                 },
                 userRoles: {
@@ -781,6 +785,8 @@ export class AuthService {
             include: {
               department: true,
               designation: true,
+              teamMembers: { include: { team: true } },
+              ledTeams: true,
             },
           },
           userRoles: {
@@ -806,6 +812,8 @@ export class AuthService {
                 include: {
                   department: true,
                   designation: true,
+                  teamMembers: { include: { team: true } },
+                  ledTeams: true,
                 },
               },
               userRoles: {
@@ -1103,7 +1111,7 @@ export class AuthService {
     const rawApp = (appType || '').trim().toLowerCase();
 
     // If logging into Employee portal and has active employee record, ensure userRole is EMPLOYEE
-    if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole) && user.employee && user.employee.status === 'ACTIVE') {
+    if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE', 'EMPLOYEE_WEB'].includes(upperExpectedRole) && user.employee && user.employee.status === 'ACTIVE') {
       if (!isSuperAdminRole) {
         userRole = 'EMPLOYEE';
         userRoleType = RoleType.CUSTOM;
@@ -1197,15 +1205,15 @@ export class AuthService {
           }
         }
       }
-    } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole)) {
+    } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE', 'EMPLOYEE_WEB'].includes(upperExpectedRole)) {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
       }
       if (userRole === 'CUSTOMER_ADMIN') {
-        throw new ForbiddenException('Customer Admin accounts cannot log in through the employee mobile portal. Please use the customer login.');
+        throw new ForbiddenException('Customer Admin accounts cannot log in through the employee portal. Please use the customer login.');
       }
       if (userRole === 'COMPANY_ADMIN') {
-        throw new ForbiddenException('Company Admin accounts cannot log in through the employee mobile portal.');
+        throw new ForbiddenException('Company Admin accounts cannot log in through the employee portal.');
       }
       if (userRole !== 'EMPLOYEE') {
         throw new ForbiddenException('These credentials are not registered as an Employee account.');
@@ -1227,6 +1235,15 @@ export class AuthService {
       }
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your company account is suspended.');
+      }
+
+      // Check Employee Website access: ONLY BPO employees can access the Employee Website
+      const isWebEmployeeLogin = upperExpectedRole === 'EMPLOYEE_WEB' || upperExpectedRole === 'EMPLOYEE';
+      if (isWebEmployeeLogin) {
+        const isBpo = await this.checkIsBpoEmployee(user.employee);
+        if (!isBpo) {
+          throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
+        }
       }
     } else if (rawApp === 'mobile') {
       const allowedRoles = ['CUSTOMER', 'CUSTOMER_ADMIN', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
@@ -1327,15 +1344,6 @@ export class AuthService {
       user.customerId = effectiveCustomerId;
     }
 
-    const tokens = await this.generateTokens(
-      user.id,
-      effectiveCustomerId,
-      user.email,
-      userRole,
-      userRoleType,
-      roleId,
-    );
-
     let emp: any = null;
     let employeeData: any = null;
     if (userRole === 'EMPLOYEE') {
@@ -1349,6 +1357,7 @@ export class AuthService {
       const targetNumericId = emp.id || user.id;
       const qbCode = emp.employeeCode || this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       const isCrmEligible = this.determineCrmEligibility(emp);
+      const isBpo = await this.checkIsBpoEmployee(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -1367,8 +1376,19 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        isBpo,
       };
     }
+
+    const tokens = await this.generateTokens(
+      user.id,
+      effectiveCustomerId,
+      user.email,
+      userRole,
+      userRoleType,
+      roleId,
+      Boolean(employeeData?.isBpo),
+    );
 
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
@@ -1409,6 +1429,7 @@ export class AuthService {
       userData.employeeId = qbCode;
       userData.employeeCode = qbCode;
       userData.employee = employeeData;
+      userData.isBpo = Boolean(employeeData?.isBpo);
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
@@ -1419,6 +1440,7 @@ export class AuthService {
     userData.permissionKeys = rbacData.permissionKeys;
     userData.isCrmEligible = rbacData.isCrmEligible ?? false;
     userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
+    userData.isBpo = Boolean(employeeData?.isBpo);
 
     const customerPayload = user.customer ? {
       id: user.customer.id,
@@ -1927,15 +1949,20 @@ export class AuthService {
       ? ['EMPLOYEE', RoleType.CUSTOM]
       : user.userRoles.map((ur) => ur.role.type);
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
-
     let emp: any = null;
     let employeeData: any = null;
+    let isBpo = false;
     if (userRole === 'EMPLOYEE') {
       emp = await this.ensureEmployee(user);
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       const isCrmEligible = this.determineCrmEligibility(emp);
+      isBpo = await this.checkIsBpoEmployee(emp);
+
+      if (((dto as any).appType || '').trim().toUpperCase() === 'EMPLOYEE_WEB' && !isBpo) {
+        throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
+      }
+
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -1954,8 +1981,11 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        isBpo,
       };
     }
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole, RoleType.CUSTOM, null, isBpo);
 
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
@@ -2210,15 +2240,20 @@ export class AuthService {
       ? ['EMPLOYEE', RoleType.CUSTOM]
       : user.userRoles.map((ur) => ur.role.type);
 
-    const tokens = await this.generateTokens(user.id, user.customerId, user.email);
-
     let emp: any = null;
     let employeeData: any = null;
+    let isBpo = false;
     if (userRole === 'EMPLOYEE') {
       emp = await this.ensureEmployee(user);
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       const isCrmEligible = this.determineCrmEligibility(emp);
+      isBpo = await this.checkIsBpoEmployee(emp);
+
+      if (((dto as any).appType || '').trim().toUpperCase() === 'EMPLOYEE_WEB' && !isBpo) {
+        throw new ForbiddenException('Employee Workspace is available only for BPO employees.');
+      }
+
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -2237,8 +2272,11 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        isBpo,
       };
     }
+
+    const tokens = await this.generateTokens(user.id, user.customerId, user.email, userRole, RoleType.CUSTOM, null, isBpo);
 
     const targetNumericId = userRole === 'EMPLOYEE'
       ? (emp?.id || user.id)
@@ -2262,6 +2300,7 @@ export class AuthService {
       userData.employeeId = qbCode;
       userData.employeeCode = qbCode;
       userData.employee = employeeData;
+      userData.isBpo = Boolean(employeeData?.isBpo);
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
@@ -2342,6 +2381,7 @@ export class AuthService {
       const targetNumericId = emp?.id || user.id;
       const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
       const isCrmEligible = this.determineCrmEligibility(emp);
+      const isBpo = await this.checkIsBpoEmployee(emp);
       employeeData = {
         id: emp.id,
         employeeId: qbCode,
@@ -2360,6 +2400,7 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        isBpo,
       };
     }
 
@@ -2387,6 +2428,7 @@ export class AuthService {
       profileData.employee = employeeData;
       profileData.employeeId = qbCode;
       profileData.employeeCode = qbCode;
+      profileData.isBpo = Boolean(employeeData?.isBpo);
     }
 
     const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
@@ -2910,6 +2952,78 @@ export class AuthService {
       isCrmEligible,
       crmMobileAccess: isCrmEligible,
     };
+  }
+
+  public isBpoEmployee(emp: any): boolean {
+    if (!emp) return false;
+
+    // 1. Team membership where team name or description contains 'BPO'
+    if (
+      emp.teamMembers?.some(
+        (tm: any) =>
+          (tm.team?.name || '').toUpperCase().includes('BPO') ||
+          (tm.team?.description || '').toUpperCase().includes('BPO'),
+      )
+    ) {
+      return true;
+    }
+
+    // 2. Leader of a team containing 'BPO'
+    if (
+      emp.ledTeams?.some(
+        (t: any) =>
+          (t.name || '').toUpperCase().includes('BPO') ||
+          (t.description || '').toUpperCase().includes('BPO'),
+      )
+    ) {
+      return true;
+    }
+
+    // 3. Department name or code contains 'BPO'
+    const deptName = (emp.department?.name || '').toUpperCase();
+    const deptCode = (emp.department?.code || '').toUpperCase();
+    if (deptName.includes('BPO') || deptCode.includes('BPO')) {
+      return true;
+    }
+
+    // 4. Designation name or code contains 'BPO' or 'TELE' (Telecaller / Telesales)
+    const desigName = (emp.designation?.name || '').toUpperCase();
+    const desigCode = (emp.designation?.code || '').toUpperCase();
+    if (
+      desigName.includes('BPO') ||
+      desigCode.includes('BPO') ||
+      desigName.includes('TELE') ||
+      desigCode.includes('TELE')
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  public async checkIsBpoEmployee(emp: any): Promise<boolean> {
+    if (!emp) return false;
+    if (this.isBpoEmployee(emp)) return true;
+
+    if (emp.id && (!emp.teamMembers || !emp.ledTeams || !emp.department)) {
+      try {
+        const fullEmp = await this.prisma.employee.findUnique({
+          where: { id: emp.id },
+          include: {
+            department: true,
+            designation: true,
+            teamMembers: { include: { team: true } },
+            ledTeams: true,
+          },
+        });
+        if (fullEmp) {
+          return this.isBpoEmployee(fullEmp);
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to query employee teams/department for BPO check: ${err.message}`);
+      }
+    }
+    return false;
   }
 
   private determineCrmEligibility(emp: any): boolean {
@@ -3729,6 +3843,7 @@ export class AuthService {
     role?: string,
     roleType?: string,
     roleId?: number | null,
+    isBpo?: boolean,
   ) {
     const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
     const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
@@ -3741,6 +3856,7 @@ export class AuthService {
       role: resolvedRole,
       roleType: resolvedRoleType,
       roleId: roleId ?? null,
+      isBpo: Boolean(isBpo),
     };
 
     const accessExpiresIn =

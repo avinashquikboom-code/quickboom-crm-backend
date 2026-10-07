@@ -100,6 +100,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           include: {
             employeeModuleOverrides: true,
             designation: true,
+            department: true,
+            teamMembers: { include: { team: true } },
+            ledTeams: true,
           },
         },
         customer: true,
@@ -660,6 +663,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee || primaryRole === 'CUSTOMER');
     }
 
+    const isBpo = user.employee ? this.checkIsBpo(user.employee) : false;
+
     return {
       id: user.id,
       email: user.email,
@@ -674,6 +679,45 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       permissions: Array.from(permissionsMap.values()),
       employee: user.employee || null,
       customer: user.customer || null,
+      isBpo,
     };
+  }
+
+  private checkIsBpo(emp: any): boolean {
+    if (!emp) return false;
+    if (
+      emp.teamMembers?.some(
+        (tm: any) =>
+          (tm.team?.name || '').toUpperCase().includes('BPO') ||
+          (tm.team?.description || '').toUpperCase().includes('BPO'),
+      )
+    ) {
+      return true;
+    }
+    if (
+      emp.ledTeams?.some(
+        (t: any) =>
+          (t.name || '').toUpperCase().includes('BPO') ||
+          (t.description || '').toUpperCase().includes('BPO'),
+      )
+    ) {
+      return true;
+    }
+    const deptName = (emp.department?.name || '').toUpperCase();
+    const deptCode = (emp.department?.code || '').toUpperCase();
+    if (deptName.includes('BPO') || deptCode.includes('BPO')) {
+      return true;
+    }
+    const desigName = (emp.designation?.name || '').toUpperCase();
+    const desigCode = (emp.designation?.code || '').toUpperCase();
+    if (
+      desigName.includes('BPO') ||
+      desigCode.includes('BPO') ||
+      desigName.includes('TELE') ||
+      desigCode.includes('TELE')
+    ) {
+      return true;
+    }
+    return false;
   }
 }
