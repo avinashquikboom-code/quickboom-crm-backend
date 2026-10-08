@@ -13,11 +13,10 @@ import { InvoiceModule } from '../invoice/invoice.module';
 import { InstallmentService } from './installment.service';
 import { CommissionModule } from '../commission/commission.module';
 import { CouponModule } from './coupon.module';
-import { CouponController } from './coupon.controller';
 
 @Module({
   imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule, CommissionModule, CouponModule],
-  controllers: [SubscriptionController, CustomPlanController, CouponController],
+  controllers: [SubscriptionController, CustomPlanController],
   providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
   exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
 })
