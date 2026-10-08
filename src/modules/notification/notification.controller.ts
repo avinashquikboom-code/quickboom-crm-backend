@@ -12,12 +12,15 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Header,
+  StreamableFile,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { NotificationService } from './notification.service';
 import { NotificationSchedulerService } from './notification-scheduler.service';
+import { EmployeeCommunicationService, EmployeeChannel } from './employee-communication.service';
 import { S3Service } from '../s3/s3.service';
 import {
   RegisterDeviceTokenDto,
@@ -45,6 +48,7 @@ export class NotificationController {
   constructor(
     private readonly notificationService: NotificationService,
     private readonly notificationSchedulerService: NotificationSchedulerService,
+    private readonly employeeCommunication: EmployeeCommunicationService,
     private readonly s3Service: S3Service,
   ) {}
 
@@ -327,6 +331,98 @@ export class NotificationController {
     }
     const targetCustomerId = customerId || 1;
     return this.notificationService.deleteNotification(id, targetCustomerId, userId);
+  }
+
+  @Get('employee-communications')
+  @ApiOperation({ summary: 'Employee email and WhatsApp delivery history' })
+  async employeeCommunications(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('employeeId') employeeId?: string,
+  ) {
+    const id = Number(employeeId);
+    if (!id) throw new BadRequestException('employeeId is required');
+    return this.employeeCommunication.listHistory(id, customerId ? Number(customerId) : undefined);
+  }
+
+  @Post('employee-communications/:id/resend')
+  @ApiOperation({ summary: 'Resend one employee email or WhatsApp delivery' })
+  async resendEmployeeCommunication(
+    @Param('id') id: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: { channel?: EmployeeChannel },
+  ) {
+    return this.employeeCommunication.resend(Number(id), body?.channel, customerId ? Number(customerId) : undefined);
+  }
+
+  @Post('employee-communications/salary-slips/:slipId/send')
+  @ApiOperation({ summary: 'Send a finalized salary slip by email and WhatsApp' })
+  async sendSalarySlip(
+    @Param('slipId') slipId: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: { channel?: EmployeeChannel },
+  ) {
+    return this.employeeCommunication.notifySalarySlip({
+      slipId: Number(slipId),
+      force: true,
+      channels: body?.channel || 'BOTH',
+      customerId: customerId ? Number(customerId) : undefined,
+    });
+  }
+
+  @Get('employee-communications/salary-slips/:slipId/pdf')
+  @ApiOperation({ summary: 'Download a salary slip PDF' })
+  @Header('Content-Type', 'application/pdf')
+  async downloadSalarySlip(
+    @Param('slipId') slipId: string,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    const file = await this.employeeCommunication.salarySlipFile(Number(slipId), customerId ? Number(customerId) : undefined);
+    if (!file) throw new BadRequestException('Salary slip not found');
+    return new StreamableFile(file.buffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${file.filename}"`,
+    });
+  }
+
+  @Post('employee-communications/attendance/generate')
+  @ApiOperation({ summary: 'Generate and send one employee monthly attendance report' })
+  async generateAttendanceReport(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: { employeeId: number; year: number; month: number; channel?: EmployeeChannel; force?: boolean },
+  ) {
+    if (!body?.employeeId || !body?.year || !body?.month) {
+      throw new BadRequestException('employeeId, year, and month are required');
+    }
+    return this.employeeCommunication.notifyAttendanceReport({
+      employeeId: Number(body.employeeId),
+      year: Number(body.year),
+      month: Number(body.month),
+      force: Boolean(body.force),
+      channels: body.channel || 'BOTH',
+      customerId: customerId ? Number(customerId) : undefined,
+    });
+  }
+
+  @Get('employee-communications/attendance/pdf')
+  @ApiOperation({ summary: 'Download a monthly attendance report PDF' })
+  @Header('Content-Type', 'application/pdf')
+  async downloadAttendanceReport(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('employeeId') employeeId?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
+  ) {
+    const file = await this.employeeCommunication.attendanceFile(
+      Number(employeeId),
+      Number(year),
+      Number(month),
+      customerId ? Number(customerId) : undefined,
+    );
+    if (!file) throw new BadRequestException('Attendance report not found');
+    return new StreamableFile(file.buffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${file.filename}"`,
+    });
   }
 
   @Patch('read-all')

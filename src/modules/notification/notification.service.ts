@@ -6,6 +6,7 @@ import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { S3Service } from '../s3/s3.service';
 import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto, UpdateOfferCampaignDto } from './dto/device-token.dto';
+import { EmployeeCommunicationService } from './employee-communication.service';
 
 export interface SendPushOptions {
   userId?: number;
@@ -27,6 +28,7 @@ export class NotificationService {
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
   ) {}
 
   async resolveCustomerEmail(customerId: number): Promise<{ email: string | null; customerName: string; companyName: string }> {
@@ -976,6 +978,17 @@ export class NotificationService {
         select: { userId: true, customerId: true, firstName: true },
       });
 
+      this.employeeCommunication?.notifySchedule({
+        employeeId,
+        workId: Number(work.id),
+        title: work.title || 'Scheduled Activity',
+        customerName: work.customer?.companyName || work.customer?.name || null,
+        date: work.scheduledDate,
+        time: work.scheduledTime,
+        notes: work.notes,
+        assignedBy: isReassignment ? 'Reassigned' : 'QB Suite',
+      }).catch((err: any) => this.logger.warn(`[SCHEDULE_ASSIGNED] ${err?.message}`));
+
       if (!emp || !emp.userId) {
         this.logger.warn(`Cannot send work assignment notification: employee #${employeeId} has no linked userId`);
         return null;
@@ -1390,6 +1403,12 @@ export class NotificationService {
         },
         orderBy: { createdAt: 'desc' },
       });
+      if (slipId) {
+        this.employeeCommunication?.notifySalarySlip({ slipId: Number(slipId) }).catch((err: any) => {
+          this.logger.warn(`[SALARY_SLIP] ${err?.message}`);
+        });
+      }
+
       if (duplicate) {
         const data = (duplicate.data as any) || {};
         if (String(data.employeeId) === String(numEmployeeId) && data.payPeriod === payPeriod) {
@@ -1524,9 +1543,12 @@ export class NotificationService {
     taskName: string;
     newDate?: Date | string | null;
     newTime?: string | null;
+    previousDate?: string | null;
+    previousTime?: string | null;
     customerName?: string | null;
+    cancelled?: boolean;
   }) {
-    const { customerId, employeeId, workId, taskName, newDate, newTime, customerName } = params;
+    const { customerId, employeeId, workId, taskName, newDate, newTime, previousDate, previousTime, customerName, cancelled } = params;
     const numCustomerId = Number(customerId);
     const numEmployeeId = Number(employeeId);
     const numWorkId = Number(workId);
@@ -1560,6 +1582,18 @@ export class NotificationService {
           return { skippedDuplicate: true };
         }
       }
+
+      this.employeeCommunication?.notifySchedule({
+        employeeId: numEmployeeId,
+        workId: numWorkId,
+        title: taskName,
+        customerName,
+        date: newDate,
+        time: timeStr,
+        previousDate: previousDate || null,
+        previousTime: previousTime || null,
+        cancelled: Boolean(cancelled),
+      }).catch((err: any) => this.logger.warn(`[SCHEDULE_UPDATED] ${err?.message}`));
 
       // 2. Resolve employee userId
       const emp = await this.prisma.employee.findUnique({

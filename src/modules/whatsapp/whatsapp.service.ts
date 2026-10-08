@@ -308,6 +308,11 @@ export class WhatsappService {
       'calendar_scheduled',
       'plan_expiry_reminder',
       'hello_world',
+      'employee_task_assigned',
+      'employee_schedule_assigned',
+      'employee_schedule_updated',
+      'employee_salary_slip',
+      'employee_attendance_report',
     ];
     const isSystemTemplate = knownSystemTemplates.includes(resolvedTemplateName);
     const inMemoryStageTpl = this.getStageTemplate(resolvedTemplateName);
@@ -2232,6 +2237,20 @@ export class WhatsappService {
       }
     } catch (commErr: any) {
       this.logger.debug(`[WHATSAPP_STATUS_COMM_HISTORY_ERR] ${commErr?.message}`);
+    }
+
+    if (status === 'delivered' || status === 'read' || isFailed) {
+      try {
+        await this.prisma.emailLog.updateMany({
+          where: { providerMessageId: messageId, channel: 'WHATSAPP' },
+          data: {
+            status: isFailed ? 'FAILED' : 'DELIVERED',
+            errorMessage: isFailed ? (errorMessage || 'WhatsApp delivery failed') : null,
+          },
+        });
+      } catch (logErr: any) {
+        this.logger.debug(`[WHATSAPP_STATUS_EMAIL_LOG] ${logErr?.message}`);
+      }
     }
   }
 

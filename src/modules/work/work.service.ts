@@ -786,8 +786,11 @@ export class WorkService {
     const isRescheduled = (dto.scheduledDate !== undefined && newDateStr !== oldDateStr) ||
                           (dto.scheduledTime !== undefined && newTimeStr !== oldTimeStr);
 
-    if (this.notificationService && isRescheduled && result.assignedToId) {
-      const customerName = result.customer?.companyName || result.customer?.name || null;
+    const customerName = result.customer?.companyName || result.customer?.name || null;
+    const wasCancelled = existing.status !== WorkStatus.CANCELLED && result.status === WorkStatus.CANCELLED;
+    const assigneeChanged = dto.assignedToId !== undefined && Number(dto.assignedToId) !== Number(existing.assignedToId);
+
+    if (this.notificationService && result.assignedToId && (isRescheduled || wasCancelled)) {
       this.notificationService
         .sendTaskRescheduledNotification({
           customerId: result.customerId,
@@ -796,10 +799,19 @@ export class WorkService {
           taskName: result.title || 'Task',
           newDate: result.scheduledDate,
           newTime: result.scheduledTime,
+          previousDate: oldDateStr,
+          previousTime: oldTimeStr,
           customerName,
+          cancelled: wasCancelled,
         })
         .catch((err) => {
           this.logger.warn(`Failed to dispatch TASK_RESCHEDULED push: ${err?.message}`);
+        });
+    } else if (this.notificationService && assigneeChanged && result.assignedToId) {
+      this.notificationService
+        .sendWorkAssignmentNotification(result.assignedToId, result, true)
+        .catch((err) => {
+          this.logger.warn(`Failed to dispatch reassignment notification: ${err?.message}`);
         });
     }
 
@@ -1214,6 +1226,25 @@ export class WorkService {
       scheduleId: existing.id,
       planId: existing.subscriptionId,
     });
+
+    if (this.notificationService && existing.assignedToId) {
+      this.notificationService
+        .sendTaskRescheduledNotification({
+          customerId: existing.customerId,
+          employeeId: existing.assignedToId,
+          workId: existing.id,
+          taskName: existing.title || 'Task',
+          newDate: existing.scheduledDate,
+          newTime: existing.scheduledTime,
+          previousDate: existing.scheduledDate ? new Date(existing.scheduledDate).toISOString().split('T')[0] : '',
+          previousTime: existing.scheduledTime,
+          customerName: existing.customer?.companyName || existing.customer?.name || null,
+          cancelled: true,
+        })
+        .catch((err) => {
+          this.logger.warn(`Failed to dispatch schedule cancellation: ${err?.message}`);
+        });
+    }
 
     return result;
   }

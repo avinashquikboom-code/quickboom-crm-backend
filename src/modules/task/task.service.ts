@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -14,12 +15,16 @@ import {
   ReviewTaskDto,
 } from './dto/task.dto';
 import { TaskPriority, TaskStatus, WorkStatus } from '@prisma/client';
+import { EmployeeCommunicationService } from '../notification/employee-communication.service';
 
 @Injectable()
 export class TaskService {
   private readonly logger = new Logger(TaskService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
+  ) {}
 
   private parseDueDateTime(dateStr?: string, timeStr?: string): { dueDate: Date | null; dueAt: Date | null } {
     if (!dateStr) return { dueDate: null, dueAt: null };
@@ -241,7 +246,7 @@ export class TaskService {
     }
 
     // Execute in atomic transaction
-    return this.prisma.$transaction(async (tx) => {
+    const task = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.create({
         data: {
           customerId: numCustomerId,
@@ -319,6 +324,24 @@ export class TaskService {
 
       return task;
     });
+
+    if (task.employeeId) {
+      const assignedBy = task.createdBy
+        ? `${task.createdBy.firstName || ''} ${task.createdBy.lastName || ''}`.trim()
+        : 'QB Suite';
+      this.employeeCommunication?.notifyTaskAssigned({
+        employeeId: task.employeeId,
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        assignedBy: assignedBy || 'QB Suite',
+        status: task.status,
+      }).catch((err: any) => this.logger.warn(`[TASK_ASSIGNED] ${err?.message}`));
+    }
+
+    return task;
   }
 
   async findAll(
@@ -549,7 +572,7 @@ export class TaskService {
     const prevEmployeeName = task.employee ? `${task.employee.firstName} ${task.employee.lastName}` : 'Unassigned';
     const newEmployeeName = `${newEmployee.firstName} ${newEmployee.lastName}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const updatedTask = await this.prisma.$transaction(async (tx) => {
       const updatedTask = await tx.task.update({
         where: { id: numId },
         data: {
@@ -596,6 +619,19 @@ export class TaskService {
 
       return updatedTask;
     });
+
+    this.employeeCommunication?.notifyTaskAssigned({
+      employeeId: newEmployee.id,
+      taskId: updatedTask.id,
+      title: task.title,
+      description: task.description,
+      priority: String(task.priority),
+      dueDate: task.dueDate,
+      assignedBy: 'QB Suite',
+      status: updatedTask.status,
+    }).catch((err: any) => this.logger.warn(`[TASK_ASSIGNED] ${err?.message}`));
+
+    return updatedTask;
   }
 
   async startTask(customerId: number | string, id: number | string, performedById: number | string) {

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
+import { EmployeeCommunicationService } from './employee-communication.service';
 import { SubscriptionStatus, WorkStatus, LeadStatus } from '@prisma/client';
 
 /**
@@ -36,6 +37,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly employeeCommunication: EmployeeCommunicationService,
   ) {}
 
   onModuleInit() {
@@ -88,10 +90,14 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
     const scheduledOffersCount = await this.notificationService.processScheduledCampaigns();
     const followUpRemindersCount = await this.checkLeadFollowUpReminders();
+    const attendanceReports = await this.employeeCommunication.sendCompletedMonthReports().catch((err: any) => {
+      this.logger.warn(`[ATTENDANCE_REPORT] ${err?.message}`);
+      return null;
+    });
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Attendance Reports: ${attendanceReports && !('skipped' in attendanceReports) ? attendanceReports.attempted : 0} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
