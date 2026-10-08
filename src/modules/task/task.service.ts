@@ -793,10 +793,10 @@ export class TaskService {
       hasProof: t.proofs && t.proofs.length > 0,
     }));
 
-    const works = await this.findMyProductionWorks(employee.id, teamIds, query);
+    const works = await this.findMyProductionWorks(employee.id, employee.customerId, teamIds, query);
     const combined = [...hrTasks, ...works];
     this.logger.log(
-      `[TASK_API] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId ?? 'none'} returned=${combined.length} hrTasks=${hrTasks.length} productionWorks=${works.length} status=${query.status || 'ALL'}`,
+      `[TASK_API] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId ?? 'none'} teamIds=${teamIds.join(',') || 'none'} returned=${combined.length} hrTasks=${hrTasks.length} productionWorks=${works.length} status=${query.status || 'ALL'}`,
     );
     return combined;
   }
@@ -823,11 +823,35 @@ export class TaskService {
     return status === filter;
   }
 
+  private async productionTeamIdsForEmployee(agencyCustomerId: number, teamIds: number[]) {
+    if (!agencyCustomerId || teamIds.length === 0) return [];
+    const teams = await this.prisma.team.findMany({
+      where: {
+        id: { in: teamIds },
+        customerId: agencyCustomerId,
+        isActive: true,
+        OR: [
+          { name: { contains: 'PRODUCTION', mode: 'insensitive' } },
+          { description: { contains: 'PRODUCTION', mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, name: true, description: true },
+    });
+    return teams
+      .filter((team) => {
+        const label = `${team.name || ''} ${team.description || ''}`.toUpperCase();
+        return label.includes('PRODUCTION') && !label.includes('BPO');
+      })
+      .map((team) => team.id);
+  }
+
   private async findMyProductionWorks(
     employeeId: number,
+    agencyCustomerId: number,
     teamIds: number[],
     query: { status?: string; priority?: string; search?: string },
   ) {
+    const productionTeamIds = await this.productionTeamIdsForEmployee(agencyCustomerId, teamIds);
     const workOr: any[] = [
       { assignedToId: employeeId },
       { editorId: employeeId },
@@ -842,6 +866,18 @@ export class TaskService {
         teamId: null,
         customer: { assignedTeamId: { in: teamIds } },
       });
+    }
+    if (productionTeamIds.length > 0) {
+      const onProductionTeam = {
+        OR: [
+          { teamMembers: { some: { teamId: { in: productionTeamIds } } } },
+          { ledTeams: { some: { id: { in: productionTeamIds } } } },
+        ],
+      };
+      // A Production teammate's work stays visible even when Work.teamId was left empty.
+      workOr.push({ customer: { assignedTeamId: { in: productionTeamIds } } });
+      workOr.push({ assignedTo: onProductionTeam });
+      workOr.push({ editor: onProductionTeam });
     }
 
     const works = await this.prisma.work.findMany({
