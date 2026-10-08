@@ -3449,7 +3449,12 @@ assignedEmployee: ${item.assignedEmployee}`);
     if (!this.notificationService) return;
 
     try {
-      const customer = work.customer;
+      const customer = work.customer || (work.customerId
+        ? await this.prisma.customer.findFirst({
+            where: { id: work.customerId },
+            select: { name: true, companyName: true, deletedAt: true, isActive: true },
+          })
+        : null);
       if (!work.customerId || !customer) {
         this.logger.warn(
           `[WORK_COMPLETED] Work #${work.id} has no customer relation. Skipping customer notification.`,
@@ -3463,16 +3468,19 @@ assignedEmployee: ${item.assignedEmployee}`);
         return;
       }
 
-      const alreadyNotified = await this.prisma.notification.findFirst({
+      const recent = await this.prisma.notification.findMany({
         where: {
           customerId: work.customerId,
           type: 'WORK_COMPLETED',
-          data: {
-            path: ['workId'],
-            equals: String(work.id),
-          },
         },
-        select: { id: true },
+        select: { data: true },
+        take: 50,
+        orderBy: { id: 'desc' },
+      });
+      const alreadyNotified = recent.some((row: any) => {
+        const data = row?.data;
+        const workId = data && typeof data === 'object' ? data.workId : undefined;
+        return String(workId ?? '') === String(work.id);
       });
       if (alreadyNotified) {
         this.logger.log(
