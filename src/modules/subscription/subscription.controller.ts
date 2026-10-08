@@ -340,7 +340,12 @@ export class SubscriptionController {
     try {
       const plan = await this.planAccessService.getEffectivePlan(customerId);
       const upcomingPlan = plan?.upcomingPlan || null;
-      const isCurrentActive = Boolean(plan && plan.isActive && plan.status === 'ACTIVE' && !plan.isExpired && plan.subscriptionId);
+      const isCurrentActive = Boolean(
+        plan &&
+        plan.subscriptionId &&
+        !plan.isExpired &&
+        String(plan.status) === 'ACTIVE',
+      );
       // Purchased subscription whose startDate is still in the future is not
       // entitlement-active, but it is the customer's current plan record and must
       // be returned in `data` so Plans/Calendar share this same source.
@@ -368,11 +373,9 @@ export class SubscriptionController {
             planName: plan.planName,
             code: plan.planCode,
             planCode: plan.planCode,
-            status: isCurrentActive
-              ? (plan.status || 'ACTIVE')
-              : (String(plan.status) === 'PENDING'
-                  ? 'PENDING'
-                  : 'UPCOMING'),
+            status: String(plan.status) === 'PENDING'
+              ? 'PENDING'
+              : (String(plan.status) === 'ACTIVE' ? 'ACTIVE' : 'UPCOMING'),
             customerId: String(plan.customerId || customerId),
             workspaceId: String(plan.customerId || customerId),
             billingCycle: plan.billingCycle || 'MONTHLY',
@@ -424,12 +427,10 @@ export class SubscriptionController {
           : 'No active subscription found',
       };
     } catch (err: any) {
-      return {
-        success: true,
-        data: null,
-        effectivePlan: null,
-        message: err?.message || 'No active subscription found',
-      };
+      this.logger.warn(
+        `[EFFECTIVE_PLAN_API] Failed for customerId=${customerId}: ${err?.message || 'unknown error'}`,
+      );
+      throw err;
     }
   }
 

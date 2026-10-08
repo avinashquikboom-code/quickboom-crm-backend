@@ -127,6 +127,36 @@ export class PlanAccessService {
     });
     this.logger.debug(`[PLAN_QUERY] subscription lookup: ${Date.now() - subStart}ms (count=${subs.length})`);
 
+    // A completed offline payment must not stay PENDING. Promote only when a
+    // successful payment already exists for that same subscription.
+    const pendingIds = subs
+      .filter((s) => s.status === SubscriptionStatus.PENDING)
+      .map((s) => s.id);
+    if (pendingIds.length > 0 && this.prisma.paymentHistory?.findMany) {
+      const paid = await this.prisma.paymentHistory.findMany({
+        where: {
+          subscriptionId: { in: pendingIds },
+          status: { in: ['SUCCESS', 'PAID'] },
+          deletedAt: null,
+        },
+        select: { subscriptionId: true },
+      });
+      const paidIds = new Set(
+        paid.map((p) => p.subscriptionId).filter((id): id is number => id != null),
+      );
+      for (const subRow of subs) {
+        if (subRow.status !== SubscriptionStatus.PENDING || !paidIds.has(subRow.id)) continue;
+        await this.prisma.customerSubscription.update({
+          where: { id: subRow.id },
+          data: { status: SubscriptionStatus.ACTIVE },
+        });
+        subRow.status = SubscriptionStatus.ACTIVE;
+        this.logger.log(
+          `[OFFLINE_SUBSCRIPTION_REPAIR] customerId=${numCustomerId} subscriptionId=${subRow.id} planId=${subRow.planId} previousStatus=PENDING newStatus=ACTIVE`,
+        );
+      }
+    }
+
     const now = new Date();
     // Allow small 60-second grace buffer for clock skew on newly activated subscriptions
     const clockGraceTime = new Date(now.getTime() + 60 * 1000);
