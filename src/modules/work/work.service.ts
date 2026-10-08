@@ -1711,27 +1711,18 @@ returnedSchedules: 0`);
         assignedToId: w.assignedToId,
         wonByName,
         assignedEmployee: isLocked
-          ? '—'
+          ? 'Unassigned'
           : (w.assignedTo
-              ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
-              : (w.editor
-                  ? `${w.editor.firstName} ${w.editor.lastName}`.trim()
-                  : (() => {
-                      const t = (w.title || w.workType || '').toLowerCase();
-                      if (t.includes('shoot') || t.includes('photo')) return 'Photographer';
-                      if (t.includes('edit')) return 'Video Editor';
-                      if (t.includes('post design') || t.includes('story design') || t.includes('design')) return 'Graphic Designer';
-                      if (t.includes('post') || t.includes('publish')) return 'Social Media Manager';
-                      return 'Creative Lead';
-                    })())),
+              ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Unassigned'
+              : 'Unassigned'),
         assignedToName: isLocked
-          ? '—'
+          ? 'Unassigned'
           : (w.assignedTo
-              ? `${w.assignedTo.firstName} ${w.assignedTo.lastName}`.trim()
-              : 'Photographer'),
+              ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Unassigned'
+              : 'Unassigned'),
         editorId: w.editorId,
-        editorName: isLocked ? '—' : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : 'Video Editor'),
-        team: w.team?.name || 'SSM Team A',
+        editorName: isLocked ? null : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null),
+        team: w.team?.name || null,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
           : (w.description || w.notes || `${w.title} deliverable`),
@@ -2445,8 +2436,8 @@ status: ${item.status}`);
       if (!assignedEmpName) {
         assignedEmpName = personName(w.editor);
       }
-      if (!assignedEmpName && !w.team && !w.customer?.assignedTeam) {
-        assignedEmpName = personName(w.customer?.assignedEmployeeRel);
+      if (!assignedEmpName) {
+        assignedEmpName = 'Unassigned';
       }
 
       const assignedEmpList: string[] = [];
@@ -3006,11 +2997,9 @@ assignedEmployee: ${item.assignedEmployee}`);
 
         const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
 
-        const assignedEmpId =
-          targetSub.customer?.assignedEmployeeId ||
-          (assignedTeamId
-            ? this.resolveTeamMemberForActivity(act, teamMembers, teamLeaderId, totalCreated)
-            : null);
+        const assignedEmpId = assignedTeamId
+          ? this.resolveTeamMemberForActivity(act, teamMembers, teamLeaderId, totalCreated)
+          : null;
 
         const createdWork = await tx.work.create({
           data: {
