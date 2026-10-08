@@ -186,6 +186,11 @@ export class VerifyOtpDto {
   @IsString()
   mobile?: string;
 
+  @ApiPropertyOptional({ example: 'EMP-004', description: 'Registered employee ID or code' })
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
   @ApiProperty({ example: '123456', description: '6-digit OTP verification code' })
   @IsString()
   @IsNotEmpty({ message: 'OTP is required' })
@@ -208,6 +213,14 @@ export class SendOtpDto {
   @IsOptional()
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email?: string;
+
+  @ApiPropertyOptional({
+    example: 'EMP-004',
+    description: 'Registered employee ID or code',
+  })
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
 }
 
 export class VerifyMobileOtpDto {

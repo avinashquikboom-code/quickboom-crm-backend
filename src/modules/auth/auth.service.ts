@@ -1751,13 +1751,51 @@ export class AuthService {
    * Dispatches a 6-digit OTP to an Indian mobile number via MSG91.
    */
   async sendOtp(dto: SendOtpDto) {
-    if (dto.email && !dto.mobile) {
+    if (dto.email && !dto.mobile && !dto.employeeId) {
       return this.sendEmailOtp({ email: dto.email });
+    }
+
+    if (dto.employeeId && !dto.mobile && !dto.email) {
+      const rawId = dto.employeeId.trim();
+      const user = await this.prisma.user.findFirst({
+        where: {
+          employee: {
+            OR: [
+              { employeeCode: { equals: rawId, mode: 'insensitive' } },
+              ...(isNaN(Number(rawId)) ? [] : [{ id: Number(rawId) }]),
+            ],
+          },
+          deletedAt: null,
+        },
+        include: { employee: true },
+      });
+      if (!user) {
+        throw new BadRequestException('No employee account found matching this Employee ID.');
+      }
+      const targetPhone = user.phone || user.employee?.phone;
+      const targetEmail = user.email || user.employee?.email;
+      if (targetPhone) {
+        const res = await this.sendOtp({ mobile: targetPhone });
+        return {
+          ...res,
+          destination: this.msg91Service.maskMobile(targetPhone),
+          destinationType: 'mobile',
+        };
+      } else if (targetEmail) {
+        const res = await this.sendEmailOtp({ email: targetEmail });
+        return {
+          ...res,
+          destination: this.maskEmail(targetEmail),
+          destinationType: 'email',
+        };
+      } else {
+        throw new BadRequestException('No registered mobile or email found for this employee.');
+      }
     }
 
     const rawMobile = dto.mobile?.trim();
     if (!rawMobile) {
-      throw new BadRequestException('Mobile number or email address is required');
+      throw new BadRequestException('Mobile number, email address, or Employee ID is required');
     }
 
     const normalizedFullMobile = this.msg91Service.normalizeMobile(rawMobile);
@@ -1820,6 +1858,8 @@ export class AuthService {
       statusCode: 200,
       success: true,
       message: 'OTP sent successfully to registered mobile number',
+      destination: maskedMobile,
+      destinationType: 'mobile',
     };
   }
 
@@ -1827,8 +1867,36 @@ export class AuthService {
    * Verifies OTP code and logs the user in, issuing JWT tokens and roles.
    */
   async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto) {
-    if ((dto as any).email && !(dto as any).mobile) {
+    if ((dto as any).email && !(dto as any).mobile && !(dto as any).employeeId) {
       return this.verifyEmailOtp(dto as any);
+    }
+
+    if ((dto as any).employeeId && !(dto as any).mobile && !(dto as any).email) {
+      const rawId = (dto as any).employeeId.trim();
+      const user = await this.prisma.user.findFirst({
+        where: {
+          employee: {
+            OR: [
+              { employeeCode: { equals: rawId, mode: 'insensitive' } },
+              ...(isNaN(Number(rawId)) ? [] : [{ id: Number(rawId) }]),
+            ],
+          },
+          deletedAt: null,
+        },
+        include: { employee: true },
+      });
+      if (!user) {
+        throw new BadRequestException('No employee account found matching this Employee ID.');
+      }
+      const targetPhone = user.phone || user.employee?.phone;
+      const targetEmail = user.email || user.employee?.email;
+      if (targetPhone) {
+        return this.verifyOtp({ mobile: targetPhone, otp: dto.otp });
+      } else if (targetEmail) {
+        return this.verifyEmailOtp({ email: targetEmail, otp: dto.otp });
+      } else {
+        throw new BadRequestException('No registered mobile or email found for this employee.');
+      }
     }
 
     const rawMobile = (dto as any).mobile?.trim();
@@ -2115,11 +2183,23 @@ export class AuthService {
 
     this.logger.log(`[EMAIL_OTP_SENT] Verification OTP dispatched via SMTP to userId: ${user.id} (${user.email})`);
 
+    const maskedEmail = this.maskEmail(user.email);
     return {
       statusCode: 200,
       success: true,
       message: 'OTP sent successfully to registered email address',
+      destination: maskedEmail,
+      destinationType: 'email',
     };
+  }
+
+  private maskEmail(email: string): string {
+    const parts = (email || '').split('@');
+    if (parts.length !== 2) return email;
+    const name = parts[0];
+    const domain = parts[1];
+    if (name.length <= 1) return `*@${domain}`;
+    return `${name[0]}***@${domain}`;
   }
 
   /**
