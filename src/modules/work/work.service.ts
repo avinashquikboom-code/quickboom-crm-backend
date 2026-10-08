@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
-import { WorkType, WorkStatus, TaskStatus, SubscriptionStatus, SubscriptionBillingCycle } from '@prisma/client';
+import { Prisma, WorkType, WorkStatus, TaskStatus, SubscriptionStatus, SubscriptionBillingCycle } from '@prisma/client';
 import {
   extractDeliverableQuotas,
   extractReelCount,
@@ -2386,17 +2386,17 @@ assignedEmployee: ${item.assignedEmployee}`);
       if (w.customerId && w.customerName) {
         customerMap.set(Number(w.customerId), w.customerName);
       }
+      const onProductionTeam = String(w.assignedTeam || '').toUpperCase().includes('PRODUCTION');
+      if (!onProductionTeam) continue;
       if (w.assignedToId && w.assignedEmployee) {
         employeeMap.set(Number(w.assignedToId), w.assignedEmployee);
       }
       if (w.editorId && w.editorName) {
         employeeMap.set(Number(w.editorId), w.editorName);
       }
-      if (w.assignedTeam) {
-        const tId = Number(w.teamId || 0);
-        if (tId > 0) {
-          teamMap.set(tId, w.assignedTeam);
-        }
+      const tId = Number(w.teamId || 0);
+      if (tId > 0 && w.assignedTeam) {
+        teamMap.set(tId, w.assignedTeam);
       }
     }
 
@@ -2407,11 +2407,26 @@ assignedEmployee: ${item.assignedEmployee}`);
     });
 
     if (emp?.customerId) {
-      const allEmps = await this.prisma.employee.findMany({
-        where: { customerId: emp.customerId, status: 'ACTIVE' },
+      const productionTeamMatch = {
+        isActive: true,
+        customerId: emp.customerId,
+        OR: [
+          { name: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
+          { description: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
+        ],
+      };
+      const productionEmployees = await this.prisma.employee.findMany({
+        where: {
+          customerId: emp.customerId,
+          status: 'ACTIVE',
+          OR: [
+            { teamMembers: { some: { team: productionTeamMatch } } },
+            { ledTeams: { some: productionTeamMatch } },
+          ],
+        },
         select: { id: true, firstName: true, lastName: true },
       });
-      for (const e of allEmps) {
+      for (const e of productionEmployees) {
         const name = `${e.firstName} ${e.lastName}`.trim();
         if (name && !employeeMap.has(e.id)) {
           employeeMap.set(e.id, name);
@@ -2419,7 +2434,7 @@ assignedEmployee: ${item.assignedEmployee}`);
       }
 
       const allTeams = await this.prisma.team.findMany({
-        where: { customerId: emp.customerId, isActive: true },
+        where: productionTeamMatch,
         select: { id: true, name: true },
       });
       for (const t of allTeams) {
