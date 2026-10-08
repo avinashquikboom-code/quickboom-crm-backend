@@ -839,6 +839,45 @@ export class TaskService {
     return status === filter;
   }
 
+  private isBpoTeamLabel(name?: string | null, description?: string | null) {
+    const label = `${name || ''} ${description || ''}`.toUpperCase();
+    return label.includes('BPO') && !label.includes('PRODUCTION');
+  }
+
+  private async employeeOnBpoTeam(teamIds: number[]) {
+    if (teamIds.length === 0) return false;
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: teamIds }, isActive: true },
+      select: { name: true, description: true },
+    });
+    return teams.some((team) => this.isBpoTeamLabel(team.name, team.description));
+  }
+
+  /** Production members see the calendar work set. Work that belongs only to a BPO team stays with BPO. Direct assignment is always visible. */
+  private productionViewerMaySeeWork(
+    work: any,
+    employeeId: number,
+    assigneeIds: number[],
+    productionTeamIds: number[],
+    viewerOnBpo: boolean,
+  ) {
+    if (assigneeIds.includes(Number(work.assignedToId)) || Number(work.editorId) === employeeId) {
+      return true;
+    }
+    if (productionTeamIds.length === 0) return true;
+    const workTeamBpo = this.isBpoTeamLabel(work.team?.name, work.team?.description);
+    const customerTeamBpo = this.isBpoTeamLabel(
+      work.customer?.assignedTeam?.name,
+      work.customer?.assignedTeam?.description,
+    );
+    if (workTeamBpo || customerTeamBpo) return viewerOnBpo;
+    const assigneeTeams = (work.assignedTo?.teamMembers || []).map((member: any) => member.team).filter(Boolean);
+    if (assigneeTeams.length > 0 && assigneeTeams.every((team: any) => this.isBpoTeamLabel(team.name, team.description))) {
+      return viewerOnBpo;
+    }
+    return true;
+  }
+
   /**
    * Works already returned by GET /works/employee/calendar for this employee.
    * Only Production-team members receive that calendar set. BPO membership
@@ -865,6 +904,7 @@ export class TaskService {
     const search = query.search?.trim().toLowerCase();
     return items
       .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
+      .filter((item) => !this.isBpoTeamLabel(item?.team || item?.assignedTeam, null))
       .filter((item) => {
         if (!search) return true;
         const title = String(item?.title || '').toLowerCase();
@@ -903,6 +943,7 @@ export class TaskService {
           dueDate: item.scheduledAt || item.scheduledDate || null,
           scheduledDate: item.scheduledDate || null,
           scheduledTime: item.scheduledTime || null,
+          workType: item.workType || item.type || item.activityType || null,
           taskNumber: `WRK-${id}`,
           employee: assignedName
             ? { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') }
@@ -977,6 +1018,18 @@ export class TaskService {
       workOr.push({ customer: { assignedTeamId: { in: productionTeamIds } } });
       workOr.push({ assignedTo: onProductionTeam });
       workOr.push({ editor: onProductionTeam });
+      // Customer Calendar lists every Work for the agency's customers. A Production
+      // team member is authorized to see that same set, except work that belongs
+      // only to a BPO team.
+      if (agencyCustomerId) {
+        workOr.push(
+          { customerId: agencyCustomerId },
+          { customer: { assignedTeam: { customerId: agencyCustomerId } } },
+          { team: { customerId: agencyCustomerId } },
+          { assignedTo: { customerId: agencyCustomerId } },
+          { editor: { customerId: agencyCustomerId } },
+        );
+      }
     }
 
     const works = await this.prisma.work.findMany({
@@ -997,6 +1050,7 @@ export class TaskService {
             address: true,
             isActive: true,
             customerType: true,
+            assignedTeam: { select: { id: true, name: true, description: true } },
           },
         },
         assignedTo: {
@@ -1006,14 +1060,19 @@ export class TaskService {
             lastName: true,
             employeeCode: true,
             designation: { select: { id: true, name: true } },
+            teamMembers: { select: { team: { select: { id: true, name: true, description: true } } } },
           },
         },
-        team: { select: { id: true, name: true } },
+        team: { select: { id: true, name: true, description: true } },
       },
     });
 
+    const viewerOnBpo = await this.employeeOnBpoTeam(teamIds);
     const search = query.search?.trim().toLowerCase();
     return works
+      .filter((work) =>
+        this.productionViewerMaySeeWork(work, employeeId, assigneeIds, productionTeamIds, viewerOnBpo),
+      )
       .filter((work) => this.productionWorkMatchesStatus(work.status, query.status))
       .filter((work) => {
         if (query.priority && query.priority !== 'ALL' && String(work.priority) !== query.priority) {
@@ -1035,17 +1094,44 @@ export class TaskService {
         id: work.id,
         source: 'WORK',
         customerId: work.customerId,
-        customer: work.customer,
+        customer: work.customer
+          ? {
+              id: work.customer.id,
+              name: work.customer.name,
+              companyName: work.customer.companyName,
+              phone: work.customer.phone,
+              email: work.customer.email,
+              city: work.customer.city,
+              address: work.customer.address,
+              isActive: work.customer.isActive,
+              customerType: work.customer.customerType,
+            }
+          : null,
         title: work.title,
         description: work.description,
         status: work.status,
         priority: work.priority,
         dueAt: work.scheduledDate,
         dueDate: work.scheduledDate,
+        scheduledDate: work.scheduledDate,
+        scheduledTime: work.scheduledTime,
+        workType: work.workType,
         taskNumber: `WRK-${work.id}`,
-        employee: work.assignedTo,
+        employee: work.assignedTo
+          ? {
+              id: work.assignedTo.id,
+              firstName: work.assignedTo.firstName,
+              lastName: work.assignedTo.lastName,
+              employeeCode: work.assignedTo.employeeCode,
+              designation: work.assignedTo.designation,
+            }
+          : null,
         assignedTo: null,
-        team: work.team,
+        team: work.team
+          ? { id: work.team.id, name: work.team.name }
+          : work.customer?.assignedTeam
+            ? { id: work.customer.assignedTeam.id, name: work.customer.assignedTeam.name }
+            : null,
         proofs: [],
         hasProof: false,
         isOverdue: false,
