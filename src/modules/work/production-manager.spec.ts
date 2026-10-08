@@ -193,6 +193,53 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
     });
   });
 
+  describe('Production filter options', () => {
+    it('returns only employees and teams belonging to the Production Team', async () => {
+      jest.spyOn(workService, 'getEmployeeCalendar').mockResolvedValue([
+        {
+          customerId: 10,
+          customerName: 'Test Customer',
+          assignedTeam: 'Production Team',
+          assignedToId: 20,
+          assignedEmployee: 'Bhavesh Gandhi',
+          editorId: 21,
+          editorName: 'BPO Editor',
+          teamId: 30,
+        },
+      ] as any);
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 50,
+        customerId: mockTenantCustomerId,
+      });
+      prisma.employee.findMany.mockResolvedValue([
+        { id: 40, firstName: 'Production', lastName: 'Employee' },
+      ]);
+      prisma.team.findMany.mockResolvedValue([
+        { id: 30, name: 'Production Team' },
+      ]);
+      prisma.customer.findMany.mockResolvedValue([]);
+
+      const result = await workService.getProductionFilterOptions(50);
+
+      expect(result.employees).toEqual([
+        { id: 40, name: 'Production Employee' },
+      ]);
+      expect(result.teams).toEqual([
+        { id: 30, name: 'Production Team' },
+      ]);
+      expect(prisma.employee.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { teamMembers: { some: { team: expect.objectContaining({ customerId: mockTenantCustomerId }) } } },
+              { ledTeams: { some: expect.objectContaining({ customerId: mockTenantCustomerId }) } },
+            ],
+          }),
+        }),
+      );
+    });
+  });
+
   describe('3. Production Metrics Calculation', () => {
     it('accurately derives total, pending, inProgress, completed, blocked, today, and overdue metrics', async () => {
       const now = new Date();

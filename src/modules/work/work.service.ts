@@ -2386,18 +2386,6 @@ assignedEmployee: ${item.assignedEmployee}`);
       if (w.customerId && w.customerName) {
         customerMap.set(Number(w.customerId), w.customerName);
       }
-      const onProductionTeam = String(w.assignedTeam || '').toUpperCase().includes('PRODUCTION');
-      if (!onProductionTeam) continue;
-      if (w.assignedToId && w.assignedEmployee) {
-        employeeMap.set(Number(w.assignedToId), w.assignedEmployee);
-      }
-      if (w.editorId && w.editorName) {
-        employeeMap.set(Number(w.editorId), w.editorName);
-      }
-      const tId = Number(w.teamId || 0);
-      if (tId > 0 && w.assignedTeam) {
-        teamMap.set(tId, w.assignedTeam);
-      }
     }
 
     const numEmployeeId = Number(employeeId);
@@ -3384,4 +3372,3 @@ assignedEmployee: ${item.assignedEmployee}`);
     });
   }
 }
-
