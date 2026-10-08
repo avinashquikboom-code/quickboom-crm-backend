@@ -2206,16 +2206,30 @@ status: ${item.status}`);
     const empFullName = empRecord ? `${empRecord.firstName} ${empRecord.lastName}`.trim() : null;
     const tenantCustomerId = (empRecord as any)?.customerId;
     const allTenantCustomers = options?.allTenantCustomers === true;
+    // Mobile calendar always passes allTenantCustomers. That flag used to set
+    // customer.id = the employee's company id, so only one customer came back.
+    // A normal employee still uses team membership. A production manager keeps
+    // the wider workspace view, scoped to this company.
+    const productionTeamIds = !isProductionManager
+      ? await this.activeProductionTeamIdsForEmployee(numEmployeeId, tenantCustomerId)
+      : [];
 
     let where: any;
 
-    if (allTenantCustomers) {
+    if (allTenantCustomers && isProductionManager) {
       where = {
         status: { not: WorkStatus.CANCELLED },
         customer: {
           deletedAt: null,
           isActive: true,
-          ...(tenantCustomerId ? { id: tenantCustomerId } : {}),
+          ...(tenantCustomerId
+            ? {
+                OR: [
+                  { id: tenantCustomerId },
+                  { assignedTeam: { isActive: true, customerId: tenantCustomerId } },
+                ],
+              }
+            : {}),
         },
       };
 
@@ -2324,10 +2338,6 @@ status: ${item.status}`);
 
       // Customer visibility follows the production team, not the task assignee.
       // A team member sees every customer assigned to their active production teams.
-      const productionTeamIds = await this.activeProductionTeamIdsForEmployee(
-        numEmployeeId,
-        tenantCustomerId,
-      );
       if (productionTeamIds.length > 0) {
         orConditions.push({
           customer: {
@@ -2665,8 +2675,10 @@ status: ${item.status}`);
       };
     });
 
-    // Calendar VIEW across all tenant customers must not drop other customers' work types.
-    const result = isFullAccess || allTenantCustomers
+    // Team visibility includes every scheduled task on those customers.
+    // A shoot assigned to another member must not be dropped because this
+    // employee's role only lists a different activity type.
+    const result = isFullAccess || allTenantCustomers || productionTeamIds.length > 0
       ? mapped
       : mapped.filter((item) => allowedTypes.has(item.activityType));
 
