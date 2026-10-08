@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionStatus } from '@prisma/client';
+import { calculatePlanExpiry } from '../../common/utils/subscription-date.util';
 
 export interface EffectivePlanUsage {
   currentUsers: number;
@@ -146,14 +147,37 @@ export class PlanAccessService {
       );
       for (const subRow of subs) {
         if (subRow.status !== SubscriptionStatus.PENDING || !paidIds.has(subRow.id)) continue;
+        const now = new Date();
+        const durationMonths = subRow.duration || (subRow.billingCycle === 'YEARLY' ? 12 : 1);
+        let repairStartDate = subRow.startDate;
+        let repairEndDate = subRow.endDate;
+        if (repairStartDate && new Date(repairStartDate) > now) {
+          const diffMs = new Date(repairStartDate).getTime() - new Date(subRow.createdAt).getTime();
+          if (diffMs <= 3 * 24 * 60 * 60 * 1000) {
+            repairStartDate = now;
+            repairEndDate = calculatePlanExpiry(repairStartDate, durationMonths);
+          }
+        }
         await this.prisma.customerSubscription.update({
           where: { id: subRow.id },
-          data: { status: SubscriptionStatus.ACTIVE },
+          data: {
+            status: SubscriptionStatus.ACTIVE,
+            startDate: repairStartDate,
+            endDate: repairEndDate,
+          },
         });
         subRow.status = SubscriptionStatus.ACTIVE;
+        subRow.startDate = repairStartDate;
+        subRow.endDate = repairEndDate;
         this.logger.log(
           `[OFFLINE_SUBSCRIPTION_REPAIR] customerId=${numCustomerId} subscriptionId=${subRow.id} planId=${subRow.planId} previousStatus=PENDING newStatus=ACTIVE`,
         );
+      }
+      if (paidIds.size > 0) {
+        await this.prisma.customer.update({
+          where: { id: numCustomerId },
+          data: { isActive: true },
+        });
       }
     }
 
@@ -218,7 +242,9 @@ export class PlanAccessService {
     let basePlan = sub?.plan;
 
     // If no active subscription exists and there is an upcoming plan with future start date, return upcomingPlan structure with isActive: false
-    if (!activeSub && upcomingPlan && (!sub || !sub.startDate || new Date(sub.startDate) > now)) {
+    // Note: Do not let an expired subscription in currentSubs suppress the upcomingPlan!
+    const isSubActuallyActive = activeSub != null;
+    if (!isSubActuallyActive && upcomingPlan && (!sub || sub.status === SubscriptionStatus.EXPIRED || !sub.startDate || new Date(sub.startDate) > now || (sub.endDate && new Date(sub.endDate) < now))) {
       return {
         customerId: numCustomerId,
         subscriptionId: upcomingPlan.subscriptionId,

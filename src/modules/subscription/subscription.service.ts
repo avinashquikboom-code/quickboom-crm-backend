@@ -8,7 +8,7 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { PaymentMethod, InvoiceStatus } from '@prisma/client';
+import { PaymentMethod, InvoiceStatus, InstallmentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import {
@@ -2866,9 +2866,22 @@ export class SubscriptionService {
     const cycle = sub.billingCycle || SubscriptionBillingCycle.MONTHLY;
     const durationMonths = sub.duration || (cycle === 'YEARLY' ? 12 : 1);
     const purchaseDate = payment.createdAt || new Date();
-    const startDate = sub.startDate
-      ? new Date(sub.startDate)
-      : resolvePlanSubscriptionDates(purchaseDate, durationMonths, null).startDate;
+    const now = new Date();
+    const rawStartDate = sub.startDate ? new Date(sub.startDate) : null;
+    let startDate: Date;
+    if (rawStartDate) {
+      const diffMs = rawStartDate.getTime() - purchaseDate.getTime();
+      const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+      // If startDate is in the past, or was set to default (+2 calendar days buffer),
+      // activate immediately so customer has an active subscription right away.
+      if (diffMs <= threeDaysMs || rawStartDate <= now) {
+        startDate = now;
+      } else {
+        startDate = rawStartDate;
+      }
+    } else {
+      startDate = now;
+    }
     const endDate = calculatePlanExpiry(startDate, durationMonths);
 
     const fullBaseAmount = cycle === 'YEARLY' ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
@@ -2902,7 +2915,15 @@ export class SubscriptionService {
         },
       });
 
-      // 3. Mark payment as SUCCESS (PAID) & attach receipt number
+      // 3. Ensure customer is marked active so they can access services without 403
+      await tx.customer.update({
+        where: { id: sub.customerId },
+        data: {
+          isActive: true,
+        },
+      });
+
+      // 4. Mark payment as SUCCESS (PAID) & attach receipt number
       await tx.paymentHistory.update({
         where: { id: payment.id },
         data: {
@@ -2912,12 +2933,71 @@ export class SubscriptionService {
         },
       });
 
-      // 4. Calculate total paid across all approved payments for this subscription
+      // 5. Calculate total paid across all approved payments for this subscription
       const allPayments = await tx.paymentHistory.findMany({
         where: { subscriptionId: sub.id, status: 'SUCCESS' },
       });
       const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
       isFullyPaid = totalPaid >= fullTotalAmount;
+
+      // 6. Ensure installments are created & consistent for GET /subscriptions/current
+      await tx.subscriptionInstallment.deleteMany({
+        where: {
+          subscriptionId: sub.id,
+          status: { in: [InstallmentStatus.PENDING, InstallmentStatus.DUE, InstallmentStatus.UPCOMING] },
+        },
+      });
+
+      const halfTotal = Math.round(fullTotalAmount * 0.5 * 100) / 100;
+      const remainingTotal = Math.round((fullTotalAmount - halfTotal) * 100) / 100;
+      const inst1Base = Math.round((halfTotal / 1.18) * 100) / 100;
+      const inst1Tax = Math.round((halfTotal - inst1Base) * 100) / 100;
+      const inst2Base = Math.round((remainingTotal / 1.18) * 100) / 100;
+      const inst2Tax = Math.round((remainingTotal - inst2Base) * 100) / 100;
+      const inst1Expiry = new Date(startDate);
+      inst1Expiry.setDate(inst1Expiry.getDate() + 30);
+      const inst2Expiry = new Date(startDate);
+      inst2Expiry.setDate(inst2Expiry.getDate() + 60);
+
+      await tx.subscriptionInstallment.create({
+        data: {
+          customerId: sub.customerId,
+          subscriptionId: sub.id,
+          installmentNumber: 1,
+          totalInstallments: 2,
+          title: 'Advance Payment (50%)',
+          amount: inst1Base,
+          taxAmount: inst1Tax,
+          totalAmount: halfTotal,
+          status: InstallmentStatus.PAID,
+          dueDate: startDate,
+          expiryDate: inst1Expiry,
+          paidAt: startDate,
+          paymentHistoryId: payment.id,
+          bufferDays: 0,
+          bufferEndDate: inst1Expiry,
+        },
+      });
+
+      await tx.subscriptionInstallment.create({
+        data: {
+          customerId: sub.customerId,
+          subscriptionId: sub.id,
+          installmentNumber: 2,
+          totalInstallments: 2,
+          title: 'Second Installment (50%)',
+          amount: inst2Base,
+          taxAmount: inst2Tax,
+          totalAmount: remainingTotal,
+          status: isFullyPaid ? InstallmentStatus.PAID : InstallmentStatus.DUE,
+          dueDate: isFullyPaid ? startDate : inst1Expiry,
+          expiryDate: inst2Expiry,
+          paidAt: isFullyPaid ? startDate : null,
+          paymentHistoryId: isFullyPaid ? payment.id : null,
+          bufferDays: 0,
+          bufferEndDate: inst2Expiry,
+        },
+      });
 
       // 5. Generate Final Invoice ONLY if 100% Fully Settled
       if (isFullyPaid) {

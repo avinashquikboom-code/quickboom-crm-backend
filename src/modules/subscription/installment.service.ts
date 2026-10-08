@@ -222,7 +222,8 @@ export class InstallmentService {
       0,
     );
     if (totalPaidFromPayments <= 0) return false;
-    if (installments.some((item) => item.status === InstallmentStatus.PAID)) {
+    const unpaidInstallments = installments.filter((item) => item.status !== InstallmentStatus.PAID);
+    if (unpaidInstallments.length === 0) {
       return false;
     }
 
@@ -243,7 +244,7 @@ export class InstallmentService {
           paymentHistoryId,
         },
       });
-    } else {
+    } else if (installments.every((item) => item.status !== InstallmentStatus.PAID)) {
       const first =
         installments.find((item) => item.installmentNumber === 1) || installments[0];
       await this.prisma.subscriptionInstallment.update({
@@ -254,6 +255,8 @@ export class InstallmentService {
           paymentHistoryId,
         },
       });
+    } else {
+      return false;
     }
 
     this.logger.log(
