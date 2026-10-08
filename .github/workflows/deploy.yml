@@ -84,30 +84,34 @@ jobs:
           TARGET_HOST=$(echo "${{ secrets.EC2_HOST }}" | tr -d '[:space:]')
           ssh-keyscan -H "${TARGET_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            "${TARGET_USER}@${TARGET_HOST}" \
-            "set -e
-             export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}'
-             export AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}'
-             export AWS_DEFAULT_REGION='${{ secrets.AWS_REGION || 'ap-south-1' }}'
-             export AWS_REGION='${{ secrets.AWS_REGION || 'ap-south-1' }}'
-             cd '${{ env.DEPLOY_DIR }}'
-             sed -i "s|546941058055|211107604014|g" config.sh backend.sh 2>/dev/null || true
-             if [ -f config.sh ]; then
-               chmod +x ./*.sh
-               sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-               sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' config.sh
-               sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' config.sh
-               sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' config.sh
-               ./backend.sh
-             elif [ -f deploy/docker/config.sh ]; then
-               sed -i "s|546941058055|211107604014|g" deploy/docker/config.sh deploy/docker/backend.sh 2>/dev/null || true
-               chmod +x deploy/docker/*.sh
-               sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
-               sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=\"${{ steps.meta.outputs.sha_tag }}\"|' deploy/docker/config.sh
-               sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' deploy/docker/config.sh
-               sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=\"${{ steps.ecr-login.outputs.registry }}\"|' deploy/docker/config.sh
-               bash deploy/docker/backend.sh
-             fi"
+            "${TARGET_USER}@${TARGET_HOST}" bash -s <<EOF
+          set -e
+          export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}'
+          export AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+          export AWS_DEFAULT_REGION='${{ secrets.AWS_REGION }}'
+          export AWS_REGION='${{ secrets.AWS_REGION }}'
+          cd '${{ env.DEPLOY_DIR }}'
+          if [ -f config.sh ]; then
+            chmod +x ./*.sh
+            sed -i 's|546941058055|211107604014|g' config.sh backend.sh || true
+            sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}|' config.sh
+            sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}|' config.sh
+            sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}|' config.sh
+            sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}|' config.sh
+            ./backend.sh
+          elif [ -f deploy/docker/config.sh ]; then
+            chmod +x deploy/docker/*.sh
+            sed -i 's|546941058055|211107604014|g' deploy/docker/config.sh deploy/docker/backend.sh || true
+            sed -i 's|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}|' deploy/docker/config.sh
+            sed -i 's|^API_IMAGE_TAG=.*|API_IMAGE_TAG=${{ steps.meta.outputs.sha_tag }}|' deploy/docker/config.sh
+            sed -i 's|^export API_ECR_REGISTRY=.*|export API_ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}|' deploy/docker/config.sh
+            sed -i 's|^API_ECR_REGISTRY=.*|API_ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}|' deploy/docker/config.sh
+            bash deploy/docker/backend.sh
+          else
+            echo "No config.sh found in ${{ env.DEPLOY_DIR }}" >&2
+            exit 1
+          fi
+          EOF
 
       - name: Deploy summary
         if: always()
