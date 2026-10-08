@@ -1908,38 +1908,50 @@ status: ${item.status}`);
     if (!employee) return [];
 
     const tenantId = Number(tenantCustomerId || employee.customerId);
-    const productionTeamMatch: any = {
-      isActive: true,
-      ...(Number.isInteger(tenantId) && tenantId > 0 ? { customerId: tenantId } : {}),
-      OR: [
-        { name: { contains: 'PRODUCTION', mode: 'insensitive' } },
-        { description: { contains: 'PRODUCTION', mode: 'insensitive' } },
-      ],
-    };
-
-    const [memberships, ledTeams] = await Promise.all([
-      this.prisma.teamMember.findMany({
-        where: { employeeId, team: productionTeamMatch },
-        select: { teamId: true, team: { select: { name: true, description: true } } },
-      }),
-      this.prisma.team.findMany({
-        where: { leaderId: employeeId, ...productionTeamMatch },
-        select: { id: true, name: true, description: true },
-      }),
-    ]);
-
-    const ids = new Set<number>();
     const keep = (name?: string | null, description?: string | null) => {
       const label = `${name || ''} ${description || ''}`.toUpperCase();
       return label.includes('PRODUCTION') && !label.includes('BPO');
     };
+
+    const [memberships, ledTeams] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: {
+          employeeId,
+          employee: { status: 'ACTIVE' },
+          team: { isActive: true },
+        },
+        select: {
+          teamId: true,
+          team: { select: { name: true, description: true, customerId: true, isActive: true } },
+        },
+      }),
+      this.prisma.team.findMany({
+        where: { leaderId: employeeId, isActive: true, leader: { status: 'ACTIVE' } },
+        select: { id: true, name: true, description: true, customerId: true },
+      }),
+    ]);
+
+    const rows = new Map<number, number>();
     for (const row of memberships) {
-      if (keep(row.team?.name, row.team?.description)) ids.add(row.teamId);
+      if (row.team?.isActive === false) continue;
+      if (!keep(row.team?.name, row.team?.description)) continue;
+      rows.set(row.teamId, Number(row.team?.customerId));
     }
     for (const team of ledTeams) {
-      if (keep(team.name, team.description)) ids.add(team.id);
+      if (!keep(team.name, team.description)) continue;
+      rows.set(team.id, Number(team.customerId));
     }
-    return Array.from(ids);
+
+    const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
+      Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
+    );
+    if (sameCompany.length > 0) {
+      return sameCompany.map(([teamId]) => teamId);
+    }
+
+    const companyIds = new Set(Array.from(rows.values()).filter((id) => Number.isInteger(id) && id > 0));
+    if (companyIds.size !== 1) return [];
+    return Array.from(rows.keys());
   }
 
   /**
@@ -2210,9 +2222,10 @@ status: ${item.status}`);
     // customer.id = the employee's company id, so only one customer came back.
     // A normal employee still uses team membership. A production manager keeps
     // the wider workspace view, scoped to this company.
-    const productionTeamIds = !isProductionManager
-      ? await this.activeProductionTeamIdsForEmployee(numEmployeeId, tenantCustomerId)
-      : [];
+    const productionTeamIds = await this.activeProductionTeamIdsForEmployee(
+      numEmployeeId,
+      tenantCustomerId,
+    );
 
     let where: any;
 
@@ -2227,9 +2240,20 @@ status: ${item.status}`);
                 OR: [
                   { id: tenantCustomerId },
                   { assignedTeam: { isActive: true, customerId: tenantCustomerId } },
+                  ...(productionTeamIds.length > 0
+                    ? [{
+                        assignedTeamId: { in: productionTeamIds },
+                        assignedTeam: { isActive: true },
+                      }]
+                    : []),
                 ],
               }
-            : {}),
+            : productionTeamIds.length > 0
+              ? {
+                  assignedTeamId: { in: productionTeamIds },
+                  assignedTeam: { isActive: true },
+                }
+              : {}),
         },
       };
 
@@ -2424,6 +2448,11 @@ status: ${item.status}`);
         where.scheduledDate.lte = new Date(toDate.getTime() + 24 * 60 * 60 * 1000);
       }
     }
+
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : []),
+      { customer: { deletedAt: null, isActive: true } },
+    ];
 
     const items = await this.prisma.work.findMany({
       where,

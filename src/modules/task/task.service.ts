@@ -1024,45 +1024,30 @@ export class TaskService {
     ];
     if (teamIds.length > 0) {
       workOr.push({ teamId: { in: teamIds } });
-      workOr.push({ customer: { assignedTeamId: { in: teamIds } } });
-    }
-    const onBpoTeam = await this.employeeOnBpoTeam(teamIds);
-    const bpoOnly = onBpoTeam && productionTeamIds.length === 0;
-    // Customer Calendar stores Work on the client customer, not on the employer id.
-    // A non-BPO employee sees those works when the client is linked to their company.
-    if (!bpoOnly && agencyCustomerId) {
-      const companyCustomer = {
-        deletedAt: null,
-        isActive: true,
-        OR: [
-          { id: agencyCustomerId },
-          { assignedTeam: { customerId: agencyCustomerId } },
-          { assignedEmployeeRel: { customerId: agencyCustomerId } },
-          { createdByEmployeeRel: { customerId: agencyCustomerId } },
-        ],
-      };
-      workOr.push(
-        { customer: companyCustomer },
-        { assignedTo: { customerId: agencyCustomerId } },
-        { editor: { customerId: agencyCustomerId } },
-        { team: { customerId: agencyCustomerId } },
-      );
+      workOr.push({
+        customer: {
+          deletedAt: null,
+          isActive: true,
+          assignedTeamId: { in: teamIds },
+          assignedTeam: { isActive: true },
+        },
+      });
     }
     if (productionTeamIds.length > 0) {
-      const onProductionTeam = {
-        OR: [
-          { teamMembers: { some: { teamId: { in: productionTeamIds } } } },
-          { ledTeams: { some: { id: { in: productionTeamIds } } } },
-        ],
-      };
-      workOr.push({ customer: { assignedTeamId: { in: productionTeamIds } } });
-      workOr.push({ assignedTo: onProductionTeam });
-      workOr.push({ editor: onProductionTeam });
+      workOr.push({
+        customer: {
+          deletedAt: null,
+          isActive: true,
+          assignedTeamId: { in: productionTeamIds },
+          assignedTeam: { isActive: true },
+        },
+      });
     }
 
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
+        customer: { deletedAt: null, isActive: true },
         OR: workOr,
       },
       orderBy: { scheduledDate: 'asc' },
