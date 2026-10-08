@@ -1540,17 +1540,64 @@ returnedSchedules: 0`);
             address: true,
             city: true,
             state: true,
-            createdByEmployeeRel: { select: { firstName: true, lastName: true } },
+            assignedEmployeeId: true,
+            createdByEmployeeRel: { select: { id: true, firstName: true, lastName: true } },
             originLead: {
               select: {
-                convertedByEmployee: { select: { firstName: true, lastName: true } },
+                convertedByEmployeeId: true,
+                convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
+              },
+            },
+            assignedTeam: {
+              select: {
+                id: true,
+                name: true,
+                leaderId: true,
+                members: { select: { employeeId: true } },
               },
             },
           },
         },
-        team: { select: { name: true } },
-        assignedTo: { select: { id: true, firstName: true, lastName: true } },
-        editor: { select: { id: true, firstName: true, lastName: true } },
+        team: {
+          select: {
+            id: true,
+            name: true,
+            leaderId: true,
+            members: { select: { employeeId: true } },
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+            designation: { select: { name: true } },
+          },
+        },
+        editor: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+            designation: { select: { name: true } },
+          },
+        },
+        tasks: {
+          select: {
+            assignedToId: true,
+            assignedTo: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                department: { select: { name: true } },
+                designation: { select: { name: true } },
+              },
+            },
+          },
+        },
         entitlement: { select: { serviceName: true } },
         subscription: {
           select: {
@@ -1676,6 +1723,7 @@ returnedSchedules: 0`);
       const wonByName = wonEmployee
         ? `${wonEmployee.firstName || ''} ${wonEmployee.lastName || ''}`.trim() || null
         : null;
+      const taskAssignee = this.productionTaskAssignee(w);
 
       return {
         id: String(w.id),
@@ -1708,21 +1756,13 @@ returnedSchedules: 0`);
         reworkActionLabel,
         isLocked,
         lockMessage,
-        assignedToId: w.assignedToId,
+        assignedToId: taskAssignee.id,
         wonByName,
-        assignedEmployee: isLocked
-          ? 'Unassigned'
-          : (w.assignedTo
-              ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Unassigned'
-              : 'Unassigned'),
-        assignedToName: isLocked
-          ? 'Unassigned'
-          : (w.assignedTo
-              ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Unassigned'
-              : 'Unassigned'),
+        assignedEmployee: isLocked ? 'Unassigned' : taskAssignee.name,
+        assignedToName: isLocked ? 'Unassigned' : taskAssignee.name,
         editorId: w.editorId,
         editorName: isLocked ? null : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null),
-        team: w.team?.name || null,
+        team: taskAssignee.teamName,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
           : (w.description || w.notes || `${w.title} deliverable`),
@@ -1843,6 +1883,50 @@ status: ${item.status}`);
     }
 
     return leaderId || null;
+  }
+
+  /**
+   * Assigned Staff is the employee stored on this work who belongs to the
+   * production team. The lead owner, customer owner, and current viewer are
+   * not used when they are not a member of that team.
+   */
+  private productionTaskAssignee(w: any): { id: number | null; name: string; teamName: string | null } {
+    const team = w.team || w.customer?.assignedTeam || null;
+    const teamName = team?.name || null;
+    const memberIds = new Set<number>(
+      (team?.members || [])
+        .map((member: any) => Number(member.employeeId))
+        .filter((id: number) => Number.isInteger(id) && id > 0),
+    );
+    const ownerIds = new Set<number>(
+      [
+        w.customer?.assignedEmployeeId,
+        w.customer?.originLead?.convertedByEmployeeId,
+        w.customer?.originLead?.convertedByEmployee?.id,
+        w.customer?.createdByEmployeeRel?.id,
+      ]
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    );
+    const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
+      `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
+    const isBpoOwner = (person?: { department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+      const label = `${person?.department?.name || ''} ${person?.designation?.name || ''}`.toUpperCase();
+      return label.includes('BPO');
+    };
+    const isTaskAssignee = (person?: { id?: number; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+      const id = Number(person?.id);
+      if (!Number.isInteger(id) || id <= 0) return false;
+      if (memberIds.size > 0) return memberIds.has(id);
+      return !ownerIds.has(id) && !isBpoOwner(person);
+    };
+
+    const stored = [w.assignedTo, w.editor, ...(w.tasks || []).map((task: any) => task.assignedTo)]
+      .find((person) => isTaskAssignee(person));
+    if (stored) {
+      return { id: Number(stored.id), name: personName(stored) || 'Unassigned', teamName };
+    }
+    return { id: null, name: 'Unassigned', teamName };
   }
 
   /**
