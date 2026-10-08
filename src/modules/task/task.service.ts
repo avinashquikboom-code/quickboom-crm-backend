@@ -832,9 +832,16 @@ export class TaskService {
       { assignedToId: employeeId },
       { editorId: employeeId },
       { tasks: { some: { assignedToId: employeeId } } },
+      // Works with no direct assignee inherit the customer's assigned employee/team (same rule as the calendar)
+      { assignedToId: null, teamId: null, customer: { assignedEmployeeId: employeeId } },
     ];
     if (teamIds.length > 0) {
       workOr.push({ teamId: { in: teamIds } });
+      workOr.push({
+        assignedToId: null,
+        teamId: null,
+        customer: { assignedTeamId: { in: teamIds } },
+      });
     }
 
     const works = await this.prisma.work.findMany({

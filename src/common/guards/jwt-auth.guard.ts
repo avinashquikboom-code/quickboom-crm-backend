@@ -97,9 +97,22 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           );
         }
 
-        this.logger.warn(
-          `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} tokenPresent=${hasValidToken} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
+        const isTokenExpired = Boolean(
+          failureReason?.toLowerCase().includes('expired') ||
+          (info as any)?.name === 'TokenExpiredError' ||
+          err?.name === 'TokenExpiredError',
         );
+        this.logger.warn(
+          `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} bearer=${hasBearer} tokenPresent=${hasValidToken} tokenExpired=${isTokenExpired} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
+        );
+        if (!err) {
+          const code = !hasValidToken ? 'TOKEN_MISSING' : isTokenExpired ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID';
+          throw new UnauthorizedException({
+            message: 'Invalid or expired authentication token',
+            error: 'Unauthorized',
+            code,
+          });
+        }
       }
       throw err || new UnauthorizedException('Invalid or expired authentication token');
     }
