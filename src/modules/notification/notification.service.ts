@@ -66,28 +66,45 @@ export class NotificationService {
     search?: string,
   ) {
     const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : NaN;
+    const numUserId = userId !== undefined && userId !== null ? Number(userId) : NaN;
     const numPage = Math.max(Number(page) || 1, 1);
     const numLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const skip = (numPage - 1) * numLimit;
 
-    const where: any = {};
+    const andConditions: any[] = [];
+
     if (!isNaN(numCustomerId)) {
-      where.customerId = numCustomerId;
+      andConditions.push({ customerId: numCustomerId });
     }
-    if (userId && !isNaN(Number(userId))) {
-      where.userId = Number(userId);
+
+    if (!isNaN(numUserId)) {
+      if (!isNaN(numCustomerId)) {
+        andConditions.push({
+          OR: [
+            { userId: numUserId },
+            { customerId: numCustomerId },
+          ],
+        });
+      } else {
+        andConditions.push({ userId: numUserId });
+      }
     }
+
     if (unreadOnly) {
-      where.isRead = false;
+      andConditions.push({ isRead: false });
     }
 
     if (search && search.trim()) {
-      where.OR = [
-        { title: { contains: search.trim(), mode: 'insensitive' } },
-        { message: { contains: search.trim(), mode: 'insensitive' } },
-        { type: { contains: search.trim(), mode: 'insensitive' } },
-      ];
+      andConditions.push({
+        OR: [
+          { title: { contains: search.trim(), mode: 'insensitive' } },
+          { message: { contains: search.trim(), mode: 'insensitive' } },
+          { type: { contains: search.trim(), mode: 'insensitive' } },
+        ],
+      });
     }
+
+    const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const [items, total] = await Promise.all([
       this.prisma.notification.findMany({
@@ -400,9 +417,32 @@ export class NotificationService {
       }
     }
 
-    // 1. Create in-app Notification database record
+    // 1. Create in-app Notification database record(s)
     let dbNotification: any = null;
-    if (targetUserId && targetCustomerId) {
+    if (targetCustomerId && !userId) {
+      const customerUsers = await this.prisma.user.findMany({
+        where: { customerId: targetCustomerId, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      const usersToNotify = customerUsers.length > 0
+        ? customerUsers
+        : (targetUserId ? [{ id: targetUserId }] : []);
+
+      for (const u of usersToNotify) {
+        const created = await this.prisma.notification.create({
+          data: {
+            customerId: targetCustomerId,
+            userId: u.id,
+            title,
+            message: body,
+            type,
+            data: data as any,
+            isRead: false,
+          },
+        });
+        if (!dbNotification) dbNotification = created;
+      }
+    } else if (targetUserId && targetCustomerId) {
       dbNotification = await this.prisma.notification.create({
         data: {
           customerId: targetCustomerId,

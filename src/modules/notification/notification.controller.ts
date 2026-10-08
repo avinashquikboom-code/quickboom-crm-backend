@@ -68,7 +68,7 @@ export class NotificationController {
     @Query('search') search?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = customerId || (isSuperAdmin ? undefined : 1);
+    const targetCustomerId = customerId || user?.customerId || (isSuperAdmin ? undefined : undefined);
     return this.notificationService.findAll(
       targetCustomerId,
       userId,

@@ -970,8 +970,8 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
 
     // Notification 5: Level / Work Approved via update & Customer Work Completed
     const isStatusChangingToCompleted =
-      existing.status !== WorkStatus.COMPLETED &&
-      (dto.status === WorkStatus.COMPLETED || String(dto.status).toUpperCase() === 'COMPLETED');
+      String(existing.status || '').toUpperCase() !== 'COMPLETED' &&
+      (dto.status === WorkStatus.COMPLETED || String(dto.status || '').toUpperCase() === 'COMPLETED');
 
     if (this.notificationService && isStatusChangingToCompleted) {
       const staffUserIds = [result.assignedTo?.userId, result.editor?.userId].filter(Boolean) as number[];
@@ -1066,6 +1066,25 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
 
       return work;
     });
+
+    if (this.notificationService && updated.customerId) {
+      try {
+        await this.notificationService.sendPushNotification({
+          customerId: updated.customerId,
+          title: 'Content Ready for Review',
+          body: `Deliverable for "${updated.title}" has been submitted by your creative team. Please review and approve.`,
+          type: 'WORK_SUBMITTED',
+          data: {
+            type: 'WORK_SUBMITTED',
+            workId: String(updated.id),
+            outputUrl: updated.outputUrl || '',
+            route: '/customer/work-requests',
+          },
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to dispatch WORK_SUBMITTED push notification (non-fatal): ${err?.message}`);
+      }
+    }
 
     return {
       success: true,
@@ -1178,6 +1197,8 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(`Failed to send level approval push to staff user #${uid} (non-fatal): ${err?.message}`);
         }
       }
+
+      await this.notifyCustomerWorkCompleted(result.work);
     }
 
     return result;
@@ -3449,13 +3470,19 @@ assignedEmployee: ${item.assignedEmployee}`);
     if (!this.notificationService) return;
 
     try {
-      const customer = work.customer || (work.customerId
-        ? await this.prisma.customer.findFirst({
-            where: { id: work.customerId },
-            select: { name: true, companyName: true, deletedAt: true, isActive: true },
-          })
-        : null);
-      if (!work.customerId || !customer) {
+      const numCustomerId = Number(work.customerId);
+      if (!numCustomerId || isNaN(numCustomerId)) {
+        this.logger.warn(
+          `[WORK_COMPLETED] Work #${work.id} has invalid customerId (${work.customerId}). Skipping notification.`,
+        );
+        return;
+      }
+
+      const customer = work.customer || (await this.prisma.customer.findFirst({
+        where: { id: numCustomerId },
+        select: { name: true, companyName: true, deletedAt: true, isActive: true },
+      }));
+      if (!customer) {
         this.logger.warn(
           `[WORK_COMPLETED] Work #${work.id} has no customer relation. Skipping customer notification.`,
         );
@@ -3463,18 +3490,20 @@ assignedEmployee: ${item.assignedEmployee}`);
       }
       if (customer.deletedAt || customer.isActive === false) {
         this.logger.warn(
-          `[WORK_COMPLETED] Customer #${work.customerId} is deleted or inactive. Skipping notification for work #${work.id}.`,
+          `[WORK_COMPLETED] Customer #${numCustomerId} is deleted or inactive. Skipping notification for work #${work.id}.`,
         );
         return;
       }
 
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
       const recent = await this.prisma.notification.findMany({
         where: {
-          customerId: work.customerId,
+          customerId: numCustomerId,
           type: 'WORK_COMPLETED',
+          createdAt: { gte: tenMinutesAgo },
         },
         select: { data: true },
-        take: 50,
+        take: 20,
         orderBy: { id: 'desc' },
       });
       const alreadyNotified = recent.some((row: any) => {
@@ -3484,7 +3513,7 @@ assignedEmployee: ${item.assignedEmployee}`);
       });
       if (alreadyNotified) {
         this.logger.log(
-          `[WORK_COMPLETED] Customer #${work.customerId} already notified for work #${work.id}. Skipping duplicate.`,
+          `[WORK_COMPLETED] Customer #${numCustomerId} already notified for work #${work.id} within last 10m. Skipping duplicate.`,
         );
         return;
       }
@@ -3497,7 +3526,7 @@ assignedEmployee: ${item.assignedEmployee}`);
         : `${taskName} has been completed.`;
 
       await this.notificationService.sendPushNotification({
-        customerId: work.customerId,
+        customerId: numCustomerId,
         title: 'Task Completed',
         body,
         type: 'WORK_COMPLETED',
@@ -3511,7 +3540,7 @@ assignedEmployee: ${item.assignedEmployee}`);
         },
       });
       this.logger.log(
-        `Dispatched WORK_COMPLETED notification to customer #${work.customerId} for work #${work.id}`,
+        `Dispatched WORK_COMPLETED notification to customer #${numCustomerId} for work #${work.id}`,
       );
     } catch (err: any) {
       this.logger.warn(
