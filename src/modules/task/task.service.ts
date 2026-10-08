@@ -16,6 +16,7 @@ import {
 } from './dto/task.dto';
 import { TaskPriority, TaskStatus, WorkStatus } from '@prisma/client';
 import { EmployeeCommunicationService } from '../notification/employee-communication.service';
+import { WorkService } from '../work/work.service';
 
 @Injectable()
 export class TaskService {
@@ -23,6 +24,7 @@ export class TaskService {
 
   constructor(
     private prisma: PrismaService,
+    private readonly workService: WorkService,
     @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
   ) {}
 
@@ -793,7 +795,21 @@ export class TaskService {
       hasProof: t.proofs && t.proofs.length > 0,
     }));
 
-    const works = await this.findMyProductionWorks(employee.id, employee.customerId, teamIds, query);
+    const works: any[] = await this.findMyProductionWorks(
+      employee.id,
+      employee.userId,
+      employee.customerId,
+      teamIds,
+      query,
+    );
+    const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, teamIds, query);
+    const seenWorkIds = new Set(works.map((work) => work.id));
+    for (const calendarWork of calendarWorks) {
+      if (!seenWorkIds.has(calendarWork.id)) {
+        works.push(calendarWork);
+        seenWorkIds.add(calendarWork.id);
+      }
+    }
     const combined = [...hrTasks, ...works];
     this.logger.log(
       `[TASK_API] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId ?? 'none'} teamIds=${teamIds.join(',') || 'none'} returned=${combined.length} hrTasks=${hrTasks.length} productionWorks=${works.length} status=${query.status || 'ALL'}`,
@@ -823,12 +839,90 @@ export class TaskService {
     return status === filter;
   }
 
-  private async productionTeamIdsForEmployee(agencyCustomerId: number, teamIds: number[]) {
-    if (!agencyCustomerId || teamIds.length === 0) return [];
+  /**
+   * Works already returned by GET /works/employee/calendar for this employee.
+   * Only Production-team members receive that calendar set. BPO membership
+   * alone does not.
+   */
+  private async findEmployeeCalendarWorks(
+    employeeId: number,
+    teamIds: number[],
+    query: { status?: string; priority?: string; search?: string },
+  ) {
+    const productionTeamIds = await this.productionTeamIdsForEmployee(0, teamIds);
+    if (productionTeamIds.length === 0) return [];
+    if (query.priority && query.priority !== 'ALL') return [];
+
+    let items: any[] = [];
+    try {
+      items = await this.workService.getEmployeeCalendar(employeeId, {}, { allTenantCustomers: true });
+    } catch (error: any) {
+      this.logger.warn(`Employee calendar work lookup failed: ${error?.message}`);
+      return [];
+    }
+    if (!Array.isArray(items)) return [];
+
+    const search = query.search?.trim().toLowerCase();
+    return items
+      .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
+      .filter((item) => {
+        if (!search) return true;
+        const title = String(item?.title || '').toLowerCase();
+        const description = String(item?.notes || item?.description || '').toLowerCase();
+        const customerName = String(item?.customerName || '').toLowerCase();
+        const companyName = String(item?.companyName || '').toLowerCase();
+        return (
+          title.includes(search) ||
+          description.includes(search) ||
+          customerName.includes(search) ||
+          companyName.includes(search)
+        );
+      })
+      .map((item) => {
+        const id = Number(item.id);
+        const customerId = Number(item.customerId);
+        const assignedName = String(item.assignedEmployee || item.assignedToName || '').trim();
+        const nameParts = assignedName ? assignedName.split(/\s+/) : [];
+        return {
+          id,
+          source: 'WORK',
+          customerId: Number.isInteger(customerId) && customerId > 0 ? customerId : null,
+          customer:
+            Number.isInteger(customerId) && customerId > 0
+              ? {
+                  id: customerId,
+                  name: item.customerName || item.companyName || `Customer #${customerId}`,
+                  companyName: item.companyName || item.businessName || null,
+                }
+              : null,
+          title: item.title,
+          description: item.notes || item.description || null,
+          status: item.status,
+          priority: null,
+          dueAt: item.scheduledAt || item.scheduledDate || null,
+          dueDate: item.scheduledAt || item.scheduledDate || null,
+          scheduledDate: item.scheduledDate || null,
+          scheduledTime: item.scheduledTime || null,
+          taskNumber: `WRK-${id}`,
+          employee: assignedName
+            ? { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') }
+            : null,
+          assignedTo: null,
+          team: item.team || item.assignedTeam ? { name: item.team || item.assignedTeam } : null,
+          editor: item.editorName ? { name: item.editorName } : null,
+          proofs: [],
+          hasProof: false,
+          isOverdue: false,
+        };
+      })
+      .filter((work) => Number.isInteger(work.id) && work.id > 0);
+  }
+
+  private async productionTeamIdsForEmployee(_agencyCustomerId: number, teamIds: number[]) {
+    if (teamIds.length === 0) return [];
     const teams = await this.prisma.team.findMany({
       where: {
         id: { in: teamIds },
-        customerId: agencyCustomerId,
         isActive: true,
         OR: [
           { name: { contains: 'PRODUCTION', mode: 'insensitive' } },
@@ -847,25 +941,30 @@ export class TaskService {
 
   private async findMyProductionWorks(
     employeeId: number,
+    userId: number | null | undefined,
     agencyCustomerId: number,
     teamIds: number[],
     query: { status?: string; priority?: string; search?: string },
   ) {
     const productionTeamIds = await this.productionTeamIdsForEmployee(agencyCustomerId, teamIds);
+    const assigneeIds = Array.from(
+      new Set(
+        [employeeId, userId]
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    );
     const workOr: any[] = [
-      { assignedToId: employeeId },
+      { assignedToId: { in: assigneeIds } },
       { editorId: employeeId },
-      { tasks: { some: { assignedToId: employeeId } } },
-      // Works with no direct assignee inherit the customer's assigned employee/team (same rule as the calendar)
-      { assignedToId: null, teamId: null, customer: { assignedEmployeeId: employeeId } },
+      { tasks: { some: { assignedToId: { in: assigneeIds } } } },
+      // Customer calendar shows every work for a customer. An employee authorized
+      // for that customer (direct assignment or their team) sees those same works.
+      { customer: { assignedEmployeeId: employeeId } },
     ];
     if (teamIds.length > 0) {
       workOr.push({ teamId: { in: teamIds } });
-      workOr.push({
-        assignedToId: null,
-        teamId: null,
-        customer: { assignedTeamId: { in: teamIds } },
-      });
+      workOr.push({ customer: { assignedTeamId: { in: teamIds } } });
     }
     if (productionTeamIds.length > 0) {
       const onProductionTeam = {
