@@ -1902,10 +1902,10 @@ status: ${item.status}`);
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, status: 'ACTIVE' },
-      select: { id: true, customerId: true },
+      where: { id: employeeId },
+      select: { id: true, customerId: true, status: true },
     });
-    if (!employee) return [];
+    if (!employee || String(employee.status || '').toUpperCase() !== 'ACTIVE') return [];
 
     const tenantId = Number(tenantCustomerId || employee.customerId);
     const keep = (name?: string | null, description?: string | null) => {
@@ -1917,7 +1917,6 @@ status: ${item.status}`);
       this.prisma.teamMember.findMany({
         where: {
           employeeId,
-          employee: { status: 'ACTIVE' },
           team: { isActive: true },
         },
         select: {
@@ -1926,8 +1925,14 @@ status: ${item.status}`);
         },
       }),
       this.prisma.team.findMany({
-        where: { leaderId: employeeId, isActive: true, leader: { status: 'ACTIVE' } },
-        select: { id: true, name: true, description: true, customerId: true },
+        where: { leaderId: employeeId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          customerId: true,
+          leader: { select: { status: true } },
+        },
       }),
     ]);
 
@@ -1938,6 +1943,7 @@ status: ${item.status}`);
       rows.set(row.teamId, Number(row.team?.customerId));
     }
     for (const team of ledTeams) {
+      if (String(team.leader?.status || '').toUpperCase() !== 'ACTIVE') continue;
       if (!keep(team.name, team.description)) continue;
       rows.set(team.id, Number(team.customerId));
     }
@@ -2229,32 +2235,53 @@ status: ${item.status}`);
 
     let where: any;
 
-    if (allTenantCustomers && isProductionManager) {
+    if (allTenantCustomers) {
+      // Mobile Calendar and My Work always pass this flag. Visibility is the
+      // employee's production teams, not customer.id = the company record.
+      // That equality was returning only customer 91 when the employee
+      // company id was 91, even though Team A has more customers.
+      const orConditions: any[] = [
+        { assignedToId: numEmployeeId },
+        { editorId: numEmployeeId },
+        { tasks: { some: { assignedToId: numEmployeeId } } },
+      ];
+      if (empRecord?.userId) {
+        orConditions.push(
+          { assignedToId: empRecord.userId },
+          { editorId: empRecord.userId },
+          { tasks: { some: { assignedToId: empRecord.userId } } },
+        );
+      }
+      if (productionTeamIds.length > 0) {
+        orConditions.push(
+          {
+            customer: {
+              deletedAt: null,
+              isActive: true,
+              assignedTeamId: { in: productionTeamIds },
+              assignedTeam: { isActive: true },
+            },
+          },
+          {
+            teamId: { in: productionTeamIds },
+            customer: { deletedAt: null, isActive: true },
+          },
+        );
+      } else if (isProductionManager && tenantCustomerId) {
+        orConditions.push({
+          customer: {
+            deletedAt: null,
+            isActive: true,
+            assignedTeam: {
+              isActive: true,
+              customerId: tenantCustomerId,
+            },
+          },
+        });
+      }
       where = {
+        OR: orConditions,
         status: { not: WorkStatus.CANCELLED },
-        customer: {
-          deletedAt: null,
-          isActive: true,
-          ...(tenantCustomerId
-            ? {
-                OR: [
-                  { id: tenantCustomerId },
-                  { assignedTeam: { isActive: true, customerId: tenantCustomerId } },
-                  ...(productionTeamIds.length > 0
-                    ? [{
-                        assignedTeamId: { in: productionTeamIds },
-                        assignedTeam: { isActive: true },
-                      }]
-                    : []),
-                ],
-              }
-            : productionTeamIds.length > 0
-              ? {
-                  assignedTeamId: { in: productionTeamIds },
-                  assignedTeam: { isActive: true },
-                }
-              : {}),
-        },
       };
 
       if (query.customerId) {
