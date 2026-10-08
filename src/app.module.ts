@@ -50,6 +50,7 @@ import { SocialPublishingModule } from './modules/social-publishing/social-publi
 import { MasterModule } from './modules/master/master.module';
 import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
 import { CommissionModule } from './modules/commission/commission.module';
+import { CouponModule } from './modules/subscription/coupon.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -109,6 +110,7 @@ import { AppController } from './app.controller';
     MasterModule,
     MetaTemplateModule,
     CommissionModule,
+    CouponModule,
   ],
   controllers: [AppController],
 })
