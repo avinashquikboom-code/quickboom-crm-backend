@@ -43,6 +43,11 @@ export class CreateRazorpayOrderDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code. The server recalculates the payable amount.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class VerifyRazorpayPaymentDto {
@@ -86,6 +91,11 @@ export class VerifyRazorpayPaymentDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code used when the Razorpay order was created.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class CreateOfflinePaymentDto {
@@ -129,6 +139,11 @@ export class CreateOfflinePaymentDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code used when the Razorpay order was created.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class SendPaymentReminderDto {

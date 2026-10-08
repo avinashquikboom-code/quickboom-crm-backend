@@ -405,6 +405,10 @@ export class SubscriptionController {
               currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
               scheduledWorks: plan.usage?.scheduledWorks || 0,
             },
+            couponCode: plan.couponCode || null,
+            originalAmount: plan.originalAmount ?? null,
+            discountAmount: plan.discountAmount ?? null,
+            paidAmount: plan.paidAmount ?? null,
             upcomingPlan,
           }
         : null;

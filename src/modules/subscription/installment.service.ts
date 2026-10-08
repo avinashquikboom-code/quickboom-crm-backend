@@ -1110,6 +1110,10 @@ export class InstallmentService {
       endDate: targetSub.endDate ? new Date(targetSub.endDate).toISOString() : null,
       expiryDate: targetSub.endDate ? new Date(targetSub.endDate).toISOString() : null,
       isActive: targetSub.status === SubscriptionStatus.ACTIVE,
+      couponCode: targetSub.couponCode || null,
+      originalAmount: targetSub.originalAmount != null ? Number(targetSub.originalAmount) : null,
+      discountAmount: targetSub.discountAmount != null ? Number(targetSub.discountAmount) : null,
+      paidAmount: targetSub.paidAmount != null ? Number(targetSub.paidAmount) : null,
     };
 
     const currentData = {
@@ -1128,6 +1132,10 @@ export class InstallmentService {
       expiryDate: subscriptionObj.endDate,
       isActive: targetSub.status === SubscriptionStatus.ACTIVE,
       status: targetSub.status,
+      couponCode: targetSub.couponCode || null,
+      originalAmount: targetSub.originalAmount != null ? Number(targetSub.originalAmount) : null,
+      discountAmount: targetSub.discountAmount != null ? Number(targetSub.discountAmount) : null,
+      paidAmount: targetSub.paidAmount != null ? Number(targetSub.paidAmount) : null,
       currentInstallment: currentInst
         ? {
             number: currentInst.installmentNumber,

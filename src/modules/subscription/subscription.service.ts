@@ -25,6 +25,7 @@ import { EmailTemplateService, renderEmailTemplate } from '../email/email-templa
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
+import { CouponService } from './coupon.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
   calculatePlanExpiry,
@@ -57,6 +58,7 @@ export class SubscriptionService {
     @Optional() private whatsappService?: WhatsappService,
     @Optional() private invoiceService?: InvoiceService,
     @Optional() private commissionService?: CommissionService,
+    @Optional() private couponService?: CouponService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -860,9 +862,24 @@ export class SubscriptionService {
     }
 
     const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const basePrice = cycle === SubscriptionBillingCycle.MONTHLY ? Number(plan.monthlyPrice) : Number(plan.yearlyPrice);
-    const tax = basePrice * 0.18;
-    const total = basePrice + tax;
+    let basePrice = cycle === SubscriptionBillingCycle.MONTHLY ? Number(plan.monthlyPrice) : Number(plan.yearlyPrice);
+    let tax = basePrice * 0.18;
+    let total = basePrice + tax;
+    let couponQuote: Awaited<ReturnType<CouponService['quote']>> | null = null;
+    if (dto.couponCode && this.couponService) {
+      couponQuote = await this.couponService.quote({
+        customerId: numCustomerId,
+        planId: plan.id,
+        couponCode: dto.couponCode,
+        billingCycle: cycle,
+        paymentOption: 'FULL',
+      });
+      basePrice = couponQuote.discountedBase;
+      tax = couponQuote.taxAmount;
+      total = couponQuote.finalAmount;
+    } else if (dto.couponCode) {
+      throw new BadRequestException('Coupon pricing is unavailable');
+    }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
     const purchaseDate = new Date();
@@ -942,8 +959,40 @@ export class SubscriptionService {
           status: 'SUCCESS',
           paymentMethod: (dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY,
           transactionId,
+          ...(couponQuote
+            ? {
+                couponId: couponQuote.couponId,
+                couponCode: couponQuote.couponCode,
+                originalAmount: couponQuote.originalAmount,
+                discountAmount: couponQuote.discountAmount,
+              }
+            : {}),
         },
       });
+
+      if (couponQuote && this.couponService) {
+        await tx.customerSubscription.update({
+          where: { id: updatedSub.id },
+          data: {
+            couponId: couponQuote.couponId,
+            couponCode: couponQuote.couponCode,
+            originalAmount: couponQuote.originalAmount,
+            discountAmount: couponQuote.discountAmount,
+            paidAmount: couponQuote.chargedTotal,
+          },
+        });
+        await this.couponService.redeem(tx, {
+          couponId: couponQuote.couponId,
+          customerId: numCustomerId,
+          planId: plan.id,
+          subscriptionId: updatedSub.id,
+          paymentId: payment.id,
+          couponCode: couponQuote.couponCode,
+          originalAmount: couponQuote.originalAmount,
+          discountAmount: couponQuote.discountAmount,
+          finalAmount: couponQuote.finalAmount,
+        });
+      }
 
       // Generate Invoice record for this subscription transaction
       const invoiceNo = `INV-${new Date(startDate).getFullYear()}-${String(payment.id).padStart(6, '0')}`;
@@ -2912,6 +2961,15 @@ export class SubscriptionService {
           startDate,
           endDate,
           updatedAt: new Date(),
+          ...(payment.couponId
+            ? {
+                couponId: payment.couponId,
+                couponCode: payment.couponCode,
+                originalAmount: payment.originalAmount,
+                discountAmount: payment.discountAmount,
+                paidAmount: Number(payment.totalAmount || 0),
+              }
+            : {}),
         },
       });
 
@@ -2932,6 +2990,22 @@ export class SubscriptionService {
           updatedAt: new Date(),
         },
       });
+
+      if (payment.couponId && payment.couponCode && this.couponService) {
+        await this.couponService.redeem(tx, {
+          couponId: payment.couponId,
+          customerId: sub.customerId,
+          planId: sub.planId,
+          subscriptionId: sub.id,
+          paymentId: payment.id,
+          couponCode: payment.couponCode,
+          originalAmount: Number(payment.originalAmount || 0),
+          discountAmount: Number(payment.discountAmount || 0),
+          finalAmount: Number(payment.totalAmount || 0),
+        });
+      } else if (payment.couponId && !this.couponService) {
+        throw new BadRequestException('Coupon could not be redeemed');
+      }
 
       // 5. Calculate total paid across all approved payments for this subscription
       const allPayments = await tx.paymentHistory.findMany({

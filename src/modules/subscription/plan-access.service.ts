@@ -66,6 +66,10 @@ export interface EffectivePlan {
   quotas?: Record<string, any>;
   usage: EffectivePlanUsage;
   upcomingPlan?: UpcomingPlanSummary | null;
+  couponCode?: string | null;
+  originalAmount?: number | null;
+  discountAmount?: number | null;
+  paidAmount?: number | null;
 }
 
 @Injectable()
@@ -585,6 +589,10 @@ export class PlanAccessService {
         scheduledWorks,
       },
       upcomingPlan,
+      couponCode: sub?.couponCode || null,
+      originalAmount: sub?.originalAmount != null ? Number(sub.originalAmount) : null,
+      discountAmount: sub?.discountAmount != null ? Number(sub.discountAmount) : null,
+      paidAmount: sub?.paidAmount != null ? Number(sub.paidAmount) : null,
     };
 
     const duration = Date.now() - startTime;

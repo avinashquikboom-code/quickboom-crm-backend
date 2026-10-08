@@ -38,6 +38,7 @@ import { isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.ut
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
+import { CouponService, CouponPriceResult } from '../subscription/coupon.service';
 import {
   buildDefaultPlanLineItems,
   withInvoiceItemsSnapshot,
@@ -58,7 +59,29 @@ export class PaymentService {
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly invoiceService?: InvoiceService,
     @Optional() private readonly commissionService?: CommissionService,
+    @Optional() private readonly couponService?: CouponService,
   ) {}
+
+  private async pricedCoupon(params: {
+    customerId: number;
+    planId: number;
+    billingCycle: string;
+    paymentOption?: string;
+    couponCode?: string;
+  }): Promise<CouponPriceResult | null> {
+    const code = String(params.couponCode || '').trim();
+    if (!code) return null;
+    if (!this.couponService) {
+      throw new BadRequestException('Coupon pricing is unavailable');
+    }
+    return this.couponService.quote({
+      customerId: params.customerId,
+      planId: params.planId,
+      couponCode: code,
+      billingCycle: params.billingCycle,
+      paymentOption: params.paymentOption,
+    });
+  }
 
   /**
    * Dynamically resolves active Razorpay credentials from Database (or .env fallback)
@@ -182,13 +205,25 @@ export class PaymentService {
       basePrice = totalAmount - taxAmount;
     }
 
-    const amountInPaise = Math.round(totalAmount * 100);
+    const couponQuote = await this.pricedCoupon({
+      customerId,
+      planId: plan.id,
+      billingCycle: cycle,
+      paymentOption,
+      couponCode: dto.couponCode,
+    });
+    if (couponQuote) {
+      basePrice = couponQuote.chargedBase;
+      taxAmount = couponQuote.chargedTax;
+      totalAmount = couponQuote.chargedTotal;
+    }
+    const chargedPaise = Math.round(totalAmount * 100);
 
     const { instance: razorpayInstance, config: rzpConfig } = await this.getRazorpayClient();
 
     const receipt = `rcpt_${customerId}_${Date.now().toString(36)}`;
     const razorpayPayload = {
-      amount: amountInPaise,
+      amount: chargedPaise,
       currency: dto.currency || 'INR',
       receipt,
       notes: {
@@ -197,6 +232,7 @@ export class PaymentService {
         planName: plan.name,
         billingCycle: cycle,
         paymentOption,
+        ...(couponQuote ? { couponCode: couponQuote.couponCode } : {}),
         ...(dto.activationDate ? { activationDate: String(dto.activationDate) } : {}),
       },
     };
@@ -260,7 +296,7 @@ export class PaymentService {
     return {
       success: true,
       orderId: razorpayOrderId,
-      amount: amountInPaise,
+      amount: chargedPaise,
       totalAmountRupees: totalAmount,
       fullPlanAmountRupees: fullTotalAmount,
       basePriceRupees: basePrice,
@@ -272,6 +308,7 @@ export class PaymentService {
       planName: plan.name,
       planCode: plan.code,
       billingCycle: cycle,
+      coupon: couponQuote,
       customer: {
         id: customer.id,
         name: customer.companyName || customer.name || 'QuikBoom Customer',
@@ -394,7 +431,7 @@ export class PaymentService {
       chargedTotal = Math.round(fullTotalAmount * 0.5);
       chargedTax = Math.round(fullTaxAmount * 0.5);
       chargedBase = chargedTotal - chargedTax;
-    } else if (paymentOption === 'BALANCE') {
+    } else     if (paymentOption === 'BALANCE') {
       const priorPayments = await this.prisma.paymentHistory.findMany({
         where: { customerId, status: 'SUCCESS' },
       });
@@ -402,6 +439,26 @@ export class PaymentService {
       chargedTotal = Math.max(0, fullTotalAmount - priorTotal);
       chargedTax = Math.round(chargedTotal - (chargedTotal / 1.18));
       chargedBase = chargedTotal - chargedTax;
+    }
+
+    const couponQuote = await this.pricedCoupon({
+      customerId,
+      planId: plan.id,
+      billingCycle: cycle,
+      paymentOption,
+      couponCode: dto.couponCode,
+    });
+    if (couponQuote) {
+      chargedBase = couponQuote.chargedBase;
+      chargedTax = couponQuote.chargedTax;
+      chargedTotal = couponQuote.chargedTotal;
+      const { instance } = await this.getRazorpayClient();
+      const gatewayOrder = await instance.orders.fetch(orderId);
+      const paidPaise = Number(gatewayOrder?.amount);
+      const expectedPaise = Math.round(couponQuote.chargedTotal * 100);
+      if (paidPaise !== expectedPaise) {
+        throw new BadRequestException('Payment amount does not match the coupon price.');
+      }
     }
 
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
@@ -438,6 +495,14 @@ export class PaymentService {
             status: 'SUCCESS',
             paymentMethod: PaymentMethod.RAZORPAY,
             transactionId,
+            ...(couponQuote
+              ? {
+                  couponId: couponQuote.couponId,
+                  couponCode: couponQuote.couponCode,
+                  originalAmount: couponQuote.originalAmount,
+                  discountAmount: couponQuote.discountAmount,
+                }
+              : {}),
           },
         });
       }
@@ -509,6 +574,30 @@ export class PaymentService {
           status: SubscriptionStatus.EXPIRED,
         },
       });
+
+      if (couponQuote && this.couponService) {
+        await tx.customerSubscription.update({
+          where: { id: sub.id },
+          data: {
+            couponId: couponQuote.couponId,
+            couponCode: couponQuote.couponCode,
+            originalAmount: couponQuote.originalAmount,
+            discountAmount: couponQuote.discountAmount,
+            paidAmount: couponQuote.chargedTotal,
+          },
+        });
+        await this.couponService.redeem(tx, {
+          couponId: couponQuote.couponId,
+          customerId,
+          planId: plan.id,
+          subscriptionId: sub.id,
+          paymentId: payment.id,
+          couponCode: couponQuote.couponCode,
+          originalAmount: couponQuote.originalAmount,
+          discountAmount: couponQuote.discountAmount,
+          finalAmount: couponQuote.finalAmount,
+        });
+      }
 
       // 3. Generate Receipt for this payment
       const receiptNo = `REC-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
@@ -1664,6 +1753,19 @@ export class PaymentService {
       basePrice = totalAmount - taxAmount;
     }
 
+    const couponQuote = await this.pricedCoupon({
+      customerId,
+      planId: plan.id,
+      billingCycle: cycle,
+      paymentOption,
+      couponCode: dto.couponCode,
+    });
+    if (couponQuote) {
+      basePrice = couponQuote.chargedBase;
+      taxAmount = couponQuote.chargedTax;
+      totalAmount = couponQuote.chargedTotal;
+    }
+
     const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
     const purchaseDate = new Date();
     const subscriptionDates = resolvePlanSubscriptionDates(
@@ -1688,6 +1790,15 @@ export class PaymentService {
         customUserLimit: plan.userLimit,
         customLeadLimit: plan.leadLimit,
         customStorageLimit: plan.storageLimit,
+        ...(couponQuote
+          ? {
+              couponId: couponQuote.couponId,
+              couponCode: couponQuote.couponCode,
+              originalAmount: couponQuote.originalAmount,
+              discountAmount: couponQuote.discountAmount,
+              paidAmount: couponQuote.chargedTotal,
+            }
+          : {}),
       },
     });
 
@@ -1730,6 +1841,14 @@ export class PaymentService {
         billingCycle: cycle,
         transactionId: txId,
         invoiceUrl: proof,
+        ...(couponQuote
+          ? {
+              couponId: couponQuote.couponId,
+              couponCode: couponQuote.couponCode,
+              originalAmount: couponQuote.originalAmount,
+              discountAmount: couponQuote.discountAmount,
+            }
+          : {}),
       },
     });
 
