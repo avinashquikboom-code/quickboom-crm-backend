@@ -960,6 +960,9 @@ export class TaskService {
           dueDate: item.scheduledAt || item.scheduledDate || null,
           scheduledDate: item.scheduledDate || null,
           scheduledTime: item.scheduledTime || null,
+          originalScheduledDate: item.originalScheduledDate || null,
+          isCarriedForward: item.isCarriedForward ?? false,
+          carryForwardNote: item.carryForwardNote || null,
           workType: item.workType || item.type || item.activityType || null,
           taskNumber: `WRK-${id}`,
           employee: assignedName

@@ -85,6 +85,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   async runAllScheduledChecks() {
     this.logger.log('Starting automated notification scheduler cycle...');
 
+    const carriedForwardCount = await this.autoCarryForwardIncompleteWorks();
     const subCount3Days = await this.checkSubscriptionExpiries(3);
     const subCountToday = await this.checkSubscriptionExpiries(0);
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
@@ -97,10 +98,11 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Attendance Reports: ${attendanceReports && !('skipped' in attendanceReports) ? attendanceReports.attempted : 0} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Tasks Carried Forward: ${carriedForwardCount} | Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Attendance Reports: ${attendanceReports && !('skipped' in attendanceReports) ? attendanceReports.attempted : 0} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
+      tasksCarriedForward: carriedForwardCount,
       subscriptionsNotified3Days: subCount3Days,
       subscriptionsNotifiedToday: subCountToday,
       customerCalendarNotified: customerCount,
@@ -109,6 +111,96 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
       followUpRemindersNotified: followUpRemindersCount,
       notificationsCleaned: cleanupCount,
     };
+  }
+
+  /**
+   * Safe Task Auto Carry-Forward:
+   * Moves any incomplete tasks scheduled for past days in IST to today (or next working day).
+   * Idempotent: Never duplicates the task. Preserves the same Task ID.
+   */
+  async autoCarryForwardIncompleteWorks(): Promise<number> {
+    const todayStart = getIstDayWindow(0).start;
+    const overdueWorks = await this.prisma.work.findMany({
+      where: {
+        scheduledDate: { lt: todayStart },
+        status: {
+          notIn: [WorkStatus.COMPLETED, WorkStatus.APPROVED, WorkStatus.CANCELLED],
+        },
+      },
+    });
+
+    if (overdueWorks.length === 0) return 0;
+
+    let count = 0;
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowUtc = new Date();
+    const nowIst = new Date(nowUtc.getTime() + IST_OFFSET_MS);
+    const curY = nowIst.getUTCFullYear();
+    const curM = nowIst.getUTCMonth();
+    const curD = nowIst.getUTCDate();
+
+    for (const work of overdueWorks) {
+      try {
+        const origDate = work.scheduledDate;
+        const origIst = new Date(origDate.getTime() + IST_OFFSET_MS);
+        const origY = origIst.getUTCFullYear();
+        const origM = String(origIst.getUTCMonth() + 1).padStart(2, '0');
+        const origD = String(origIst.getUTCDate()).padStart(2, '0');
+        const origIso = `${origY}-${origM}-${origD}`;
+
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const origDisplay = `${origD} ${months[origIst.getUTCMonth()]} ${origY}`;
+
+        const existingNotes = work.notes || '';
+        const alreadyHasOriginalTag = /\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/.test(existingNotes);
+
+        let updatedNotes = existingNotes;
+        if (!alreadyHasOriginalTag) {
+          const origPrefix = `[ORIGINAL_SCHEDULE:${origIso}] Originally scheduled: ${origDisplay}`;
+          updatedNotes = existingNotes.trim().length > 0 ? `${origPrefix}\n${existingNotes}` : origPrefix;
+        }
+
+        let targetIstY = curY;
+        let targetIstM = curM;
+        let targetIstD = curD;
+
+        if (work.customerId) {
+          const customerPolicy = await this.prisma.attendancePolicy.findFirst({
+            where: { customerId: work.customerId, isActive: true },
+          });
+          const workingDaysPerWeek = customerPolicy?.workingDaysPerWeek ?? 6;
+          const targetDateObj = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 12, 0, 0, 0));
+          const dayOfWeek = targetDateObj.getUTCDay();
+
+          if (workingDaysPerWeek <= 5 && (dayOfWeek === 0 || dayOfWeek === 6)) {
+            const daysToAdd = dayOfWeek === 6 ? 2 : 1;
+            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + daysToAdd);
+            targetIstY = targetDateObj.getUTCFullYear();
+            targetIstM = targetDateObj.getUTCMonth();
+            targetIstD = targetDateObj.getUTCDate();
+          } else if (workingDaysPerWeek === 6 && dayOfWeek === 0) {
+            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + 1);
+            targetIstY = targetDateObj.getUTCFullYear();
+            targetIstM = targetDateObj.getUTCMonth();
+            targetIstD = targetDateObj.getUTCDate();
+          }
+        }
+
+        const targetDateUtc = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 4, 30, 0, 0));
+
+        await this.prisma.work.update({
+          where: { id: work.id },
+          data: {
+            scheduledDate: targetDateUtc,
+            notes: updatedNotes,
+          },
+        });
+        count++;
+      } catch (err: any) {
+        this.logger.error(`Error in notification scheduler carrying forward work #${work.id}: ${err?.message}`);
+      }
+    }
+    return count;
   }
 
   /**

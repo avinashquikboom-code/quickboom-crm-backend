@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   Logger,
   Optional,
+  OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
@@ -21,8 +23,10 @@ import { WorkPermissionService, normalizeActivityType } from './work-permission.
 import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
-export class WorkService {
+export class WorkService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WorkService.name);
+  private carryForwardTimer: NodeJS.Timeout | null = null;
+  private lastCarryForwardRunMs = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -30,6 +34,29 @@ export class WorkService {
     @Optional() private readonly planScheduleGateway?: PlanScheduleGateway,
     @Optional() private readonly notificationService?: NotificationService,
   ) {}
+
+  onModuleInit() {
+    // Warmup delay (12s) to allow database connections to establish
+    setTimeout(() => {
+      this.autoCarryForwardIncompleteWorks().catch((err) => {
+        this.logger.error(`Initial carry forward check error: ${err?.message}`, err?.stack);
+      });
+    }, 12000);
+
+    // Periodic check every 30 minutes for automated task carry-forward
+    this.carryForwardTimer = setInterval(() => {
+      this.autoCarryForwardIncompleteWorks().catch((err) => {
+        this.logger.error(`Periodic carry forward check error: ${err?.message}`, err?.stack);
+      });
+    }, 30 * 60 * 1000);
+  }
+
+  onModuleDestroy() {
+    if (this.carryForwardTimer) {
+      clearInterval(this.carryForwardTimer);
+      this.carryForwardTimer = null;
+    }
+  }
 
   /**
    * Helper to emit customer-isolated real-time plan/schedule events
@@ -54,6 +81,132 @@ export class WorkService {
         this.logger.warn(`Failed to emit real-time schedule event: ${err?.message}`);
       }
     }
+  }
+
+  /**
+   * Auto carry-forward uncompleted tasks scheduled for past days in IST (UTC+05:30).
+   * Safe & Idempotent: Never creates duplicate tasks. Updates the existing Work record.
+   * Preserves the original scheduled date in notes and updates scheduledDate to today (or next valid working day).
+   */
+  async autoCarryForwardIncompleteWorks(): Promise<{ carriedForwardCount: number }> {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowUtc = new Date();
+    const nowIst = new Date(nowUtc.getTime() + IST_OFFSET_MS);
+
+    const currentIstYear = nowIst.getUTCFullYear();
+    const currentIstMonth = nowIst.getUTCMonth();
+    const currentIstDate = nowIst.getUTCDate();
+
+    // Start of today in IST converted to UTC: any work scheduled strictly prior to this cutoff is from a day that has ended.
+    const startOfTodayIstInUtc = new Date(
+      Date.UTC(currentIstYear, currentIstMonth, currentIstDate, 0, 0, 0, 0) - IST_OFFSET_MS,
+    );
+
+    // Find all uncompleted, non-cancelled works whose scheduledDate is strictly prior to start of today in IST
+    const overdueWorks = await this.prisma.work.findMany({
+      where: {
+        scheduledDate: { lt: startOfTodayIstInUtc },
+        status: {
+          notIn: [WorkStatus.COMPLETED, WorkStatus.APPROVED, WorkStatus.CANCELLED],
+        },
+      },
+      include: {
+        customer: { select: { id: true, name: true, companyName: true } },
+      },
+    });
+
+    if (overdueWorks.length === 0) {
+      return { carriedForwardCount: 0 };
+    }
+
+    const istDateString = `${currentIstYear}-${String(currentIstMonth + 1).padStart(2, '0')}-${String(currentIstDate).padStart(2, '0')}`;
+    this.logger.log(
+      `[CARRY_FORWARD_CHECK] Found ${overdueWorks.length} uncompleted tasks prior to ${istDateString} IST to carry forward.`,
+    );
+
+    let carriedForwardCount = 0;
+
+    for (const work of overdueWorks) {
+      try {
+        // Determine original scheduled date representation in IST
+        const origDate = work.scheduledDate;
+        const origIst = new Date(origDate.getTime() + IST_OFFSET_MS);
+        const origY = origIst.getUTCFullYear();
+        const origM = String(origIst.getUTCMonth() + 1).padStart(2, '0');
+        const origD = String(origIst.getUTCDate()).padStart(2, '0');
+        const origIso = `${origY}-${origM}-${origD}`;
+
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const origDisplay = `${origD} ${months[origIst.getUTCMonth()]} ${origY}`;
+
+        // Check if notes already contains original schedule tag from an earlier carry-forward
+        const existingNotes = work.notes || '';
+        const alreadyHasOriginalTag = /\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/.test(existingNotes);
+
+        let updatedNotes = existingNotes;
+        if (!alreadyHasOriginalTag) {
+          const origPrefix = `[ORIGINAL_SCHEDULE:${origIso}] Originally scheduled: ${origDisplay}`;
+          updatedNotes = existingNotes.trim().length > 0 ? `${origPrefix}\n${existingNotes}` : origPrefix;
+        }
+
+        // Target date in IST
+        let targetIstY = currentIstYear;
+        let targetIstM = currentIstMonth;
+        let targetIstD = currentIstDate;
+
+        // Check customer attendance policy for weekend/Sunday skipping
+        if (work.customerId) {
+          const customerPolicy = await this.prisma.attendancePolicy.findFirst({
+            where: { customerId: work.customerId, isActive: true },
+          });
+          const workingDaysPerWeek = customerPolicy?.workingDaysPerWeek ?? 6;
+          const targetDateObj = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 12, 0, 0, 0));
+          const dayOfWeek = targetDateObj.getUTCDay(); // 0 = Sun, 6 = Sat
+
+          if (workingDaysPerWeek <= 5 && (dayOfWeek === 0 || dayOfWeek === 6)) {
+            const daysToAdd = dayOfWeek === 6 ? 2 : 1;
+            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + daysToAdd);
+            targetIstY = targetDateObj.getUTCFullYear();
+            targetIstM = targetDateObj.getUTCMonth();
+            targetIstD = targetDateObj.getUTCDate();
+          } else if (workingDaysPerWeek === 6 && dayOfWeek === 0) {
+            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + 1);
+            targetIstY = targetDateObj.getUTCFullYear();
+            targetIstM = targetDateObj.getUTCMonth();
+            targetIstD = targetDateObj.getUTCDate();
+          }
+        }
+
+        // Store target date at 10:00 AM IST (04:30:00 UTC) to ensure clean date matching in both UTC and IST
+        const targetDateUtc = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 4, 30, 0, 0));
+
+        // Atomic update of the SAME work record — DO NOT DUPLICATE!
+        await this.prisma.work.update({
+          where: { id: work.id },
+          data: {
+            scheduledDate: targetDateUtc,
+            notes: updatedNotes,
+          },
+        });
+
+        carriedForwardCount++;
+
+        const newDateIso = `${targetIstY}-${String(targetIstM + 1).padStart(2, '0')}-${String(targetIstD).padStart(2, '0')}`;
+        this.logger.log(
+          `[CARRY_FORWARD_SUCCESS] Work #${work.id} ('${work.title}') moved from ${origIso} to ${newDateIso}. Status '${work.status}' preserved. Same Work ID kept.`,
+        );
+
+        // Emit real-time notification to subscribed clients
+        this.emitRealtimeScheduleEvent(work.customerId, 'PLAN_SCHEDULE_UPDATED', {
+          scheduleId: work.id,
+          date: newDateIso,
+        });
+      } catch (err: any) {
+        this.logger.error(`Failed to carry forward work #${work.id}: ${err?.message}`);
+      }
+    }
+
+    return { carriedForwardCount };
   }
 
   /**
@@ -854,50 +1007,7 @@ export class WorkService {
         }
       }
 
-      // Notify customer that work is completed (with idempotency guard to prevent duplicates)
-      try {
-        const recentWorkNotifs = await this.prisma.notification.findMany({
-          where: {
-            customerId: result.customerId,
-            type: 'WORK_COMPLETED',
-            createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
-          },
-          select: { data: true },
-          take: 10,
-          orderBy: { id: 'desc' },
-        });
-        const alreadyNotifiedCustomer = recentWorkNotifs.some((n: any) => {
-          const d = (n.data as any) || {};
-          return String(d.workId) === String(result.id);
-        });
-
-        if (!alreadyNotifiedCustomer) {
-          const cleanTitle = result.title?.trim();
-          const notifBody = cleanTitle && cleanTitle.length > 0
-            ? `Your "${cleanTitle}" production work has been completed successfully.`
-            : 'Your production work has been completed successfully.';
-
-          await this.notificationService.sendPushNotification({
-            customerId: result.customerId,
-            title: 'Production Work Completed',
-            body: notifBody,
-            type: 'WORK_COMPLETED',
-            data: {
-              type: 'WORK_COMPLETED',
-              workId: String(result.id),
-              orderId: String(result.subscriptionId || ''),
-              purchaseId: String(result.planId || ''),
-              status: 'COMPLETED',
-              route: '/customer/work-requests',
-            },
-          });
-          this.logger.log(`Dispatched WORK_COMPLETED push notification to customer #${result.customerId} for work #${result.id}`);
-        } else {
-          this.logger.log(`[WORK_COMPLETED] Customer #${result.customerId} already notified for work #${result.id}. Skipping duplicate push.`);
-        }
-      } catch (err: any) {
-        this.logger.warn(`Failed to send WORK_COMPLETED push to customer #${result.customerId} (non-fatal): ${err?.message}`);
-      }
+      await this.notifyCustomerWorkCompleted(result);
     }
 
     return result;
@@ -1265,6 +1375,15 @@ export class WorkService {
     } = {},
   ) {
     const startTime = Date.now();
+
+    // JIT task auto carry-forward check (at most once every 60 seconds)
+    if (Date.now() - this.lastCarryForwardRunMs > 60000) {
+      this.lastCarryForwardRunMs = Date.now();
+      await this.autoCarryForwardIncompleteWorks().catch((err) => {
+        this.logger.warn(`JIT carry-forward in getCalendar warning: ${err?.message}`);
+      });
+    }
+
     const where: any = {};
     let numCustomerId = this.resolveCustomerId(scopedCustomerId);
     if (!numCustomerId && scopedCustomerId) {
@@ -1495,6 +1614,22 @@ returnedSchedules: 0`);
             : String(w.scheduledDate).split('T')[0])
         : null;
 
+      const originalScheduleMatch = (w.notes || '').match(/\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
+      const originalScheduledDate = originalScheduleMatch ? originalScheduleMatch[1] : null;
+      const isCarriedForward = Boolean(
+        originalScheduledDate && (schedDateVal ? originalScheduledDate !== schedDateVal : true),
+      );
+      let carryForwardNote: string | null = null;
+      if (isCarriedForward && originalScheduledDate) {
+        const parts = originalScheduledDate.split('-').map(Number);
+        if (parts.length === 3 && !parts.some(isNaN)) {
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          carryForwardNote = `Originally scheduled: ${String(parts[2]).padStart(2, '0')} ${months[parts[1] - 1]} ${parts[0]}`;
+        } else {
+          carryForwardNote = `Originally scheduled: ${originalScheduledDate}`;
+        }
+      }
+
       const normalizedType = normalizeActivityType(w);
 
       return {
@@ -1510,6 +1645,9 @@ returnedSchedules: 0`);
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
         scheduledTime: startTime,
+        originalScheduledDate,
+        isCarriedForward,
+        carryForwardNote,
         date: w.scheduledDate,
         scheduleDate: w.scheduledDate,
         time: startTime,
@@ -1803,6 +1941,14 @@ status: ${item.status}`);
     const numEmployeeId = Number(employeeId);
     if (!numEmployeeId || isNaN(numEmployeeId)) {
       return [];
+    }
+
+    // JIT task auto carry-forward check (at most once every 60 seconds)
+    if (Date.now() - this.lastCarryForwardRunMs > 60000) {
+      this.lastCarryForwardRunMs = Date.now();
+      await this.autoCarryForwardIncompleteWorks().catch((err) => {
+        this.logger.warn(`JIT carry-forward in getEmployeeCalendar warning: ${err?.message}`);
+      });
     }
 
     // Auto-sync unassigned team works if employee belongs to any teams
@@ -2224,6 +2370,22 @@ status: ${item.status}`);
 
       const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate, targetDateStr) : null;
 
+      const originalScheduleMatch = (w.notes || '').match(/\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
+      const originalScheduledDate = originalScheduleMatch ? originalScheduleMatch[1] : null;
+      const isCarriedForward = Boolean(
+        originalScheduledDate && (schedDateVal ? originalScheduledDate !== schedDateVal : true),
+      );
+      let carryForwardNote: string | null = null;
+      if (isCarriedForward && originalScheduledDate) {
+        const parts = originalScheduledDate.split('-').map(Number);
+        if (parts.length === 3 && !parts.some(isNaN)) {
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          carryForwardNote = `Originally scheduled: ${String(parts[2]).padStart(2, '0')} ${months[parts[1] - 1]} ${parts[0]}`;
+        } else {
+          carryForwardNote = `Originally scheduled: ${originalScheduledDate}`;
+        }
+      }
+
       const customerLocation = [w.customer?.address, w.customer?.city, w.customer?.state]
         .filter(Boolean)
         .join(', ') || null;
@@ -2270,6 +2432,9 @@ status: ${item.status}`);
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
         scheduledTime: startTime,
+        originalScheduledDate,
+        isCarriedForward,
+        carryForwardNote,
         date: schedDateVal || w.scheduledDate,
         scheduleDate: schedDateVal || w.scheduledDate,
         time: startTime,
@@ -3263,6 +3428,91 @@ assignedEmployee: ${item.assignedEmployee}`);
   }
 
   /**
+   * Notify the work's customer after a non-completed → COMPLETED transition.
+   * Runs only after the status update is committed. Delivery failure is logged
+   * and does not change the completed work.
+   */
+  private async notifyCustomerWorkCompleted(work: {
+    id: number;
+    customerId: number;
+    title?: string | null;
+    subscriptionId?: number | null;
+    planId?: number | null;
+    customer?: {
+      name?: string | null;
+      companyName?: string | null;
+      deletedAt?: Date | null;
+      isActive?: boolean | null;
+    } | null;
+    assignedTo?: { firstName?: string | null; lastName?: string | null } | null;
+  }) {
+    if (!this.notificationService) return;
+
+    try {
+      const customer = work.customer;
+      if (!work.customerId || !customer) {
+        this.logger.warn(
+          `[WORK_COMPLETED] Work #${work.id} has no customer relation. Skipping customer notification.`,
+        );
+        return;
+      }
+      if (customer.deletedAt || customer.isActive === false) {
+        this.logger.warn(
+          `[WORK_COMPLETED] Customer #${work.customerId} is deleted or inactive. Skipping notification for work #${work.id}.`,
+        );
+        return;
+      }
+
+      const alreadyNotified = await this.prisma.notification.findFirst({
+        where: {
+          customerId: work.customerId,
+          type: 'WORK_COMPLETED',
+          data: {
+            path: ['workId'],
+            equals: String(work.id),
+          },
+        },
+        select: { id: true },
+      });
+      if (alreadyNotified) {
+        this.logger.log(
+          `[WORK_COMPLETED] Customer #${work.customerId} already notified for work #${work.id}. Skipping duplicate.`,
+        );
+        return;
+      }
+
+      const taskName = (work.title || '').trim() || 'Task';
+      const customerLabel = (customer.companyName || customer.name || '').trim();
+      const employeeName = `${work.assignedTo?.firstName || ''} ${work.assignedTo?.lastName || ''}`.trim();
+      const body = employeeName
+        ? `Your task '${taskName}'${customerLabel ? ` for ${customerLabel}` : ''} has been completed by ${employeeName}.`
+        : `${taskName} has been completed.`;
+
+      await this.notificationService.sendPushNotification({
+        customerId: work.customerId,
+        title: 'Task Completed',
+        body,
+        type: 'WORK_COMPLETED',
+        data: {
+          type: 'WORK_COMPLETED',
+          workId: String(work.id),
+          orderId: String(work.subscriptionId || ''),
+          purchaseId: String(work.planId || ''),
+          status: 'COMPLETED',
+          route: '/customer/work-requests',
+        },
+      });
+      this.logger.log(
+        `Dispatched WORK_COMPLETED notification to customer #${work.customerId} for work #${work.id}`,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to send WORK_COMPLETED notification to customer #${work.customerId} for work #${work.id} (non-fatal): ${err?.message}`,
+      );
+    }
+  }
+
+  /**
    * Mark activity schedule as completed
    */
   async completeActivity(
@@ -3286,11 +3536,17 @@ assignedEmployee: ${item.assignedEmployee}`);
       throw new NotFoundException(`Activity with ID ${numWorkId} not found or unauthorized`);
     }
 
+    const wasAlreadyCompleted = existing.status === WorkStatus.COMPLETED;
+
     const updated = await this.prisma.work.update({
       where: { id: numWorkId },
       data: {
         status: WorkStatus.COMPLETED,
         completedAt: new Date(),
+      },
+      include: {
+        customer: true,
+        assignedTo: true,
       },
     });
 
@@ -3298,6 +3554,10 @@ assignedEmployee: ${item.assignedEmployee}`);
       scheduleId: updated.id,
       status: 'completed',
     });
+
+    if (!wasAlreadyCompleted) {
+      await this.notifyCustomerWorkCompleted(updated);
+    }
 
     return {
       success: true,
