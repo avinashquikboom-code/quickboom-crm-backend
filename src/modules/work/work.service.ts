@@ -1886,6 +1886,63 @@ status: ${item.status}`);
   }
 
   /**
+   * Active production teams for this employee, scoped to their company.
+   * Inactive employees and BPO-named teams are excluded.
+   */
+  private async activeProductionTeamIdsForEmployee(
+    employeeId: number,
+    tenantCustomerId?: number | null,
+  ): Promise<number[]> {
+    if (
+      typeof this.prisma.employee?.findFirst !== 'function' ||
+      typeof this.prisma.teamMember?.findMany !== 'function' ||
+      typeof this.prisma.team?.findMany !== 'function'
+    ) {
+      return [];
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, status: 'ACTIVE' },
+      select: { id: true, customerId: true },
+    });
+    if (!employee) return [];
+
+    const tenantId = Number(tenantCustomerId || employee.customerId);
+    const productionTeamMatch: any = {
+      isActive: true,
+      ...(Number.isInteger(tenantId) && tenantId > 0 ? { customerId: tenantId } : {}),
+      OR: [
+        { name: { contains: 'PRODUCTION', mode: 'insensitive' } },
+        { description: { contains: 'PRODUCTION', mode: 'insensitive' } },
+      ],
+    };
+
+    const [memberships, ledTeams] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: { employeeId, team: productionTeamMatch },
+        select: { teamId: true, team: { select: { name: true, description: true } } },
+      }),
+      this.prisma.team.findMany({
+        where: { leaderId: employeeId, ...productionTeamMatch },
+        select: { id: true, name: true, description: true },
+      }),
+    ]);
+
+    const ids = new Set<number>();
+    const keep = (name?: string | null, description?: string | null) => {
+      const label = `${name || ''} ${description || ''}`.toUpperCase();
+      return label.includes('PRODUCTION') && !label.includes('BPO');
+    };
+    for (const row of memberships) {
+      if (keep(row.team?.name, row.team?.description)) ids.add(row.teamId);
+    }
+    for (const team of ledTeams) {
+      if (keep(team.name, team.description)) ids.add(team.id);
+    }
+    return Array.from(ids);
+  }
+
+  /**
    * Assigned Staff is the employee stored on this work who belongs to the
    * production team. The lead owner, customer owner, and current viewer are
    * not used when they are not a member of that team.
@@ -2262,6 +2319,23 @@ status: ${item.status}`);
           customer: { assignedEmployee: { equals: empFullName, mode: 'insensitive' } },
           assignedToId: null,
           editorId: null,
+        });
+      }
+
+      // Customer visibility follows the production team, not the task assignee.
+      // A team member sees every customer assigned to their active production teams.
+      const productionTeamIds = await this.activeProductionTeamIdsForEmployee(
+        numEmployeeId,
+        tenantCustomerId,
+      );
+      if (productionTeamIds.length > 0) {
+        orConditions.push({
+          customer: {
+            deletedAt: null,
+            isActive: true,
+            assignedTeamId: { in: productionTeamIds },
+            assignedTeam: { isActive: true },
+          },
         });
       }
 
