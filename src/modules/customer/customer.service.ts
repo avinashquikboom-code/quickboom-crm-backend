@@ -9,7 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, RoleType, CommissionStatus, LeadStatus } from '@prisma/client';
+import { Prisma, RoleType, CommissionStatus, LeadStatus, WorkStatus } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
