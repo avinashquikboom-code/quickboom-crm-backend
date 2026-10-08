@@ -412,7 +412,7 @@ export class WorkController {
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
-    });
+    }, { allTenantCustomers: true });
   }
 
   @Get('production/metrics')
@@ -511,7 +511,7 @@ export class WorkController {
           month: month ? parseInt(month, 10) : undefined,
           year: year ? parseInt(year, 10) : undefined,
           status,
-        });
+        }, { allTenantCustomers: true });
       }
     }
 

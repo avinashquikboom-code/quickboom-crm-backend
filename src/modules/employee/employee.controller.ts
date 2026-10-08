@@ -180,7 +180,7 @@ export class EmployeeController {
       year: year ? parseInt(year, 10) : undefined,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
-    });
+    }, { allTenantCustomers: true });
   }
 
   @Get('hrm/offices')

@@ -16,6 +16,7 @@ import {
 } from './dto/task.dto';
 import { TaskPriority, TaskStatus, WorkStatus } from '@prisma/client';
 import { EmployeeCommunicationService } from '../notification/employee-communication.service';
+import { WorkService } from '../work/work.service';
 
 @Injectable()
 export class TaskService {
@@ -23,6 +24,7 @@ export class TaskService {
 
   constructor(
     private prisma: PrismaService,
+    private readonly workService: WorkService,
     @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
   ) {}
 
@@ -822,7 +824,12 @@ export class TaskService {
   private productionWorkMatchesStatus(status: string, filter?: string) {
     if (!filter || filter === 'ALL') return status !== WorkStatus.CANCELLED;
     if (filter === 'PENDING') {
-      return status === WorkStatus.SCHEDULED || status === WorkStatus.ASSIGNED || status === WorkStatus.BLOCKED;
+      return (
+        status === 'PENDING' ||
+        status === WorkStatus.SCHEDULED ||
+        status === WorkStatus.ASSIGNED ||
+        status === WorkStatus.BLOCKED
+      );
     }
     if (filter === 'IN_PROGRESS') {
       return status === WorkStatus.IN_PROGRESS || status === WorkStatus.PROCESSING;
@@ -881,72 +888,46 @@ export class TaskService {
   }
 
   /**
-   * Same Work rows as GET /works/employee/calendar.
+   * Same Work rows as GET /works/employee/calendar, with no date window.
    * A BPO-only employee does not receive that full calendar set.
    */
   private async findEmployeeCalendarWorks(
     employeeId: number,
-    agencyCustomerId: number | null | undefined,
+    _agencyCustomerId: number | null | undefined,
     teamIds: number[],
     query: { status?: string; priority?: string; search?: string },
   ) {
     const productionTeamIds = await this.productionTeamIdsForEmployee(0, teamIds);
     const onBpoTeam = await this.employeeOnBpoTeam(teamIds);
     const bpoOnly = onBpoTeam && productionTeamIds.length === 0;
-    if (bpoOnly || (query.priority && query.priority !== 'ALL')) return [];
-
-    const companyId = Number(agencyCustomerId);
-    if (!Number.isInteger(companyId) || companyId <= 0) return [];
+    if (query.priority && query.priority !== 'ALL') return [];
 
     let items: any[] = [];
     try {
-      items = await this.prisma.work.findMany({
-        where: {
-          status: { not: WorkStatus.CANCELLED },
-          OR: [
-            {
-              customer: {
-                deletedAt: null,
-                isActive: true,
-                OR: [
-                  { id: companyId },
-                  { assignedTeam: { customerId: companyId } },
-                  { assignedEmployeeRel: { customerId: companyId } },
-                  { createdByEmployeeRel: { customerId: companyId } },
-                ],
-              },
-            },
-            { assignedTo: { customerId: companyId } },
-            { editor: { customerId: companyId } },
-            { team: { customerId: companyId } },
-          ],
-        },
-        orderBy: { scheduledDate: 'asc' },
-        include: {
-          customer: { select: { id: true, name: true, companyName: true } },
-          assignedTo: { select: { id: true, firstName: true, lastName: true } },
-          editor: { select: { id: true, firstName: true, lastName: true } },
-          team: { select: { id: true, name: true, description: true } },
-        },
-      });
+      items = await this.workService.getEmployeeCalendar(employeeId, {}, { allTenantCustomers: true });
     } catch (error: any) {
       this.logger.warn(`Employee calendar work lookup failed: ${error?.message}`);
       return [];
     }
+    if (!Array.isArray(items)) return [];
 
     const search = query.search?.trim().toLowerCase();
     return items
       .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
       .filter((item) => {
-        if (Number(item.assignedToId) === employeeId || Number(item.editorId) === employeeId) return true;
-        return !this.isBpoTeamLabel(item?.team?.name, item?.team?.description);
+        const teamIsBpo = this.isBpoTeamLabel(item?.team || item?.assignedTeam, null);
+        const assignedToViewer =
+          Number(item?.assignedToId) === employeeId || Number(item?.editorId) === employeeId;
+        if (assignedToViewer) return true;
+        if (bpoOnly) return teamIsBpo;
+        return !teamIsBpo;
       })
       .filter((item) => {
         if (!search) return true;
         const title = String(item?.title || '').toLowerCase();
-        const description = String(item?.description || '').toLowerCase();
-        const customerName = String(item?.customer?.name || '').toLowerCase();
-        const companyName = String(item?.customer?.companyName || '').toLowerCase();
+        const description = String(item?.notes || item?.description || '').toLowerCase();
+        const customerName = String(item?.customerName || '').toLowerCase();
+        const companyName = String(item?.companyName || '').toLowerCase();
         return (
           title.includes(search) ||
           description.includes(search) ||
@@ -957,9 +938,8 @@ export class TaskService {
       .map((item) => {
         const id = Number(item.id);
         const customerId = Number(item.customerId);
-        const assigned = item.assignedTo || item.editor;
-        const firstName = assigned?.firstName || '';
-        const lastName = assigned?.lastName || '';
+        const assignedName = String(item.assignedEmployee || item.assignedToName || '').trim();
+        const nameParts = assignedName ? assignedName.split(/\s+/) : [];
         return {
           id,
           source: 'WORK',
@@ -968,25 +948,25 @@ export class TaskService {
             Number.isInteger(customerId) && customerId > 0
               ? {
                   id: customerId,
-                  name: item.customer?.name || item.customer?.companyName || `Customer #${customerId}`,
-                  companyName: item.customer?.companyName || null,
+                  name: item.customerName || item.companyName || `Customer #${customerId}`,
+                  companyName: item.companyName || item.businessName || null,
                 }
               : null,
           title: item.title,
-          description: item.description || null,
+          description: item.notes || item.description || null,
           status: item.status,
-          priority: item.priority || null,
-          dueAt: item.scheduledDate || null,
-          dueDate: item.scheduledDate || null,
+          priority: null,
+          dueAt: item.scheduledAt || item.scheduledDate || null,
+          dueDate: item.scheduledAt || item.scheduledDate || null,
           scheduledDate: item.scheduledDate || null,
           scheduledTime: item.scheduledTime || null,
-          workType: item.workType || null,
+          workType: item.workType || item.type || item.activityType || null,
           taskNumber: `WRK-${id}`,
-          employee: assigned
-            ? { id: assigned.id, firstName, lastName }
+          employee: assignedName
+            ? { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') }
             : null,
           assignedTo: null,
-          team: item.team ? { id: item.team.id, name: item.team.name } : null,
+          team: item.team || item.assignedTeam ? { name: item.team || item.assignedTeam } : null,
           proofs: [],
           hasProof: false,
           isOverdue: false,
