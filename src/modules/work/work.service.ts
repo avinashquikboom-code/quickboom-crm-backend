@@ -1910,7 +1910,7 @@ status: ${item.status}`);
     const tenantId = Number(tenantCustomerId || employee.customerId);
     const keep = (name?: string | null, description?: string | null) => {
       const label = `${name || ''} ${description || ''}`.toUpperCase();
-      return label.includes('PRODUCTION') && !label.includes('BPO');
+      return !label.includes('BPO');
     };
 
     const [memberships, ledTeams] = await Promise.all([
@@ -1943,10 +1943,12 @@ status: ${item.status}`);
       rows.set(row.teamId, Number(row.team?.customerId));
     }
     for (const team of ledTeams) {
-      if (String(team.leader?.status || '').toUpperCase() !== 'ACTIVE') continue;
+      if (String(team.leader?.status || '').toUpperCase() === 'INACTIVE') continue;
       if (!keep(team.name, team.description)) continue;
       rows.set(team.id, Number(team.customerId));
     }
+
+    if (rows.size === 0) return [];
 
     const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
       Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
@@ -1954,6 +1956,8 @@ status: ${item.status}`);
     if (sameCompany.length > 0) {
       return sameCompany.map(([teamId]) => teamId);
     }
+
+    return Array.from(rows.keys());
 
     const companyIds = new Set(Array.from(rows.values()).filter((id) => Number.isInteger(id) && id > 0));
     if (companyIds.size !== 1) return [];
@@ -2387,17 +2391,26 @@ status: ${item.status}`);
         });
       }
 
-      // Customer visibility follows the production team, not the task assignee.
-      // A team member sees every customer assigned to their active production teams.
+      // Team and customer visibility: a team member sees works and customers assigned to their active teams
       if (productionTeamIds.length > 0) {
-        orConditions.push({
-          customer: {
-            deletedAt: null,
-            isActive: true,
-            assignedTeamId: { in: productionTeamIds },
-            assignedTeam: { isActive: true },
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          {
+            customer: {
+              deletedAt: null,
+              assignedTeamId: { in: productionTeamIds },
+            },
           },
-        });
+          {
+            team: {
+              isActive: true,
+              OR: [
+                { leaderId: numEmployeeId },
+                { members: { some: { employeeId: numEmployeeId } } },
+              ],
+            },
+          },
+        );
       }
 
       where = {
@@ -2854,21 +2867,22 @@ assignedEmployee: ${item.assignedEmployee}`);
     });
 
     if (emp?.customerId) {
-      const productionTeamMatch = {
+      const nonBpoTeamMatch = {
         isActive: true,
         customerId: emp.customerId,
+        NOT: { name: { contains: 'BPO', mode: Prisma.QueryMode.insensitive } },
         OR: [
-          { name: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
-          { description: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
+          { leaderId: numEmployeeId },
+          { members: { some: { employeeId: numEmployeeId } } },
         ],
       };
       const productionEmployees = await this.prisma.employee.findMany({
         where: {
           customerId: emp.customerId,
-          status: 'ACTIVE',
+          NOT: { status: 'INACTIVE' },
           OR: [
-            { teamMembers: { some: { team: productionTeamMatch } } },
-            { ledTeams: { some: productionTeamMatch } },
+            { teamMembers: { some: { team: { customerId: emp.customerId, isActive: true } } } },
+            { ledTeams: { some: { customerId: emp.customerId, isActive: true } } },
           ],
         },
         select: { id: true, firstName: true, lastName: true },
@@ -2881,7 +2895,7 @@ assignedEmployee: ${item.assignedEmployee}`);
       }
 
       const allTeams = await this.prisma.team.findMany({
-        where: productionTeamMatch,
+        where: nonBpoTeamMatch,
         select: { id: true, name: true },
       });
       for (const t of allTeams) {
@@ -2890,32 +2904,18 @@ assignedEmployee: ${item.assignedEmployee}`);
         }
       }
 
-      const viewerIsActive =
-        !emp.status || String(emp.status).toUpperCase() === 'ACTIVE';
-      const allCustomers = viewerIsActive
-        ? await this.prisma.customer.findMany({
-            where: {
-              deletedAt: null,
-              assignedTeam: {
-                isActive: true,
-                customerId: emp.customerId,
-                OR: [
-                  { name: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
-                  { description: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
-                ],
-                AND: [
-                  {
-                    OR: [
-                      { leaderId: numEmployeeId },
-                      { members: { some: { employeeId: numEmployeeId } } },
-                    ],
-                  },
-                ],
-              },
-            },
-            select: { id: true, name: true, companyName: true },
-          })
-        : [];
+      const relevantTeamIds = allTeams.map((t) => t.id);
+
+      const allCustomers = await this.prisma.customer.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            ...(relevantTeamIds.length > 0 ? [{ assignedTeamId: { in: relevantTeamIds } }] : []),
+            { assignedEmployeeId: numEmployeeId },
+          ],
+        },
+        select: { id: true, name: true, companyName: true },
+      });
       for (const c of allCustomers) {
         const name = c.companyName || c.name;
         if (name && !customerMap.has(c.id)) {

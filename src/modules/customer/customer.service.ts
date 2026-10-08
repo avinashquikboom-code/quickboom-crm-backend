@@ -1131,26 +1131,45 @@ export class CustomerService {
     // Exclude unassigned, other employee's customers, and do NOT use createdById as replacement for assignedToId!
     // Calendar customer picker (forCalendar + Calendar VIEW/CREATE) lists all active tenant customers.
     if (effectiveEmployeeId && !isPrivilegedAdmin && !skipAssignmentScope) {
+      const [empTeams, empLedTeams] = await Promise.all([
+        this.prisma.teamMember.findMany({
+          where: { employeeId: effectiveEmployeeId },
+          select: { teamId: true },
+        }),
+        this.prisma.team.findMany({
+          where: { leaderId: effectiveEmployeeId },
+          select: { id: true },
+        }),
+      ]);
+      const myTeamIds = Array.from(
+        new Set([
+          ...empTeams.map((t) => t.teamId),
+          ...empLedTeams.map((t) => t.id),
+        ]),
+      );
+
       andConditions.push({
         OR: [
           // 1. Directly assigned to this employee
           { assignedEmployeeId: effectiveEmployeeId },
-          // 1b. Assigned to an active team this employee currently belongs to.
-          // Visibility follows the team assignment, not a copy of the customer per member.
+          // 1b. Directly assigned to any team this employee belongs to or leads
+          ...(myTeamIds.length > 0 ? [{ assignedTeamId: { in: myTeamIds } }] : []),
+          // 1c. Customer with works assigned to this employee's teams
+          ...(myTeamIds.length > 0
+            ? [{ works: { some: { teamId: { in: myTeamIds }, status: { not: WorkStatus.CANCELLED } } } }]
+            : []),
+          // Assigned to an active team relation
           {
             assignedTeam: {
               isActive: true,
-              ...(companyId ? { customerId: Number(companyId) } : {}),
               OR: [
                 {
                   leaderId: effectiveEmployeeId,
-                  leader: { status: 'ACTIVE' },
                 },
                 {
                   members: {
                     some: {
                       employeeId: effectiveEmployeeId,
-                      employee: { status: 'ACTIVE' },
                     },
                   },
                 },
