@@ -1533,7 +1533,21 @@ returnedSchedules: 0`);
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true, address: true, city: true, state: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            city: true,
+            state: true,
+            createdByEmployeeRel: { select: { firstName: true, lastName: true } },
+            originLead: {
+              select: {
+                convertedByEmployee: { select: { firstName: true, lastName: true } },
+              },
+            },
+          },
+        },
         team: { select: { name: true } },
         assignedTo: { select: { id: true, firstName: true, lastName: true } },
         editor: { select: { id: true, firstName: true, lastName: true } },
@@ -1656,6 +1670,12 @@ returnedSchedules: 0`);
       }
 
       const normalizedType = normalizeActivityType(w);
+      const wonEmployee =
+        w.customer?.originLead?.convertedByEmployee ||
+        w.customer?.createdByEmployeeRel;
+      const wonByName = wonEmployee
+        ? `${wonEmployee.firstName || ''} ${wonEmployee.lastName || ''}`.trim() || null
+        : null;
 
       return {
         id: String(w.id),
@@ -1689,6 +1709,7 @@ returnedSchedules: 0`);
         isLocked,
         lockMessage,
         assignedToId: w.assignedToId,
+        wonByName,
         assignedEmployee: isLocked
           ? '—'
           : (w.assignedTo
