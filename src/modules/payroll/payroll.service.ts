@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { EmployeeCommunicationService } from '../notification/employee-communication.service';
 
 @Injectable()
 export class PayrollService {
@@ -9,6 +10,7 @@ export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
@@ -143,6 +145,320 @@ export class PayrollService {
       }
     }
     return workingDays;
+  }
+
+  private utcDayKey(value: Date): string {
+    const date = new Date(value);
+    return date.toISOString().slice(0, 10);
+  }
+
+  private eachUtcDay(year: number, month: number): Date[] {
+    const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return Array.from({ length: days }, (_, index) => new Date(Date.UTC(year, month - 1, index + 1)));
+  }
+
+  private isWeeklyOff(date: Date, shiftDays?: string[], workingDaysPerWeek = 5): boolean {
+    const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const name = names[date.getUTCDay()];
+    if (shiftDays && shiftDays.length > 0) {
+      return !shiftDays.some((day) => day.toLowerCase() === name.toLowerCase());
+    }
+    if (workingDaysPerWeek >= 7) return false;
+    if (workingDaysPerWeek === 6) return date.getUTCDay() === 0;
+    return date.getUTCDay() === 0 || date.getUTCDay() === 6;
+  }
+
+  private roundMoney(value: number): number {
+    return Math.round((Number(value) || 0) * 100) / 100;
+  }
+
+  private async writePayrollAudit(input: {
+    customerId: number;
+    user?: any;
+    action: string;
+    description: string;
+    entityId: string;
+    details?: Record<string, unknown>;
+  }) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: input.customerId,
+          userId: input.user?.id ? Number(input.user.id) : undefined,
+          userName: input.user?.name || input.user?.email || undefined,
+          userRole: input.user?.role || undefined,
+          action: input.action,
+          module: 'Payroll',
+          description: input.description,
+          entityType: 'PayrollItem',
+          entityId: input.entityId,
+          status: 'SUCCESS',
+          details: input.details as any,
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(`Payroll audit skipped: ${err?.message}`);
+    }
+  }
+
+  private async buildEmployeePayroll(tx: any, input: {
+    customerId: number;
+    employee: any;
+    year: number;
+    month: number;
+    periodEnd: Date;
+    salaryDays: number;
+    workingDaysPerWeek: number;
+    holidays: Array<{ date: Date; officeId: number | null; name: string }>;
+    commissionEnabled: boolean;
+    commissionPct: number;
+  }) {
+    const structure = input.employee.salaryStructures?.[0];
+    const basic = structure ? Number(structure.basicSalary) || 0 : 0;
+    const hra = structure ? Number(structure.hra) || 0 : 0;
+    const allowances = structure ? Number(structure.allowances) || 0 : 0;
+    const specialAllowance = structure ? Number(structure.specialAllowance) || 0 : 0;
+    const bonus = structure ? Number(structure.bonus) || 0 : 0;
+    const overtime = structure ? Number(structure.overtime) || 0 : 0;
+    const otherEarnings = structure ? Number(structure.otherEarnings) || 0 : 0;
+    let commission = structure ? Number(structure.commission) || 0 : 0;
+
+    const days = this.eachUtcDay(input.year, input.month);
+    const joining = input.employee.joiningDate ? this.utcDayKey(new Date(input.employee.joiningDate)) : null;
+    const attendances = await tx.attendance.findMany({
+      where: {
+        customerId: input.customerId,
+        employeeId: input.employee.id,
+        date: { gte: days[0], lte: input.periodEnd },
+      },
+    });
+    const attendanceByDay = new Map<string, any>();
+    for (const row of attendances) {
+      attendanceByDay.set(this.utcDayKey(new Date(row.date)), row);
+    }
+    const leaves = await tx.leaveRequest.findMany({
+      where: {
+        customerId: input.customerId,
+        employeeId: input.employee.id,
+        status: 'APPROVED',
+        fromDate: { lte: input.periodEnd },
+        toDate: { gte: days[0] },
+      },
+      include: { leaveType: true },
+    });
+    const holidayByDay = new Map<string, string>();
+    for (const holiday of input.holidays) {
+      if (holiday.officeId && input.employee.officeId && holiday.officeId !== input.employee.officeId) continue;
+      if (holiday.officeId && !input.employee.officeId) continue;
+      holidayByDay.set(this.utcDayKey(new Date(holiday.date)), holiday.name);
+    }
+
+    let presentDays = 0;
+    let halfDays = 0;
+    let absentDays = 0;
+    let paidLeaveDays = 0;
+    let unpaidLeaveDays = 0;
+    let halfPaidLeave = 0;
+    let holidayDays = 0;
+    let weeklyOffDays = 0;
+    let payableDays = 0;
+    let lopDays = 0;
+    let wfhDays = 0;
+
+    for (const day of days) {
+      const key = this.utcDayKey(day);
+      if (joining && key < joining) continue;
+      if (this.isWeeklyOff(day, input.employee.shift?.workingDays, input.workingDaysPerWeek)) {
+        weeklyOffDays += 1;
+        payableDays += 1;
+        continue;
+      }
+      if (holidayByDay.has(key)) {
+        holidayDays += 1;
+        payableDays += 1;
+        continue;
+      }
+      const leave = leaves.find((row: any) => key >= this.utcDayKey(new Date(row.fromDate)) && key <= this.utcDayKey(new Date(row.toDate)));
+      const attendance = attendanceByDay.get(key);
+      const halfAttendance = attendance?.status === 'HALF_DAY';
+      if (leave) {
+        const code = String(leave.leaveType?.code || '').toUpperCase();
+        const name = String(leave.leaveType?.name || '').toLowerCase();
+        const unpaid = code === 'UL' || code === 'LOP' || name.includes('unpaid') || name.includes('loss of pay') || name.includes('lop');
+        const weight = halfAttendance ? 0.5 : 1;
+        if (unpaid) {
+          unpaidLeaveDays += weight;
+          lopDays += weight;
+          if (halfAttendance) halfDays += 1;
+        } else if (halfAttendance) {
+          halfPaidLeave += 1;
+          payableDays += 0.5;
+          lopDays += 0.5;
+          halfDays += 1;
+        } else {
+          paidLeaveDays += 1;
+          payableDays += 1;
+        }
+        continue;
+      }
+      if (attendance?.workMode === 'WFH' || attendance?.workMode === 'REMOTE' || attendance?.status === 'REMOTE') {
+        wfhDays += 1;
+      }
+      if (attendance?.status === 'PRESENT' || attendance?.status === 'LATE' || attendance?.status === 'REMOTE') {
+        presentDays += 1;
+        payableDays += 1;
+        continue;
+      }
+      if (halfAttendance) {
+        halfDays += 1;
+        payableDays += 0.5;
+        lopDays += 0.5;
+        continue;
+      }
+      absentDays += 1;
+      lopDays += 1;
+    }
+
+    const salaryDays = Math.max(1, input.salaryDays);
+    const monthlyEarnings = basic + hra + allowances + specialAllowance + bonus + overtime + otherEarnings;
+    if (commission === 0 && input.commissionEnabled && input.commissionPct > 0) {
+      commission = this.roundMoney((basic * input.commissionPct) / 100);
+    }
+    const factor = payableDays / salaryDays;
+    const paidBasic = this.roundMoney(basic * factor);
+    const paidHra = this.roundMoney(hra * factor);
+    const paidAllowances = this.roundMoney(allowances * factor);
+    const paidSpecial = this.roundMoney(specialAllowance * factor);
+    const paidBonus = this.roundMoney(bonus * factor);
+    const paidOvertime = this.roundMoney(overtime * factor);
+    const paidOther = this.roundMoney(otherEarnings * factor);
+    const paidCommission = this.roundMoney(commission * factor);
+    const lopDeduction = this.roundMoney(((monthlyEarnings + commission) * lopDays) / salaryDays);
+
+    const claims = await tx.employeeClaim.findMany({
+      where: {
+        customerId: input.customerId,
+        employeeId: input.employee.id,
+        status: 'APPROVED',
+        paymentStatus: { in: ['UNPAID', 'PENDING'] },
+        claimDate: { lte: input.periodEnd },
+      },
+    });
+    const reimbursement = this.roundMoney(claims.reduce((sum: number, claim: any) => sum + Number(claim.approvedAmount ?? claim.amount ?? 0), 0));
+
+    const loans = await tx.employeeLoan.findMany({
+      where: {
+        customerId: input.customerId,
+        employeeId: input.employee.id,
+        status: { in: ['ACTIVE', 'APPROVED'] },
+        remainingBalance: { gt: 0 },
+      },
+    });
+    let loanDeduction = 0;
+    let advanceDeduction = 0;
+    const loanLines: any[] = [];
+    for (const loan of loans) {
+      if (loan.startDate && new Date(loan.startDate) > input.periodEnd) continue;
+      const emi = Number(loan.monthlyEmi) > 0
+        ? Number(loan.monthlyEmi)
+        : Number(loan.approvedAmount || loan.loanAmount) / (Number(loan.termMonths) || 12);
+      const current = this.roundMoney(Math.min(emi, Number(loan.remainingBalance) || emi));
+      const isAdvance = /advance/i.test(`${loan.reason || ''} ${loan.notes || ''}`);
+      if (isAdvance) advanceDeduction += current;
+      else loanDeduction += current;
+      loanLines.push({
+        loanId: loan.id,
+        kind: isAdvance ? 'ADVANCE' : 'LOAN',
+        amount: Number(loan.approvedAmount || loan.loanAmount),
+        emi: this.roundMoney(emi),
+        recoveredBefore: this.roundMoney(Number(loan.approvedAmount || loan.loanAmount) - Number(loan.remainingBalance || 0)),
+        current,
+        remainingAfter: this.roundMoney(Math.max(0, Number(loan.remainingBalance || 0) - current)),
+      });
+    }
+
+    const pf = structure ? Number(structure.pf) || 0 : 0;
+    const esi = structure ? Number(structure.esi) || 0 : 0;
+    const professionalTax = structure ? Number(structure.professionalTax) || 0 : 0;
+    const tds = structure ? Number(structure.tds) || 0 : 0;
+    const otherDeductions = structure ? Number(structure.otherDeductions) || 0 : 0;
+    const gross = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidCommission + paidOvertime + paidOther + reimbursement);
+    const deductions = this.roundMoney(pf + esi + professionalTax + tds + otherDeductions + loanDeduction + advanceDeduction);
+    const netBeforeFloor = this.roundMoney(gross - deductions);
+    const blocked = netBeforeFloor < 0;
+    const workingDays = days.length - weeklyOffDays - holidayDays;
+
+    return {
+      basicSalary: paidBasic,
+      hra: paidHra,
+      allowances: paidAllowances,
+      specialAllowance: paidSpecial,
+      bonus: paidBonus,
+      commission: paidCommission,
+      overtime: paidOvertime,
+      otherEarnings: paidOther,
+      reimbursement,
+      pf,
+      esi,
+      professionalTax,
+      tds,
+      otherDeductions,
+      loanDeduction: this.roundMoney(loanDeduction),
+      advanceDeduction: this.roundMoney(advanceDeduction),
+      grossSalary: gross,
+      totalDeductions: deductions,
+      netSalary: blocked ? 0 : netBeforeFloor,
+      workingDays: Math.max(0, Math.round(workingDays)),
+      presentDays,
+      absentDays,
+      halfDays,
+      paidLeaveDays: paidLeaveDays + halfPaidLeave * 0.5,
+      unpaidLeaveDays,
+      wfhDays,
+      payableDays,
+      holidayDays,
+      weeklyOffDays,
+      lopDays,
+      lopDeduction,
+      status: 'CALCULATED',
+      calculationSnapshot: {
+        salaryDays,
+        monthlySalary: this.roundMoney(monthlyEarnings + commission),
+        presentDays,
+        halfDays,
+        absentDays,
+        paidLeaveDays,
+        halfPaidLeave,
+        unpaidLeaveDays,
+        holidayDays,
+        weeklyOffDays,
+        payableDays,
+        lopDays,
+        attendanceSalary: this.roundMoney(gross - reimbursement),
+        reimbursement,
+        expenses: claims.map((claim: any) => ({
+          id: claim.id,
+          title: claim.description,
+          category: claim.category,
+          amount: Number(claim.approvedAmount ?? claim.amount ?? 0),
+          approvedAt: claim.reviewedAt,
+        })),
+        loans: loanLines,
+        gross,
+        lopDeduction,
+        pf,
+        esi,
+        professionalTax,
+        tds,
+        advanceDeduction: this.roundMoney(advanceDeduction),
+        loanDeduction: this.roundMoney(loanDeduction),
+        otherDeductions,
+        totalDeductions: deductions,
+        netSalary: blocked ? netBeforeFloor : netBeforeFloor,
+        blocked,
+        blockReason: blocked ? 'Payroll deductions exceed payable salary. Please review deductions.' : null,
+      },
+    };
   }
 
   private formatSalarySlip(slip: any) {
@@ -280,10 +596,10 @@ export class PayrollService {
       this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
     ]);
 
-    const pfPctConfig = payrollPolicy?.pfPercent ?? salaryPolicy?.pfPercent ?? 12.0;
-    const esiPctConfig = payrollPolicy?.esiPercent ?? salaryPolicy?.esiPercent ?? 0.75;
     const commissionEnabled = salaryPolicy?.commissionEnabled ?? false;
     const commissionPctConfig = salaryPolicy?.commissionPercentage ?? 0.0;
+    const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
+    const workingDaysPerWeek = attendancePolicy?.workingDaysPerWeek || 5;
 
     // 2. Fetch active employees
     const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
@@ -326,236 +642,62 @@ export class PayrollService {
           },
         });
       }
+      if (payroll.status === 'PAID') {
+        throw new BadRequestException('This payroll is already paid and cannot be recalculated.');
+      }
+
+      const holidays = await tx.publicHoliday.findMany({
+        where: {
+          customerId: numCustomerId,
+          isActive: true,
+          date: { gte: periodStart, lte: periodEnd },
+        },
+      });
+      const lockedItems = await tx.payrollItem.findMany({
+        where: { payrollId: payroll.id, status: 'PAID' },
+      });
+      const lockedEmployeeIds = new Set(lockedItems.map((item: any) => item.employeeId));
 
       let totalGross = 0;
       let totalDeductions = 0;
       let totalNet = 0;
       const itemsData: any[] = [];
 
+      for (const locked of lockedItems) {
+        totalGross += Number(locked.grossSalary) || 0;
+        totalDeductions += Number(locked.totalDeductions) || 0;
+        totalNet += Number(locked.netSalary) || 0;
+      }
+
       for (const emp of employees) {
-        const structure = emp.salaryStructures[0];
-        let basic = structure ? structure.basicSalary : 0;
-        if (!basic && emp.bankDetails) {
-          const b = typeof emp.bankDetails === 'string' ? JSON.parse(emp.bankDetails) : emp.bankDetails;
-          basic = Number(b?.basicSalary || b?.monthlySalary || 0);
-        }
-        if (!basic) basic = 35000;
-        const hra = structure ? structure.hra : Math.round(basic * 0.4);
-        const allowances = structure ? structure.allowances : Math.round(basic * 0.1);
-        const specialAllowance = structure ? structure.specialAllowance : 0;
-        const bonus = structure ? structure.bonus : 0;
-        const overtime = structure ? structure.overtime : 0;
-        const otherEarnings = structure ? structure.otherEarnings : 0;
-
-        // ── Commission Integration ──
-        let commission = structure ? structure.commission : 0;
-        if (commission === 0 && commissionEnabled && commissionPctConfig > 0) {
-          commission = Math.round((basic * commissionPctConfig) / 100);
-        }
-
-        // ── Dynamic Working Days Calculation ──
-        const workingDaysConfig = this.calculateWorkingDays(
+        if (lockedEmployeeIds.has(emp.id)) continue;
+        const computed = await this.buildEmployeePayroll(tx, {
+          customerId: numCustomerId,
+          employee: emp,
           year,
           month,
-          attendancePolicy?.workingDaysPerWeek || 5,
-          emp.shift?.workingDays,
-        );
-
-        // ── Attendance Integration ──
-        const attendances = await tx.attendance.findMany({
-          where: {
-            customerId: numCustomerId,
-            employeeId: emp.id,
-            date: {
-              gte: periodStart,
-              lte: periodEnd,
-            },
-          },
+          periodEnd,
+          salaryDays,
+          workingDaysPerWeek,
+          holidays,
+          commissionEnabled,
+          commissionPct: commissionPctConfig,
         });
-
-        const presentCount = attendances.filter(
-          (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'REMOTE',
-        ).length;
-        const halfDayCount = attendances.filter((a) => a.status === 'HALF_DAY').length;
-        const wfhCount = attendances.filter(
-          (a) => a.workMode === 'WFH' || a.workMode === 'REMOTE',
-        ).length;
-
-        // Actual present days (integer aligned to DB schema)
-        const presentDays = Math.min(
-          workingDaysConfig,
-          Math.round(presentCount + halfDayCount * 0.5),
-        );
-
-        // ── Leave Integration ──
-        const approvedLeaves = await tx.leaveRequest.findMany({
-          where: {
-            customerId: numCustomerId,
-            employeeId: emp.id,
-            status: 'APPROVED',
-            fromDate: { lte: periodEnd },
-            toDate: { gte: periodStart },
-          },
-          include: {
-            leaveType: true,
-          },
-        });
-
-        let rawPaidLeaveDays = 0;
-        let rawUnpaidLeaveDays = 0;
-
-        for (const lr of approvedLeaves) {
-          const code = lr.leaveType?.code?.toUpperCase() || '';
-          const name = lr.leaveType?.name?.toLowerCase() || '';
-          const isUnpaid =
-            code === 'UL' ||
-            code === 'LOP' ||
-            name.includes('unpaid') ||
-            name.includes('loss of pay') ||
-            name.includes('lop');
-
-          const lFrom = new Date(Math.max(new Date(lr.fromDate).getTime(), periodStart.getTime()));
-          const lTo = new Date(Math.min(new Date(lr.toDate).getTime(), periodEnd.getTime()));
-          let daysInPeriod = 0;
-          if (lFrom <= lTo) {
-            const totalLeaveDays = lr.days || 1;
-            const diffDays = Math.round((lTo.getTime() - lFrom.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            daysInPeriod = Math.min(totalLeaveDays, Math.max(1, diffDays));
-          } else {
-            daysInPeriod = lr.days || 1;
-          }
-
-          if (isUnpaid) {
-            rawUnpaidLeaveDays += daysInPeriod;
-          } else {
-            rawPaidLeaveDays += daysInPeriod;
-          }
-        }
-
-        const paidLeaveDays = Math.min(workingDaysConfig - presentDays, Math.round(rawPaidLeaveDays));
-        const unpaidLeaveDays = Math.min(
-          Math.max(0, workingDaysConfig - presentDays - paidLeaveDays),
-          Math.round(rawUnpaidLeaveDays),
-        );
-
-        // Reconcile Absent Days
-        // Approved paid leaves are NOT absent. Working days = present + absent + paid leave + unpaid leave
-        const absentDays = Math.max(
-          0,
-          workingDaysConfig - presentDays - paidLeaveDays - unpaidLeaveDays,
-        );
-
-        // Unpaid leave deduction (Loss of Pay)
-        const perDayRate = basic / workingDaysConfig;
-        const unpaidLeaveDeduction = Math.round(unpaidLeaveDays * perDayRate);
-
-        // ── Approved Expense Reimbursement Integration ──
-        const approvedClaims = await tx.employeeClaim.findMany({
-          where: {
-            customerId: numCustomerId,
-            employeeId: emp.id,
-            status: 'APPROVED',
-            paymentStatus: { in: ['UNPAID', 'PENDING'] },
-            claimDate: { lte: periodEnd },
-          },
-        });
-        const reimbursement = approvedClaims.reduce(
-          (sum, c) => sum + (c.approvedAmount ?? c.amount ?? 0),
-          0,
-        );
-
-        // ── Approved Loan Deduction Integration ──
-        const activeLoans = await tx.employeeLoan.findMany({
-          where: {
-            customerId: numCustomerId,
-            employeeId: emp.id,
-            status: { in: ['ACTIVE', 'APPROVED'] },
-            remainingBalance: { gt: 0 },
-          },
-        });
-        let loanDeduction = 0;
-        for (const loan of activeLoans) {
-          if (loan.startDate && loan.startDate > periodEnd) {
-            continue; // Loan starts in future
-          }
-          const emi =
-            loan.monthlyEmi > 0
-              ? loan.monthlyEmi
-              : (loan.approvedAmount || loan.loanAmount) / (loan.termMonths || 12);
-          const deductionAmount = Math.min(emi, loan.remainingBalance || emi);
-          loanDeduction += Math.round(deductionAmount);
-        }
-
-        // ── Statutory Deductions ──
-        const pf = structure ? structure.pf : Math.round(basic * (pfPctConfig / 100));
-        const esi = structure ? structure.esi : Math.round(basic * (esiPctConfig / 100));
-        const profTax = structure ? structure.professionalTax : 200;
-        const tds = structure ? structure.tds : 0;
-        const otherDeductions = structure ? structure.otherDeductions : 0;
-
-        // ── Final Calculation ──
-        const gross =
-          basic +
-          hra +
-          allowances +
-          specialAllowance +
-          bonus +
-          commission +
-          overtime +
-          otherEarnings +
-          reimbursement;
-
-        const deductions =
-          pf +
-          esi +
-          profTax +
-          tds +
-          otherDeductions +
-          loanDeduction +
-          unpaidLeaveDeduction;
-
-        const net = Math.max(0, gross - deductions);
-
-        totalGross += gross;
-        totalDeductions += deductions;
-        totalNet += net;
-
+        totalGross += computed.grossSalary;
+        totalDeductions += computed.totalDeductions;
+        totalNet += computed.netSalary;
         itemsData.push({
           payrollId: payroll.id,
           customerId: numCustomerId,
           employeeId: emp.id,
-          basicSalary: basic,
-          hra,
-          allowances,
-          specialAllowance,
-          bonus,
-          commission,
-          overtime,
-          otherEarnings,
-          reimbursement,
-          pf,
-          esi,
-          professionalTax: profTax,
-          tds,
-          otherDeductions,
-          loanDeduction,
-          grossSalary: gross,
-          totalDeductions: deductions,
-          netSalary: net,
-          workingDays: workingDaysConfig,
-          presentDays,
-          absentDays,
-          halfDays: halfDayCount,
-          paidLeaveDays,
-          unpaidLeaveDays,
-          wfhDays: wfhCount,
-          status: 'CALCULATED',
+          ...computed,
+          paidLeaveDays: Math.round(computed.paidLeaveDays),
+          unpaidLeaveDays: Math.round(computed.unpaidLeaveDays),
         });
       }
 
-      // Recreate items idempotently
       await tx.payrollItem.deleteMany({
-        where: { payrollId: payroll.id },
+        where: { payrollId: payroll.id, status: { not: 'PAID' } },
       });
 
       await tx.payrollItem.createMany({
@@ -855,12 +997,27 @@ export class PayrollService {
     if (!payroll) {
       throw new NotFoundException('No payroll batch found to disburse. Please calculate and approve payroll first.');
     }
+    if (payroll.status === 'PAID') {
+      return {
+        success: true,
+        alreadyPaid: true,
+        message: `Payroll batch #${payroll.id} is already paid`,
+        data: payroll,
+      };
+    }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const periodEnd = new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999);
 
       // Process each payroll item to settle claims and loans
+      const paidItemIds: number[] = [];
       for (const item of payroll.items) {
+        if (item.status === 'PAID') continue;
+        const snapshot = item.calculationSnapshot as any;
+        if (snapshot?.blocked) {
+          throw new BadRequestException(snapshot.blockReason || 'Payroll deductions exceed payable salary. Please review deductions.');
+        }
+        paidItemIds.push(item.id);
         // Settle approved claims that were reimbursed
         if (item.reimbursement && item.reimbursement > 0) {
           await tx.employeeClaim.updateMany({
@@ -908,12 +1065,16 @@ export class PayrollService {
           }
         }
 
-        // Mark salary slip status as PAID
+        await tx.payrollItem.update({
+          where: { id: item.id },
+          data: { status: 'PAID', paidAt: new Date() },
+        });
         await tx.salarySlip.updateMany({
           where: { payrollItemId: item.id },
           data: { status: 'PAID' },
         });
       }
+      (payroll as any).paidItemIds = paidItemIds;
 
       const updated = await tx.payroll.update({
         where: { id: payroll.id },
@@ -934,8 +1095,136 @@ export class PayrollService {
         success: true,
         message: `Payroll batch #${payroll.id} disbursed successfully. Reimbursed expenses and loan installments marked as settled.`,
         data: updated,
+        paidItemIds,
       };
     });
+    await this.deliverSalarySlips(numCustomerId, result.paidItemIds || [], undefined);
+    return result;
+  }
+
+  async payPayrollItem(customerId: number | string | undefined, itemId: number | string, user?: any) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const item = await this.prisma.payrollItem.findFirst({
+      where: { id: Number(itemId), customerId: numCustomerId },
+      include: { payroll: true, employee: true, salarySlips: true },
+    });
+    if (!item) throw new NotFoundException('Payroll record not found');
+    if (item.status === 'PAID') {
+      return { success: true, alreadyPaid: true, message: 'This payroll is already paid', data: item };
+    }
+    const snapshot = item.calculationSnapshot as any;
+    if (snapshot?.blocked || Number(item.netSalary) < 0) {
+      throw new BadRequestException(snapshot?.blockReason || 'Payroll deductions exceed payable salary. Please review deductions.');
+    }
+    const payroll = item.payroll;
+    const periodEnd = new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999);
+    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const payPeriod = `${monthNames[payroll.month]} ${payroll.year}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (item.reimbursement > 0) {
+        await tx.employeeClaim.updateMany({
+          where: {
+            customerId: numCustomerId,
+            employeeId: item.employeeId,
+            status: 'APPROVED',
+            paymentStatus: { in: ['UNPAID', 'PENDING'] },
+            claimDate: { lte: periodEnd },
+          },
+          data: { paymentStatus: 'PAID', status: 'PAID', paidAt: new Date() },
+        });
+      }
+      if (item.loanDeduction > 0 || item.advanceDeduction > 0) {
+        let pending = Number(item.loanDeduction || 0) + Number(item.advanceDeduction || 0);
+        const loans = await tx.employeeLoan.findMany({
+          where: { customerId: numCustomerId, employeeId: item.employeeId, status: { in: ['ACTIVE', 'APPROVED'] }, remainingBalance: { gt: 0 } },
+        });
+        for (const loan of loans) {
+          if (pending <= 0) break;
+          const deduct = Math.min(pending, Number(loan.remainingBalance) || 0);
+          const nextBalance = Math.max(0, Number(loan.remainingBalance || 0) - deduct);
+          pending -= deduct;
+          await tx.employeeLoan.update({
+            where: { id: loan.id },
+            data: { remainingBalance: nextBalance, status: nextBalance <= 0 ? 'PAID' : loan.status },
+          });
+        }
+      }
+      const slipNum = `SLIP-${payroll.year}${String(payroll.month).padStart(2, '0')}-${String(item.employeeId).padStart(4, '0')}`;
+      const existing = await tx.salarySlip.findFirst({ where: { payrollItemId: item.id, customerId: numCustomerId } });
+      if (!existing) {
+        await tx.salarySlip.create({
+          data: {
+            customerId: numCustomerId,
+            payrollItemId: item.id,
+            employeeId: item.employeeId,
+            slipNumber: slipNum,
+            payPeriod,
+            grossSalary: item.grossSalary,
+            totalDeductions: item.totalDeductions,
+            netSalary: item.netSalary,
+            status: 'PAID',
+          },
+        });
+      } else {
+        await tx.salarySlip.update({ where: { id: existing.id }, data: { status: 'PAID', payPeriod, grossSalary: item.grossSalary, totalDeductions: item.totalDeductions, netSalary: item.netSalary } });
+      }
+      await tx.payrollItem.update({ where: { id: item.id }, data: { status: 'PAID', paidAt: new Date() } });
+      const unpaid = await tx.payrollItem.count({ where: { payrollId: payroll.id, status: { not: 'PAID' } } });
+      await tx.payroll.update({
+        where: { id: payroll.id },
+        data: unpaid === 0 ? { status: 'PAID', disbursedAt: new Date() } : { status: payroll.status },
+      });
+    });
+
+    await this.deliverSalarySlips(numCustomerId, [item.id], user);
+    await this.writePayrollAudit({
+      customerId: numCustomerId,
+      user,
+      action: 'PAY',
+      description: `Payroll marked paid for employee ${item.employeeId} ${payPeriod}`,
+      entityId: String(item.id),
+      details: { month: payroll.month, year: payroll.year, netSalary: item.netSalary },
+    });
+    const fresh = await this.prisma.payrollItem.findFirst({
+      where: { id: item.id, customerId: numCustomerId },
+      include: { employee: { include: { department: true, designation: true } }, salarySlips: true, payroll: true },
+    });
+    return { success: true, message: 'Payroll marked as paid', data: fresh };
+  }
+
+  private async deliverSalarySlips(customerId: number, itemIds: number[], user?: any) {
+    if (!itemIds.length || !this.employeeCommunication) return;
+    const slips = await this.prisma.salarySlip.findMany({
+      where: { customerId, payrollItemId: { in: itemIds } },
+    });
+    for (const slip of slips) {
+      let emailStatus = 'EMAIL_PENDING';
+      let whatsappStatus = 'WHATSAPP_PENDING';
+      try {
+        const result: any = await this.employeeCommunication.notifySalarySlip({ slipId: slip.id, customerId });
+        emailStatus = result?.email?.status === 'FAILED' ? 'EMAIL_FAILED' : result?.email?.skipped && result?.email?.status !== 'SENT' && !result?.email?.success ? 'EMAIL_FAILED' : 'EMAIL_SENT';
+        if (result?.email?.status === 'FAILED') emailStatus = 'EMAIL_FAILED';
+        else if (result?.email?.success || result?.email?.status === 'SENT' || result?.email?.skipped) emailStatus = 'EMAIL_SENT';
+        if (result?.whatsapp?.status === 'FAILED' || result?.whatsapp?.success === false) whatsappStatus = 'WHATSAPP_FAILED';
+        else if (result?.whatsapp?.success || result?.whatsapp?.status === 'SENT' || result?.whatsapp?.skipped) whatsappStatus = 'WHATSAPP_SENT';
+      } catch (err: any) {
+        emailStatus = 'EMAIL_FAILED';
+        whatsappStatus = 'WHATSAPP_FAILED';
+        this.logger.warn(`Salary slip delivery failed for slip ${slip.id}: ${err?.message}`);
+      }
+      await this.prisma.payrollItem.update({
+        where: { id: slip.payrollItemId },
+        data: { emailStatus, whatsappStatus },
+      });
+      await this.writePayrollAudit({
+        customerId,
+        user,
+        action: 'DELIVER',
+        description: `Salary slip delivery ${emailStatus} ${whatsappStatus}`,
+        entityId: String(slip.payrollItemId),
+      });
+    }
   }
 
   async getPayrolls(

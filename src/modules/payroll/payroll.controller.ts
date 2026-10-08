@@ -68,6 +68,19 @@ export class PayrollController {
     });
   }
 
+  @Post('items/:itemId/pay')
+  @ApiOperation({ summary: 'Mark one employee payroll as paid and send the salary slip' })
+  async payItem(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('itemId') itemId: string,
+    @Body() body: { customerId?: string | number },
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.payPayrollItem(customerId, itemId, user);
+  }
+
   @Post('disburse')
   @ApiOperation({ summary: 'Disburse payroll to employee bank accounts' })
   async disburse(

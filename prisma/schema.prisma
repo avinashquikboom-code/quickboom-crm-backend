@@ -1826,6 +1826,16 @@ model PayrollItem {
   paidLeaveDays    Int          @default(0)
   unpaidLeaveDays  Int          @default(0)
   wfhDays          Int          @default(0)
+  payableDays      Float        @default(0)
+  holidayDays      Float        @default(0)
+  weeklyOffDays    Float        @default(0)
+  lopDays          Float        @default(0)
+  lopDeduction     Float        @default(0)
+  advanceDeduction Float        @default(0)
+  paidAt           DateTime?
+  emailStatus      String       @default("EMAIL_PENDING")
+  whatsappStatus   String       @default("WHATSAPP_PENDING")
+  calculationSnapshot Json?
   status           String       @default("GENERATED")
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt

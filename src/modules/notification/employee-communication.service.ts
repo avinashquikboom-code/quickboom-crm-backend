@@ -130,12 +130,16 @@ export class EmployeeCommunicationService {
   async notifySalarySlip(params: { slipId: number; force?: boolean; channels?: EmployeeChannel; customerId?: number }) {
     const slip = await this.prisma.salarySlip.findUnique({
       where: { id: params.slipId },
-      include: { employee: true },
+      include: {
+        employee: { include: { department: true, designation: true, customer: true } },
+        payrollItem: { include: { payroll: true } },
+      },
     });
     if (!slip) return { skipped: true, reason: 'SLIP_NOT_FOUND' };
     if (params.customerId && slip.customerId !== params.customerId) return { skipped: true, reason: 'FORBIDDEN' };
     const employee = slip.employee;
     const name = `${employee.firstName} ${employee.lastName}`.trim();
+    const company = employee.customer?.companyName || employee.customer?.name || 'QB Suite';
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
     const pdf = await this.buildSalaryPdf({
       employeeName: name,
@@ -145,8 +149,24 @@ export class EmployeeCommunicationService {
       deductions: slip.totalDeductions,
       net: slip.netSalary,
       slipNumber: slip.slipNumber,
+      company,
+      designation: employee.designation?.name,
+      department: employee.department?.name,
+      joiningDate: employee.joiningDate,
+      snapshot: slip.payrollItem?.calculationSnapshot,
     });
-    const text = `Hi ${name},\n\nYour salary slip for ${slip.payPeriod} is attached.\n\nSalary Slip:\n${slip.payPeriod}\n\nRegards,\nQB Suite HR`;
+    const text = [
+      `Dear ${name},`,
+      '',
+      `Your salary for ${slip.payPeriod} has been processed successfully.`,
+      '',
+      `Net Salary: ₹${slip.netSalary}`,
+      '',
+      'Please find your salary slip attached.',
+      '',
+      'Regards,',
+      company,
+    ].join('\n');
     return this.dispatch({
       employeeId: employee.id,
       eventType: 'SALARY_SLIP',
@@ -155,7 +175,7 @@ export class EmployeeCommunicationService {
       text,
       whatsappTemplate: 'employee_salary_slip',
       whatsappParams: [name, slip.payPeriod],
-      whatsappText: `Hi ${name},\n\nYour salary slip for ${slip.payPeriod} is attached.`,
+      whatsappText: `Hello ${name},\nYour salary slip for ${slip.payPeriod} is ready.\nNet Salary: ₹${slip.netSalary}.\nPlease find your salary slip attached.`,
       pdf,
       filename,
       force: params.force,
@@ -582,20 +602,41 @@ export class EmployeeCommunicationService {
     deductions: number;
     net: number;
     slipNumber: string;
+    company?: string;
+    designation?: string | null;
+    department?: string | null;
+    joiningDate?: Date | null;
+    snapshot?: any;
   }) {
+    const snap = data.snapshot || {};
     return this.renderPdf((doc) => {
-      doc.fontSize(18).text('QB Suite', { align: 'left' });
+      doc.fontSize(18).text(data.company || 'QB Suite', { align: 'left' });
       doc.fontSize(11).fillColor('#166534').text('SALARY SLIP');
-      doc.moveDown();
-      doc.fillColor('#111').fontSize(12);
-      doc.text(`Employee: ${data.employeeName}`);
-      doc.text(`Employee Code: ${data.employeeCode}`);
-      doc.text(`Period: ${data.payPeriod}`);
+      doc.fillColor('#111').fontSize(11);
+      doc.text(`Payroll Month: ${data.payPeriod}`);
       doc.text(`Slip: ${data.slipNumber}`);
-      doc.moveDown();
-      doc.text(`Gross Salary: ₹${data.gross}`);
-      doc.text(`Deductions: ₹${data.deductions}`);
-      doc.text(`Net Salary: ₹${data.net}`);
+      doc.text('Payment Status: PAID');
+      doc.moveDown(0.5);
+      doc.text(`Employee: ${data.employeeName}`);
+      doc.text(`Employee ID: ${data.employeeCode}`);
+      if (data.designation) doc.text(`Designation: ${data.designation}`);
+      if (data.department) doc.text(`Department: ${data.department}`);
+      if (data.joiningDate) doc.text(`Joining Date: ${new Date(data.joiningDate).toISOString().slice(0, 10)}`);
+      doc.moveDown(0.5);
+      doc.text(`Working Days: ${snap.salaryDays ?? '—'}`);
+      doc.text(`Present: ${snap.presentDays ?? '—'}    Half Days: ${snap.halfDays ?? '—'}`);
+      doc.text(`Paid Leave: ${snap.paidLeaveDays ?? '—'}    Unpaid Leave: ${snap.unpaidLeaveDays ?? '—'}`);
+      doc.text(`Holidays: ${snap.holidayDays ?? '—'}    LOP Days: ${snap.lopDays ?? '—'}    Payable Days: ${snap.payableDays ?? '—'}`);
+      doc.moveDown(0.5);
+      doc.text(`Gross Earnings: ₹${data.gross}`);
+      doc.text(`Expense Reimbursement: ₹${snap.reimbursement ?? 0}`);
+      doc.text(`LOP: ₹${snap.lopDeduction ?? 0}`);
+      doc.text(`PF: ₹${snap.pf ?? 0}    ESI: ₹${snap.esi ?? 0}`);
+      doc.text(`Professional Tax: ₹${snap.professionalTax ?? 0}    TDS: ₹${snap.tds ?? 0}`);
+      doc.text(`Advance Recovery: ₹${snap.advanceDeduction ?? 0}    Loan EMI: ₹${snap.loanDeduction ?? 0}`);
+      doc.text(`Total Deductions: ₹${data.deductions}`);
+      doc.moveDown(0.5);
+      doc.fontSize(13).text(`NET SALARY: ₹${data.net}`);
     });
   }
 

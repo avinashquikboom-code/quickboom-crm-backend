@@ -111,6 +111,8 @@ describe('PayrollService (HRM Payroll)', () => {
         create: jest.fn().mockResolvedValue({ id: 1, slipNumber: 'SLIP-202608-0010' }),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({ id: 1 }),
       },
       salaryStructure: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -118,7 +120,19 @@ describe('PayrollService (HRM Payroll)', () => {
         update: jest.fn().mockResolvedValue({ id: 1 }),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      attendance: { findMany: jest.fn().mockResolvedValue([]) },
+      leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      publicHoliday: { findMany: jest.fn().mockResolvedValue([]) },
+      employeeClaim: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      employeeLoan: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      payrollPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
+      salaryPolicy: { findFirst: jest.fn().mockResolvedValue(null) },
+      attendancePolicy: { findFirst: jest.fn().mockResolvedValue(null) },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 1 }) },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };
+    prisma.payrollItem.findMany = jest.fn().mockResolvedValue([]);
+    prisma.payrollItem.update = jest.fn().mockResolvedValue({ id: 1, status: 'PAID' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
