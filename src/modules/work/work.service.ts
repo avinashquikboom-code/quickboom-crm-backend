@@ -468,7 +468,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
 
     const employee = await this.prisma.employee.findFirst({
       where: { id: numEmployeeId },
-      select: { id: true, customerId: true },
+      select: { id: true, customerId: true, status: true },
     });
     if (!employee) {
       throw new ForbiddenException('Employee profile not found');
@@ -501,18 +501,22 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (customer.assignedTeamId) {
-      const [member, leader] = await Promise.all([
-        this.prisma.teamMember.findFirst({
-          where: { teamId: customer.assignedTeamId, employeeId: numEmployeeId },
-          select: { id: true },
-        }),
-        this.prisma.team.findFirst({
-          where: { id: customer.assignedTeamId, leaderId: numEmployeeId },
-          select: { id: true },
-        }),
-      ]);
-      if (member || leader) {
+    const employeeIsActive =
+      !employee.status || String(employee.status).toUpperCase() === 'ACTIVE';
+    if (customer.assignedTeamId && employeeIsActive) {
+      const team = await this.prisma.team.findFirst({
+        where: {
+          id: customer.assignedTeamId,
+          isActive: true,
+          customerId: employee.customerId,
+          OR: [
+            { leaderId: numEmployeeId },
+            { members: { some: { employeeId: numEmployeeId } } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (team) {
         return;
       }
     }
@@ -2608,7 +2612,7 @@ assignedEmployee: ${item.assignedEmployee}`);
     const numEmployeeId = Number(employeeId);
     const emp = await this.prisma.employee.findUnique({
       where: { id: numEmployeeId },
-      select: { customerId: true },
+      select: { customerId: true, status: true },
     });
 
     if (emp?.customerId) {
@@ -2648,11 +2652,32 @@ assignedEmployee: ${item.assignedEmployee}`);
         }
       }
 
-      const allCustomers = await this.prisma.customer.findMany({
-        where: { deletedAt: null, isActive: true },
-        select: { id: true, name: true, companyName: true },
-        take: 100,
-      });
+      const viewerIsActive =
+        !emp.status || String(emp.status).toUpperCase() === 'ACTIVE';
+      const allCustomers = viewerIsActive
+        ? await this.prisma.customer.findMany({
+            where: {
+              deletedAt: null,
+              assignedTeam: {
+                isActive: true,
+                customerId: emp.customerId,
+                OR: [
+                  { name: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
+                  { description: { contains: 'PRODUCTION', mode: Prisma.QueryMode.insensitive } },
+                ],
+                AND: [
+                  {
+                    OR: [
+                      { leaderId: numEmployeeId },
+                      { members: { some: { employeeId: numEmployeeId } } },
+                    ],
+                  },
+                ],
+              },
+            },
+            select: { id: true, name: true, companyName: true },
+          })
+        : [];
       for (const c of allCustomers) {
         const name = c.companyName || c.name;
         if (name && !customerMap.has(c.id)) {

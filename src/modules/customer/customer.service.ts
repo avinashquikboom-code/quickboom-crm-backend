@@ -1135,6 +1135,28 @@ export class CustomerService {
         OR: [
           // 1. Directly assigned to this employee
           { assignedEmployeeId: effectiveEmployeeId },
+          // 1b. Assigned to an active team this employee currently belongs to.
+          // Visibility follows the team assignment, not a copy of the customer per member.
+          {
+            assignedTeam: {
+              isActive: true,
+              ...(companyId ? { customerId: Number(companyId) } : {}),
+              OR: [
+                {
+                  leaderId: effectiveEmployeeId,
+                  leader: { status: 'ACTIVE' },
+                },
+                {
+                  members: {
+                    some: {
+                      employeeId: effectiveEmployeeId,
+                      employee: { status: 'ACTIVE' },
+                    },
+                  },
+                },
+              ],
+            },
+          },
           // 2. Created by this employee
           { createdByEmployeeId: effectiveEmployeeId },
           // 3. Won by this employee via originLead
@@ -2093,6 +2115,43 @@ export class CustomerService {
   }
 
   /**
+   * Active team membership: the employee is an active member or leader of the
+   * customer's current active team, inside the same tenant. Removing the member,
+   * deactivating the employee, or moving the customer to another team drops this.
+   */
+  private async employeeHasActiveTeamAssignment(
+    employeeId: number | null | undefined,
+    team: any,
+    tenantId?: number | null,
+  ): Promise<boolean> {
+    const empId = Number(employeeId);
+    if (!Number.isInteger(empId) || empId <= 0 || !team?.isActive) return false;
+    const teamTenantId = Number(team.customerId);
+    if (
+      tenantId &&
+      Number.isInteger(Number(tenantId)) &&
+      Number(tenantId) > 0 &&
+      teamTenantId !== Number(tenantId)
+    ) {
+      return false;
+    }
+    const onTeam =
+      Number(team.leaderId) === empId ||
+      Number(team.leader?.id) === empId ||
+      (Array.isArray(team.members) &&
+        team.members.some(
+          (m: any) => Number(m.employeeId) === empId || Number(m.employee?.id) === empId,
+        ));
+    if (!onTeam) return false;
+    if (typeof this.prisma.employee?.findFirst !== 'function') return true;
+    const activeEmployee = await this.prisma.employee.findFirst({
+      where: { id: empId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    return Boolean(activeEmployee);
+  }
+
+  /**
    * Get single customer with complete overview and related CRM entity counts
    */
   async findOne(id: number | string, user?: any) {
@@ -2242,11 +2301,10 @@ export class CustomerService {
           (customer as any).originLead?.convertedByEmployeeId === effectiveEmployeeId
         ));
 
-      const isAssignedTeamMember = Boolean(
-        effectiveEmployeeId &&
-        (customer.assignedTeam as any)?.members?.some(
-          (m: any) => m.employeeId === effectiveEmployeeId || m.employee?.id === effectiveEmployeeId,
-        ),
+      const isAssignedTeamMember = await this.employeeHasActiveTeamAssignment(
+        effectiveEmployeeId,
+        customer.assignedTeam,
+        callerCustomerId,
       );
 
       // Check if caller is user belonging to this customer
