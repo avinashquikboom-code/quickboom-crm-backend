@@ -804,6 +804,7 @@ export class TaskService {
     );
     const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, teamIds, query);
     const seenWorkIds = new Set(works.map((work) => work.id));
+    const assignmentWorks = works.length;
     for (const calendarWork of calendarWorks) {
       if (!seenWorkIds.has(calendarWork.id)) {
         works.push(calendarWork);
@@ -812,7 +813,7 @@ export class TaskService {
     }
     const combined = [...hrTasks, ...works];
     this.logger.log(
-      `[TASK_API] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId ?? 'none'} teamIds=${teamIds.join(',') || 'none'} returned=${combined.length} hrTasks=${hrTasks.length} productionWorks=${works.length} status=${query.status || 'ALL'}`,
+      `[MOBILE_TASKS_DEBUG] currentEmployeeId=${employee.id} teamIds=${teamIds.join(',') || 'none'} tenantCustomerId=${employee.customerId ?? 'none'} calendarTaskCount=${calendarWorks.length} mobileTaskQueryCount=${assignmentWorks} finalTaskCount=${combined.length} status=${query.status || 'ALL'}`,
     );
     return combined;
   }
@@ -864,24 +865,23 @@ export class TaskService {
     if (assigneeIds.includes(Number(work.assignedToId)) || Number(work.editorId) === employeeId) {
       return true;
     }
-    if (productionTeamIds.length === 0) return true;
     const workTeamBpo = this.isBpoTeamLabel(work.team?.name, work.team?.description);
     const customerTeamBpo = this.isBpoTeamLabel(
       work.customer?.assignedTeam?.name,
       work.customer?.assignedTeam?.description,
     );
-    if (workTeamBpo || customerTeamBpo) return viewerOnBpo;
     const assigneeTeams = (work.assignedTo?.teamMembers || []).map((member: any) => member.team).filter(Boolean);
-    if (assigneeTeams.length > 0 && assigneeTeams.every((team: any) => this.isBpoTeamLabel(team.name, team.description))) {
-      return viewerOnBpo;
-    }
+    const assigneeIsBpoOnly =
+      assigneeTeams.length > 0 && assigneeTeams.every((team: any) => this.isBpoTeamLabel(team.name, team.description));
+    if ((workTeamBpo || customerTeamBpo || assigneeIsBpoOnly) && !viewerOnBpo) return false;
+    if (productionTeamIds.length === 0) return true;
+    if (workTeamBpo || customerTeamBpo || assigneeIsBpoOnly) return viewerOnBpo;
     return true;
   }
 
   /**
-   * Works already returned by GET /works/employee/calendar for this employee.
-   * Only Production-team members receive that calendar set. BPO membership
-   * alone does not.
+   * Same Work rows as GET /works/employee/calendar.
+   * A BPO-only employee does not receive that full calendar set.
    */
   private async findEmployeeCalendarWorks(
     employeeId: number,
@@ -889,7 +889,8 @@ export class TaskService {
     query: { status?: string; priority?: string; search?: string },
   ) {
     const productionTeamIds = await this.productionTeamIdsForEmployee(0, teamIds);
-    if (productionTeamIds.length === 0) return [];
+    const onBpoTeam = await this.employeeOnBpoTeam(teamIds);
+    const bpoOnly = onBpoTeam && productionTeamIds.length === 0;
     if (query.priority && query.priority !== 'ALL') return [];
 
     let items: any[] = [];
@@ -904,7 +905,13 @@ export class TaskService {
     const search = query.search?.trim().toLowerCase();
     return items
       .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
-      .filter((item) => !this.isBpoTeamLabel(item?.team || item?.assignedTeam, null))
+      .filter((item) => {
+        const teamIsBpo = this.isBpoTeamLabel(item?.team || item?.assignedTeam, null);
+        const assignedToViewer =
+          Number(item?.assignedToId) === employeeId || Number(item?.editorId) === employeeId;
+        if (bpoOnly) return teamIsBpo || assignedToViewer;
+        return !teamIsBpo;
+      })
       .filter((item) => {
         if (!search) return true;
         const title = String(item?.title || '').toLowerCase();
@@ -1007,6 +1014,17 @@ export class TaskService {
       workOr.push({ teamId: { in: teamIds } });
       workOr.push({ customer: { assignedTeamId: { in: teamIds } } });
     }
+    const onBpoTeam = await this.employeeOnBpoTeam(teamIds);
+    const bpoOnly = onBpoTeam && productionTeamIds.length === 0;
+    if (!bpoOnly && teamIds.length > 0 && agencyCustomerId) {
+      workOr.push(
+        { customerId: agencyCustomerId },
+        { customer: { assignedTeam: { customerId: agencyCustomerId } } },
+        { team: { customerId: agencyCustomerId } },
+        { assignedTo: { customerId: agencyCustomerId } },
+        { editor: { customerId: agencyCustomerId } },
+      );
+    }
     if (productionTeamIds.length > 0) {
       const onProductionTeam = {
         OR: [
@@ -1014,22 +1032,9 @@ export class TaskService {
           { ledTeams: { some: { id: { in: productionTeamIds } } } },
         ],
       };
-      // A Production teammate's work stays visible even when Work.teamId was left empty.
       workOr.push({ customer: { assignedTeamId: { in: productionTeamIds } } });
       workOr.push({ assignedTo: onProductionTeam });
       workOr.push({ editor: onProductionTeam });
-      // Customer Calendar lists every Work for the agency's customers. A Production
-      // team member is authorized to see that same set, except work that belongs
-      // only to a BPO team.
-      if (agencyCustomerId) {
-        workOr.push(
-          { customerId: agencyCustomerId },
-          { customer: { assignedTeam: { customerId: agencyCustomerId } } },
-          { team: { customerId: agencyCustomerId } },
-          { assignedTo: { customerId: agencyCustomerId } },
-          { editor: { customerId: agencyCustomerId } },
-        );
-      }
     }
 
     const works = await this.prisma.work.findMany({
