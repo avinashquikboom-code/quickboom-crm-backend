@@ -628,6 +628,13 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         if (activeSub) resolvedSubscriptionId = activeSub.id;
       }
 
+      const customerTeam = await tx.customer.findUnique({
+        where: { id: numCustomerId },
+        select: { assignedTeamId: true },
+      });
+      const resolvedTeamId = dto.teamId
+        ? Number(dto.teamId)
+        : (customerTeam?.assignedTeamId || null);
       const resolvedAssignedToId = dto.assignedToId ? Number(dto.assignedToId) : null;
 
       if (resolvedAssignedToId) {
@@ -667,7 +674,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           subscriptionId: resolvedSubscriptionId,
           planId: activePlan.planId,
           entitlementId: entitlement.id,
-          teamId: dto.teamId ? Number(dto.teamId) : null,
+          teamId: resolvedTeamId,
           assignedToId: resolvedAssignedToId,
           editorId: dto.editorId ? Number(dto.editorId) : null,
           workType: dto.workType,
@@ -2306,19 +2313,10 @@ status: ${item.status}`);
           );
         }
       } else if (productionTeamIds.length > 0) {
-        orConditions.push({
-          AND: [
-            { assignedToId: null },
-            { editorId: null },
-            { tasks: { none: { assignedToId: { not: null } } } },
-            {
-              OR: [
-                { teamId: { in: productionTeamIds } },
-                { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
-              ],
-            },
-          ],
-        });
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
+        );
       }
       if (teamCustomerIds.length === 0 && productionTeamIds.length === 0 && isProductionManager && tenantCustomerId) {
         orConditions.push({
@@ -2425,19 +2423,10 @@ status: ${item.status}`);
       }
 
       if (productionTeamIds.length > 0) {
-        orConditions.push({
-          AND: [
-            { assignedToId: null },
-            { editorId: null },
-            { tasks: { none: { assignedToId: { not: null } } } },
-            {
-              OR: [
-                { teamId: { in: productionTeamIds } },
-                { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
-              ],
-            },
-          ],
-        });
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
+        );
       }
 
       where = {
@@ -2562,8 +2551,24 @@ status: ${item.status}`);
             },
           },
         },
-        assignedTo: { select: { id: true, firstName: true, lastName: true } },
-        editor: { select: { id: true, firstName: true, lastName: true } },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+            designation: { select: { name: true } },
+          },
+        },
+        editor: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            department: { select: { name: true } },
+            designation: { select: { name: true } },
+          },
+        },
         entitlement: { select: { serviceName: true } },
         subscription: {
           select: {
@@ -2580,7 +2585,15 @@ status: ${item.status}`);
             assignedToId: true,
             notes: true,
             createdAt: true,
-            assignedTo: { select: { id: true, firstName: true, lastName: true } },
+            assignedTo: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                department: { select: { name: true } },
+                designation: { select: { name: true } },
+              },
+            },
           },
           orderBy: { stepOrder: 'asc' },
         },
@@ -2641,15 +2654,38 @@ status: ${item.status}`);
     if (!isProductionManager) {
       const viewerIds = new Set<number>([numEmployeeId]);
       if (empRecord?.userId) viewerIds.add(Number(empRecord.userId));
+      const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
+        `${person?.firstName || ''} ${person?.lastName || ''}`.trim().toUpperCase().replace(/\s+/g, ' ');
+      const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+        if (!person) return false;
+        const roleLabel = `${person.designation?.name || ''} ${person.department?.name || ''}`.toUpperCase();
+        if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
+        if (roleLabel.trim() === 'ADMIN') return true;
+        const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
+        const name = personName(person);
+        return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
+      };
       const directlyAssigned = (w: any) => {
         const ids = [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
           .map((id) => Number(id))
           .filter((id) => Number.isInteger(id) && id > 0);
         return ids.some((id) => viewerIds.has(id));
       };
+      const assignedToAnotherEmployee = (w: any) => {
+        const people = [
+          w.assignedTo,
+          w.editor,
+          ...(w.tasks || []).map((task: any) => task.assignedTo),
+        ];
+        return people.some((person) => {
+          const id = Number(person?.id);
+          if (!Number.isInteger(id) || id <= 0 || viewerIds.has(id)) return false;
+          return !isPlatformAdmin(person);
+        });
+      };
       filteredItems = filteredItems.filter((w) => {
         if (directlyAssigned(w)) return true;
-        if (w.assignedToId || w.editorId || (w.tasks || []).some((task: any) => task.assignedToId)) return false;
+        if (assignedToAnotherEmployee(w)) return false;
         const teamId = Number(w.teamId || w.customer?.assignedTeamId);
         if (!productionTeamIds.includes(teamId)) return false;
         if (isFullAccess) return true;
