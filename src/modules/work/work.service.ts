@@ -2080,12 +2080,22 @@ status: ${item.status}`);
    */
   private scheduleDateKey(value: any): string | null {
     if (!value) return null;
-    const raw = value instanceof Date ? value.toISOString() : String(value);
-    const datePart = raw.includes('T') ? raw.split('T')[0] : raw.split(' ')[0];
-    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed.toISOString().split('T')[0];
+    let parsed: Date;
+    if (value instanceof Date) {
+      parsed = value;
+    } else {
+      parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        const raw = String(value);
+        const datePart = raw.includes('T') ? raw.split('T')[0] : raw.split(' ')[0];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+        return null;
+      }
+    }
+    // Offset UTC to Indian Standard Time (+05:30) for consistent date matching
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(parsed.getTime() + istOffsetMs);
+    return istDate.toISOString().split('T')[0];
   }
 
   /**
@@ -2283,12 +2293,28 @@ status: ${item.status}`);
     const empRecord = this.prisma.employee?.findUnique
       ? await this.prisma.employee.findUnique({
           where: { id: numEmployeeId },
-          select: { id: true, userId: true, firstName: true, lastName: true, customerId: true },
+          select: {
+            id: true,
+            userId: true,
+            firstName: true,
+            lastName: true,
+            customerId: true,
+            designation: { select: { name: true } },
+            department: { select: { name: true } },
+          },
         })
       : (this.prisma.employee?.findFirst
           ? await this.prisma.employee.findFirst({
               where: { id: numEmployeeId },
-              select: { id: true, userId: true, firstName: true, lastName: true, customerId: true },
+              select: {
+            id: true,
+            userId: true,
+            firstName: true,
+            lastName: true,
+            customerId: true,
+            designation: { select: { name: true } },
+            department: { select: { name: true } },
+          },
             })
           : null);
 
@@ -2616,6 +2642,7 @@ status: ${item.status}`);
           select: {
             id: true,
             name: true,
+            description: true,
             leaderId: true,
             members: {
               select: {
@@ -2724,21 +2751,39 @@ status: ${item.status}`);
           .filter((id: number) => Number.isInteger(id) && id > 0);
         return ids.some((id: number) => viewerIds.has(id));
       };
-      const assignedToAnotherEmployee = (w: any) => {
-        const people = [
-          w.assignedTo,
-          w.editor,
-          ...(w.tasks || []).map((task: any) => task.assignedTo),
-        ];
+      const matchesViewerRole = (w: any) => {
+        if (!empRecord) return false;
+        return this.resolveTeamMemberForActivity(
+          w,
+          [{
+            employeeId: numEmployeeId,
+            employee: {
+              id: numEmployeeId,
+              designation: (empRecord as any).designation,
+              department: (empRecord as any).department,
+            },
+          }],
+          null,
+          0,
+          { roleMatchOnly: true },
+        ) === numEmployeeId;
+      };
+      const ownedByAnotherRoleMatch = (w: any) => {
+        const people = [w.assignedTo, w.editor, ...(w.tasks || []).map((task: any) => task.assignedTo)];
         return people.some((person) => {
           const id = Number(person?.id);
-          if (!Number.isInteger(id) || id <= 0 || viewerIds.has(id)) return false;
-          return !isPlatformAdmin(person);
+          if (!Number.isInteger(id) || id <= 0 || viewerIds.has(id) || isPlatformAdmin(person)) return false;
+          return this.resolveTeamMemberForActivity(
+            w,
+            [{ employeeId: id, employee: person }],
+            null,
+            0,
+            { roleMatchOnly: true },
+          ) === id;
         });
       };
       filteredItems = filteredItems.filter((w) => {
         if (directlyAssigned(w)) return true;
-        if (assignedToAnotherEmployee(w)) return false;
         const teamId = Number(w.teamId || w.team?.id || w.customer?.assignedTeamId || w.customer?.assignedTeam?.id);
         const isMemberOfWorkTeam =
           (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
@@ -2749,9 +2794,11 @@ status: ${item.status}`);
           isMemberOfWorkTeam ||
           (teamId > 0 && productionTeamIds.includes(teamId)) ||
           teamCustomerIds.includes(Number(w.customerId));
-        if (!isTeamWork) return false;
-        if (isFullAccess) return true;
-        return allowedTypes.has(normalizeActivityType(w));
+        if (!isTeamWork || this.isBpoOnlyTeam(w.team?.name, w.team?.description)) return false;
+        const roleMatch = isFullAccess || allowedTypes.has(normalizeActivityType(w)) || matchesViewerRole(w);
+        if (!roleMatch) return false;
+        if (ownedByAnotherRoleMatch(w)) return false;
+        return true;
       });
     }
 
