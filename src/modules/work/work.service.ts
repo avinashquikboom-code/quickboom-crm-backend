@@ -1666,24 +1666,10 @@ returnedSchedules: 0`);
     // Date-only precision filtering to strictly match target day without timezone shifts
     const filteredItems = (targetYear && targetMonth && targetDay)
       ? items.filter((w) => {
-          if (!w.scheduledDate) return false;
-          const raw = w.scheduledDate;
-          const str = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString() : String(raw));
-          const datePart = str.includes('T') ? str.split('T')[0] : str.split(' ')[0];
-          const [y, m, d] = datePart.split('-').map(Number);
-          if (y === targetYear && m === targetMonth && d === targetDay) return true;
-
-          const dateObj = new Date(w.scheduledDate);
-          if (isNaN(dateObj.getTime())) return false;
-          const isUtcMatch =
-            dateObj.getUTCFullYear() === targetYear &&
-            dateObj.getUTCMonth() + 1 === targetMonth &&
-            dateObj.getUTCDate() === targetDay;
-          const isLocalMatch =
-            dateObj.getFullYear() === targetYear &&
-            dateObj.getMonth() + 1 === targetMonth &&
-            dateObj.getDate() === targetDay;
-          return isUtcMatch || isLocalMatch;
+          const key = this.scheduleDateKey(w.scheduledDate);
+          if (!key) return false;
+          const [y, m, d] = key.split('-').map(Number);
+          return y === targetYear && m === targetMonth && d === targetDay;
         })
       : items;
 
@@ -1744,11 +1730,7 @@ returnedSchedules: 0`);
       else if (titleLower.includes('design')) reworkActionLabel = 'Request Re-design';
       else if (titleLower.includes('post') || titleLower.includes('publish')) reworkActionLabel = 'Request Re-post';
 
-      const schedDateVal = w.scheduledDate
-        ? (w.scheduledDate instanceof Date
-            ? w.scheduledDate.toISOString().split('T')[0]
-            : String(w.scheduledDate).split('T')[0])
-        : null;
+      const schedDateVal = this.scheduleDateKey(w.scheduledDate);
 
       const originalScheduleMatch = (w.notes || '').match(/\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
       const originalScheduledDate = originalScheduleMatch ? originalScheduleMatch[1] : null;
@@ -2090,6 +2072,20 @@ status: ${item.status}`);
       });
       return customers.map((customer) => customer.id);
     }
+  }
+
+  /**
+   * Calendar day stored on the work row. Customer and employee calendars both
+   * use this value so a task is not moved onto the date the user happens to open.
+   */
+  private scheduleDateKey(value: any): string | null {
+    if (!value) return null;
+    const raw = value instanceof Date ? value.toISOString() : String(value);
+    const datePart = raw.includes('T') ? raw.split('T')[0] : raw.split(' ')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().split('T')[0];
   }
 
   /**
@@ -2682,45 +2678,17 @@ status: ${item.status}`);
 
     // Timezone normalization helpers: check Direct String, UTC, Server Local, and IST (+05:30)
     const matchesTargetDate = (dateVal: any, tY: number, tM: number, tD: number): boolean => {
-      if (!dateVal) return false;
-      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
-      const datePart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
-      const [sy, sm, sd] = datePart.split('-').map(Number);
-      if (sy === tY && sm === tM && sd === tD) return true;
-
-      const d = new Date(dateVal);
-      if (isNaN(d.getTime())) return false;
-
-      // UTC match
-      if (d.getUTCFullYear() === tY && d.getUTCMonth() + 1 === tM && d.getUTCDate() === tD) return true;
-      // Local server match
-      if (d.getFullYear() === tY && d.getMonth() + 1 === tM && d.getDate() === tD) return true;
-      // IST match (UTC + 05:30)
-      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-      if (istDate.getUTCFullYear() === tY && istDate.getUTCMonth() + 1 === tM && istDate.getUTCDate() === tD) return true;
-
-      return false;
+      const key = this.scheduleDateKey(dateVal);
+      if (!key) return false;
+      const [sy, sm, sd] = key.split('-').map(Number);
+      return sy === tY && sm === tM && sd === tD;
     };
 
     const matchesTargetMonth = (dateVal: any, tY: number, tM: number): boolean => {
-      if (!dateVal) return false;
-      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
-      const datePart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
-      const [sy, sm] = datePart.split('-').map(Number);
-      if (sy === tY && sm === tM) return true;
-
-      const d = new Date(dateVal);
-      if (isNaN(d.getTime())) return false;
-
-      // UTC match
-      if (d.getUTCFullYear() === tY && d.getUTCMonth() + 1 === tM) return true;
-      // Local server match
-      if (d.getFullYear() === tY && d.getMonth() + 1 === tM) return true;
-      // IST match (UTC + 05:30)
-      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-      if (istDate.getUTCFullYear() === tY && istDate.getUTCMonth() + 1 === tM) return true;
-
-      return false;
+      const key = this.scheduleDateKey(dateVal);
+      if (!key) return false;
+      const [sy, sm] = key.split('-').map(Number);
+      return sy === tY && sm === tM;
     };
 
     // Filter items according to queried date / month
@@ -2787,27 +2755,7 @@ status: ${item.status}`);
       });
     }
 
-    const formatScheduleDate = (dateVal: any, explicitTarget?: string): string => {
-      if (explicitTarget && /^\d{4}-\d{2}-\d{2}$/.test(explicitTarget)) {
-        const [y, m, d] = explicitTarget.split('-').map(Number);
-        if (matchesTargetDate(dateVal, y, m, d)) {
-          return explicitTarget;
-        }
-      }
-      if (!dateVal) return '';
-      const rawStr = typeof dateVal === 'string' ? dateVal : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
-      const directPart = rawStr.includes('T') ? rawStr.split('T')[0] : rawStr.split(' ')[0];
-      if (/^\d{4}-\d{2}-\d{2}$/.test(directPart)) {
-        return directPart;
-      }
-      const d = new Date(dateVal);
-      if (isNaN(d.getTime())) return '';
-      const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-      const y = istDate.getUTCFullYear();
-      const m = String(istDate.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(istDate.getUTCDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    };
+    const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
 
     const mapped = filteredItems.map((w) => {
       const purchaseRef = w.subscriptionId
@@ -2818,7 +2766,7 @@ status: ${item.status}`);
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
       const planName = w.subscription?.plan?.name || 'Active Plan';
 
-      const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate, targetDateStr) : null;
+      const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate) : null;
 
       const originalScheduleMatch = (w.notes || '').match(/\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
       const originalScheduledDate = originalScheduleMatch ? originalScheduleMatch[1] : null;
