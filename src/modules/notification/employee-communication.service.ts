@@ -350,30 +350,31 @@ export class EmployeeCommunicationService {
     if (!slip || (customerId && slip.customerId !== customerId)) return null;
     const employee = slip.employee;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
-    const pi = slip.payrollItem;
+    const s = slip as any;
+    const pi = s.payrollItem as any;
     const buffer = await this.buildSalaryPdf({
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       employeeCode: employee.employeeCode,
-      payPeriod: slip.payPeriod,
-      gross: slip.grossSalary,
-      deductions: slip.totalDeductions,
-      net: slip.netSalary,
-      slipNumber: slip.slipNumber,
+      payPeriod: s.payPeriod,
+      gross: s.grossSalary,
+      deductions: s.totalDeductions,
+      net: s.netSalary,
+      slipNumber: s.slipNumber,
       designation: employee.designation?.name || null,
       department: employee.department?.name || null,
       joiningDate: employee.joiningDate,
       bankDetails: employee.bankDetails,
-      basicSalary: pi?.basicSalary ?? slip.basicSalary ?? slip.grossSalary,
-      hra: pi?.hra ?? slip.hra ?? 0,
-      allowances: (pi?.allowances ?? slip.allowances ?? 0) + (pi?.specialAllowance ?? slip.specialAllowance ?? 0),
-      commission: pi?.commission ?? slip.commission ?? 0,
-      reimbursement: pi?.reimbursement ?? slip.reimbursement ?? 0,
-      pf: pi?.pf ?? slip.pf ?? 0,
-      esi: pi?.esi ?? slip.esi ?? 0,
-      tds: pi?.tds ?? slip.tds ?? 0,
-      professionalTax: pi?.professionalTax ?? slip.professionalTax ?? 0,
-      loanDeduction: pi?.loanDeduction ?? slip.loanDeduction ?? 0,
-      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? slip.unpaidLeaveDeduction ?? 0,
+      basicSalary: pi?.basicSalary ?? s.basicSalary ?? s.grossSalary,
+      hra: pi?.hra ?? s.hra ?? 0,
+      allowances: (pi?.allowances ?? s.allowances ?? 0) + (pi?.specialAllowance ?? s.specialAllowance ?? 0),
+      commission: pi?.commission ?? s.commission ?? 0,
+      reimbursement: pi?.reimbursement ?? s.reimbursement ?? 0,
+      pf: pi?.pf ?? s.pf ?? 0,
+      esi: pi?.esi ?? s.esi ?? 0,
+      tds: pi?.tds ?? s.tds ?? 0,
+      professionalTax: pi?.professionalTax ?? s.professionalTax ?? 0,
+      loanDeduction: pi?.loanDeduction ?? s.loanDeduction ?? 0,
+      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? s.unpaidLeaveDeduction ?? 0,
     });
     return { filename, buffer };
   }
@@ -627,6 +628,26 @@ export class EmployeeCommunicationService {
     return { monthName, year, present, absent, halfDay, leave, wfh, late, early, hours: Math.round(hours * 10) / 10, overtime: Math.round(overtime * 10) / 10, workingDays, percentage, days };
   }
 
+  private resolveFontPaths(): { regular: string; bold: string } | null {
+    const candidateDirs = [
+      path.join(__dirname, '../../assets/fonts'),
+      path.join(__dirname, '../assets/fonts'),
+      path.join(process.cwd(), 'src/assets/fonts'),
+      path.join(process.cwd(), 'dist/src/assets/fonts'),
+      path.join(process.cwd(), 'dist/assets/fonts'),
+      path.join(process.cwd(), 'assets/fonts'),
+    ];
+
+    for (const dir of candidateDirs) {
+      const regular = path.join(dir, 'Roboto-Regular.ttf');
+      const bold = path.join(dir, 'Roboto-Bold.ttf');
+      if (fs.existsSync(regular) && fs.existsSync(bold)) {
+        return { regular, bold };
+      }
+    }
+    return null;
+  }
+
   private buildSalaryPdf(data: {
     employeeName: string;
     employeeCode: string;
@@ -639,37 +660,201 @@ export class EmployeeCommunicationService {
     designation?: string | null;
     department?: string | null;
     joiningDate?: Date | null;
+    bankDetails?: any;
+    basicSalary?: number;
+    hra?: number;
+    allowances?: number;
+    commission?: number;
+    reimbursement?: number;
+    pf?: number;
+    esi?: number;
+    tds?: number;
+    professionalTax?: number;
+    loanDeduction?: number;
+    unpaidLeaveDeduction?: number;
     snapshot?: any;
   }) {
-    const snap = data.snapshot || {};
     return this.renderPdf((doc) => {
-      doc.fontSize(18).text(data.company || 'QB Suite', { align: 'left' });
-      doc.fontSize(11).fillColor('#166534').text('SALARY SLIP');
-      doc.fillColor('#111').fontSize(11);
-      doc.text(`Payroll Month: ${data.payPeriod}`);
-      doc.text(`Slip: ${data.slipNumber}`);
-      doc.text('Payment Status: PAID');
-      doc.moveDown(0.5);
-      doc.text(`Employee: ${data.employeeName}`);
-      doc.text(`Employee ID: ${data.employeeCode}`);
-      if (data.designation) doc.text(`Designation: ${data.designation}`);
-      if (data.department) doc.text(`Department: ${data.department}`);
-      if (data.joiningDate) doc.text(`Joining Date: ${new Date(data.joiningDate).toISOString().slice(0, 10)}`);
-      doc.moveDown(0.5);
-      doc.text(`Working Days: ${snap.salaryDays ?? '—'}`);
-      doc.text(`Present: ${snap.presentDays ?? '—'}    Half Days: ${snap.halfDays ?? '—'}`);
-      doc.text(`Paid Leave: ${snap.paidLeaveDays ?? '—'}    Unpaid Leave: ${snap.unpaidLeaveDays ?? '—'}`);
-      doc.text(`Holidays: ${snap.holidayDays ?? '—'}    LOP Days: ${snap.lopDays ?? '—'}    Payable Days: ${snap.payableDays ?? '—'}`);
-      doc.moveDown(0.5);
-      doc.text(`Gross Earnings: ₹${data.gross}`);
-      doc.text(`Expense Reimbursement: ₹${snap.reimbursement ?? 0}`);
-      doc.text(`LOP: ₹${snap.lopDeduction ?? 0}`);
-      doc.text(`PF: ₹${snap.pf ?? 0}    ESI: ₹${snap.esi ?? 0}`);
-      doc.text(`Professional Tax: ₹${snap.professionalTax ?? 0}    TDS: ₹${snap.tds ?? 0}`);
-      doc.text(`Advance Recovery: ₹${snap.advanceDeduction ?? 0}    Loan EMI: ₹${snap.loanDeduction ?? 0}`);
-      doc.text(`Total Deductions: ₹${data.deductions}`);
-      doc.moveDown(0.5);
-      doc.fontSize(13).text(`NET SALARY: ₹${data.net}`);
+      const fontPaths = this.resolveFontPaths();
+      let regularFont = 'Helvetica';
+      let boldFont = 'Helvetica-Bold';
+      let hasUnicodeFont = false;
+
+      if (fontPaths) {
+        doc.registerFont('SalaryFont', fontPaths.regular);
+        doc.registerFont('SalaryFont-Bold', fontPaths.bold);
+        regularFont = 'SalaryFont';
+        boldFont = 'SalaryFont-Bold';
+        hasUnicodeFont = true;
+      }
+
+      const formatInr = (val?: number | null) => {
+        const num = Number(val || 0);
+        const isNeg = num < 0;
+        const abs = Math.abs(num);
+        const parts = abs.toFixed(2).split('.');
+        const intPart = parts[0];
+        const decPart = parts[1];
+        let formattedInt = intPart;
+        if (intPart.length > 3) {
+          const lastThree = intPart.substring(intPart.length - 3);
+          const rest = intPart.substring(0, intPart.length - 3);
+          const formattedRest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+          formattedInt = `${formattedRest},${lastThree}`;
+        }
+        const sym = hasUnicodeFont ? '₹' : '₹';
+        return `${isNeg ? '-' : ''}${sym}${formattedInt}.${decPart}`;
+      };
+
+      const maskAccount = (raw?: string | null) => {
+        if (!raw || !raw.trim()) return '—';
+        const clean = raw.trim();
+        if (clean.length <= 4) return clean;
+        return `XXXX XXXX ${clean.substring(clean.length - 4)}`;
+      };
+
+      const contentWidth = 595.28 - 72; // 523.28 pt printable area
+      const leftX = 36;
+
+      // 1. Header Banner
+      const bannerY = 36;
+      doc.rect(leftX, bannerY, contentWidth, 56).fill('#0F763E');
+
+      doc.font(boldFont).fontSize(14).fillColor('#FFFFFF').text('QUICKBOOM BUSINESS SUITE', leftX + 12, bannerY + 10);
+      doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text('OFFICIAL SALARY & PAYROLL SLIP', leftX + 12, bannerY + 28);
+      doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text(`Pay Period: ${data.payPeriod}`, leftX + 12, bannerY + 40);
+
+      const metaX = leftX + contentWidth - 192;
+      doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Slip No: ${data.slipNumber || 'N/A'}`, metaX, bannerY + 10, { width: 180, align: 'right' });
+      doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Disbursed On: ${new Date().toISOString().slice(0, 10)}`, metaX, bannerY + 24, { width: 180, align: 'right' });
+      doc.font(boldFont).fontSize(8).fillColor('#FFFFFF').text('Status: PAID', metaX, bannerY + 38, { width: 180, align: 'right' });
+
+      // 2. Employee Details
+      const bDetails = typeof data.bankDetails === 'string'
+        ? (JSON.parse(data.bankDetails) || {})
+        : (data.bankDetails || {});
+
+      const infoSectionY = 104;
+      doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('EMPLOYEE & DISBURSEMENT DETAILS', leftX, infoSectionY);
+
+      const cardY = infoSectionY + 14;
+      doc.roundedRect(leftX, cardY, contentWidth, 66, 4).fillAndStroke('#F8FAFC', '#E2E8F0');
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee Name:', leftX + 10, cardY + 8);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(data.employeeName, leftX + 10, cardY + 18, { width: 120, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee ID:', leftX + 10, cardY + 32);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(data.employeeCode, leftX + 10, cardY + 42, { width: 120, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Designation:', leftX + 140, cardY + 8);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(data.designation || '—', leftX + 140, cardY + 18, { width: 120, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Department:', leftX + 140, cardY + 32);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(data.department || '—', leftX + 140, cardY + 42, { width: 120, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Joining Date:', leftX + 270, cardY + 8);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(data.joiningDate ? new Date(data.joiningDate).toISOString().slice(0, 10) : '—', leftX + 270, cardY + 18, { width: 110, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Payment Mode:', leftX + 270, cardY + 32);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text('Bank Transfer', leftX + 270, cardY + 42, { width: 110, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Bank Name:', leftX + 390, cardY + 8);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(bDetails?.bankName || '—', leftX + 390, cardY + 18, { width: 120, ellipsis: true });
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Account No:', leftX + 390, cardY + 32);
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(maskAccount(bDetails?.accountNumber), leftX + 390, cardY + 42, { width: 120, ellipsis: true });
+
+      // 3. Salary Breakdown Table
+      const breakdownTitleY = cardY + 66 + 14;
+      doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('SALARY BREAKDOWN', leftX, breakdownTitleY);
+
+      const tableY = breakdownTitleY + 14;
+      const col1W = 155;
+      const col2W = 106.64;
+      const col3W = 155;
+      const col4W = 106.64;
+
+      // Table Header
+      doc.rect(leftX, tableY, contentWidth, 20).fill('#0F763E');
+      doc.font(boldFont).fontSize(8.5).fillColor('#FFFFFF');
+      doc.text('EARNINGS', leftX + 8, tableY + 5);
+      doc.text('AMOUNT', leftX + col1W - 8, tableY + 5, { width: col2W, align: 'right' });
+      doc.text('DEDUCTIONS', leftX + col1W + col2W + 8, tableY + 5);
+      doc.text('AMOUNT', leftX + col1W + col2W + col3W - 8, tableY + 5, { width: col4W, align: 'right' });
+
+      const earnings: [string, number][] = [
+        ['Basic Salary', data.basicSalary || data.gross],
+        ['HRA Allowance', data.hra || 0],
+        ['Allowances & Special', data.allowances || 0],
+      ];
+      if (data.commission && data.commission > 0) earnings.push(['Earned Commission', data.commission]);
+      if (data.reimbursement && data.reimbursement > 0) earnings.push(['Expense Reimbursement', data.reimbursement]);
+
+      const deductions: [string, number][] = [
+        ['Provident Fund (PF)', data.pf || 0],
+        ['ESI Contribution', data.esi || 0],
+        ['TDS / Income Tax', data.tds || 0],
+      ];
+      if (data.loanDeduction && data.loanDeduction > 0) deductions.push(['Loan EMI Deduction', data.loanDeduction]);
+      if (data.unpaidLeaveDeduction && data.unpaidLeaveDeduction > 0) deductions.push(['Loss of Pay (LOP)', data.unpaidLeaveDeduction]);
+      if (data.professionalTax && data.professionalTax > 0) deductions.push(['Professional Tax', data.professionalTax]);
+
+      const numRows = Math.max(earnings.length, deductions.length);
+      let currRowY = tableY + 20;
+
+      for (let i = 0; i < numRows; i++) {
+        const earn = earnings[i];
+        const ded = deductions[i];
+        const isEven = i % 2 === 0;
+
+        doc.rect(leftX, currRowY, contentWidth, 18).fillAndStroke(isEven ? '#FFFFFF' : '#F8FAFC', '#E2E8F0');
+
+        if (earn) {
+          doc.font(regularFont).fontSize(8).fillColor('#334155').text(earn[0], leftX + 8, currRowY + 4, { width: col1W - 12 });
+          doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatInr(earn[1]), leftX + col1W - 8, currRowY + 4, { width: col2W, align: 'right' });
+        }
+
+        if (ded) {
+          doc.font(regularFont).fontSize(8).fillColor('#334155').text(ded[0], leftX + col1W + col2W + 8, currRowY + 4, { width: col3W - 12 });
+          doc.font(boldFont).fontSize(8).fillColor('#DC2626').text(formatInr(ded[1]), leftX + col1W + col2W + col3W - 8, currRowY + 4, { width: col4W, align: 'right' });
+        }
+
+        currRowY += 18;
+      }
+
+      // Totals Row
+      doc.rect(leftX, currRowY, contentWidth, 22).fillAndStroke('#F1F5F9', '#CBD5E1');
+      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A');
+      doc.text('Total Gross Salary', leftX + 8, currRowY + 6);
+      doc.text(formatInr(data.gross), leftX + col1W - 8, currRowY + 6, { width: col2W, align: 'right' });
+
+      doc.text('Total Deductions', leftX + col1W + col2W + 8, currRowY + 6);
+      doc.fillColor('#DC2626').text(formatInr(data.deductions), leftX + col1W + col2W + col3W - 8, currRowY + 6, { width: col4W, align: 'right' });
+
+      currRowY += 22;
+
+      // 4. Net Payable Section
+      const netBannerY = currRowY + 12;
+      doc.roundedRect(leftX, netBannerY, contentWidth, 48, 5).fillAndStroke('#E8F9EE', '#23C45E');
+
+      doc.font(boldFont).fontSize(8.5).fillColor('#15803D').text('NET PAYABLE (TAKE HOME SALARY)', leftX + 14, netBannerY + 10);
+      doc.font(boldFont).fontSize(16).fillColor('#15803D').text(formatInr(data.net), leftX + 14, netBannerY + 23);
+
+      doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text(
+        'Confidential Document — Generated electronically by QB Suite',
+        leftX + contentWidth - 280,
+        netBannerY + 20,
+        { width: 266, align: 'right' }
+      );
+
+      // 5. Footer Note
+      const footerY = netBannerY + 48 + 14;
+      doc.font(regularFont).fontSize(7).fillColor('#94A3B8').text(
+        'This is a computer generated salary slip and does not require a physical signature. For any payroll queries, please contact HR/Accounts.',
+        leftX,
+        footerY,
+        { width: contentWidth, align: 'center' }
+      );
     });
   }
 
