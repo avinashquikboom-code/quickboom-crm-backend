@@ -1981,41 +1981,35 @@ export class CustomerService {
     let finalItems: any[] = [];
     let effectiveTotal = 0;
 
-    const totalActive = activeCustomerIds.length + unconvertedActiveLeads.length;
-    const totalUpcoming = upcomingCustomerIds.length + unconvertedUpcomingLeads.length;
-    const totalInactive = inactiveCustomerIds.length + unconvertedInactiveLeads.length;
+    const totalActive = activeCustomerIds.length;
+    const totalUpcoming = upcomingCustomerIds.length;
+    const totalInactive = inactiveCustomerIds.length;
     const totalAll = totalActive + totalUpcoming + totalInactive;
 
     if (targetStatus === 'UPCOMING') {
       const customerUpcoming = formatted.filter((item) => item.customerStatus === 'UPCOMING');
-      const combinedUpcoming = [...customerUpcoming, ...unconvertedUpcomingLeads];
-      // Sort upcoming items strictly by scheduled call date/time ascending
-      combinedUpcoming.sort((a, b) => {
+      customerUpcoming.sort((a, b) => {
         const timeA = a.upcomingCall?.scheduledAt ? new Date(a.upcomingCall.scheduledAt).getTime() : 0;
         const timeB = b.upcomingCall?.scheduledAt ? new Date(b.upcomingCall.scheduledAt).getTime() : 0;
         return timeA - timeB;
       });
-      effectiveTotal = combinedUpcoming.length;
-      finalItems = combinedUpcoming.slice(skip, skip + limit);
+      effectiveTotal = customerUpcoming.length;
+      finalItems = customerUpcoming.slice(skip, skip + limit);
     } else if (targetStatus === 'ACTIVE') {
       const customerActive = formatted.filter((item) => item.customerStatus === 'ACTIVE');
-      const combinedActive = [...customerActive, ...unconvertedActiveLeads];
-      effectiveTotal = combinedActive.length;
-      finalItems = combinedActive.slice(skip, skip + limit);
+      effectiveTotal = customerActive.length;
+      finalItems = customerActive.slice(skip, skip + limit);
     } else if (targetStatus === 'INACTIVE') {
       const customerInactive = formatted.filter((item) => item.customerStatus === 'INACTIVE');
-      const combinedInactive = [...customerInactive, ...unconvertedInactiveLeads];
-      effectiveTotal = combinedInactive.length;
-      finalItems = combinedInactive.slice(skip, skip + limit);
+      effectiveTotal = customerInactive.length;
+      finalItems = customerInactive.slice(skip, skip + limit);
     } else if (targetStatus === 'COMPLETED') {
       const completedItems = formatted.filter((item) => item.customerStatus === 'COMPLETED' || item.leadStatus === 'WON');
       effectiveTotal = completedItems.length;
       finalItems = completedItems.slice(skip, skip + limit);
     } else {
-      // 'ALL' tab: all Active + all Upcoming + all Inactive
-      const combinedAll = [...formatted, ...unconvertedAllLeads];
-      effectiveTotal = combinedAll.length;
-      finalItems = combinedAll.slice(skip, skip + limit);
+      effectiveTotal = formatted.length;
+      finalItems = formatted.slice(skip, skip + limit);
     }
 
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
