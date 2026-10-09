@@ -1100,10 +1100,6 @@ export class CustomerService {
 
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
-    } else if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
-      if (query.status.toUpperCase() === 'INACTIVE') {
-        where.isActive = false;
-      }
     }
 
     if (query.source && query.source !== 'ALL' && query.source.trim() !== '') {
@@ -1433,6 +1429,12 @@ export class CustomerService {
     const completedCustomerIds: number[] = [];
 
     for (const c of allCustomersForCounts) {
+      if (c.isActive === false) {
+        inactiveCount++;
+        inactiveCustomerIds.push(c.id);
+        continue;
+      }
+
       const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
       const wonEligible = isPersistedCustomerEligibleForList(c, wonStageIds);
 
