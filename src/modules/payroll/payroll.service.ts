@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
+import { Response } from 'express';
+import * as path from 'path';
+import * as fs from 'fs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { EmployeeCommunicationService } from '../notification/employee-communication.service';
+import PDFDocument = require('pdfkit');
 
 @Injectable()
 export class PayrollService {
@@ -1536,23 +1540,367 @@ export class PayrollService {
   async getSalarySlipById(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    const slip = await this.prisma.salarySlip.findFirst({
-      where: { id: numId, customerId: numCustomerId },
-      include: {
-        employee: {
+    let slip: any = null;
+    if (!isNaN(numId) && numId > 0) {
+      slip = await this.prisma.salarySlip.findFirst({
+        where: { id: numId, customerId: numCustomerId },
+        include: {
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+            },
+          },
+          payrollItem: {
+            include: {
+              payroll: true,
+            },
+          },
+        },
+      });
+    }
+
+    if (!slip && String(id).startsWith('active-')) {
+      const empId = Number(String(id).replace('active-', ''));
+      if (!isNaN(empId) && empId > 0) {
+        const emp = await this.prisma.employee.findFirst({
+          where: { id: empId, customerId: numCustomerId },
           include: {
             department: true,
             designation: true,
+            salaryStructures: {
+              where: { status: 'ACTIVE' },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
           },
-        },
-        payrollItem: {
-          include: {
-            payroll: true,
-          },
-        },
-      },
-    });
+        });
+        if (emp) {
+          const activeStructure = emp.salaryStructures?.[0];
+          let basic = activeStructure ? activeStructure.basicSalary : 0;
+          if (!basic && emp.bankDetails) {
+            const b = typeof emp.bankDetails === 'string'
+              ? JSON.parse(emp.bankDetails)
+              : emp.bankDetails;
+            basic = Number(b?.basicSalary || b?.monthlySalary || 0);
+          }
+          const hra = activeStructure?.hra !== undefined ? activeStructure.hra : Math.round(basic * 0.4);
+          const allowances = activeStructure?.allowances !== undefined ? activeStructure.allowances : Math.round(basic * 0.1);
+          const specialAllowance = activeStructure?.specialAllowance !== undefined ? activeStructure.specialAllowance : 0;
+          const pf = activeStructure?.pf !== undefined ? activeStructure.pf : Math.round(basic * 0.12);
+          const esi = activeStructure?.esi !== undefined ? activeStructure.esi : (basic <= 21000 ? Math.round(basic * 0.0075) : 0);
+          const professionalTax = activeStructure?.professionalTax !== undefined ? activeStructure.professionalTax : 200;
+          const tds = activeStructure?.tds !== undefined ? activeStructure.tds : 0;
+          const grossSalary = basic + hra + allowances + specialAllowance;
+          const totalDeductions = pf + esi + professionalTax + tds;
+          const netSalary = Math.max(0, grossSalary - totalDeductions);
+          const now = new Date();
+          const curMonth = now.getMonth() + 1;
+          const curYear = now.getFullYear();
+          const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+          return {
+            id: `active-${emp.id}`,
+            slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${emp.id}`,
+            payPeriod: `${FULL_MONTH_NAMES[curMonth]} ${curYear}`,
+            month: curMonth,
+            year: curYear,
+            monthName: FULL_MONTH_NAMES[curMonth],
+            date: now.toISOString().split('T')[0],
+            grossSalary,
+            totalDeductions,
+            netSalary,
+            basicSalary: basic,
+            hra,
+            allowances,
+            specialAllowance,
+            pf,
+            esi,
+            professionalTax,
+            tds,
+            status: 'ACTIVE',
+            employee: emp,
+          };
+        }
+      }
+    }
+
     return this.formatSalarySlip(slip);
+  }
+
+  private resolveFontPaths(): { regular: string; bold: string } | null {
+    const candidateDirs = [
+      path.join(__dirname, '../../assets/fonts'),
+      path.join(__dirname, '../assets/fonts'),
+      path.join(process.cwd(), 'src/assets/fonts'),
+      path.join(process.cwd(), 'dist/src/assets/fonts'),
+      path.join(process.cwd(), 'dist/assets/fonts'),
+      path.join(process.cwd(), 'assets/fonts'),
+    ];
+
+    for (const dir of candidateDirs) {
+      const regular = path.join(dir, 'Roboto-Regular.ttf');
+      const bold = path.join(dir, 'Roboto-Bold.ttf');
+      if (fs.existsSync(regular) && fs.existsSync(bold)) {
+        return { regular, bold };
+      }
+    }
+    return null;
+  }
+
+  async generateSalarySlipPdfBuffer(slip: any): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ margin: 36, size: 'A4' });
+        const chunks: Buffer[] = [];
+        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const fontPaths = this.resolveFontPaths();
+        let regularFont = 'Helvetica';
+        let boldFont = 'Helvetica-Bold';
+        let hasUnicodeFont = false;
+
+        if (fontPaths) {
+          doc.registerFont('SalaryFont', fontPaths.regular);
+          doc.registerFont('SalaryFont-Bold', fontPaths.bold);
+          regularFont = 'SalaryFont';
+          boldFont = 'SalaryFont-Bold';
+          hasUnicodeFont = true;
+        }
+
+        const formatInr = (val?: number | null) => {
+          const num = Number(val || 0);
+          const isNeg = num < 0;
+          const abs = Math.abs(num);
+          const parts = abs.toFixed(2).split('.');
+          const intPart = parts[0];
+          const decPart = parts[1];
+          let formattedInt = intPart;
+          if (intPart.length > 3) {
+            const lastThree = intPart.substring(intPart.length - 3);
+            const rest = intPart.substring(0, intPart.length - 3);
+            const formattedRest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+            formattedInt = `${formattedRest},${lastThree}`;
+          }
+          const sym = hasUnicodeFont ? '₹' : '₹';
+          return `${isNeg ? '-' : ''}${sym}${formattedInt}.${decPart}`;
+        };
+
+        const maskAccount = (raw?: string | null) => {
+          if (!raw || !raw.trim()) return '—';
+          const clean = raw.trim();
+          if (clean.length <= 4) return clean;
+          return `XXXX XXXX ${clean.substring(clean.length - 4)}`;
+        };
+
+        const contentWidth = 595.28 - 72; // 523.28 pt printable area
+        const leftX = 36;
+
+        // 1. Header Banner
+        const bannerY = 36;
+        doc.rect(leftX, bannerY, contentWidth, 56).fill('#0F763E');
+
+        doc.font(boldFont).fontSize(14).fillColor('#FFFFFF').text('QUICKBOOM BUSINESS SUITE', leftX + 12, bannerY + 10);
+        doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text('OFFICIAL SALARY & PAYROLL SLIP', leftX + 12, bannerY + 28);
+        doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text(`Pay Period: ${slip.payPeriod || slip.monthName || ''}`, leftX + 12, bannerY + 40);
+
+        const metaX = leftX + contentWidth - 192;
+        doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Slip No: ${slip.slipNumber || slip.id || 'N/A'}`, metaX, bannerY + 10, { width: 180, align: 'right' });
+        doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Disbursed On: ${slip.date || '—'}`, metaX, bannerY + 24, { width: 180, align: 'right' });
+        doc.font(boldFont).fontSize(8).fillColor('#FFFFFF').text(`Status: ${(slip.status || 'PAID').toUpperCase()}`, metaX, bannerY + 38, { width: 180, align: 'right' });
+
+        // 2. Employee Details Section
+        const emp = slip.employee || {};
+        const bDetails = typeof emp.bankDetails === 'string'
+          ? (JSON.parse(emp.bankDetails) || {})
+          : (emp.bankDetails || slip.bankDetails || {});
+
+        const infoSectionY = 104;
+        doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('EMPLOYEE & DISBURSEMENT DETAILS', leftX, infoSectionY);
+
+        const cardY = infoSectionY + 14;
+        doc.roundedRect(leftX, cardY, contentWidth, 66, 4).fillAndStroke('#F8FAFC', '#E2E8F0');
+
+        // Column 1
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee Name:', leftX + 10, cardY + 8);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(`${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee', leftX + 10, cardY + 18, { width: 120, ellipsis: true });
+
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee ID:', leftX + 10, cardY + 32);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.employeeCode || '—', leftX + 10, cardY + 42, { width: 120, ellipsis: true });
+
+        // Column 2
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Designation:', leftX + 140, cardY + 8);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.designation?.name || emp.designation || '—', leftX + 140, cardY + 18, { width: 120, ellipsis: true });
+
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Department:', leftX + 140, cardY + 32);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.department?.name || emp.department || '—', leftX + 140, cardY + 42, { width: 120, ellipsis: true });
+
+        // Column 3
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Joining Date:', leftX + 270, cardY + 8);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.joiningDate ? new Date(emp.joiningDate).toISOString().slice(0, 10) : '—', leftX + 270, cardY + 18, { width: 110, ellipsis: true });
+
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Payment Mode:', leftX + 270, cardY + 32);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(slip.paymentMode || 'Bank Transfer', leftX + 270, cardY + 42, { width: 110, ellipsis: true });
+
+        // Column 4
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Bank Name:', leftX + 390, cardY + 8);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(bDetails?.bankName || '—', leftX + 390, cardY + 18, { width: 120, ellipsis: true });
+
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Account No:', leftX + 390, cardY + 32);
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(maskAccount(bDetails?.accountNumber), leftX + 390, cardY + 42, { width: 120, ellipsis: true });
+
+        // 3. Salary Breakdown Table
+        const breakdownTitleY = cardY + 66 + 14;
+        doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('SALARY BREAKDOWN', leftX, breakdownTitleY);
+
+        const tableY = breakdownTitleY + 14;
+        const col1W = 155;
+        const col2W = 106.64;
+        const col3W = 155;
+        const col4W = 106.64;
+
+        // Header Row
+        doc.rect(leftX, tableY, contentWidth, 20).fill('#0F763E');
+        doc.font(boldFont).fontSize(8.5).fillColor('#FFFFFF');
+        doc.text('EARNINGS', leftX + 8, tableY + 5);
+        doc.text('AMOUNT', leftX + col1W - 8, tableY + 5, { width: col2W, align: 'right' });
+        doc.text('DEDUCTIONS', leftX + col1W + col2W + 8, tableY + 5);
+        doc.text('AMOUNT', leftX + col1W + col2W + col3W - 8, tableY + 5, { width: col4W, align: 'right' });
+
+        // Prepare line items
+        const earnings: [string, number][] = [
+          ['Basic Salary', slip.basicSalary || 0],
+          ['HRA Allowance', slip.hra || 0],
+          ['Allowances & Special', (slip.allowances || 0) + (slip.specialAllowance || 0)],
+        ];
+        if (slip.commission && slip.commission > 0) earnings.push(['Earned Commission', slip.commission]);
+        if (slip.reimbursement && slip.reimbursement > 0) earnings.push(['Expense Reimbursement', slip.reimbursement]);
+
+        const deductions: [string, number][] = [
+          ['Provident Fund (PF)', slip.pf || 0],
+          ['ESI Contribution', slip.esi || 0],
+          ['TDS / Income Tax', slip.tds || 0],
+        ];
+        if (slip.loanDeduction && slip.loanDeduction > 0) deductions.push(['Loan EMI Deduction', slip.loanDeduction]);
+        if (slip.unpaidLeaveDeduction && slip.unpaidLeaveDeduction > 0) deductions.push(['Loss of Pay (LOP)', slip.unpaidLeaveDeduction]);
+        if (slip.professionalTax && slip.professionalTax > 0) deductions.push(['Professional Tax', slip.professionalTax]);
+
+        const numRows = Math.max(earnings.length, deductions.length);
+        let currRowY = tableY + 20;
+
+        for (let i = 0; i < numRows; i++) {
+          const earn = earnings[i];
+          const ded = deductions[i];
+          const isEven = i % 2 === 0;
+
+          // Row background & border
+          doc.rect(leftX, currRowY, contentWidth, 18).fillAndStroke(isEven ? '#FFFFFF' : '#F8FAFC', '#E2E8F0');
+
+          // Earnings
+          if (earn) {
+            doc.font(regularFont).fontSize(8).fillColor('#334155').text(earn[0], leftX + 8, currRowY + 4, { width: col1W - 12 });
+            doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatInr(earn[1]), leftX + col1W - 8, currRowY + 4, { width: col2W, align: 'right' });
+          }
+
+          // Deductions
+          if (ded) {
+            doc.font(regularFont).fontSize(8).fillColor('#334155').text(ded[0], leftX + col1W + col2W + 8, currRowY + 4, { width: col3W - 12 });
+            doc.font(boldFont).fontSize(8).fillColor('#DC2626').text(formatInr(ded[1]), leftX + col1W + col2W + col3W - 8, currRowY + 4, { width: col4W, align: 'right' });
+          }
+
+          currRowY += 18;
+        }
+
+        // Totals Row
+        doc.rect(leftX, currRowY, contentWidth, 22).fillAndStroke('#F1F5F9', '#CBD5E1');
+        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A');
+        doc.text('Total Gross Salary', leftX + 8, currRowY + 6);
+        doc.text(formatInr(slip.grossSalary), leftX + col1W - 8, currRowY + 6, { width: col2W, align: 'right' });
+
+        doc.text('Total Deductions', leftX + col1W + col2W + 8, currRowY + 6);
+        doc.fillColor('#DC2626').text(formatInr(slip.totalDeductions ?? slip.deductions), leftX + col1W + col2W + col3W - 8, currRowY + 6, { width: col4W, align: 'right' });
+
+        currRowY += 22;
+
+        // 4. Net Payable Section
+        const netBannerY = currRowY + 12;
+        doc.roundedRect(leftX, netBannerY, contentWidth, 48, 5).fillAndStroke('#E8F9EE', '#23C45E');
+
+        doc.font(boldFont).fontSize(8.5).fillColor('#15803D').text('NET PAYABLE (TAKE HOME SALARY)', leftX + 14, netBannerY + 10);
+        doc.font(boldFont).fontSize(16).fillColor('#15803D').text(formatInr(slip.netSalary), leftX + 14, netBannerY + 23);
+
+        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text(
+          'Confidential Document — Generated electronically by QB Suite',
+          leftX + contentWidth - 280,
+          netBannerY + 20,
+          { width: 266, align: 'right' }
+        );
+
+        // 5. Footer Note
+        const footerY = netBannerY + 48 + 14;
+        doc.font(regularFont).fontSize(7).fillColor('#94A3B8').text(
+          'This is a computer generated salary slip and does not require a physical signature. For any payroll queries, please contact HR/Accounts.',
+          leftX,
+          footerY,
+          { width: contentWidth, align: 'center' }
+        );
+
+        doc.end();
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  async downloadSalarySlipPdf(
+    customerId: number | string | undefined,
+    id: number | string,
+    res: Response,
+    user?: any,
+  ) {
+    try {
+      const slip = await this.getSalarySlipById(customerId, id);
+      if (!slip) {
+        if (!res.headersSent) {
+          res.status(404).json({ statusCode: 404, message: 'Salary slip not found' });
+        }
+        return;
+      }
+
+      // Check tenant / ownership security
+      if (user) {
+        const isSuperOrAdmin =
+          String(user?.role).toUpperCase() === 'SUPER_ADMIN' ||
+          String(user?.role).toUpperCase() === 'COMPANY_ADMIN' ||
+          String(user?.roleType).toUpperCase() === 'SUPER_ADMIN' ||
+          String(user?.roleType).toUpperCase() === 'CUSTOMER_ADMIN' ||
+          String(user?.roleType).toUpperCase() === 'TENANT_ADMIN';
+        if (!isSuperOrAdmin) {
+          const currentEmpId = user?.employee?.id || user?.employeeId;
+          const slipEmpId = slip.employeeId || slip.employee?.id;
+          if (currentEmpId && slipEmpId && slipEmpId !== currentEmpId) {
+            if (!res.headersSent) {
+              res.status(403).json({ statusCode: 403, message: 'Forbidden' });
+            }
+            return;
+          }
+        }
+      }
+
+      const pdfBuffer = await this.generateSalarySlipPdfBuffer(slip);
+      const safeFilename = `salary_slip_${String(slip.payPeriod || slip.month || 'slip').replace(/[\/\\:*?"<>| ]+/g, '_')}.pdf`;
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+      return res.end(pdfBuffer);
+    } catch (err: any) {
+      this.logger.error(`Failed to generate salary slip PDF: ${err?.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ statusCode: 500, message: 'Unable to generate salary slip PDF' });
+      }
+    }
   }
 
   async getPayrollHistory(customerId?: number | string) {

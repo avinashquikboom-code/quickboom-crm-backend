@@ -1,5 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { AttendanceStatus } from '@prisma/client';
+import * as path from 'path';
+import * as fs from 'fs';
 import PDFDocument = require('pdfkit');
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -329,10 +331,26 @@ export class EmployeeCommunicationService {
   }
 
   async salarySlipFile(slipId: number, customerId?: number) {
-    const slip = await this.prisma.salarySlip.findUnique({ where: { id: slipId }, include: { employee: true } });
+    const slip = await this.prisma.salarySlip.findUnique({
+      where: { id: slipId },
+      include: {
+        employee: {
+          include: {
+            department: true,
+            designation: true,
+          },
+        },
+        payrollItem: {
+          include: {
+            payroll: true,
+          },
+        },
+      },
+    });
     if (!slip || (customerId && slip.customerId !== customerId)) return null;
     const employee = slip.employee;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
+    const pi = slip.payrollItem;
     const buffer = await this.buildSalaryPdf({
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       employeeCode: employee.employeeCode,
@@ -341,6 +359,21 @@ export class EmployeeCommunicationService {
       deductions: slip.totalDeductions,
       net: slip.netSalary,
       slipNumber: slip.slipNumber,
+      designation: employee.designation?.name || null,
+      department: employee.department?.name || null,
+      joiningDate: employee.joiningDate,
+      bankDetails: employee.bankDetails,
+      basicSalary: pi?.basicSalary ?? slip.basicSalary ?? slip.grossSalary,
+      hra: pi?.hra ?? slip.hra ?? 0,
+      allowances: (pi?.allowances ?? slip.allowances ?? 0) + (pi?.specialAllowance ?? slip.specialAllowance ?? 0),
+      commission: pi?.commission ?? slip.commission ?? 0,
+      reimbursement: pi?.reimbursement ?? slip.reimbursement ?? 0,
+      pf: pi?.pf ?? slip.pf ?? 0,
+      esi: pi?.esi ?? slip.esi ?? 0,
+      tds: pi?.tds ?? slip.tds ?? 0,
+      professionalTax: pi?.professionalTax ?? slip.professionalTax ?? 0,
+      loanDeduction: pi?.loanDeduction ?? slip.loanDeduction ?? 0,
+      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? slip.unpaidLeaveDeduction ?? 0,
     });
     return { filename, buffer };
   }

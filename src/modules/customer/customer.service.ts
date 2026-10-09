@@ -3249,23 +3249,33 @@ export class CustomerService {
       throw new BadRequestException('Customer IDs array must not be empty.');
     }
 
+    const rejected: Array<{ id: number; error: string }> = [];
     const uniqueIds = Array.from(
       new Set(
         ids
           .map((id) => {
             const num = Number(id);
-            return Number.isInteger(num) && num > 0 ? num : null;
+            if (!Number.isInteger(num) || num <= 0) {
+              rejected.push({
+                id: Number.isFinite(num) ? num : 0,
+                error: `Invalid customer ID "${id}". Only a saved customer's positive ID can be deleted.`,
+              });
+              return null;
+            }
+            return num;
           })
           .filter((n): n is number => n !== null),
       ),
     );
 
     if (uniqueIds.length === 0) {
-      throw new BadRequestException('No valid positive customer IDs provided.');
+      throw new BadRequestException(
+        rejected[0]?.error || 'No valid positive customer IDs provided.',
+      );
     }
 
     const succeeded: number[] = [];
-    const failed: Array<{ id: number; error: string }> = [];
+    const failed: Array<{ id: number; error: string }> = [...rejected];
 
     for (const id of uniqueIds) {
       try {
@@ -3282,7 +3292,7 @@ export class CustomerService {
 
     return {
       success: failed.length === 0,
-      totalCount: uniqueIds.length,
+      totalCount: uniqueIds.length + rejected.length,
       succeededCount: succeeded.length,
       failedCount: failed.length,
       succeeded,

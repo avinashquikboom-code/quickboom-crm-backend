@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
@@ -154,21 +155,31 @@ export class PayrollController {
   }
 
   @Get('slips/:id/download')
-  @ApiOperation({ summary: 'Download salary slip PDF metadata' })
+  @ApiOperation({ summary: 'Download salary slip PDF' })
   async downloadSlip(
     @CurrentUser() user: any,
     @Param('id') id: string,
+    @Res() res: Response,
     @CurrentCustomer() currentCustomer?: any,
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
-    const slip = await this.payrollService.getSalarySlipById(customerId, id);
-    return {
-      message: 'Download salary slip PDF',
-      slip,
-      downloadUrl: `/downloads/slips/${id}.pdf`,
-    };
+    return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
+  }
+
+  @Get('slips/:id/pdf')
+  @ApiOperation({ summary: 'Download salary slip PDF' })
+  async downloadSlipPdf(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Res() res: Response,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
   }
 
   @Get('history')
