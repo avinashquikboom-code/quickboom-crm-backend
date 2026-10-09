@@ -20,12 +20,14 @@ import {
 } from './dto/social-media-handler.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Social Media Handlers')
 @Controller()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SocialMediaHandlerController {
   constructor(private readonly handlerService: SocialMediaHandlerService) {}
@@ -53,6 +55,7 @@ export class SocialMediaHandlerController {
   // ── Customer & Common Endpoints ─────────────────────────────────────────────
 
   @Get(['social-media-handler', 'social-media-handlers', 'customer/social-media-handler', 'customer/social-media-handlers'])
+  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
   @ApiOperation({ summary: 'Get social media handlers for authenticated customer' })
   async getCustomerHandlers(
     @CurrentCustomer() customerId: string,
@@ -65,6 +68,7 @@ export class SocialMediaHandlerController {
   }
 
   @Post(['social-media-handler', 'customer/social-media-handler'])
+  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
   @ApiOperation({ summary: 'Create a social media handler record' })
   async createHandler(
     @CurrentCustomer() customerId: string,
@@ -77,6 +81,7 @@ export class SocialMediaHandlerController {
   }
 
   @Get(['social-media-handler/:id', 'customer/social-media-handler/:id'])
+  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single social media handler by ID' })
   async getHandlerById(
     @Param('id', ParseIntPipe) id: number,
@@ -89,6 +94,7 @@ export class SocialMediaHandlerController {
   }
 
   @Patch(['social-media-handler/:id', 'customer/social-media-handler/:id'])
+  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
   @ApiOperation({ summary: 'Update a social media handler record' })
   async updateHandler(
     @Param('id', ParseIntPipe) id: number,
@@ -102,6 +108,7 @@ export class SocialMediaHandlerController {
   }
 
   @Delete(['social-media-handler/:id', 'customer/social-media-handler/:id'])
+  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
   @ApiOperation({ summary: 'Delete a social media handler record' })
   async deleteHandler(
     @Param('id', ParseIntPipe) id: number,

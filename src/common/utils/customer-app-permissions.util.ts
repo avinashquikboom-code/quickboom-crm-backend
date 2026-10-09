@@ -96,19 +96,6 @@ export async function resolveCustomerAppPermissionItems(
     items = defaults.map((p) => ({ module: p.module, action: p.action }));
   }
 
-  if (!customer.mobileRoleId) {
-    // For default customer accounts without custom mobile roles, ensure all standard customer app
-    // permissions (including newly introduced ones like CUSTOMER_MARKETING) are present by default.
-    const itemKeys = new Set(items.map((i) => `${i.module}:${i.action}`));
-    for (const d of defaults) {
-      const k = `${d.module}:${d.action}`;
-      if (!itemKeys.has(k)) {
-        items.push({ module: d.module, action: d.action });
-        itemKeys.add(k);
-      }
-    }
-  }
-
   const map = new Map<string, PermissionItem>();
   for (const item of items) {
     map.set(`${item.module}:${item.action}`, item);

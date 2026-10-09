@@ -28,6 +28,8 @@ import {
 } from './dto/video.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -257,7 +259,8 @@ export class VideoController {
 
   @Get(['customer/marketing/videos', 'marketing/videos'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_MARKETING', action: 'VIEW' })
   @ApiOperation({ summary: 'Get active, customer-visible marketing videos for Customer Home Screen' })
   async getCustomerVideos(
     @CurrentUser() user: any,

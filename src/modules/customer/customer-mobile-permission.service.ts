@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { AccessOverrideType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CUSTOMER_APP_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
+import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 
 const CUSTOMER_MODULE_LABELS: Record<string, string> = {
   CUSTOMER_HOME: 'Home',
@@ -21,7 +22,12 @@ const CUSTOMER_MODULE_LABELS: Record<string, string> = {
 
 @Injectable()
 export class CustomerMobilePermissionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    @Inject(forwardRef(() => PlanScheduleGateway))
+    private readonly planScheduleGateway?: PlanScheduleGateway,
+  ) {}
 
   async getPermissions(customerId: number) {
     let customer: any;
@@ -79,14 +85,6 @@ export class CustomerMobilePermissionService {
         collect(ownRole.role.rolePermissions);
       } else {
         for (const item of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
-          rolePermissions.add(`${item.module}:${item.action}`);
-        }
-      }
-    }
-
-    if (!customer.mobileRoleId) {
-      for (const item of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
-        if (!rolePermissions.has(`${item.module}:${item.action}`)) {
           rolePermissions.add(`${item.module}:${item.action}`);
         }
       }
@@ -205,6 +203,7 @@ export class CustomerMobilePermissionService {
       }
     }
 
+    this.planScheduleGateway?.notifyCustomerPermissionsUpdated?.(customerId);
     return this.getPermissions(customerId);
   }
 
@@ -228,6 +227,7 @@ export class CustomerMobilePermissionService {
       where: { id: customerId },
       data: { mobileRoleId },
     });
+    this.planScheduleGateway?.notifyCustomerPermissionsUpdated?.(customerId);
     return this.getPermissions(customerId);
   }
 
@@ -235,6 +235,7 @@ export class CustomerMobilePermissionService {
     await this.prisma.customerModuleOverride.deleteMany({
       where: { subjectCustomerId: customerId },
     });
+    this.planScheduleGateway?.notifyCustomerPermissionsUpdated?.(customerId);
     return this.getPermissions(customerId);
   }
 

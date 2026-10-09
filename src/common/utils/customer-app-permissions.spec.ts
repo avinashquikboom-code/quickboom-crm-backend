@@ -10,7 +10,7 @@ describe('Customer App Permissions Resolution', () => {
     expect(hasMarketing).toBe(true);
   });
 
-  it('should include CUSTOMER_MARKETING for a customer even if designation role lacked it in legacy DB rows', async () => {
+  it('should respect saved designation role permissions and not force unassigned defaults', async () => {
     const mockPrisma = {
       customer: {
         findFirst: jest.fn().mockResolvedValue({
@@ -24,7 +24,6 @@ describe('Customer App Permissions Resolution', () => {
           id: 1,
           code: 'CUSTOMER',
           role: {
-            // Simulated legacy DB role permissions that only had CUSTOMER_HOME and CUSTOMER_PLANS
             rolePermissions: [
               { permission: { module: 'CUSTOMER_HOME', action: 'VIEW' } },
               { permission: { module: 'CUSTOMER_PLANS', action: 'VIEW' } },
@@ -35,10 +34,18 @@ describe('Customer App Permissions Resolution', () => {
     };
 
     const items = await resolveCustomerAppPermissionItems(mockPrisma, 10);
+    const hasHome = items.some(
+      (i) => i.module === 'CUSTOMER_HOME' && i.action === 'VIEW',
+    );
+    const hasPlans = items.some(
+      (i) => i.module === 'CUSTOMER_PLANS' && i.action === 'VIEW',
+    );
     const hasMarketing = items.some(
       (i) => i.module === 'CUSTOMER_MARKETING' && i.action === 'VIEW',
     );
-    expect(hasMarketing).toBe(true);
+    expect(hasHome).toBe(true);
+    expect(hasPlans).toBe(true);
+    expect(hasMarketing).toBe(false);
   });
 
   it('should respect DENY override for CUSTOMER_MARKETING', async () => {
@@ -74,4 +81,39 @@ describe('Customer App Permissions Resolution', () => {
     );
     expect(hasMarketing).toBe(false);
   });
+
+  it('should respect ALLOW override even when omitted in base designation role', async () => {
+    const mockPrisma = {
+      customer: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 10,
+          mobileRoleId: null,
+          moduleOverrides: [
+            {
+              moduleKey: 'CUSTOMER_MARKETING',
+              override: 'ALLOW',
+            },
+          ],
+        }),
+      },
+      designation: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 1,
+          code: 'CUSTOMER',
+          role: {
+            rolePermissions: [
+              { permission: { module: 'CUSTOMER_HOME', action: 'VIEW' } },
+            ],
+          },
+        }),
+      },
+    };
+
+    const items = await resolveCustomerAppPermissionItems(mockPrisma, 10);
+    const hasMarketing = items.some(
+      (i) => i.module === 'CUSTOMER_MARKETING' && i.action === 'VIEW',
+    );
+    expect(hasMarketing).toBe(true);
+  });
 });
+

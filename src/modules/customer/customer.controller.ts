@@ -87,6 +87,8 @@ export class CustomerController {
   }
 
   @Get(['me', '/customer/me'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PROFILE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get profile of current authenticated customer' })
   async getMe(@CurrentUser() user: any) {
     return this.customerService.getMe(user);
@@ -101,6 +103,8 @@ export class CustomerController {
   }
 
   @Get(['profile', '/customer/profile'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_PROFILE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
   async getProfile(@CurrentUser() user: any) {
     return this.customerService.getMe(user);

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -421,9 +422,11 @@ export class VideoService {
         });
         if (marketingOverride) {
           this.logger.log(
-            `[CUSTOMER_MARKETING_DENIED] customerId=${resolvedCustomerId} — returning empty video list`,
+            `[CUSTOMER_MARKETING_DENIED] customerId=${resolvedCustomerId} — throwing ForbiddenException`,
           );
-          return [];
+          throw new ForbiddenException(
+            'Access denied: CUSTOMER_MARKETING permission is revoked for this customer',
+          );
         }
       } catch {
         // Graceful fallback: serve normally if override table is unavailable

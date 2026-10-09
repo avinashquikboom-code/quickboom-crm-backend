@@ -12,6 +12,7 @@ import { CreateDesignationDto, UpdateDesignationDto } from './dto/designation.dt
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 import {
   STANDARD_PERMISSIONS,
+  CUSTOMER_APP_PERMISSIONS,
   ROLE_PERMISSION_DEFAULTS,
   toPermissionKey,
   fromPermissionKey,
@@ -386,6 +387,10 @@ export class DesignationService {
       throw new NotFoundException(`Designation #${id} not found`);
     }
 
+    if (designation.code === 'CUSTOMER') {
+      throw new BadRequestException('System default Customer role cannot be deleted.');
+    }
+
     // Safety rule: If employees have this designation, soft-deactivate to avoid losing employee reference
     if (designation._count.employees > 0) {
       await this.prisma.designation.update({
@@ -398,7 +403,19 @@ export class DesignationService {
       };
     }
 
+    const affectedCustomers = designation.audience === 'CUSTOMER'
+      ? await this.prisma.customer.findMany({
+          where: { mobileRoleId: id, deletedAt: null },
+          select: { id: true },
+        })
+      : [];
+
     await this.prisma.designation.delete({ where: { id } });
+
+    for (const cust of affectedCustomers) {
+      this.planScheduleGateway.notifyCustomerPermissionsUpdated(cust.id);
+    }
+
     return {
       message: `Designation #${id} deleted successfully.`,
       deleted: true,
@@ -856,9 +873,9 @@ export class DesignationService {
         where: { module_action: { module: p.module, action: p.action } },
       });
       if (!permRecord) {
-        const standardMatch = STANDARD_PERMISSIONS.find(
-          (sp) => sp.module === p.module && sp.action === p.action,
-        );
+        const standardMatch =
+          STANDARD_PERMISSIONS.find((sp) => sp.module === p.module && sp.action === p.action) ||
+          CUSTOMER_APP_PERMISSIONS.find((cp) => cp.module === p.module && cp.action === p.action);
         permRecord = await this.prisma.permission.create({
           data: {
             module: p.module,
@@ -910,6 +927,27 @@ export class DesignationService {
 
     // Emit real-time notification to affected employees via WebSocket
     this.planScheduleGateway.notifyDesignationPermissionsUpdated(designationId, affectedEmployeeIds);
+
+    // If Customer role/designation, notify all affected customers via WebSocket
+    if (designation.audience === 'CUSTOMER' || designation.code === 'CUSTOMER') {
+      try {
+        const affectedCustomers = await this.prisma.customer.findMany({
+          where: {
+            OR: [
+              { mobileRoleId: designationId },
+              ...(designation.code === 'CUSTOMER' ? [{ mobileRoleId: null }] : []),
+            ],
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        for (const cust of affectedCustomers) {
+          this.planScheduleGateway.notifyCustomerPermissionsUpdated(cust.id);
+        }
+      } catch (custErr) {
+        this.logger.warn(`Failed to notify customers for designation #${designationId}: ${custErr}`);
+      }
+    }
 
     this.logger.log(
       `[RBAC_REALTIME] Designation #${designationId} (${designation.name}) updated with ${normalizedList.length} permissions. Notified ${affectedEmployeeIds.length} employees.`,
