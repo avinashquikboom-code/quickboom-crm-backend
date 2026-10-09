@@ -146,6 +146,19 @@ export class DataManagementController {
   }
 
   /**
+   * GET /api/v1/admin/data-management/employees/:employeeId/reset/module
+   * Read-only module counts for an employee without resetting data
+   */
+  @Get('employees/:employeeId/reset/module')
+  @ApiOperation({ summary: 'Get employee module record counts without resetting data' })
+  async getEmployeeModuleResetSummary(
+    @CurrentCustomer() customerId: string,
+    @Param('employeeId') employeeId: string,
+  ) {
+    return this.dataManagementService.getEmployeeSummary(customerId, employeeId);
+  }
+
+  /**
    * POST /api/v1/admin/data-management/employees/:employeeId/reset/module
    * Reset single module for an employee
    */

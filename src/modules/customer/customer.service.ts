@@ -3097,10 +3097,21 @@ export class CustomerService {
     const numericId = this.parseCustomerId(id);
     const existing = await this.prisma.customer.findUnique({
       where: { id: numericId },
+      include: {
+        _count: {
+          select: { employees: true },
+        },
+      },
     });
 
     if (!existing) {
       throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    if (numericId === 1 || existing._count.employees > 0) {
+      throw new ForbiddenException(
+        `Customer #${numericId} (${existing.name}) is an organization account with employees and cannot be deleted.`,
+      );
     }
 
     // Tenant Isolation Check: only Super Admin can delete cross-tenant records
@@ -3113,20 +3124,19 @@ export class CustomerService {
 
     // PERMANENT CASCADE DELETE
     const result = await this.prisma.$transaction(async (tx) => {
-      // 0. Detach customer self-referencing / assigned employee / team pointers
+      // 0. Detach customer pointers. Clearing leadId preserves origin Lead row.
       await tx.customer.update({
         where: { id: numericId },
-        data: { assignedEmployeeId: null, assignedTeamId: null },
+        data: {
+          leadId: null,
+          assignedEmployeeId: null,
+          assignedTeamId: null,
+          createdByEmployeeId: null,
+          mobileRoleId: null,
+        },
       });
 
       // 1. Delete FK-restricted application records before customer-owned parents
-      if (existing.leadId) {
-        await tx.leadActivityTimeline?.deleteMany?.({ where: { leadId: existing.leadId } });
-        await tx.leadNote?.deleteMany?.({ where: { leadId: existing.leadId } });
-        await tx.leadReminder?.deleteMany?.({ where: { leadId: existing.leadId } });
-        await tx.leadStatusHistory?.deleteMany?.({ where: { leadId: existing.leadId } });
-        await tx.lead?.deleteMany?.({ where: { id: existing.leadId } });
-      }
       await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numericId } } });
       await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numericId } } });
@@ -3149,16 +3159,9 @@ export class CustomerService {
       await tx.task?.deleteMany?.({ where: { customerId: numericId } });
       await tx.deal?.deleteMany?.({ where: { customerId: numericId } });
       await tx.contact?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.lead?.deleteMany?.({ where: { customerId: numericId } });
       await tx.company?.deleteMany?.({ where: { customerId: numericId } });
       await tx.supportTicket?.deleteMany?.({ where: { customerId: numericId } });
       await tx.work?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.attendance?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.leaveRequest?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.remoteRequest?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.salarySlip?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.payrollItem?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.payroll?.deleteMany?.({ where: { customerId: numericId } });
       await tx.dataCapturePlace?.deleteMany?.({ where: { customerId: numericId } });
       await tx.dataCaptureJob?.deleteMany?.({ where: { customerId: numericId } });
       await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId: numericId } });
@@ -3175,55 +3178,27 @@ export class CustomerService {
       await tx.customPlanOrder?.deleteMany?.({ where: { customerId: numericId } });
       await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numericId } });
       await tx.customerSubscription?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.couponRedemption?.deleteMany?.({ where: { customerId: numericId } });
+      await tx.customerModuleOverride?.deleteMany?.({ where: { subjectCustomerId: numericId } });
 
-      // 3. Employee child records & HRMS policies
-      await tx.salaryStructure?.deleteMany?.({ where: { employee: { customerId: numericId } } });
-      await tx.employeeClaim?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employeeLoan?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employeeLocation?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employeeLeaveBalance?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employeeModuleOverride?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employeeLeadLimit?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.roleLeadLimit?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.roleWorkPermission?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.workAccessRequest?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.socialMediaHandler?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.marketingVideo?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.marketingBanner?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.trendingContent?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.branchGeofence?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.locationTrackingSetting?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.shiftGuidance?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.shift?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.publicHoliday?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.attendancePolicy?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.claimPolicy?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.leavePolicy?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.salaryPolicy?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.payrollPolicy?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.leadStage?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.pipeline?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.product?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.planEntitlement?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.featureToggle?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
+      // 3. Client Portal Users
+      const clientUsers = await tx.user.findMany({
+        where: { customerId: numericId },
+        select: { id: true },
+      });
+      if (clientUsers.length > 0) {
+        const clientUserIds = clientUsers.map((u) => u.id);
+        await tx.userRole?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+        await tx.userDeviceToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+        await tx.refreshToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+        await tx.session?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+        await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
+        await tx.user?.deleteMany?.({ where: { id: { in: clientUserIds } } });
+      } else {
+        await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
+      }
 
-      // 4. Invalidate auth sessions & tokens
-      await tx.userRole?.deleteMany?.({ where: { user: { customerId: numericId } } });
-      await tx.userDeviceToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
-      await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
-      await tx.session?.deleteMany?.({ where: { user: { customerId: numericId } } });
-
-      // 5. Delete employees, teams, designations, departments, roles, users, and customer row
-      await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numericId } } });
-      await tx.team?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.auditLog?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.employee?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.designation?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.department?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.role?.deleteMany?.({ where: { customerId: numericId } });
-      await tx.user?.deleteMany?.({ where: { customerId: numericId } });
+      // 4. Delete customer row
       return tx.customer.delete({ where: { id: numericId } });
     });
 
@@ -3302,6 +3277,73 @@ export class CustomerService {
           ? `Successfully deleted ${succeeded.length} customer(s).`
           : `Deleted ${succeeded.length} customer(s), ${failed.length} failed.`,
     };
+  }
+
+  /**
+   * Delete all eligible persisted customers server-side.
+   * Resolves eligible customer IDs on the backend (strictly excludes enterprise #1 & accounts with employees).
+   */
+  async deleteAll(user?: any, reason?: string) {
+    if (user && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only Super Admin can delete all customers.');
+    }
+
+    const eligibleCustomers = await this.prisma.customer.findMany({
+      where: {
+        deletedAt: null,
+        id: { not: 1 },
+        employees: { none: {} },
+        NOT: [
+          {
+            users: {
+              some: {
+                userRoles: {
+                  some: {
+                    role: {
+                      OR: [
+                        { type: 'SUPER_ADMIN' as any },
+                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          { customerType: { in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'] } },
+          {
+            OR: [
+              { name: { equals: 'Super Admin', mode: 'insensitive' as any } },
+              { name: { equals: 'SUPER_ADMIN', mode: 'insensitive' as any } },
+              { name: { equals: 'Super Administrator', mode: 'insensitive' as any } },
+              { name: { equals: 'Admin', mode: 'insensitive' as any } },
+              { name: { equals: 'System Admin', mode: 'insensitive' as any } },
+              { companyName: { equals: 'Super Admin', mode: 'insensitive' as any } },
+              { companyName: { equals: 'SUPER_ADMIN', mode: 'insensitive' as any } },
+              { companyName: { equals: 'Super Administrator', mode: 'insensitive' as any } },
+              { companyName: { equals: 'Admin', mode: 'insensitive' as any } },
+              { companyName: { equals: 'System Admin', mode: 'insensitive' as any } },
+            ],
+          },
+        ],
+      },
+      select: { id: true, name: true },
+    });
+
+    const eligibleIds = eligibleCustomers.map((c) => c.id);
+    if (eligibleIds.length === 0) {
+      return {
+        success: true,
+        totalCount: 0,
+        succeededCount: 0,
+        failedCount: 0,
+        succeeded: [],
+        failed: [],
+        message: 'No eligible saved customers found to delete.',
+      };
+    }
+
+    return this.bulkDelete(eligibleIds, user);
   }
 
   /**

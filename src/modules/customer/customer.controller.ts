@@ -31,7 +31,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 import { CustomerMobilePermissionService } from './customer-mobile-permission.service';
 
 /** Numeric PK only — permits negative sign validation in service while preventing non-numeric paths like /customer/influencers */
-const NUMERIC_CUSTOMER_ID = ':id(-?\\d+)';
+const NUMERIC_CUSTOMER_ID = ':id(-?[0-9]+)';
 
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
@@ -345,6 +345,24 @@ export class CustomerController {
     @CurrentUser() user: any,
   ) {
     return this.customerService.bulkDelete(dto?.ids || [], user);
+  }
+
+  @Post(['delete-all', 'bulk-delete-all'])
+  @ApiOperation({ summary: 'Delete all eligible customers server-side' })
+  async deleteAll(
+    @Body() dto: { confirmation?: string; reason?: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.customerService.deleteAll(user, dto?.reason);
+  }
+
+  @Delete('delete-all')
+  @ApiOperation({ summary: 'Delete all eligible customers server-side (DELETE alias)' })
+  async deleteAllViaDelete(
+    @Body() dto: { confirmation?: string; reason?: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.customerService.deleteAll(user, dto?.reason);
   }
 
   @Delete(NUMERIC_CUSTOMER_ID)
