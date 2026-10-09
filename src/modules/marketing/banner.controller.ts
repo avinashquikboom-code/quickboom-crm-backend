@@ -28,8 +28,6 @@ import {
 } from './dto/banner.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -221,8 +219,7 @@ export class BannerController {
 
   @Get(['customer/marketing/banners', 'marketing/banners', 'customer/banners'])
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_MARKETING', action: 'VIEW' })
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Get active, published home banners for Customer Home Screen' })
   async getCustomerBanners(
     @CurrentUser() user: any,
