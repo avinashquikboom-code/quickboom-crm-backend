@@ -2119,6 +2119,10 @@ export class CustomerService {
    * Helper to validate and convert raw customer ID to positive integer
    */
   private parseCustomerId(id: number | string): number {
+    const str = String(id).trim();
+    if (str.startsWith('-')) {
+      throw new BadRequestException(`Invalid customer ID: negative ID "${id}" is not supported.`);
+    }
     let cleanId = id;
     if (typeof id === 'string') {
       const match = id.match(/\d+/);
@@ -3233,6 +3237,61 @@ export class CustomerService {
 
     this.logger.log(`[CUSTOMER_PERMANENT_DELETE] Customer #${numericId} permanently deleted from database.`);
     return this.serializeBigInt(result);
+  }
+
+  /**
+   * Bulk permanently delete customers.
+   * Enforces tenant isolation and cascades for each customer.
+   * Reports successful and failed records separately.
+   */
+  async bulkDelete(ids: (number | string)[], user?: any) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Customer IDs array must not be empty.');
+    }
+
+    const uniqueIds = Array.from(
+      new Set(
+        ids
+          .map((id) => {
+            const num = Number(id);
+            return Number.isInteger(num) && num > 0 ? num : null;
+          })
+          .filter((n): n is number => n !== null),
+      ),
+    );
+
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid positive customer IDs provided.');
+    }
+
+    const succeeded: number[] = [];
+    const failed: Array<{ id: number; error: string }> = [];
+
+    for (const id of uniqueIds) {
+      try {
+        await this.remove(id, user, true);
+        succeeded.push(id);
+      } catch (err: any) {
+        this.logger.error(`Failed to delete customer ${id} in bulkDelete: ${err?.message}`);
+        failed.push({
+          id,
+          error: err?.message || 'Failed to delete customer',
+        });
+      }
+    }
+
+    return {
+      success: failed.length === 0,
+      totalCount: uniqueIds.length,
+      succeededCount: succeeded.length,
+      failedCount: failed.length,
+      succeeded,
+      failed,
+      message:
+        failed.length === 0
+          ? `Successfully deleted ${succeeded.length} customer(s).`
+          : `Deleted ${succeeded.length} customer(s), ${failed.length} failed.`,
+    };
   }
 
   /**

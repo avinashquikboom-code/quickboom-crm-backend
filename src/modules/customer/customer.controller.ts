@@ -30,8 +30,8 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CustomerMobilePermissionService } from './customer-mobile-permission.service';
 
-/** Numeric PK only — prevents /customer/:id from capturing paths like /customer/influencers */
-const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
+/** Numeric PK only — permits negative sign validation in service while preventing non-numeric paths like /customer/influencers */
+const NUMERIC_CUSTOMER_ID = ':id(-?\\d+)';
 
 @ApiTags('Customers & Tenant Management')
 @ApiBearerAuth()
@@ -327,6 +327,24 @@ export class CustomerController {
   ) {
     const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
     return this.customerService.assignTeam(id, targetTeamId, user);
+  }
+
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk permanently delete customers' })
+  async bulkDelete(
+    @Body() dto: { ids?: number[] },
+    @CurrentUser() user: any,
+  ) {
+    return this.customerService.bulkDelete(dto?.ids || [], user);
+  }
+
+  @Delete('bulk-delete')
+  @ApiOperation({ summary: 'Bulk permanently delete customers (DELETE alias)' })
+  async bulkDeleteViaDelete(
+    @Body() dto: { ids?: number[] },
+    @CurrentUser() user: any,
+  ) {
+    return this.customerService.bulkDelete(dto?.ids || [], user);
   }
 
   @Delete(NUMERIC_CUSTOMER_ID)
