@@ -21,10 +21,12 @@ export function userHasModulePermission(
       .replace(/^EMPLOYEE\./, '')
       .replace(/\./g, '_');
     const uAct = String(userPerm.action || '').toUpperCase();
-    const modMatches =
-      uMod === rMod ||
-      uMod === rMod.replace(/_/g, '') ||
-      normalizeMod(uMod) === normalizeMod(rMod);
+    const customerModule = rMod.startsWith('CUSTOMER_') || uMod.startsWith('CUSTOMER_');
+    const modMatches = customerModule
+      ? uMod === rMod
+      : uMod === rMod ||
+        uMod === rMod.replace(/_/g, '') ||
+        normalizeMod(uMod) === normalizeMod(rMod);
     const actMatches =
       uAct === rAct ||
       uAct === 'MANAGE' ||
@@ -111,10 +113,12 @@ export class PermissionsGuard implements CanActivate {
         return true;
       }
 
-      const modMatches =
-        uMod === rMod ||
-        uMod === rMod.replace(/_/g, '') ||
-        normalizeMod(uMod) === normalizeMod(rMod);
+      const customerModule = rMod.startsWith('CUSTOMER_') || uMod.startsWith('CUSTOMER_');
+      const modMatches = customerModule
+        ? uMod === rMod
+        : uMod === rMod ||
+          uMod === rMod.replace(/_/g, '') ||
+          normalizeMod(uMod) === normalizeMod(rMod);
 
       const actMatches =
         uAct === rAct ||

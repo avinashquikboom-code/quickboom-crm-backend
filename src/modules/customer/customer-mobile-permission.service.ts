@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@ne
 import { AccessOverrideType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CUSTOMER_APP_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
+import { pickConfiguredCustomerDesignation } from '../../common/utils/customer-app-permissions.util';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 
 const CUSTOMER_MODULE_LABELS: Record<string, string> = {
@@ -63,26 +64,16 @@ export class CustomerMobilePermissionService {
     if (customer.mobileRoleId) {
       collect(customer.mobileRole?.role?.rolePermissions || []);
     } else {
-      let ownRole = await this.prisma.designation.findFirst({
-        where: { customerId, code: 'CUSTOMER', audience: 'CUSTOMER' },
-        include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
+      const rows = await this.prisma.designation.findMany({
+        where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+          customer: { select: { _count: { select: { employees: true } } } },
+        },
       });
-      if (!ownRole) {
-        ownRole = await this.prisma.designation.findFirst({
-          where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
-          include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
-          orderBy: { id: 'asc' },
-        });
-      }
-      if (!ownRole) {
-        ownRole = await this.prisma.designation.findFirst({
-          where: { audience: 'CUSTOMER' },
-          include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
-          orderBy: { id: 'asc' },
-        });
-      }
-      if (ownRole?.role?.rolePermissions?.length) {
-        collect(ownRole.role.rolePermissions);
+      const picked = pickConfiguredCustomerDesignation(rows);
+      if (picked?.role) {
+        collect(picked.role.rolePermissions || []);
       } else {
         for (const item of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
           rolePermissions.add(`${item.module}:${item.action}`);

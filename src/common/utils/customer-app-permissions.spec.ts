@@ -115,5 +115,47 @@ describe('Customer App Permissions Resolution', () => {
     );
     expect(hasMarketing).toBe(true);
   });
+
+  it('uses the company Customer role and does not grant Influencer Hub from an older client role', async () => {
+    const mockPrisma = {
+      customer: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 42,
+          mobileRoleId: null,
+          moduleOverrides: [],
+        }),
+      },
+      designation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 1,
+            customer: { _count: { employees: 0 } },
+            role: {
+              permissionsUpdatedAt: new Date('2020-01-01'),
+              rolePermissions: [
+                { permission: { module: 'CUSTOMER_HOME', action: 'VIEW' } },
+                { permission: { module: 'CUSTOMER_INFLUENCERS', action: 'VIEW' } },
+              ],
+            },
+          },
+          {
+            id: 8,
+            customer: { _count: { employees: 4 } },
+            role: {
+              permissionsUpdatedAt: new Date('2026-10-01'),
+              rolePermissions: [
+                { permission: { module: 'CUSTOMER_HOME', action: 'VIEW' } },
+                { permission: { module: 'CUSTOMER_PLANS', action: 'VIEW' } },
+              ],
+            },
+          },
+        ]),
+      },
+    };
+
+    const items = await resolveCustomerAppPermissionItems(mockPrisma, 42);
+    expect(items.some((i) => i.module === 'CUSTOMER_HOME' && i.action === 'VIEW')).toBe(true);
+    expect(items.some((i) => i.module === 'CUSTOMER_INFLUENCERS')).toBe(false);
+  });
 });
 

@@ -2,6 +2,35 @@ import { CUSTOMER_APP_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../constants
 
 type PermissionItem = { module: string; action: string };
 
+export function mapCustomerRolePermissionRows(rows: any[]): PermissionItem[] {
+  return (rows || [])
+    .filter((rp) => String(rp?.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
+    .map((rp) => ({
+      module: String(rp.permission.module).toUpperCase(),
+      action: String(rp.permission.action).toUpperCase(),
+    }));
+}
+
+/**
+ * Roles & Permissions edits the company Customer designation.
+ * Prefer that tenant role (the customer that has employees) and the most
+ * recently saved permission set. A client-owned copy must not override it.
+ */
+export function pickConfiguredCustomerDesignation(rows: any[]): any | null {
+  const withRole = (rows || []).filter((row) => row?.role);
+  const tenantRoles = withRole.filter(
+    (row) => Number(row?.customer?._count?.employees || row?.employeeCount || 0) > 0,
+  );
+  const pool = tenantRoles.length ? tenantRoles : withRole;
+  pool.sort((a, b) => {
+    const aTime = new Date(a?.role?.permissionsUpdatedAt || a?.updatedAt || 0).getTime();
+    const bTime = new Date(b?.role?.permissionsUpdatedAt || b?.updatedAt || 0).getTime();
+    if (bTime !== aTime) return bTime - aTime;
+    return Number(b?.id || 0) - Number(a?.id || 0);
+  });
+  return pool[0] || null;
+}
+
 /**
  * Customer mobile effective permissions:
  * assigned customer role defaults, otherwise the seeded Customer role,
@@ -37,13 +66,27 @@ export async function resolveCustomerAppPermissionItems(
   const roleRows = customer.mobileRole?.role?.rolePermissions || [];
   if (customer.mobileRole?.role) {
     roleResolved = true;
-    items = roleRows
-      .filter((rp: any) => String(rp.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
-      .map((rp: any) => ({
-        module: String(rp.permission.module).toUpperCase(),
-        action: String(rp.permission.action).toUpperCase(),
-      }));
-  } else if (!customer.mobileRoleId && prisma?.designation?.findFirst) {
+    items = mapCustomerRolePermissionRows(roleRows);
+  } else if (!customer.mobileRoleId && typeof prisma?.designation?.findMany === 'function') {
+    try {
+      const rows = await prisma.designation.findMany({
+        where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+          customer: { select: { _count: { select: { employees: true } } } },
+        },
+      });
+      const picked = pickConfiguredCustomerDesignation(rows);
+      if (picked?.role) {
+        roleResolved = true;
+        items = mapCustomerRolePermissionRows(picked.role.rolePermissions);
+      }
+    } catch {
+      roleResolved = false;
+    }
+  }
+
+  if (!roleResolved && !customer.mobileRoleId && prisma?.designation?.findFirst) {
     // 1. Try finding customer-scoped Customer designation
     let ownRole = await prisma.designation.findFirst({
       where: { customerId: id, code: 'CUSTOMER', audience: 'CUSTOMER' },
@@ -81,13 +124,7 @@ export async function resolveCustomerAppPermissionItems(
 
     if (ownRole?.role) {
       roleResolved = true;
-      const ownRows = ownRole.role.rolePermissions || [];
-      items = ownRows
-        .filter((rp: any) => String(rp.permission?.module || '').toUpperCase().startsWith('CUSTOMER_'))
-        .map((rp: any) => ({
-          module: String(rp.permission.module).toUpperCase(),
-          action: String(rp.permission.action).toUpperCase(),
-        }));
+      items = mapCustomerRolePermissionRows(ownRole.role.rolePermissions);
     }
   }
 
