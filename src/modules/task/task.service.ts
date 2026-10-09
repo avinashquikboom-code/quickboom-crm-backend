@@ -984,17 +984,13 @@ export class TaskService {
       where: {
         id: { in: teamIds },
         isActive: true,
-        OR: [
-          { name: { contains: 'PRODUCTION', mode: 'insensitive' } },
-          { description: { contains: 'PRODUCTION', mode: 'insensitive' } },
-        ],
       },
       select: { id: true, name: true, description: true },
     });
     return teams
       .filter((team) => {
         const label = `${team.name || ''} ${team.description || ''}`.toUpperCase();
-        return label.includes('PRODUCTION') && !label.includes('BPO');
+        return !label.includes('BPO');
       })
       .map((team) => team.id);
   }
@@ -1027,9 +1023,11 @@ export class TaskService {
       workOr.push({
         customer: {
           deletedAt: null,
-          isActive: true,
-          assignedTeamId: { in: teamIds },
-          assignedTeam: { isActive: true },
+          NOT: { isActive: false },
+          OR: [
+            { assignedTeamId: { in: teamIds } },
+            { assignedTeam: { id: { in: teamIds } } },
+          ],
         },
       });
     }
@@ -1037,9 +1035,11 @@ export class TaskService {
       workOr.push({
         customer: {
           deletedAt: null,
-          isActive: true,
-          assignedTeamId: { in: productionTeamIds },
-          assignedTeam: { isActive: true },
+          NOT: { isActive: false },
+          OR: [
+            { assignedTeamId: { in: productionTeamIds } },
+            { assignedTeam: { id: { in: productionTeamIds } } },
+          ],
         },
       });
     }
@@ -1047,7 +1047,7 @@ export class TaskService {
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
-        customer: { deletedAt: null, isActive: true },
+        customer: { deletedAt: null, NOT: { isActive: false } },
         OR: workOr,
       },
       orderBy: { scheduledDate: 'asc' },

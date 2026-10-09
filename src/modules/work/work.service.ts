@@ -1905,7 +1905,7 @@ status: ${item.status}`);
       where: { id: employeeId },
       select: { id: true, customerId: true, status: true },
     });
-    if (!employee || String(employee.status || '').toUpperCase() !== 'ACTIVE') return [];
+    if (!employee || String(employee.status || '').toUpperCase() === 'INACTIVE') return [];
 
     const tenantId = Number(tenantCustomerId || employee.customerId);
     const keep = (name?: string | null, description?: string | null) => {
@@ -2000,16 +2000,30 @@ status: ${item.status}`);
 
   private async customerIdsAssignedToTeams(teamIds: number[]): Promise<number[]> {
     if (teamIds.length === 0 || typeof this.prisma.customer?.findMany !== 'function') return [];
-    const customers = await this.prisma.customer.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        assignedTeamId: { in: teamIds },
-        assignedTeam: { isActive: true },
-      },
-      select: { id: true },
-    });
-    return customers.map((customer) => customer.id);
+    try {
+      const customers = await this.prisma.customer.findMany({
+        where: {
+          deletedAt: null,
+          NOT: { isActive: false },
+          OR: [
+            { assignedTeamId: { in: teamIds } },
+            { assignedTeam: { id: { in: teamIds } } },
+            { works: { some: { teamId: { in: teamIds }, status: { not: WorkStatus.CANCELLED } } } },
+          ],
+        },
+        select: { id: true },
+      });
+      return customers.map((customer) => customer.id);
+    } catch {
+      const customers = await this.prisma.customer.findMany({
+        where: {
+          deletedAt: null,
+          assignedTeamId: { in: teamIds },
+        },
+        select: { id: true },
+      });
+      return customers.map((customer) => customer.id);
+    }
   }
 
   /**
@@ -2312,10 +2326,12 @@ status: ${item.status}`);
         orConditions.push({ customerId: { in: teamCustomerIds } });
       }
       if (productionTeamIds.length > 0) {
-        orConditions.push({
-          teamId: { in: productionTeamIds },
-          customer: { deletedAt: null, isActive: true },
-        });
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          { customer: { assignedTeamId: { in: productionTeamIds }, deletedAt: null } },
+          { customer: { assignedTeam: { id: { in: productionTeamIds }, isActive: true }, deletedAt: null } },
+          { team: { id: { in: productionTeamIds }, isActive: true } },
+        );
       }
       if (teamCustomerIds.length === 0 && productionTeamIds.length === 0 && isProductionManager && tenantCustomerId) {
         orConditions.push({
@@ -2451,6 +2467,12 @@ status: ${item.status}`);
             },
           },
           {
+            customer: {
+              deletedAt: null,
+              assignedTeam: { id: { in: productionTeamIds }, isActive: true },
+            },
+          },
+          {
             team: {
               isActive: true,
               OR: [
@@ -2540,7 +2562,7 @@ status: ${item.status}`);
 
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : []),
-      { customer: { deletedAt: null, isActive: true } },
+      { customer: { deletedAt: null, NOT: { isActive: false } } },
     ];
 
     const items = await this.prisma.work.findMany({
@@ -2861,7 +2883,7 @@ assignedEmployee: ${item.assignedEmployee}`);
       year?: number;
     } = {},
   ) {
-    const works = await this.getEmployeeCalendar(employeeId, query);
+    const works = await this.getEmployeeCalendar(employeeId, query, { allTenantCustomers: true });
 
     const total = works.length;
     let pending = 0;
@@ -2911,7 +2933,7 @@ assignedEmployee: ${item.assignedEmployee}`);
    * Get filter options (customers, employees, teams, statuses) for Production Manager dashboard.
    */
   async getProductionFilterOptions(employeeId: number) {
-    const works = await this.getEmployeeCalendar(employeeId, {});
+    const works = await this.getEmployeeCalendar(employeeId, {}, { allTenantCustomers: true });
     const customerMap = new Map<number, string>();
     const employeeMap = new Map<number, string>();
     const teamMap = new Map<number, string>();
