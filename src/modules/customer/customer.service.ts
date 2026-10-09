@@ -544,6 +544,7 @@ export function isPersistedCustomerEligibleForList(
 @Injectable()
 export class CustomerService {
   private readonly logger = new Logger(CustomerService.name);
+  private deleteAllInProgress = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -3283,9 +3284,15 @@ export class CustomerService {
    * Delete all eligible persisted customers server-side.
    * Resolves eligible customer IDs on the backend (strictly excludes enterprise #1 & accounts with employees).
    */
-  async deleteAll(user?: any, reason?: string) {
+  async deleteAll(user?: any, reason?: string, confirmation?: string) {
+    if (String(confirmation || '').trim().toUpperCase() !== 'DELETE ALL CUSTOMERS') {
+      throw new BadRequestException('Confirmation phrase must be "DELETE ALL CUSTOMERS" to proceed.');
+    }
     if (user && !isUserSuperAdmin(user)) {
       throw new ForbiddenException('Only Super Admin can delete all customers.');
+    }
+    if (this.deleteAllInProgress) {
+      throw new ConflictException('Delete all customers is already running.');
     }
 
     const eligibleCustomers = await this.prisma.customer.findMany({
@@ -3331,19 +3338,52 @@ export class CustomerService {
     });
 
     const eligibleIds = eligibleCustomers.map((c) => c.id);
-    if (eligibleIds.length === 0) {
-      return {
-        success: true,
-        totalCount: 0,
-        succeededCount: 0,
-        failedCount: 0,
-        succeeded: [],
-        failed: [],
-        message: 'No eligible saved customers found to delete.',
-      };
-    }
+    const keepId = Number(user?.customerId);
+    const keeper = Number.isInteger(keepId) && keepId > 0 && !eligibleIds.includes(keepId) ? keepId : null;
 
-    return this.bulkDelete(eligibleIds, user);
+    this.deleteAllInProgress = true;
+    try {
+      if (eligibleIds.length > 0 && keeper) {
+        await this.prisma.lead.updateMany({
+          where: { customerId: { in: eligibleIds } },
+          data: { customerId: keeper },
+        });
+      }
+
+      const result = eligibleIds.length === 0
+        ? {
+            success: true,
+            totalCount: 0,
+            succeededCount: 0,
+            failedCount: 0,
+            succeeded: [] as number[],
+            failed: [] as Array<{ id: number; error: string }>,
+            message: 'No eligible saved customers found to delete.',
+          }
+        : await this.bulkDelete(eligibleIds, user);
+
+      const userId = Number(user?.id);
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: keeper,
+          userId: Number.isInteger(userId) && userId > 0 ? userId : null,
+          action: 'DATA_RESET',
+          module: 'CUSTOMERS',
+          details: {
+            scope: 'DELETE_ALL_CUSTOMERS',
+            customersDeleted: result.succeededCount,
+            failedCount: result.failedCount,
+            customerIds: result.succeeded,
+            reason: reason || 'Delete All Customers',
+            status: result.success ? 'SUCCESS' : 'PARTIAL',
+          },
+        },
+      });
+
+      return result;
+    } finally {
+      this.deleteAllInProgress = false;
+    }
   }
 
   /**

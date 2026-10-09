@@ -353,7 +353,7 @@ export class CustomerController {
     @Body() dto: { confirmation?: string; reason?: string },
     @CurrentUser() user: any,
   ) {
-    return this.customerService.deleteAll(user, dto?.reason);
+    return this.customerService.deleteAll(user, dto?.reason, dto?.confirmation);
   }
 
   @Delete('delete-all')
@@ -362,7 +362,7 @@ export class CustomerController {
     @Body() dto: { confirmation?: string; reason?: string },
     @CurrentUser() user: any,
   ) {
-    return this.customerService.deleteAll(user, dto?.reason);
+    return this.customerService.deleteAll(user, dto?.reason, dto?.confirmation);
   }
 
   @Delete(NUMERIC_CUSTOMER_ID)
