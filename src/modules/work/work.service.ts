@@ -2055,14 +2055,23 @@ status: ${item.status}`);
       const label = `${person?.department?.name || ''} ${person?.designation?.name || ''}`.toUpperCase();
       return label.includes('BPO');
     };
-    const isTaskAssignee = (person?: { id?: number; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+    const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+      const roleLabel = `${person?.designation?.name || ''} ${person?.department?.name || ''}`.toUpperCase();
+      if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
+      if (roleLabel.trim() === 'ADMIN') return true;
+      const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
+      const name = personName(person).toUpperCase().replace(/\s+/g, ' ');
+      return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
+    };
+    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
+      if (ownerIds.has(id) || isPlatformAdmin(person)) return false;
       if (memberIds.size > 0) return memberIds.has(id);
-      return !ownerIds.has(id) && !isBpoOwner(person);
+      return !isBpoOwner(person);
     };
 
-    const stored = [w.assignedTo, w.editor, ...(w.tasks || []).map((task: any) => task.assignedTo)]
+    const stored = [w.assignedTo, ...(w.tasks || []).map((task: any) => task.assignedTo), w.editor]
       .find((person) => isTaskAssignee(person));
     if (stored) {
       return { id: Number(stored.id), name: personName(stored) || 'Unassigned', teamName };
@@ -2738,18 +2747,11 @@ status: ${item.status}`);
       const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
         `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
 
-      const taskAssignee = (w.tasks || []).map((task) => task.assignedTo).find((person) => personName(person));
-      const workAssignee = w.assignedTo || taskAssignee || null;
-      let assignedEmpName = personName(workAssignee);
-      if (!assignedEmpName) {
-        assignedEmpName = personName(w.editor);
-      }
-      if (!assignedEmpName) {
-        assignedEmpName = 'Unassigned';
-      }
+      const scheduleAssignee = this.productionTaskAssignee(w);
+      const assignedEmpName = scheduleAssignee.name || 'Unassigned';
 
       const assignedEmpList: string[] = [];
-      if (assignedEmpName) assignedEmpList.push(assignedEmpName);
+      if (assignedEmpName && assignedEmpName !== 'Unassigned') assignedEmpList.push(assignedEmpName);
       const editorName = personName(w.editor);
       if (editorName && !assignedEmpList.includes(editorName)) assignedEmpList.push(editorName);
 
@@ -2795,15 +2797,15 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedToId: w.assignedToId || taskAssignee?.id || (!w.team && !w.customer?.assignedTeam ? w.customer?.assignedEmployeeRel?.id || null : null),
+        assignedToId: scheduleAssignee.id,
         assignedEmployee: assignedEmpName,
         assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
         editorId: w.editorId,
         editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
-        team: w.team?.name || w.customer?.assignedTeam?.name || null,
-        assignedTeam: w.team?.name || w.customer?.assignedTeam?.name || null,
+        team: scheduleAssignee.teamName,
+        assignedTeam: scheduleAssignee.teamName,
         notes: w.notes || w.description || null,
         outputUrl: w.outputUrl,
         feedback: w.feedback,
