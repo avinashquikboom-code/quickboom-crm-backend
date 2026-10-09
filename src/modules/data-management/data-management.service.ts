@@ -409,6 +409,14 @@ export class DataManagementService {
           deletedCount = cnt(works);
           break;
         }
+        case 'schedules': {
+          // Monthly customer plan schedules only. Plans and subscriptions use onDelete: SetNull.
+          const schedules = tx.monthlySchedule?.deleteMany
+            ? await tx.monthlySchedule.deleteMany({ where: { customerId: numCustomerId } })
+            : { count: 0 };
+          deletedCount = cnt(schedules);
+          break;
+        }
         default:
           throw new BadRequestException(`Unsupported reset module: ${dto.module}`);
       }
