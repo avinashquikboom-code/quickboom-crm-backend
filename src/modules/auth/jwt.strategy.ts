@@ -654,13 +654,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
     );
 
-    const isCustomerUser = primaryRole === 'CUSTOMER' || !user.employee;
+    const isCustomerUser =
+      primaryRole === 'CUSTOMER' ||
+      primaryRole === 'CUSTOMER_ADMIN' ||
+      payload.role === 'CUSTOMER' ||
+      !user.employee;
     if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
         customerId || user.customerId,
       );
-      applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee || primaryRole === 'CUSTOMER');
+      applyCustomerEffectivePermissions(
+        permissionsMap,
+        customerItems,
+        !user.employee || primaryRole === 'CUSTOMER' || payload.role === 'CUSTOMER',
+      );
     }
 
     const isBpo = user.employee ? this.checkIsBpo(user.employee) : false;

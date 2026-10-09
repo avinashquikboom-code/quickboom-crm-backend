@@ -2390,7 +2390,7 @@ export class AuthService {
     };
   }
 
-  async getProfile(userId: number | string) {
+  async getProfile(userId: number | string, currentUser?: any) {
     const numericUserId = Number(userId);
     const user = await this.prisma.user.findUnique({
       where: { id: numericUserId },
@@ -2414,6 +2414,9 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
+    const tokenRole = currentUser?.role ? String(currentUser.role).toUpperCase() : null;
+    const isCustomerSession = tokenRole === 'CUSTOMER' || tokenRole === 'CUSTOMER_ADMIN';
+
     const roles = user.userRoles.map((ur) => ur.role.type);
     const hasSuperAdminRole = roles.includes(RoleType.SUPER_ADMIN);
     const hasCustomerAdminRole = user.userRoles.some(
@@ -2422,15 +2425,18 @@ export class AuthService {
         ur.role?.name?.toUpperCase().includes('CUSTOMER'),
     );
     const isEmployee = Boolean(
+      !isCustomerSession &&
       (user.employee || user.userRoles.some((ur) => ur.role?.name?.toUpperCase().includes('EMPLOYEE'))) &&
       !hasSuperAdminRole &&
       !hasCustomerAdminRole,
     );
-    const isCustomer = Boolean(!hasSuperAdminRole && !isEmployee && (hasCustomerAdminRole || user.customerId));
+    const isCustomer = Boolean(!hasSuperAdminRole && !isEmployee && (isCustomerSession || hasCustomerAdminRole || user.customerId));
 
     let userRole: string;
     if (hasSuperAdminRole) {
       userRole = 'SUPER_ADMIN';
+    } else if (isCustomerSession) {
+      userRole = tokenRole || 'CUSTOMER';
     } else if (isCustomer) {
       userRole = 'CUSTOMER';
     } else if (isEmployee) {
@@ -2496,7 +2502,10 @@ export class AuthService {
       profileData.isBpo = Boolean(employeeData?.isBpo);
     }
 
-    const rbacData = await this.resolveUserEffectivePermissions(user.id, user);
+    const rbacData = await this.resolveUserEffectivePermissions(user.id, {
+      ...user,
+      role: userRole,
+    });
     profileData.role = userRole;
     profileData.effectiveRole = rbacData.role || userRole;
     profileData.permissions = rbacData.permissions;
@@ -2914,15 +2923,26 @@ export class AuthService {
     }
 
     const isCustomerUser =
+      user.role === 'CUSTOMER' ||
+      user.role === 'CUSTOMER_ADMIN' ||
+      user.role === 'CLIENT' ||
       !user.employee ||
-      user.userRoles?.some((ur: any) => String(ur.role?.name || '').toUpperCase().includes('CUSTOMER'));
+      user.userRoles?.some((ur: any) => {
+        const name = String(ur.role?.name || '').toUpperCase();
+        const type = String(ur.role?.type || '').toUpperCase();
+        return name.includes('CUSTOMER') || type.includes('CUSTOMER');
+      });
 
     if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
         user.customerId || user.customer?.id,
       );
-      applyCustomerEffectivePermissions(permissionsMap, customerItems, !user.employee);
+      const isPureCustomer =
+        user.role === 'CUSTOMER' ||
+        !user.employee ||
+        user.userRoles?.some((ur: any) => String(ur.role?.name || '').toUpperCase() === 'CUSTOMER');
+      applyCustomerEffectivePermissions(permissionsMap, customerItems, isPureCustomer);
     }
 
     const permissions = Array.from(permissionsMap.values());

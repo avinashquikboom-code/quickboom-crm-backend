@@ -203,7 +203,7 @@ export class AuthController {
   @Get('profile')
   @ApiOperation({ summary: 'Get current logged-in user profile' })
   async getProfile(@CurrentUser() user: any) {
-    return this.authService.getProfile(user.id || user.userId);
+    return this.authService.getProfile(user.id || user.userId, user);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -211,7 +211,7 @@ export class AuthController {
   @Get('me')
   @ApiOperation({ summary: 'Get current user identity' })
   async getMe(@CurrentUser() user: any) {
-    return this.authService.getProfile(user.id || user.userId);
+    return this.authService.getProfile(user.id || user.userId, user);
   }
 
   @UseGuards(JwtAuthGuard)

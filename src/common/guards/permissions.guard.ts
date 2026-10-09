@@ -88,11 +88,6 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
-    // Employee routes are not gated by customer-app permissions.
-    if (!isCustomerAccount && customerScoped.length === requiredPermissions.length) {
-      return true;
-    }
-
     const permissionsToCheck =
       isCustomerAccount && customerScoped.length > 0 ? customerScoped : requiredPermissions;
 

@@ -31,6 +31,50 @@ export function pickConfiguredCustomerDesignation(rows: any[]): any | null {
   return pool[0] || null;
 }
 
+export async function resolveMasterCustomerRoleItems(prisma: any): Promise<PermissionItem[] | null> {
+  if (typeof prisma?.designation?.findMany === 'function') {
+    try {
+      const rows = await prisma.designation.findMany({
+        where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+          customer: { select: { _count: { select: { employees: true } } } },
+        },
+      });
+      const picked = pickConfiguredCustomerDesignation(rows);
+      if (picked?.role?.rolePermissions) {
+        return mapCustomerRolePermissionRows(picked.role.rolePermissions);
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  if (typeof prisma?.designation?.findFirst === 'function') {
+    try {
+      const ownRole = await prisma.designation.findFirst({
+        where: {
+          OR: [
+            { code: 'CUSTOMER', audience: 'CUSTOMER' },
+            { audience: 'CUSTOMER' },
+          ],
+        },
+        include: {
+          role: { include: { rolePermissions: { include: { permission: true } } } },
+        },
+        orderBy: { id: 'asc' },
+      });
+      if (ownRole?.role?.rolePermissions) {
+        return mapCustomerRolePermissionRows(ownRole.role.rolePermissions);
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  return null;
+}
+
 /**
  * Customer mobile effective permissions:
  * assigned customer role defaults, otherwise the seeded Customer role,
@@ -43,7 +87,8 @@ export async function resolveCustomerAppPermissionItems(
   const id = Number(customerId);
   const defaults = ROLE_PERMISSION_DEFAULTS.CUSTOMER || [];
   if (!id || Number.isNaN(id) || !prisma?.customer?.findFirst) {
-    return defaults;
+    const masterItems = await resolveMasterCustomerRoleItems(prisma);
+    return masterItems ?? defaults;
   }
 
   const customer = await prisma.customer.findFirst({
@@ -58,7 +103,10 @@ export async function resolveCustomerAppPermissionItems(
     },
   });
 
-  if (!customer) return defaults;
+  if (!customer) {
+    const masterItems = await resolveMasterCustomerRoleItems(prisma);
+    return masterItems ?? defaults;
+  }
 
   let items: PermissionItem[] = [];
   let roleResolved = false;
@@ -130,7 +178,8 @@ export async function resolveCustomerAppPermissionItems(
 
   // Only fall back to code defaults if no Customer role/designation was ever configured in the database
   if (!roleResolved && !customer.mobileRoleId) {
-    items = defaults.map((p) => ({ module: p.module, action: p.action }));
+    const masterItems = await resolveMasterCustomerRoleItems(prisma);
+    items = masterItems ?? defaults.map((p) => ({ module: p.module, action: p.action }));
   }
 
   const map = new Map<string, PermissionItem>();
