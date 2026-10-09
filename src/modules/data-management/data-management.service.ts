@@ -1961,6 +1961,7 @@ export class DataManagementService {
   public async deleteCustomerAndDependencies(
     tx: Prisma.TransactionClient,
     customerId: number,
+    preserveCustomerId?: number | null,
   ) {
     const counts: Record<string, number> = {};
     const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
@@ -1982,10 +1983,19 @@ export class DataManagementService {
       );
     }
 
-    // 1. Detach pointers from Customer row
+    const keeper =
+      typeof preserveCustomerId === 'number' &&
+      Number.isInteger(preserveCustomerId) &&
+      preserveCustomerId > 0 &&
+      preserveCustomerId !== customerId
+        ? preserveCustomerId
+        : null;
+
+    // 1. Detach pointers from Customer row. Clearing leadId keeps the origin Lead row.
     await tx.customer.update({
       where: { id: customerId },
       data: {
+        leadId: null,
         assignedEmployeeId: null,
         assignedTeamId: null,
         createdByEmployeeId: null,
@@ -1993,15 +2003,18 @@ export class DataManagementService {
       },
     });
 
-    // 2. Child leaf tables that reference parents referencing customer
-    if (cust.leadId) {
-      await tx.leadActivityTimeline?.deleteMany?.({ where: { leadId: cust.leadId } });
-      await tx.leadNote?.deleteMany?.({ where: { leadId: cust.leadId } });
-      await tx.leadReminder?.deleteMany?.({ where: { leadId: cust.leadId } });
-      await tx.leadStatusHistory?.deleteMany?.({ where: { leadId: cust.leadId } });
-      // Detach origin lead customer pointer so unconverted/original leads remain intact
-      await tx.lead?.updateMany?.({ where: { id: cust.leadId }, data: { customerId: null } });
+    // Leads, payment history, and prior audit rows cascade with the customer.
+    // Move them to the acting company so this reset keeps unconverted leads and the ledger.
+    if (keeper) {
+      await tx.lead.updateMany({ where: { customerId }, data: { customerId: keeper } });
+      await tx.paymentHistory.updateMany({
+        where: { customerId },
+        data: { customerId: keeper, subscriptionId: null },
+      });
+      await tx.auditLog.updateMany({ where: { customerId }, data: { customerId: keeper } });
     }
+
+    // 2. Child leaf tables that reference parents referencing customer
     await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId } } });
     await tx.leadNote?.deleteMany?.({ where: { lead: { customerId } } });
     await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId } } });
@@ -2131,6 +2144,7 @@ export class DataManagementService {
     userId: string,
     userRole: string,
     reason?: string,
+    auditCustomerId?: number | string,
   ) {
     if (!Array.isArray(customerIds) || customerIds.length === 0) {
       throw new BadRequestException('Please select at least one customer to reset.');
@@ -2161,12 +2175,16 @@ export class DataManagementService {
       throw new BadRequestException('None of the selected customers are eligible for reset.');
     }
 
+    const eligibleIds = eligibleCustomers.map((customer) => customer.id);
+    const keepId = Number(auditCustomerId);
+    const keeper = Number.isInteger(keepId) && keepId > 0 && !eligibleIds.includes(keepId) ? keepId : null;
+
     const succeeded: number[] = [];
     const aggregatedCounts: Record<string, number> = {};
 
     for (const cust of eligibleCustomers) {
       await this.prisma.$transaction(async (tx) => {
-        const res = await this.deleteCustomerAndDependencies(tx, cust.id);
+        const res = await this.deleteCustomerAndDependencies(tx, cust.id, keeper);
         if (res.success) {
           succeeded.push(cust.id);
           for (const [k, v] of Object.entries(res.counts)) {
@@ -2181,7 +2199,7 @@ export class DataManagementService {
     const initiatingUserId = Number(userId) || null;
     await this.prisma.auditLog.create({
       data: {
-        customerId: 1, // root enterprise tenant where audit history is stored and viewed
+        customerId: keeper,
         userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
         action: 'DATA_RESET',
         module: 'CUSTOMER_RESET',
@@ -2219,10 +2237,15 @@ export class DataManagementService {
     userId: string,
     userRole: string,
     reason?: string,
+    auditCustomerId?: number | string,
   ) {
-    if (!confirmation || confirmation.trim().toUpperCase() !== 'DELETE ALL CUSTOMERS') {
-      throw new BadRequestException('Confirmation phrase must be "DELETE ALL CUSTOMERS" to proceed.');
+    const typed = String(confirmation || '').trim().toUpperCase();
+    if (typed !== 'DELETE ALL CUSTOMERS' && typed !== 'DELETE ALL CUSTOMER DATA') {
+      throw new BadRequestException(
+        'Confirmation phrase must be "DELETE ALL CUSTOMER DATA" to proceed.',
+      );
     }
+    const scope = typed === 'DELETE ALL CUSTOMER DATA' ? 'RESET_ALL_CUSTOMER_DATA' : 'RESET_ALL_CUSTOMERS';
 
     // Query ALL eligible client customers using backend filter
     const eligibleCustomers = await this.prisma.customer.findMany({
@@ -2230,14 +2253,38 @@ export class DataManagementService {
       select: { id: true, name: true, companyName: true },
     });
 
+    const eligibleIds = eligibleCustomers.map((customer) => customer.id);
+    const keepId = Number(auditCustomerId);
+    const keeper = Number.isInteger(keepId) && keepId > 0 && !eligibleIds.includes(keepId) ? keepId : null;
+
     if (eligibleCustomers.length === 0) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: keeper,
+          userId: Number(userId) || null,
+          action: 'DATA_RESET',
+          module: 'CUSTOMER_RESET',
+          details: {
+            scope,
+            operation: scope,
+            customersAffected: 0,
+            customerIds: [],
+            recordsDeletedByCategory: {},
+            totalRecordsDeleted: 0,
+            performedByRole: userRole || 'SUPER_ADMIN',
+            reason: reason || 'Admin executed Reset All Customer Data',
+            status: 'SUCCESS',
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
       return {
         success: true,
         customersAffected: 0,
         customerIds: [],
         recordsDeletedByCategory: {},
         totalRecordsDeleted: 0,
-        message: 'No eligible client customers found to reset.',
+        message: 'No eligible saved customers found to reset.',
       };
     }
 
@@ -2246,7 +2293,7 @@ export class DataManagementService {
 
     for (const cust of eligibleCustomers) {
       await this.prisma.$transaction(async (tx) => {
-        const res = await this.deleteCustomerAndDependencies(tx, cust.id);
+        const res = await this.deleteCustomerAndDependencies(tx, cust.id, keeper);
         if (res.success) {
           succeeded.push(cust.id);
           for (const [k, v] of Object.entries(res.counts)) {
@@ -2260,13 +2307,13 @@ export class DataManagementService {
     const initiatingUserId = Number(userId) || null;
     await this.prisma.auditLog.create({
       data: {
-        customerId: 1,
+        customerId: keeper,
         userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
         action: 'DATA_RESET',
         module: 'CUSTOMER_RESET',
         details: {
-          scope: 'RESET_ALL_CUSTOMERS',
-          operation: 'RESET_ALL_CUSTOMERS',
+          scope,
+          operation: scope,
           customersAffected: succeeded.length,
           customerIds: succeeded,
           recordsDeletedByCategory: aggregatedCounts,

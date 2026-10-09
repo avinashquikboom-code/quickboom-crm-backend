@@ -59,6 +59,17 @@ export class DataManagementController {
   }
 
   /**
+   * GET /api/v1/admin/data-management/reset/module
+   * Read-only module counts. This must not delete records.
+   * Page load uses GET /summary; this answers the same summary for clients that request this path.
+   */
+  @Get('reset/module')
+  @ApiOperation({ summary: 'Get module record counts without resetting data' })
+  async getModuleResetSummary(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getSummary(customerId);
+  }
+
+  /**
    * POST /api/v1/admin/data-management/reset/module
    * Reset single module transactional data
    */
@@ -232,6 +243,7 @@ export class DataManagementController {
   async resetSelectedCustomers(
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: ResetSelectedCustomersDto,
   ) {
     return this.dataManagementService.resetSelectedCustomers(
@@ -239,6 +251,7 @@ export class DataManagementController {
       userId,
       userRole,
       dto.reason,
+      customerId,
     );
   }
 
@@ -251,6 +264,7 @@ export class DataManagementController {
   async resetAllCustomers(
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
+    @CurrentCustomer() customerId: string,
     @Body() dto: ResetAllCustomersDto,
   ) {
     return this.dataManagementService.resetAllCustomers(
@@ -258,6 +272,7 @@ export class DataManagementController {
       userId,
       userRole,
       dto.reason,
+      customerId,
     );
   }
 
