@@ -25,6 +25,8 @@ import {
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
   BulkDeleteBinDto,
+  ResetSelectedCustomersDto,
+  ResetAllCustomersDto,
 } from './dto/data-management.dto';
 
 @ApiTags('Admin Data Management')
@@ -202,6 +204,16 @@ export class DataManagementController {
   }
 
   /**
+   * GET /api/v1/admin/data-management/customers/summary/all
+   * Get total customer and related record counts across all eligible customers
+   */
+  @Get('customers/summary/all')
+  @ApiOperation({ summary: 'Get total customer and related record counts across all eligible customers' })
+  async getCustomersSummaryAll() {
+    return this.dataManagementService.getCustomersSummaryAll();
+  }
+
+  /**
    * GET /api/v1/admin/data-management/customers/:customerId/summary
    * Get transactional summary for a specific customer
    */
@@ -209,6 +221,44 @@ export class DataManagementController {
   @ApiOperation({ summary: 'Get live customer record summary for data reset' })
   async getCustomerSummary(@Param('customerId') customerId: string) {
     return this.dataManagementService.getCustomerSummary(customerId);
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/customers/reset-selected
+   * Reset and permanently delete selected customers and their related data
+   */
+  @Post('customers/reset-selected')
+  @ApiOperation({ summary: 'Reset and delete selected customers and their related dependencies' })
+  async resetSelectedCustomers(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') userRole: string,
+    @Body() dto: ResetSelectedCustomersDto,
+  ) {
+    return this.dataManagementService.resetSelectedCustomers(
+      dto.customerIds,
+      userId,
+      userRole,
+      dto.reason,
+    );
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/customers/reset-all
+   * Reset and permanently delete all eligible client customers and their related data
+   */
+  @Post('customers/reset-all')
+  @ApiOperation({ summary: 'Reset and delete all eligible client customers and their related data' })
+  async resetAllCustomers(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') userRole: string,
+    @Body() dto: ResetAllCustomersDto,
+  ) {
+    return this.dataManagementService.resetAllCustomers(
+      dto.confirmation,
+      userId,
+      userRole,
+      dto.reason,
+    );
   }
 
   /**

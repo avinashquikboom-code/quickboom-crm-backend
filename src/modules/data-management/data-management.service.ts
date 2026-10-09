@@ -1279,22 +1279,19 @@ export class DataManagementService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * GET /api/v1/admin/data-management/customers
-   * Returns list of real customer accounts for Data Management.
+   * Base customer filter for Data Management:
    * Strictly excludes:
-   * - Super Admin accounts and users
-   * - Admin users
-   * - System / internal non-customer accounts
+   * - Customer ID 1 (root enterprise tenant)
+   * - Accounts with employees (organization master accounts)
+   * - Accounts with Super Admin / Admin roles or names
+   * - Non-customer system/internal accounts
    */
-  async getCustomers(query: { search?: string; limit?: number; page?: number }) {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
-    const skip = (page - 1) * limit;
-
-    const where: Prisma.CustomerWhereInput = {
+  public getBaseCustomerFilter(): Prisma.CustomerWhereInput {
+    return {
       deletedAt: null,
+      id: { not: 1 },
+      employees: { none: {} },
       NOT: [
-        // Exclude accounts linked to Super Admin or Admin users
         {
           users: {
             some: {
@@ -1311,13 +1308,11 @@ export class DataManagementService {
             },
           },
         },
-        // Exclude non-customer system accounts
         {
           customerType: {
             in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'],
           },
         },
-        // Exclude customer accounts explicitly named Super Admin or Admin
         {
           OR: [
             { name: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
@@ -1334,47 +1329,74 @@ export class DataManagementService {
         },
       ],
     };
+  }
+
+  /**
+   * GET /api/v1/admin/data-management/customers
+   * Returns list of real customer accounts for Data Management.
+   * Strictly excludes:
+   * - Super Admin accounts and users
+   * - Admin users
+   * - System / internal non-customer accounts
+   * - Primary root enterprise tenant (#1)
+   */
+  async getCustomers(query: { search?: string; limit?: number; page?: number }) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.CustomerWhereInput = {
+      ...this.getBaseCustomerFilter(),
+    };
 
     if (query.search && query.search.trim().length > 0) {
       const s = query.search.trim();
-      const searchCondition: Prisma.CustomerWhereInput = {
-        OR: [
-          { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-          { companyName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-          { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-          { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-          {
-            users: {
-              some: {
-                AND: [
-                  { deletedAt: null },
-                  {
-                    OR: [
-                      { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                      { firstName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                      { lastName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                      { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                    ],
-                  },
-                  {
-                    NOT: {
-                      userRoles: {
-                        some: {
-                          role: {
-                            OR: [
-                              { type: RoleType.SUPER_ADMIN },
-                              { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
-                            ],
-                          },
+      const searchConditions: Prisma.CustomerWhereInput[] = [
+        { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { companyName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+        {
+          users: {
+            some: {
+              AND: [
+                { deletedAt: null },
+                {
+                  OR: [
+                    { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                    { firstName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                    { lastName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                    { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
+                  ],
+                },
+                {
+                  NOT: {
+                    userRoles: {
+                      some: {
+                        role: {
+                          OR: [
+                            { type: RoleType.SUPER_ADMIN },
+                            { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
+                          ],
                         },
                       },
                     },
                   },
-                ],
-              },
+                },
+              ],
             },
           },
-        ],
+        },
+      ];
+
+      // Support searching by numeric ID
+      const numId = Number(s);
+      if (!isNaN(numId) && Number.isInteger(numId) && numId > 0) {
+        searchConditions.push({ id: numId });
+      }
+
+      const searchCondition: Prisma.CustomerWhereInput = {
+        OR: searchConditions,
       };
 
       if (where.AND) {
@@ -1406,6 +1428,10 @@ export class DataManagementService {
               contacts: true,
               deals: true,
               tasks: true,
+              works: true,
+              invoices: true,
+              monthlySchedules: true,
+              subscriptions: true,
               employees: true,
             },
           },
@@ -1414,13 +1440,100 @@ export class DataManagementService {
       this.prisma.customer.count({ where }),
     ]);
 
+    const itemsWithRelated = items.map((cust) => {
+      const c = cust as any;
+      const relatedRecordsCount =
+        (c._count?.contacts || 0) +
+        (c._count?.deals || 0) +
+        (c._count?.tasks || 0) +
+        (c._count?.works || 0) +
+        (c._count?.invoices || 0) +
+        (c._count?.monthlySchedules || 0) +
+        (c._count?.subscriptions || 0);
+
+      return {
+        ...cust,
+        relatedRecordsCount,
+      };
+    });
+
     return {
-      customers: items,
-      data: items,
+      customers: itemsWithRelated,
+      data: itemsWithRelated,
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * GET /api/v1/admin/data-management/customers/summary/all
+   * Returns aggregated record counts across all eligible client customers for Reset All preview
+   */
+  async getCustomersSummaryAll() {
+    const where = this.getBaseCustomerFilter();
+    const customers = await this.prisma.customer.findMany({
+      where,
+      select: {
+        id: true,
+        _count: {
+          select: {
+            leads: true,
+            contacts: true,
+            deals: true,
+            tasks: true,
+            works: true,
+            invoices: true,
+            monthlySchedules: true,
+            subscriptions: true,
+          },
+        },
+      },
+    });
+
+    const customerIds = customers.map((c) => c.id);
+    const visitsCount = customerIds.length > 0
+      ? await this.prisma.visit.count({ where: { customerId: { in: customerIds } } })
+      : 0;
+
+    const breakdown = {
+      leads: 0,
+      contacts: 0,
+      deals: 0,
+      tasks: 0,
+      works: 0,
+      visits: visitsCount,
+      invoices: 0,
+      monthlySchedules: 0,
+      subscriptions: 0,
+    };
+
+    for (const c of customers as any[]) {
+      breakdown.leads += c._count?.leads || 0;
+      breakdown.contacts += c._count?.contacts || 0;
+      breakdown.deals += c._count?.deals || 0;
+      breakdown.tasks += c._count?.tasks || 0;
+      breakdown.works += c._count?.works || 0;
+      breakdown.invoices += c._count?.invoices || 0;
+      breakdown.monthlySchedules += c._count?.monthlySchedules || 0;
+      breakdown.subscriptions += c._count?.subscriptions || 0;
+    }
+
+    const totalRelatedRecords =
+      breakdown.contacts +
+      breakdown.deals +
+      breakdown.tasks +
+      breakdown.works +
+      breakdown.visits +
+      breakdown.invoices +
+      breakdown.monthlySchedules +
+      breakdown.subscriptions;
+
+    return {
+      totalCustomers: customers.length,
+      totalRelatedRecords,
+      breakdown,
     };
   }
 
@@ -1825,6 +1938,346 @@ export class DataManagementService {
       customerName: customer.companyName || customer.name,
       recordsDeleted: resetResult.totalDeleted,
       message: `Successfully reset all application data for ${customer.companyName || customer.name} (${resetResult.totalDeleted} records permanently removed). Customer profile, employees, and settings remain preserved.`,
+    };
+  }
+
+  /**
+   * Safe cascading permanent deletion of a customer and all their dependencies.
+   * Runs within an atomic Prisma transaction client.
+   * Strictly protects:
+   * - Employees (never deleted)
+   * - Attendance, Payroll (never deleted)
+   * - System master data (Plans, Coupons, Roles, Departments, Designations)
+   * - Unconverted Leads
+   */
+  public async deleteCustomerAndDependencies(
+    tx: Prisma.TransactionClient,
+    customerId: number,
+  ) {
+    const counts: Record<string, number> = {};
+    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
+
+    // 0. Safety check: Root enterprise customer #1 or customers with employees cannot be deleted
+    const cust = await tx.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        _count: {
+          select: { employees: true },
+        },
+      },
+    });
+
+    if (!cust) return { success: false, notFound: true, counts };
+    if (customerId === 1 || cust._count.employees > 0) {
+      throw new ForbiddenException(
+        `Customer #${customerId} (${cust.name}) is an organization account with employees and cannot be deleted via Customer Reset.`,
+      );
+    }
+
+    // 1. Detach pointers from Customer row
+    await tx.customer.update({
+      where: { id: customerId },
+      data: {
+        assignedEmployeeId: null,
+        assignedTeamId: null,
+        createdByEmployeeId: null,
+        mobileRoleId: null,
+      },
+    });
+
+    // 2. Child leaf tables that reference parents referencing customer
+    if (cust.leadId) {
+      await tx.leadActivityTimeline?.deleteMany?.({ where: { leadId: cust.leadId } });
+      await tx.leadNote?.deleteMany?.({ where: { leadId: cust.leadId } });
+      await tx.leadReminder?.deleteMany?.({ where: { leadId: cust.leadId } });
+      await tx.leadStatusHistory?.deleteMany?.({ where: { leadId: cust.leadId } });
+      // Detach origin lead customer pointer so unconverted/original leads remain intact
+      await tx.lead?.updateMany?.({ where: { id: cust.leadId }, data: { customerId: null } });
+    }
+    await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId } } });
+    await tx.leadNote?.deleteMany?.({ where: { lead: { customerId } } });
+    await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId } } });
+    await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId } } });
+
+    // Task children: reviews, proofs, history
+    await tx.taskReview?.deleteMany?.({ where: { task: { customerId } } });
+    await tx.taskProof?.deleteMany?.({ where: { task: { customerId } } });
+    await tx.taskHistory?.deleteMany?.({ where: { task: { customerId } } });
+
+    // Work children: work tasks
+    await tx.workTask?.deleteMany?.({ where: { work: { customerId } } });
+
+    // Ticket children: comments
+    await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId } } });
+
+    // Contact children: communication history
+    await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId } } });
+
+    // Invoice & quotation children: items
+    await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId } } });
+    await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId } } });
+
+    // Subscription installments
+    const installments = await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId } });
+    counts.installments = cnt(installments);
+
+    // AI asset children
+    await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId } } });
+
+    // 3. Operational & Calendar records
+    const schedules = await tx.monthlySchedule?.deleteMany?.({ where: { customerId } });
+    counts.monthlySchedules = cnt(schedules);
+
+    const works = await tx.work?.deleteMany?.({ where: { customerId } });
+    counts.works = cnt(works);
+
+    const tasks = await tx.task?.deleteMany?.({ where: { customerId } });
+    counts.tasks = cnt(tasks);
+
+    const visits = await tx.visit?.deleteMany?.({ where: { customerId } });
+    counts.visits = cnt(visits);
+
+    // 4. Invoices & Billing & Subscriptions
+    const invoices = await tx.invoice?.deleteMany?.({ where: { customerId } });
+    counts.invoices = cnt(invoices);
+
+    const quotations = await tx.quotation?.deleteMany?.({ where: { customerId } });
+    counts.quotations = cnt(quotations);
+
+    const subscriptions = await tx.customerSubscription?.deleteMany?.({ where: { customerId } });
+    counts.subscriptions = cnt(subscriptions);
+
+    const customPlanOrders = await tx.customPlanOrder?.deleteMany?.({ where: { customerId } });
+    counts.customPlanOrders = cnt(customPlanOrders);
+
+    const payments = await tx.paymentHistory?.deleteMany?.({ where: { customerId } });
+    counts.payments = cnt(payments);
+
+    const couponRedemptions = await tx.couponRedemption?.deleteMany?.({ where: { customerId } });
+    counts.couponRedemptions = cnt(couponRedemptions);
+
+    // 5. CRM: Deals, Contacts, Support Tickets, Notifications
+    const deals = await tx.deal?.deleteMany?.({ where: { customerId } });
+    counts.deals = cnt(deals);
+
+    const contacts = await tx.contact?.deleteMany?.({ where: { customerId } });
+    counts.contacts = cnt(contacts);
+
+    const tickets = await tx.supportTicket?.deleteMany?.({ where: { customerId } });
+    counts.tickets = cnt(tickets);
+
+    const notifications = await tx.notification?.deleteMany?.({ where: { customerId } });
+    counts.notifications = cnt(notifications);
+
+    // 6. Marketing, Data Capture, AI & Social
+    await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId } });
+    await tx.marketingVideo?.deleteMany?.({ where: { customerId } });
+    await tx.marketingBanner?.deleteMany?.({ where: { customerId } });
+    await tx.trendingContent?.deleteMany?.({ where: { customerId } });
+    await tx.socialPublish?.deleteMany?.({ where: { customerId } });
+    await tx.socialAccount?.deleteMany?.({ where: { customerId } });
+    await tx.socialMediaHandler?.deleteMany?.({ where: { customerId } });
+    await tx.aiGeneration?.deleteMany?.({ where: { customerId } });
+    await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId } });
+    await tx.aiCreditWallet?.deleteMany?.({ where: { customerId } });
+    await tx.dataCaptureJob?.deleteMany?.({ where: { customerId } });
+    await tx.dataCapturePlace?.deleteMany?.({ where: { customerId } });
+    await tx.dataCaptureSearch?.deleteMany?.({ where: { customerId } });
+    await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId } });
+    await tx.influencerBooking?.deleteMany?.({ where: { customerId } });
+    await tx.influencerReview?.deleteMany?.({ where: { customerId } });
+    await tx.workAccessRequest?.deleteMany?.({ where: { customerId } });
+    await tx.roleWorkPermission?.deleteMany?.({ where: { customerId } });
+    await tx.customerModuleOverride?.deleteMany?.({ where: { subjectCustomerId: customerId } });
+
+    // 7. Client Portal Users (users belonging exclusively to this client customer, if any)
+    const clientUsers = await tx.user.findMany({
+      where: { customerId },
+      select: { id: true },
+    });
+    if (clientUsers.length > 0) {
+      const clientUserIds = clientUsers.map((u) => u.id);
+      await tx.userRole?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+      await tx.userDeviceToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+      await tx.refreshToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+      await tx.session?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
+      await tx.user?.deleteMany?.({ where: { id: { in: clientUserIds } } });
+    }
+
+    // 8. Delete the Customer row
+    await tx.customer.delete({ where: { id: customerId } });
+
+    return {
+      success: true,
+      customerId,
+      counts,
+    };
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/customers/reset-selected
+   * Resets and permanently deletes selected customers and their dependencies.
+   */
+  async resetSelectedCustomers(
+    customerIds: (number | string)[],
+    userId: string,
+    userRole: string,
+    reason?: string,
+  ) {
+    if (!Array.isArray(customerIds) || customerIds.length === 0) {
+      throw new BadRequestException('Please select at least one customer to reset.');
+    }
+
+    const numericIds = Array.from(
+      new Set(
+        customerIds
+          .map((id) => Number(id))
+          .filter((n) => Number.isInteger(n) && n > 0 && n !== 1),
+      ),
+    );
+
+    if (numericIds.length === 0) {
+      throw new BadRequestException('No valid client customer IDs selected for reset.');
+    }
+
+    // Verify authorized eligible customers
+    const eligibleCustomers = await this.prisma.customer.findMany({
+      where: {
+        id: { in: numericIds },
+        ...this.getBaseCustomerFilter(),
+      },
+      select: { id: true, name: true, companyName: true },
+    });
+
+    if (eligibleCustomers.length === 0) {
+      throw new BadRequestException('None of the selected customers are eligible for reset.');
+    }
+
+    const succeeded: number[] = [];
+    const aggregatedCounts: Record<string, number> = {};
+
+    for (const cust of eligibleCustomers) {
+      await this.prisma.$transaction(async (tx) => {
+        const res = await this.deleteCustomerAndDependencies(tx, cust.id);
+        if (res.success) {
+          succeeded.push(cust.id);
+          for (const [k, v] of Object.entries(res.counts)) {
+            aggregatedCounts[k] = (aggregatedCounts[k] || 0) + v;
+          }
+        }
+      });
+    }
+
+    // Record audit log
+    const totalRecords = Object.values(aggregatedCounts).reduce((a, b) => a + b, 0);
+    const initiatingUserId = Number(userId) || null;
+    await this.prisma.auditLog.create({
+      data: {
+        customerId: 1, // root enterprise tenant where audit history is stored and viewed
+        userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
+        action: 'DATA_RESET',
+        module: 'CUSTOMER_RESET',
+        details: {
+          scope: 'RESET_SELECTED_CUSTOMERS',
+          operation: 'RESET_SELECTED_CUSTOMERS',
+          customersAffected: succeeded.length,
+          customerIds: succeeded,
+          recordsDeletedByCategory: aggregatedCounts,
+          totalRecordsDeleted: totalRecords,
+          performedByRole: userRole || 'SUPER_ADMIN',
+          reason: reason || 'Admin executed reset for selected customers',
+          status: 'SUCCESS',
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
+
+    return {
+      success: true,
+      customersAffected: succeeded.length,
+      customerIds: succeeded,
+      recordsDeletedByCategory: aggregatedCounts,
+      totalRecordsDeleted: totalRecords,
+      message: `Successfully reset and deleted ${succeeded.length} customer(s) and ${totalRecords} related records.`,
+    };
+  }
+
+  /**
+   * POST /api/v1/admin/data-management/customers/reset-all
+   * Resets and permanently deletes all eligible client customers and their dependencies.
+   */
+  async resetAllCustomers(
+    confirmation: string,
+    userId: string,
+    userRole: string,
+    reason?: string,
+  ) {
+    if (!confirmation || confirmation.trim().toUpperCase() !== 'DELETE ALL CUSTOMERS') {
+      throw new BadRequestException('Confirmation phrase must be "DELETE ALL CUSTOMERS" to proceed.');
+    }
+
+    // Query ALL eligible client customers using backend filter
+    const eligibleCustomers = await this.prisma.customer.findMany({
+      where: this.getBaseCustomerFilter(),
+      select: { id: true, name: true, companyName: true },
+    });
+
+    if (eligibleCustomers.length === 0) {
+      return {
+        success: true,
+        customersAffected: 0,
+        customerIds: [],
+        recordsDeletedByCategory: {},
+        totalRecordsDeleted: 0,
+        message: 'No eligible client customers found to reset.',
+      };
+    }
+
+    const succeeded: number[] = [];
+    const aggregatedCounts: Record<string, number> = {};
+
+    for (const cust of eligibleCustomers) {
+      await this.prisma.$transaction(async (tx) => {
+        const res = await this.deleteCustomerAndDependencies(tx, cust.id);
+        if (res.success) {
+          succeeded.push(cust.id);
+          for (const [k, v] of Object.entries(res.counts)) {
+            aggregatedCounts[k] = (aggregatedCounts[k] || 0) + v;
+          }
+        }
+      });
+    }
+
+    const totalRecords = Object.values(aggregatedCounts).reduce((a, b) => a + b, 0);
+    const initiatingUserId = Number(userId) || null;
+    await this.prisma.auditLog.create({
+      data: {
+        customerId: 1,
+        userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
+        action: 'DATA_RESET',
+        module: 'CUSTOMER_RESET',
+        details: {
+          scope: 'RESET_ALL_CUSTOMERS',
+          operation: 'RESET_ALL_CUSTOMERS',
+          customersAffected: succeeded.length,
+          customerIds: succeeded,
+          recordsDeletedByCategory: aggregatedCounts,
+          totalRecordsDeleted: totalRecords,
+          performedByRole: userRole || 'SUPER_ADMIN',
+          reason: reason || 'Admin executed Reset All Customers',
+          status: 'SUCCESS',
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
+
+    return {
+      success: true,
+      customersAffected: succeeded.length,
+      customerIds: succeeded,
+      recordsDeletedByCategory: aggregatedCounts,
+      totalRecordsDeleted: totalRecords,
+      message: `Successfully reset and deleted all ${succeeded.length} customer(s) and ${totalRecords} related records.`,
     };
   }
 

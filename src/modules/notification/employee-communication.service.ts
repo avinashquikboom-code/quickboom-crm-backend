@@ -349,32 +349,31 @@ export class EmployeeCommunicationService {
     });
     if (!slip || (customerId && slip.customerId !== customerId)) return null;
     const employee = slip.employee;
+    const item = slip.payrollItem;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
-    const s = slip as any;
-    const pi = s.payrollItem as any;
     const buffer = await this.buildSalaryPdf({
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       employeeCode: employee.employeeCode,
-      payPeriod: s.payPeriod,
-      gross: s.grossSalary,
-      deductions: s.totalDeductions,
-      net: s.netSalary,
-      slipNumber: s.slipNumber,
+      payPeriod: slip.payPeriod,
+      gross: slip.grossSalary,
+      deductions: slip.totalDeductions,
+      net: slip.netSalary,
+      slipNumber: slip.slipNumber,
       designation: employee.designation?.name || null,
       department: employee.department?.name || null,
       joiningDate: employee.joiningDate,
       bankDetails: employee.bankDetails,
-      basicSalary: pi?.basicSalary ?? s.basicSalary ?? s.grossSalary,
-      hra: pi?.hra ?? s.hra ?? 0,
-      allowances: (pi?.allowances ?? s.allowances ?? 0) + (pi?.specialAllowance ?? s.specialAllowance ?? 0),
-      commission: pi?.commission ?? s.commission ?? 0,
-      reimbursement: pi?.reimbursement ?? s.reimbursement ?? 0,
-      pf: pi?.pf ?? s.pf ?? 0,
-      esi: pi?.esi ?? s.esi ?? 0,
-      tds: pi?.tds ?? s.tds ?? 0,
-      professionalTax: pi?.professionalTax ?? s.professionalTax ?? 0,
-      loanDeduction: pi?.loanDeduction ?? s.loanDeduction ?? 0,
-      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? s.unpaidLeaveDeduction ?? 0,
+      basicSalary: item.basicSalary,
+      hra: item.hra,
+      allowances: item.allowances + item.specialAllowance,
+      commission: item.commission,
+      reimbursement: item.reimbursement,
+      pf: item.pf,
+      esi: item.esi,
+      tds: item.tds,
+      professionalTax: item.professionalTax,
+      loanDeduction: item.loanDeduction,
+      unpaidLeaveDeduction: item.lopDeduction,
     });
     return { filename, buffer };
   }
