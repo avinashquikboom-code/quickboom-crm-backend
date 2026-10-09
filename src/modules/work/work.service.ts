@@ -1939,8 +1939,16 @@ status: ${item.status}`);
   }
 
   /**
+   * Check if a team is purely a BPO-telecalling team and not a production team.
+   */
+  private isBpoOnlyTeam(name?: string | null, description?: string | null): boolean {
+    const label = `${name || ''} ${description || ''}`.toUpperCase();
+    return label.includes('BPO') && !label.includes('PRODUCTION');
+  }
+
+  /**
    * Active production teams for this employee, scoped to their company.
-   * Inactive employees and BPO-named teams are excluded.
+   * Inactive employees and BPO-only teams are excluded.
    */
   private async activeProductionTeamIdsForEmployee(
     employeeId: number,
@@ -1956,20 +1964,18 @@ status: ${item.status}`);
 
     const employee = await this.prisma.employee.findFirst({
       where: { id: employeeId },
-      select: { id: true, customerId: true, status: true },
+      select: { id: true, userId: true, customerId: true, status: true },
     });
     if (!employee || String(employee.status || '').toUpperCase() === 'INACTIVE') return [];
 
     const tenantId = Number(tenantCustomerId || employee.customerId);
-    const keep = (name?: string | null, description?: string | null) => {
-      const label = `${name || ''} ${description || ''}`.toUpperCase();
-      return !label.includes('BPO');
-    };
+    const empIds = [employeeId];
+    if (employee.userId) empIds.push(Number(employee.userId));
 
     const [memberships, ledTeams] = await Promise.all([
       this.prisma.teamMember.findMany({
         where: {
-          employeeId,
+          employeeId: { in: empIds },
           team: { isActive: true },
         },
         select: {
@@ -1978,7 +1984,7 @@ status: ${item.status}`);
         },
       }),
       this.prisma.team.findMany({
-        where: { leaderId: employeeId, isActive: true },
+        where: { leaderId: { in: empIds }, isActive: true },
         select: {
           id: true,
           name: true,
@@ -1992,12 +1998,12 @@ status: ${item.status}`);
     const rows = new Map<number, number>();
     for (const row of memberships) {
       if (row.team?.isActive === false) continue;
-      if (!keep(row.team?.name, row.team?.description)) continue;
+      if (this.isBpoOnlyTeam(row.team?.name, row.team?.description)) continue;
       rows.set(row.teamId, Number(row.team?.customerId));
     }
     for (const team of ledTeams) {
       if (String(team.leader?.status || '').toUpperCase() === 'INACTIVE') continue;
-      if (!keep(team.name, team.description)) continue;
+      if (this.isBpoOnlyTeam(team.name, team.description)) continue;
       rows.set(team.id, Number(team.customerId));
     }
 
@@ -2019,13 +2025,21 @@ status: ${item.status}`);
    */
   private async productionTeamIdsFromEmployeeWorks(employeeId: number): Promise<number[]> {
     if (typeof this.prisma.work?.findMany !== 'function') return [];
+    const empRecord = await this.prisma.employee.findFirst({
+      where: { id: employeeId },
+      select: { userId: true },
+    });
+    const viewerIds = [employeeId];
+    if (empRecord?.userId) viewerIds.push(Number(empRecord.userId));
+
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
         OR: [
-          { assignedToId: employeeId },
-          { editorId: employeeId },
-          { tasks: { some: { assignedToId: employeeId } } },
+          { assignedToId: { in: viewerIds } },
+          { editorId: { in: viewerIds } },
+          { tasks: { some: { assignedToId: { in: viewerIds } } } },
+          { customer: { assignedEmployeeId: { in: viewerIds } } },
         ],
       },
       select: {
@@ -2040,8 +2054,7 @@ status: ${item.status}`);
     const ids = new Set<number>();
     const keep = (team?: { id?: number; name?: string | null; description?: string | null; isActive?: boolean | null } | null) => {
       if (!team?.id || team.isActive === false) return;
-      const label = `${team.name || ''} ${team.description || ''}`.toUpperCase();
-      if (!label.includes('PRODUCTION') || label.includes('BPO')) return;
+      if (this.isBpoOnlyTeam(team.name, team.description)) return;
       ids.add(team.id);
     };
     for (const work of works) {
@@ -2172,8 +2185,7 @@ status: ${item.status}`);
       return 0;
     }
 
-    const teamLabel = `${team.name || ''} ${team.description || ''}`.toUpperCase();
-    const isBpoTeam = teamLabel.includes('BPO');
+    const isBpoTeam = this.isBpoOnlyTeam(team.name, team.description);
     let roleAssignmentIndex = 0;
 
     let updatedCount = 0;
@@ -2330,26 +2342,40 @@ status: ${item.status}`);
         { assignedToId: numEmployeeId },
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
+        { customer: { assignedEmployeeId: numEmployeeId } },
       ];
       if (empRecord?.userId) {
         orConditions.push(
           { assignedToId: empRecord.userId },
           { editorId: empRecord.userId },
           { tasks: { some: { assignedToId: empRecord.userId } } },
+          { customer: { assignedEmployeeId: empRecord.userId } },
         );
       }
-      if (isProductionManager) {
-        if (teamCustomerIds.length > 0) {
-          orConditions.push({ customerId: { in: teamCustomerIds } });
-        }
-        if (productionTeamIds.length > 0) {
-          orConditions.push(
-            { teamId: { in: productionTeamIds } },
-            { customer: { assignedTeamId: { in: productionTeamIds }, deletedAt: null } },
-            { customer: { assignedTeam: { id: { in: productionTeamIds }, isActive: true }, deletedAt: null } },
-            { team: { id: { in: productionTeamIds }, isActive: true } },
-          );
-        }
+      if (productionTeamIds.length > 0) {
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
+          { customer: { deletedAt: null, assignedTeam: { id: { in: productionTeamIds }, isActive: true } } },
+          { team: { id: { in: productionTeamIds }, isActive: true } },
+        );
+      }
+      orConditions.push(
+        { team: { members: { some: { employeeId: numEmployeeId } } } },
+        { team: { leaderId: numEmployeeId } },
+        { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
+        { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
+      );
+      if (empRecord?.userId) {
+        orConditions.push(
+          { team: { members: { some: { employeeId: empRecord.userId } } } },
+          { team: { leaderId: empRecord.userId } },
+          { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: empRecord.userId } } } } },
+          { customer: { deletedAt: null, assignedTeam: { leaderId: empRecord.userId } } },
+        );
+      }
+      if (teamCustomerIds.length > 0) {
+        orConditions.push({ customerId: { in: teamCustomerIds } });
       }
       if (teamCustomerIds.length === 0 && productionTeamIds.length === 0 && isProductionManager && tenantCustomerId) {
         orConditions.push({
@@ -2445,6 +2471,7 @@ status: ${item.status}`);
         { assignedToId: numEmployeeId },
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
+        { customer: { assignedEmployeeId: numEmployeeId } },
       ];
 
       if (empRecord?.userId) {
@@ -2452,7 +2479,34 @@ status: ${item.status}`);
           { assignedToId: empRecord.userId },
           { editorId: empRecord.userId },
           { tasks: { some: { assignedToId: empRecord.userId } } },
+          { customer: { assignedEmployeeId: empRecord.userId } },
         );
+      }
+
+      if (productionTeamIds.length > 0) {
+        orConditions.push(
+          { teamId: { in: productionTeamIds } },
+          { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
+          { customer: { deletedAt: null, assignedTeam: { id: { in: productionTeamIds }, isActive: true } } },
+          { team: { id: { in: productionTeamIds }, isActive: true } },
+        );
+      }
+      orConditions.push(
+        { team: { members: { some: { employeeId: numEmployeeId } } } },
+        { team: { leaderId: numEmployeeId } },
+        { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
+        { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
+      );
+      if (empRecord?.userId) {
+        orConditions.push(
+          { team: { members: { some: { employeeId: empRecord.userId } } } },
+          { team: { leaderId: empRecord.userId } },
+          { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: empRecord.userId } } } } },
+          { customer: { deletedAt: null, assignedTeam: { leaderId: empRecord.userId } } },
+        );
+      }
+      if (teamCustomerIds.length > 0) {
+        orConditions.push({ customerId: { in: teamCustomerIds } });
       }
 
       where = {
@@ -2680,11 +2734,56 @@ status: ${item.status}`);
     if (!isProductionManager) {
       const viewerIds = new Set<number>([numEmployeeId]);
       if (empRecord?.userId) viewerIds.add(Number(empRecord.userId));
-      filteredItems = filteredItems.filter((w) => {
-        const ids = [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
+      const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
+        `${person?.firstName || ''} ${person?.lastName || ''}`.trim().toUpperCase().replace(/\s+/g, ' ');
+      const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+        if (!person) return false;
+        const roleLabel = `${person.designation?.name || ''} ${person.department?.name || ''}`.toUpperCase();
+        if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
+        if (roleLabel.trim() === 'ADMIN') return true;
+        const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
+        const name = personName(person);
+        return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
+      };
+      const directlyAssigned = (w: any) => {
+        const ids = [
+          w.assignedToId,
+          w.editorId,
+          w.customer?.assignedEmployeeId,
+          ...(w.tasks || []).map((task: any) => task.assignedToId),
+        ]
           .map((id: any) => Number(id))
           .filter((id: number) => Number.isInteger(id) && id > 0);
         return ids.some((id: number) => viewerIds.has(id));
+      };
+      const assignedToAnotherEmployee = (w: any) => {
+        const people = [
+          w.assignedTo,
+          w.editor,
+          ...(w.tasks || []).map((task: any) => task.assignedTo),
+        ];
+        return people.some((person) => {
+          const id = Number(person?.id);
+          if (!Number.isInteger(id) || id <= 0 || viewerIds.has(id)) return false;
+          return !isPlatformAdmin(person);
+        });
+      };
+      filteredItems = filteredItems.filter((w) => {
+        if (directlyAssigned(w)) return true;
+        if (assignedToAnotherEmployee(w)) return false;
+        const teamId = Number(w.teamId || w.team?.id || w.customer?.assignedTeamId || w.customer?.assignedTeam?.id);
+        const isMemberOfWorkTeam =
+          (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+          viewerIds.has(Number(w.team?.leaderId)) ||
+          ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+          viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
+        const isTeamWork =
+          isMemberOfWorkTeam ||
+          (teamId > 0 && productionTeamIds.includes(teamId)) ||
+          teamCustomerIds.includes(Number(w.customerId));
+        if (!isTeamWork) return false;
+        if (isFullAccess) return true;
+        return allowedTypes.has(normalizeActivityType(w));
       });
     }
 

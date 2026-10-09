@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus, WorkType } from '@prisma/client';
+import { WorkPermissionService } from './work-permission.service';
 
 describe('Employee Calendar Isolation & Mapping Tests', () => {
   let workService: WorkService;
@@ -155,7 +156,19 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
                   if (condition.assignedToId === null && item.assignedToId !== null) return false;
                   return true;
                 }
+                if (condition.teamId !== undefined) {
+                  const tId = item.teamId || item.team?.id;
+                  if (condition.teamId?.in && Array.isArray(condition.teamId.in)) {
+                    if (condition.teamId.in.includes(tId)) return true;
+                  } else if (condition.teamId === tId) {
+                    return true;
+                  }
+                }
                 if (condition.team !== undefined) {
+                  const tId = item.teamId || item.team?.id;
+                  if (condition.team?.id?.in && Array.isArray(condition.team?.id?.in)) {
+                    if (condition.team.id.in.includes(tId)) return true;
+                  }
                   if (condition.team.members?.some?.employeeId !== undefined) {
                     return item.team?.members?.some((m: any) => m.employeeId === condition.team.members.some.employeeId);
                   }
@@ -206,6 +219,18 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: WorkPermissionService,
+          useValue: {
+            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+              role: 'STAFF',
+              allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT', 'POST_DESIGN']),
+              isFullAccess: true,
+              isProductionManager: false,
+              workPermissions: [],
+            }),
+          },
+        },
       ],
     }).compile();
 

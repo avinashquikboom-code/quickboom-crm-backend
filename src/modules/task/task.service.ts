@@ -988,10 +988,7 @@ export class TaskService {
       select: { id: true, name: true, description: true },
     });
     return teams
-      .filter((team) => {
-        const label = `${team.name || ''} ${team.description || ''}`.toUpperCase();
-        return !label.includes('BPO');
-      })
+      .filter((team) => !this.isBpoTeamLabel(team.name, team.description))
       .map((team) => team.id);
   }
 
