@@ -424,10 +424,13 @@ export class WorkController {
       );
     }
 
+    const rangeStart = dateFrom || startDate;
+    const rangeEnd = dateTo || endDate;
+    const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
     return this.workService.getEmployeeCalendar(authEmpId, {
-      date: date || startDate,
-      dateFrom: startDate || dateFrom,
-      dateTo: endDate || dateTo,
+      date: multiDayRange ? undefined : (date || rangeStart),
+      dateFrom: multiDayRange ? rangeStart : (startDate || dateFrom),
+      dateTo: multiDayRange ? rangeEnd : (endDate || dateTo),
       month: period.month,
       year: period.year,
       status,
@@ -536,10 +539,13 @@ export class WorkController {
         const canViewCalendar =
           userHasModulePermission(req?.user, 'CALENDAR', 'VIEW') ||
           userHasModulePermission(req?.user, 'CALENDAR', 'VIEW_ASSIGNED');
+        const rangeStart = dateFrom || startDate;
+        const rangeEnd = dateTo || endDate;
+        const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
         return this.workService.getEmployeeCalendar(resolvedEmpId, {
-          date: date || startDate,
-          dateFrom: dateFrom || startDate,
-          dateTo: dateTo || endDate,
+          date: multiDayRange ? undefined : (date || rangeStart),
+          dateFrom: multiDayRange ? rangeStart : (dateFrom || startDate),
+          dateTo: multiDayRange ? rangeEnd : (dateTo || endDate),
           month: period.month,
           year: period.year,
           status,

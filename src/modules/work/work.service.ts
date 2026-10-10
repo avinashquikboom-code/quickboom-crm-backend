@@ -2599,8 +2599,18 @@ status: ${item.status}`);
           ];
 
     const designationTypes = workTypesForDesignation(designationName);
+    const enumWorkTypes = new Set<string>(Object.values(WorkType));
+    const visibleTypes = new Set(
+      designationTypes.filter((type) => enumWorkTypes.has(type)),
+    );
+    // Designation text can be "Production" while the role still has video_edit / reel_shoot permissions.
+    if (visibleTypes.size === 0 && !isFullAccess && !isProductionManager) {
+      for (const type of allowedTypes) {
+        if (enumWorkTypes.has(type)) visibleTypes.add(type);
+      }
+    }
     const designationSchedule = () => {
-      if (designationTypes.length === 0 || !tenantCustomerId) return [];
+      if (visibleTypes.size === 0 || !tenantCustomerId) return [];
       const companyId = Number(tenantCustomerId);
       const companyScope: any[] = [
         { customerId: companyId },
@@ -2618,7 +2628,7 @@ status: ${item.status}`);
       return [
         {
           AND: [
-            { workType: { in: designationTypes } },
+            { workType: { in: Array.from(visibleTypes) } },
             { OR: companyScope },
             {
               OR: [
@@ -2806,6 +2816,13 @@ status: ${item.status}`);
     let targetDay: number | undefined;
     let appliedMonth = query.month;
     let appliedYear = query.year;
+    const rangeFromRaw = query.dateFrom || (query as any).startDate;
+    const rangeToRaw = query.dateTo || (query as any).endDate;
+    const rangeFromKey = rangeFromRaw ? String(rangeFromRaw).trim().slice(0, 10) : '';
+    const rangeToKey = rangeToRaw ? String(rangeToRaw).trim().slice(0, 10) : '';
+    // A week sends dateFrom and dateTo. Do not let a copied start date
+    // collapse that range to the first day.
+    const rangeIsMultiDay = Boolean(rangeFromKey && rangeToKey && rangeFromKey !== rangeToKey);
     const hasExplicitRange = Boolean(
       query.date ||
       query.dateFrom ||
@@ -2820,7 +2837,7 @@ status: ${item.status}`);
       appliedMonth = appliedMonth && appliedMonth >= 1 && appliedMonth <= 12 ? appliedMonth : istNow.getUTCMonth() + 1;
     }
 
-    if (query.date) {
+    if (!rangeIsMultiDay && query.date) {
       targetDateStr = query.date.trim();
       const parts = targetDateStr.split('-').map(Number);
       if (parts.length === 3 && !parts.some(isNaN)) {
@@ -2843,22 +2860,22 @@ status: ${item.status}`);
           where.scheduledDate = { gte: startWindow, lte: endWindow };
         }
       }
-    } else if (appliedMonth && appliedYear) {
+    } else if (!rangeIsMultiDay && appliedMonth && appliedYear) {
       targetYear = appliedYear;
       targetMonth = appliedMonth;
       // Buffer by +/- 1 day on month edges to avoid timezone truncation
       const startOfMonth = new Date(Date.UTC(appliedYear, appliedMonth - 1, 0, 0, 0, 0, 0));
       const endOfMonth = new Date(Date.UTC(appliedYear, appliedMonth, 2, 23, 59, 59, 999));
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
-    } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
+    } else if (rangeFromKey || rangeToKey) {
       where.scheduledDate = {};
-      const from = query.dateFrom || (query as any).startDate;
-      const to = query.dateTo || (query as any).endDate;
-      if (from) where.scheduledDate.gte = new Date(new Date(from).getTime() - 24 * 60 * 60 * 1000);
-      if (to) {
-        const toDate = new Date(to);
-        toDate.setHours(23, 59, 59, 999);
-        where.scheduledDate.lte = new Date(toDate.getTime() + 24 * 60 * 60 * 1000);
+      if (rangeFromKey) {
+        const [y, m, d] = rangeFromKey.split('-').map(Number);
+        where.scheduledDate.gte = new Date(Date.UTC(y, m - 1, d - 1, 0, 0, 0, 0));
+      }
+      if (rangeToKey) {
+        const [y, m, d] = rangeToKey.split('-').map(Number);
+        where.scheduledDate.lte = new Date(Date.UTC(y, m - 1, d + 1, 23, 59, 59, 999));
       }
     }
 
@@ -3022,6 +3039,14 @@ status: ${item.status}`);
       filteredItems = items.filter((w) => matchesTargetDate(w.scheduledDate, targetYear!, targetMonth!, targetDay!));
     } else if (targetYear && targetMonth) {
       filteredItems = items.filter((w) => matchesTargetMonth(w.scheduledDate, targetYear!, targetMonth!));
+    } else if (rangeFromKey || rangeToKey) {
+      filteredItems = items.filter((w) => {
+        const key = this.scheduleDateKey(w.scheduledDate);
+        if (!key) return false;
+        if (rangeFromKey && key < rangeFromKey) return false;
+        if (rangeToKey && key > rangeToKey) return false;
+        return true;
+      });
     }
 
     if (!isProductionManager) {
@@ -3044,7 +3069,8 @@ status: ${item.status}`);
           (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && Number(w.editorId) !== numEmployeeId);
         if (
           !otherAssignee &&
-          (workMatchesDesignation(designationName, w.workType) ||
+          (visibleTypes.has(String(w.workType || '').toUpperCase()) ||
+            workMatchesDesignation(designationName, w.workType) ||
             workMatchesDesignation(designationName, normalizeActivityType(w)))
         ) {
           return true;
@@ -3232,7 +3258,7 @@ status: ${item.status}`);
       }
 
       // Date range buffering for Prisma query
-      if (query.date) {
+      if (!rangeIsMultiDay && query.date) {
         const d = new Date(query.date);
         if (!isNaN(d.getTime())) {
           const startWindow = new Date(d.getTime() - 24 * 60 * 60 * 1000);
@@ -3248,7 +3274,7 @@ status: ${item.status}`);
             },
           ];
         }
-      } else if (appliedMonth && appliedYear) {
+      } else if (!rangeIsMultiDay && appliedMonth && appliedYear) {
         const startOfMonth = new Date(Date.UTC(appliedYear, appliedMonth - 1, 0, 0, 0, 0, 0));
         const endOfMonth = new Date(Date.UTC(appliedYear, appliedMonth, 2, 23, 59, 59, 999));
         taskWhere.AND = [
@@ -3329,6 +3355,17 @@ status: ${item.status}`);
         matchesTargetMonth(t.startDate, targetYear!, targetMonth!) ||
         matchesTargetMonth(t.dueAt, targetYear!, targetMonth!)
       );
+    } else if (rangeFromKey || rangeToKey) {
+      filteredTasks = tasksList.filter((t) => {
+        const keys = [t.dueDate, t.startDate, t.dueAt]
+          .map((value) => this.scheduleDateKey(value))
+          .filter((key): key is string => Boolean(key));
+        return keys.some((key) => {
+          if (rangeFromKey && key < rangeFromKey) return false;
+          if (rangeToKey && key > rangeToKey) return false;
+          return true;
+        });
+      });
     }
 
     const formatTaskTime = (d: Date): string => {
