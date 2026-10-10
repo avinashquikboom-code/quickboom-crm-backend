@@ -347,7 +347,36 @@ describe('Employee calendar team and assignment regressions', () => {
     await workService.getEmployeeCalendar(1, {}, { assignedOnly: true });
     expect(prisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
       { employeeId: 1 }, { assignedToId: 2 },
+      { customer: { assignedTeamId: { in: [7] } } },
     ]);
+  });
+
+  it('includes tasks for every team-allotted customer even when assigned to another member', async () => {
+    const prisma = testingModule.get(PrismaService) as any;
+    const rows = [30, 31, 32].map((customerId, index) => ({
+      id: 900 + index,
+      customerId,
+      employeeId: 9,
+      assignedToId: 19,
+      title: `Customer ${customerId} task`,
+      dueDate: new Date('2026-10-12T00:00:00.000Z'),
+      status: 'PENDING',
+      customer: { id: customerId, name: `Customer ${customerId}`, assignedTeamId: index < 2 ? 7 : 99 },
+    }));
+    prisma.task.findMany.mockImplementation(({ where }: any) => rows.filter((row) =>
+      where.OR.some((condition: any) =>
+        condition.employeeId === row.employeeId ||
+        condition.assignedToId === row.assignedToId ||
+        condition.customer?.assignedTeamId?.in?.includes(row.customer.assignedTeamId),
+      ),
+    ));
+    const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-12' }, { assignedOnly: true });
+    expect(calendar.map((item) => item.id)).toEqual(expect.arrayContaining(['900', '901']));
+    expect(calendar.map((item) => item.id)).not.toContain('902');
+
+    prisma.teamMember.findMany.mockResolvedValue([]);
+    const withoutMembership = await workService.getEmployeeCalendar(1, { date: '2026-10-12' }, { assignedOnly: true });
+    expect(withoutMembership.map((item) => item.id)).not.toEqual(expect.arrayContaining(['900', '901']));
   });
 
   it('returns non-empty customer-wise data through the existing HTTP endpoint', async () => {

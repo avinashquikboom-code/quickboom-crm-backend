@@ -3456,7 +3456,7 @@ status: ${item.status}`);
         { customer: { deletedAt: null, NOT: { isActive: false } } },
       ];
 
-      // Preserve employee-level authorization. Never return tasks belonging to unrelated employees.
+      // My Calendar includes direct assignments and customers allotted to active teams.
       if (!assignedOnly && query.employeeId && isProductionManager) {
         const filterEmpId = Number(query.employeeId);
         taskWhere.OR = [
@@ -3469,6 +3469,11 @@ status: ${item.status}`);
         const taskOr: any[] = [{ employeeId: numEmployeeId }];
         if (empRecord?.userId) {
           taskOr.push({ assignedToId: empRecord.userId });
+        }
+        if (assignedOnly && membershipTeamIds.length > 0) {
+          taskOr.push({
+            customer: { assignedTeamId: { in: membershipTeamIds } },
+          });
         }
         taskWhere.OR = taskOr;
       }
