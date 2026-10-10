@@ -52,6 +52,7 @@ describe('Employee designation calendar visibility', () => {
       scheduledDate: scheduled,
       scheduledTime: '10:00 AM',
       status: WorkStatus.SCHEDULED,
+      subscriptionId: customerId === 1 ? 3 : null,
       customer: {
         id: customerId,
         name: customerId === 1 ? 'Client' : 'Other tenant',
@@ -149,16 +150,29 @@ describe('Employee designation calendar visibility', () => {
       },
       team: { findMany: jest.fn().mockResolvedValue([]) },
       customer: { findMany: jest.fn().mockResolvedValue([]) },
+      customerSubscription: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 3,
+          customerId: 1,
+          status: 'ACTIVE',
+          startDate: new Date('2026-10-04T00:00:00.000Z'),
+          endDate: new Date('2026-11-04T00:00:00.000Z'),
+          plan: { name: 'Growth', monthlyPrice: 0 },
+        }),
+      },
       task: { findMany: jest.fn().mockResolvedValue([]) },
       work: {
         update: jest.fn(),
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           return works.filter((item) => {
             if (where?.status?.not && item.status === where.status.not) return false;
+            if (where?.customerId != null && item.customerId !== Number(where.customerId)) return false;
+            if (where?.subscriptionId != null && item.subscriptionId !== where.subscriptionId) return false;
             if (where?.OR && !where.OR.some((condition: any) => matches(item, condition))) return false;
             return true;
           });
         }),
+        count: jest.fn().mockResolvedValue(4),
       },
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -201,6 +215,24 @@ describe('Employee designation calendar visibility', () => {
     expect(week.map((item) => item.id)).toEqual(calendar.map((item) => item.id));
     expect(metrics.total).toBe(calendar.length);
     expect(calendar.find((item) => item.id === '6')).toBeUndefined();
+  });
+
+  it('shows the same customer-calendar edit to the Video Editor on the same date', async () => {
+    const { service } = await serviceFor({ id: 11, designation: 'Video Editor' });
+    const customerCalendar = await service.getCalendar(1, { month: 10, year: 2026 });
+    const employeeCalendar = await service.getEmployeeCalendar(11, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    const customerEdit = customerCalendar.find((item) => item.id === '2');
+    const employeeEdit = employeeCalendar.find((item) => item.id === '2');
+    expect(customerEdit).toBeDefined();
+    expect(employeeEdit?.scheduledDate).toBe(customerEdit?.scheduledDate);
+    expect(employeeEdit?.title).toBe(customerEdit?.title);
+    expect(employeeEdit?.status).toBe(customerEdit?.status);
+    expect(employeeEdit?.customerId).toBe(customerEdit?.customerId);
+    const metrics = await service.getProductionMetrics(11, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    expect(metrics.total).toBe(employeeCalendar.length);
+    const telecaller = await serviceFor({ id: 14, designation: 'Telecaller' });
+    const hidden = await telecaller.service.getEmployeeCalendar(14, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    expect(hidden.find((item) => item.id === '2')).toBeUndefined();
   });
 
   it('does not give video-editing tasks to a videographer', async () => {

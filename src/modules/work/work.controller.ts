@@ -415,9 +415,11 @@ export class WorkController {
       `date=${date || startDate || 'none'} dateFrom=${dateFrom || startDate || 'none'} dateTo=${dateTo || endDate || 'none'}`,
     );
     // Employees without the calendar module still receive rows assigned to them.
-    // Team-wide and company-wide schedules stay behind CALENDAR:VIEW.
-    const lookingAtAnotherEmployee =
-      Boolean(employeeId) && Number(employeeId) !== authEmpId;
+    const targetQueryEmpId = employeeId
+      ? await this.workService.resolveCanonicalEmployeeId(employeeId)
+      : undefined;
+    const isTargetSameAsAuth = !targetQueryEmpId || targetQueryEmpId === authEmpId;
+    const lookingAtAnotherEmployee = !isTargetSameAsAuth;
     if (lookingAtAnotherEmployee && !canViewCalendar) {
       throw new ForbiddenException(
         'Access denied: Missing required permission [CALENDAR:VIEW]',
@@ -435,7 +437,7 @@ export class WorkController {
       year: period.year,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
-      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      employeeId: targetQueryEmpId,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
     }, {
@@ -533,7 +535,9 @@ export class WorkController {
       (Array.isArray(req?.user?.roles) && req?.user?.roles.some((r: string) => r.toUpperCase().includes('EMPLOYEE'))) ||
       req?.user?.employee != null;
     if (isEmployeeRole && !req?.query?.customerId && !headerCustId) {
-      const resolvedEmpId = employeeId ? Number(employeeId) : await this.workService.resolveEmployeeIdForUser(req?.user);
+      const resolvedEmpId = employeeId
+        ? (await this.workService.resolveCanonicalEmployeeId(employeeId) || Number(employeeId))
+        : await this.workService.resolveEmployeeIdForUser(req?.user);
       if (resolvedEmpId) {
         const period = parseCalendarMonthYear(month, year);
         const canViewCalendar =

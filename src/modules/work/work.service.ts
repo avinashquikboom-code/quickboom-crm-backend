@@ -644,14 +644,81 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         if (activeSub) resolvedSubscriptionId = activeSub.id;
       }
 
-      const customerTeam = await tx.customer.findUnique({
+      const customerRecord = await tx.customer.findUnique({
         where: { id: numCustomerId },
-        select: { assignedTeamId: true },
+        select: { assignedTeamId: true, assignedEmployeeId: true },
       });
       const resolvedTeamId = dto.teamId
         ? Number(dto.teamId)
-        : (customerTeam?.assignedTeamId || null);
-      const resolvedAssignedToId = dto.assignedToId ? Number(dto.assignedToId) : null;
+        : (customerRecord?.assignedTeamId || null);
+      let resolvedAssignedToId = dto.assignedToId
+        ? await this.resolveCanonicalEmployeeId(dto.assignedToId, numCustomerId)
+        : null;
+      let resolvedEditorId = dto.editorId
+        ? await this.resolveCanonicalEmployeeId(dto.editorId, numCustomerId)
+        : null;
+
+      // Auto-assign from team members if not explicitly provided
+      if (!resolvedAssignedToId && resolvedTeamId) {
+        const team = await tx.team.findUnique({
+          where: { id: resolvedTeamId },
+          include: {
+            members: {
+              include: {
+                employee: {
+                  select: {
+                    id: true,
+                    customerId: true,
+                    status: true,
+                    firstName: true,
+                    lastName: true,
+                    designation: { select: { name: true } },
+                    department: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const teamLabel = `${team?.name || ''} ${team?.description || ''}`.toUpperCase();
+        if (team && !teamLabel.includes('BPO') && (team.members || []).length > 0) {
+          const eligibleMemberIds = await this.eligibleProductionMemberIds(
+            { workType: dto.workType, title: dto.title, description: dto.description },
+            team.members,
+            team.customerId,
+          );
+          if (eligibleMemberIds.length > 0) {
+            resolvedAssignedToId = eligibleMemberIds[0];
+          }
+
+          // If this is a video/reel activity, also match an eligible editor
+          const isReelOrVideo =
+            dto.workType === WorkType.REEL ||
+            dto.workType === WorkType.REELS_SHOOT ||
+            dto.workType === WorkType.SHOOT ||
+            dto.workType === WorkType.EDITING ||
+            (dto.title && /reel|shoot|video|edit/i.test(dto.title));
+          if (isReelOrVideo && !resolvedEditorId) {
+            const editorEligibleIds = await this.eligibleProductionMemberIds(
+              { workType: WorkType.EDITING, title: 'Video Editing' },
+              team.members,
+              team.customerId,
+            );
+            if (editorEligibleIds.length > 0) {
+              resolvedEditorId = editorEligibleIds[0];
+            }
+          }
+        }
+      }
+
+      // Fallback: If still no assigned employee, check customer's direct assigned employee
+      if (!resolvedAssignedToId && customerRecord?.assignedEmployeeId) {
+        resolvedAssignedToId = Number(customerRecord.assignedEmployeeId);
+      }
+
+      if (dto.workType === WorkType.EDITING && resolvedEditorId) {
+        resolvedAssignedToId = resolvedEditorId;
+      }
 
       if (resolvedAssignedToId) {
         const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
@@ -670,8 +737,8 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      if (dto.editorId) {
-        const edId = Number(dto.editorId);
+      if (resolvedEditorId) {
+        const edId = Number(resolvedEditorId);
         const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
           edId,
           numCustomerId,
@@ -683,6 +750,10 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      const workStatus = (resolvedAssignedToId || resolvedEditorId)
+        ? WorkStatus.ASSIGNED
+        : WorkStatus.SCHEDULED;
+
       // Create Work deliverable record
       const work = await tx.work.create({
         data: {
@@ -692,14 +763,14 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           entitlementId: entitlement.id,
           teamId: resolvedTeamId,
           assignedToId: resolvedAssignedToId,
-          editorId: dto.editorId ? Number(dto.editorId) : null,
+          editorId: resolvedEditorId,
           workType: dto.workType,
           title: dto.title,
           description: dto.description,
           scheduledDate: schedDate,
           scheduledTime: dto.scheduledTime || '10:00 AM',
           priority: dto.priority || 'MEDIUM',
-          status: resolvedAssignedToId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
+          status: workStatus,
           notes: dto.notes,
         },
         include: {
@@ -723,17 +794,16 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           data: [
             { workId: work.id, title: 'Reels Video Shoot', stepOrder: 1, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
             { workId: work.id, title: 'Video Editing & Color Grading', stepOrder: 2, status: TaskStatus.PENDING, assignedToId: work.editorId || work.assignedToId },
-            { workId: work.id, title: 'Customer Review & Approval', stepOrder: 3, status: TaskStatus.PENDING },
-            { workId: work.id, title: 'Social Media Feed Upload', stepOrder: 4, status: TaskStatus.PENDING },
+            { workId: work.id, title: 'Customer Review & Approval', stepOrder: 3, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
+            { workId: work.id, title: 'Social Media Feed Upload', stepOrder: 4, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
           ],
         });
       } else {
         await tx.workTask.createMany({
           data: [
-            { workId: work.id, title: 'Creative Post Design', stepOrder: 1, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
-            { workId: work.id, title: 'Captions & Hashtags', stepOrder: 2, status: TaskStatus.PENDING },
-            { workId: work.id, title: 'Customer Review', stepOrder: 3, status: TaskStatus.PENDING },
-            { workId: work.id, title: 'Publishing & Boosting', stepOrder: 4, status: TaskStatus.PENDING },
+            { workId: work.id, title: `${work.title || 'Work'} - Asset Preparation`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
+            { workId: work.id, title: `${work.title || 'Work'} - Content Execution`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
+            { workId: work.id, title: `${work.title || 'Work'} - Review & Approval`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: work.assignedToId },
           ],
         });
       }
@@ -912,8 +982,25 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
               ...(previousAssignee ? [{ assignedToId: previousAssignee }] : []),
               { assignedToId: null },
             ],
+            NOT: {
+              title: { contains: 'Edit', mode: 'insensitive' },
+            },
           },
           data: { assignedToId: nextAssignee },
+        });
+      }
+
+      if (dto.editorId !== undefined) {
+        const nextEditor = updatedWork.editorId != null ? Number(updatedWork.editorId) : null;
+        await tx.workTask.updateMany({
+          where: {
+            workId: numId,
+            OR: [
+              { stepOrder: 2 },
+              { title: { contains: 'Edit', mode: 'insensitive' } },
+            ],
+          },
+          data: { assignedToId: nextEditor },
         });
       }
 
@@ -1362,6 +1449,9 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             ...(previousAssignee ? [{ assignedToId: previousAssignee }] : []),
             { assignedToId: null },
           ],
+          NOT: {
+            title: { contains: 'Edit', mode: 'insensitive' },
+          },
         },
         data: { assignedToId: nextAssignee },
       });
@@ -1374,6 +1464,30 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           .sendWorkAssignmentNotification(nextAssignee, updated, previousAssignee != null)
           .catch((err: any) => {
             this.logger.warn(`Failed to dispatch work assignment notification: ${err?.message}`);
+          });
+      }
+    }
+
+    if (dto.editorId !== undefined) {
+      const nextEditor = updated.editorId != null ? Number(updated.editorId) : null;
+      await this.prisma.workTask.updateMany({
+        where: {
+          workId: numId,
+          OR: [
+            { stepOrder: 2 },
+            { title: { contains: 'Edit', mode: 'insensitive' } },
+          ],
+        },
+        data: { assignedToId: nextEditor },
+      });
+      if (
+        nextEditor &&
+        this.notificationService?.sendWorkAssignmentNotification
+      ) {
+        this.notificationService
+          .sendWorkAssignmentNotification(nextEditor, updated, false)
+          .catch((err: any) => {
+            this.logger.warn(`Failed to dispatch editor assignment notification: ${err?.message}`);
           });
       }
     }
@@ -2288,20 +2402,23 @@ status: ${item.status}`);
       const name = personName(person).toUpperCase().replace(/\s+/g, ' ');
       return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
     };
-    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null) => {
+    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null, requireTeam = true) => {
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
       if (isPlatformAdmin(person)) return false;
-      if (memberIds.size > 0 && !memberIds.has(id)) return false;
+      if (requireTeam && memberIds.size > 0 && !memberIds.has(id)) return false;
       return true;
     };
 
-    const stored = [
+    const candidates = [
       ...(w.tasks || []).map((task: any) => task.assignedTo),
       w.assignedTo,
       w.editor,
-    ]
-      .find((person) => isTaskAssignee(person));
+    ];
+    let stored = candidates.find((person) => isTaskAssignee(person, true));
+    if (!stored) {
+      stored = candidates.find((person) => isTaskAssignee(person, false));
+    }
     if (stored) {
       return { id: Number(stored.id), name: personName(stored) || 'Not assigned', teamName };
     }
@@ -2833,19 +2950,18 @@ status: ${item.status}`);
     // A week sends dateFrom and dateTo. Do not let a copied start date
     // collapse that range to the first day.
     const rangeIsMultiDay = Boolean(rangeFromKey && rangeToKey && rangeFromKey !== rangeToKey);
+    const hasExplicitMonth = Boolean(query.month);
+    if (hasExplicitMonth && !appliedYear) {
+      appliedYear = new Date().getFullYear();
+    }
     const hasExplicitRange = Boolean(
       query.date ||
       query.dateFrom ||
       query.dateTo ||
       (query as any).startDate ||
       (query as any).endDate ||
-      (query.month && query.year),
+      hasExplicitMonth,
     );
-    if (!hasExplicitRange) {
-      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-      appliedYear = appliedYear && appliedYear >= 1970 ? appliedYear : istNow.getUTCFullYear();
-      appliedMonth = appliedMonth && appliedMonth >= 1 && appliedMonth <= 12 ? appliedMonth : istNow.getUTCMonth() + 1;
-    }
 
     if (!rangeIsMultiDay && query.date) {
       targetDateStr = query.date.trim();
@@ -3767,6 +3883,51 @@ assignedEmployee: ${item.assignedEmployee}`);
   }
 
   /**
+   * Resolve canonical Employee ID from any identifier (Employee ID, User ID, or Employee Code).
+   * Ensures User ID vs Employee ID mismatches are correctly resolved across calendars and assignment.
+   */
+  async resolveCanonicalEmployeeId(idOrCode: any, customerId?: number): Promise<number | null> {
+    if (idOrCode == null) return null;
+    if (typeof idOrCode === 'object') {
+      return this.resolveEmployeeIdForUser(idOrCode);
+    }
+    const strVal = String(idOrCode).trim();
+    if (!strVal) return null;
+
+    const numVal = Number(strVal);
+    if (Number.isInteger(numVal) && numVal > 0) {
+      // 1. Direct Employee ID match
+      const byEmpId = await this.prisma.employee.findUnique({
+        where: { id: numVal },
+        select: { id: true },
+      });
+      if (byEmpId?.id) return byEmpId.id;
+
+      // 2. Check if numVal is actually a User ID linked to an Employee
+      const byUserId = await this.prisma.employee.findFirst({
+        where: { userId: numVal },
+        select: { id: true },
+      });
+      if (byUserId?.id) return byUserId.id;
+    }
+
+    // 3. Match by employeeCode
+    const codeWhere: any = {
+      employeeCode: { equals: strVal, mode: 'insensitive' },
+    };
+    if (customerId && Number.isInteger(Number(customerId))) {
+      codeWhere.customerId = Number(customerId);
+    }
+    const byCode = await this.prisma.employee.findFirst({
+      where: codeWhere,
+      select: { id: true },
+    });
+    if (byCode?.id) return byCode.id;
+
+    return null;
+  }
+
+  /**
    * Get detailed plan service quotas and live usage breakdown for Customer / Admin
    */
   async getCustomerUsage(customerId: number | string) {
@@ -4052,10 +4213,35 @@ assignedEmployee: ${item.assignedEmployee}`);
               productionTeamCustomerId,
             )
           : [];
-        const matchedEmployeeId = eligibleMemberIds.length > 0
+        let matchedEmployeeId = eligibleMemberIds.length > 0
           ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
           : null;
+        if (!matchedEmployeeId && targetSub.customer?.assignedEmployeeId) {
+          matchedEmployeeId = Number(targetSub.customer.assignedEmployeeId);
+        }
         if (matchedEmployeeId) roleAssignmentIndex++;
+
+        // For video / reel tasks, match video editor
+        let matchedEditorId: number | null = null;
+        const isReelOrVideoAct =
+          act.workType === WorkType.REEL ||
+          act.workType === WorkType.REELS_SHOOT ||
+          act.workType === WorkType.SHOOT ||
+          act.workType === WorkType.EDITING ||
+          (act.title && /reel|shoot|video|edit/i.test(act.title));
+        if (isReelOrVideoAct && productionMembers.length > 0) {
+          const editorIds = await this.eligibleProductionMemberIds(
+            { workType: WorkType.EDITING, title: 'Video Editing' },
+            productionMembers,
+            productionTeamCustomerId,
+          );
+          if (editorIds.length > 0) {
+            matchedEditorId = editorIds[0];
+          }
+        }
+        if (act.workType === WorkType.EDITING && matchedEditorId) {
+          matchedEmployeeId = matchedEditorId;
+        }
 
         const createdWork = await tx.work.create({
           data: {
@@ -4065,23 +4251,35 @@ assignedEmployee: ${item.assignedEmployee}`);
             entitlementId: entId,
             teamId: assignedTeamId,
             assignedToId: matchedEmployeeId,
+            editorId: matchedEditorId,
             workType: act.workType,
             title: act.title,
             description: act.description,
             scheduledDate: act.scheduledDate,
             scheduledTime: act.scheduledTime,
             priority: 'MEDIUM',
-            status: matchedEmployeeId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
+            status: (matchedEmployeeId || matchedEditorId) ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
           },
         });
 
-        await tx.workTask.createMany({
-          data: [
-            { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
-            { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
-            { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
-          ],
-        });
+        if (isReelOrVideoAct) {
+          await tx.workTask.createMany({
+            data: [
+              { workId: createdWork.id, title: `1. Reels Video Shoot`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+              { workId: createdWork.id, title: `2. Video Editing & Color Grading`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: matchedEditorId || matchedEmployeeId },
+              { workId: createdWork.id, title: `3. Review & Client Approval`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+              { workId: createdWork.id, title: `4. Social Media Feed Upload`, stepOrder: 4, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+            ],
+          });
+        } else {
+          await tx.workTask.createMany({
+            data: [
+              { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+              { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+              { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: matchedEmployeeId },
+            ],
+          });
+        }
 
         createdItems.push(createdWork);
         totalCreated++;
