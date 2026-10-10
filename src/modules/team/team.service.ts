@@ -412,30 +412,25 @@ export class TeamService {
     }
 
     if (permanent) {
-      const membersCount = (team as any)._count?.members ?? 0;
-      const worksCount = (team as any)._count?.works ?? 0;
-      const customersCount = (team as any)._count?.assignedCustomers ?? 0;
-      const hasLeader = team.leaderId !== null && team.leaderId !== undefined;
-
-      if (membersCount > 0 || worksCount > 0 || customersCount > 0 || hasLeader) {
-        throw new BadRequestException(
-          'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
-        );
-      }
-
       try {
-        await this.prisma.team.delete({
-          where: { id: numId },
+        await this.prisma.$transaction(async (tx) => {
+          await tx.teamMember.deleteMany({ where: { teamId: numId } });
+          await tx.work.updateMany({
+            where: { teamId: numId },
+            data: { teamId: null },
+          });
+          await tx.team.delete({ where: { id: numId } });
         });
-        return { success: true, message: `Team "${team.name}" permanently deleted` };
       } catch (err: any) {
         if (err?.code === 'P2003' || err?.code === 'P2014') {
           throw new BadRequestException(
-            'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
+            'Cannot permanently delete this team because related records still reference it. Remove or reassign them first, or deactivate the team instead.',
           );
         }
         throw err;
       }
+
+      return { success: true, message: `Team "${team.name}" permanently deleted` };
     }
 
     await this.prisma.team.update({
