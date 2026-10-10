@@ -3,9 +3,14 @@ import { WorkStatus, WorkType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkPermissionService } from './work-permission.service';
 import { WorkService } from './work.service';
+import { WorkController } from './work.controller';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TransformInterceptor } from '../../common/interceptors/transform.interceptor';
+import * as request from 'supertest';
 
 describe('Employee calendar team and assignment regressions', () => {
   let workService: WorkService;
+  let testingModule: TestingModule;
 
   const teamWork = {
     id: 801,
@@ -66,16 +71,18 @@ describe('Employee calendar team and assignment regressions', () => {
 
   function matches(item: any, condition: any): boolean {
     if (condition.assignedToId !== undefined && condition.assignedToId !== null) {
-      return item.assignedToId === condition.assignedToId;
+      return condition.assignedToId?.in ? condition.assignedToId.in.includes(item.assignedToId) : item.assignedToId === condition.assignedToId;
     }
     if (condition.editorId !== undefined && condition.editorId !== null) {
-      return item.editorId === condition.editorId;
+      return condition.editorId?.in ? condition.editorId.in.includes(item.editorId) : item.editorId === condition.editorId;
     }
     if (condition.tasks?.some?.assignedToId !== undefined) {
-      return item.tasks.some((task: any) => task.assignedToId === condition.tasks.some.assignedToId);
+      const ids = condition.tasks.some.assignedToId;
+      return item.tasks.some((task: any) => ids?.in ? ids.in.includes(task.assignedToId) : task.assignedToId === ids);
     }
     if (condition.customer?.assignedEmployeeId !== undefined) {
-      return item.customer?.assignedEmployeeId === condition.customer.assignedEmployeeId;
+      const ids = condition.customer.assignedEmployeeId;
+      return ids?.in ? ids.in.includes(item.customer?.assignedEmployeeId) : item.customer?.assignedEmployeeId === ids;
     }
     if (condition.teamId?.in) {
       return condition.teamId.in.includes(item.teamId);
@@ -91,6 +98,7 @@ describe('Employee calendar team and assignment regressions', () => {
   }
 
   beforeEach(async () => {
+    works.splice(3);
     const prisma: any = {
       employee: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
@@ -135,6 +143,7 @@ describe('Employee calendar team and assignment regressions', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
+      controllers: [WorkController],
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
@@ -151,7 +160,8 @@ describe('Employee calendar team and assignment regressions', () => {
           },
         },
       ],
-    }).compile();
+    }).overrideGuard(JwtAuthGuard).useValue({ canActivate: () => true }).compile();
+    testingModule = module;
 
     const videoEditWork = {
       ...teamWork,
@@ -300,4 +310,75 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(metrics.total).toBe(calendar.length);
     expect(metrics.total).toBe(2);
   });
+  it('keeps every active team assignment regardless of designation or another assignee', async () => {
+    const calendar = await workService.getEmployeeCalendar(5, { month: 10, year: 2026 }, { assignedOnly: true });
+    expect(calendar.map((item) => item.id)).toEqual(expect.arrayContaining(['801', '804', '806', '807']));
+    expect(calendar.find((item) => item.id === '803')).toBeUndefined();
+  });
+
+  it('does not grant team visibility from a direct assignment without membership', async () => {
+    works.push({ ...directWork, id: 808, assignedToId: 4, teamId: 99 });
+    const calendar = await workService.getEmployeeCalendar(4, { month: 10, year: 2026 }, { assignedOnly: true });
+    expect(calendar.map((item) => item.id)).toEqual(['808']);
+  });
+
+  it('does not confuse a matching User.id with another Employee.id', async () => {
+    works.push({ ...directWork, id: 809, assignedToId: 2 });
+    const calendar = await workService.getEmployeeCalendar(1, {}, { assignedOnly: true });
+    expect(calendar.find((item) => item.id === '809')).toBeUndefined();
+  });
+
+  it.each([
+    { customerId: 1, isActive: false },
+    { customerId: 99, isActive: true },
+  ])('excludes inactive or foreign-company membership: %j', async (team) => {
+    const prisma = testingModule.get(PrismaService) as any;
+    prisma.teamMember.findMany.mockResolvedValue([{ teamId: 7, team }]);
+    const calendar = await workService.getEmployeeCalendar(1, {}, { assignedOnly: true });
+    expect(calendar.map((item) => item.id)).toEqual(['802']);
+  });
+
+  it("does not expose a manager's unrelated general tasks in My Calendar", async () => {
+    const permissions = testingModule.get(WorkPermissionService) as any;
+    permissions.getAllowedActivityTypesForEmployee.mockResolvedValue({
+      role: 'PRODUCTION_MANAGER', allowedTypes: new Set(), isFullAccess: true, isProductionManager: true,
+    });
+    const prisma = testingModule.get(PrismaService) as any;
+    await workService.getEmployeeCalendar(1, {}, { assignedOnly: true });
+    expect(prisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
+      { employeeId: 1 }, { assignedToId: 2 },
+    ]);
+  });
+
+  it('returns non-empty customer-wise data through the existing HTTP endpoint', async () => {
+    const log = jest.spyOn((workService as any).logger, 'log');
+    jest.spyOn(workService, 'onModuleInit').mockImplementation(() => undefined);
+    const app = testingModule.createNestApplication();
+    app.setGlobalPrefix('api/v1');
+    app.use((req: any, _res: any, next: any) => {
+      req.user = { id: 2, role: 'EMPLOYEE', employee: { id: 1, customerId: 1 } };
+      next();
+    });
+    app.useGlobalInterceptors(new TransformInterceptor());
+    await app.init();
+    try {
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/works/employee/calendar?month=10&year=2026')
+        .expect(200);
+      expect(response.body.success).toBe(true);
+      const debug = log.mock.calls.map((call) => String(call[0])).find((line) => line.startsWith('[EMPLOYEE_CALENDAR_DEBUG]'));
+      expect(debug).toEqual(expect.stringContaining('authUserId=2 resolvedEmployeeId=1'));
+      expect(debug).toEqual(expect.stringContaining('membershipTeams=7'));
+      expect(debug).toEqual(expect.stringContaining('directWorkCount=1 teamWorkCount=0 customerWorkCount=4'));
+      expect(debug).toEqual(expect.stringContaining('finalCount=5'));
+      expect(response.body.data.map((item: any) => item.id)).toEqual(expect.arrayContaining(['801', '802']));
+      expect(response.body.data.find((item: any) => item.id === '803')).toBeUndefined();
+      expect(response.body.data.find((item: any) => item.id === '801')).toMatchObject({
+        customerId: '30', customerName: 'Allotted Client', scheduledDate: '2026-10-12',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
 });
