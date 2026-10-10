@@ -1623,6 +1623,13 @@ returnedSchedules: 0`);
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
+            user: {
+              select: {
+                userRoles: {
+                  select: { role: { select: { type: true } } },
+                },
+              },
+            },
           },
         },
         editor: {
@@ -1632,6 +1639,13 @@ returnedSchedules: 0`);
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
+            user: {
+              select: {
+                userRoles: {
+                  select: { role: { select: { type: true } } },
+                },
+              },
+            },
           },
         },
         tasks: {
@@ -1644,6 +1658,13 @@ returnedSchedules: 0`);
                 lastName: true,
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
+                user: {
+                  select: {
+                    userRoles: {
+                      select: { role: { select: { type: true } } },
+                    },
+                  },
+                },
               },
             },
           },
@@ -1920,6 +1941,53 @@ status: ${item.status}`);
     return leaderId || null;
   }
 
+  private async eligibleProductionMemberIds(
+    act: { workType?: string; title?: string; description?: string; serviceName?: string },
+    members: Array<{
+      employeeId: number;
+      employee?: {
+        id: number;
+        customerId?: number | null;
+        status?: string | null;
+      } | null;
+    }>,
+    teamCustomerId?: number | null,
+  ): Promise<number[]> {
+    const normalizedType = normalizeActivityType(act);
+    const eligible: number[] = [];
+
+    for (const member of members || []) {
+      const employeeId = Number(member.employeeId || member.employee?.id);
+      if (!Number.isInteger(employeeId) || employeeId <= 0) continue;
+      if (String(member.employee?.status || '').toUpperCase() !== 'ACTIVE') continue;
+      if (
+        teamCustomerId &&
+        member.employee?.customerId &&
+        Number(member.employee.customerId) !== Number(teamCustomerId)
+      ) {
+        continue;
+      }
+
+      try {
+        const permission =
+          await this.workPermissionService.getAllowedActivityTypesForEmployee(
+            employeeId,
+            member.employee?.customerId || teamCustomerId || undefined,
+          );
+        if (permission.isFullAccess || permission.isProductionManager) continue;
+        if (permission.allowedTypes.has(normalizedType)) {
+          eligible.push(employeeId);
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Unable to resolve work eligibility for employee ${employeeId}: ${err?.message}`,
+        );
+      }
+    }
+
+    return eligible;
+  }
+
   /**
    * Check if a team is purely a BPO-telecalling team and not a production team.
    */
@@ -2113,15 +2181,23 @@ status: ${item.status}`);
     );
     const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
       `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
-    const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+    // Admin role types that must never appear as the production task assignee
+    const adminRoleTypes = new Set(['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN']);
+    const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null) => {
+      if (!person) return false;
+      // 1. Check designation / department name patterns
       const roleLabel = `${person?.designation?.name || ''} ${person?.department?.name || ''}`.toUpperCase();
       if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
       if (roleLabel.trim() === 'ADMIN') return true;
+      // 2. Check explicit user role type from the User table (most reliable)
+      const userRoles = person?.user?.userRoles || [];
+      if (userRoles.some((ur: any) => ur?.role?.type && adminRoleTypes.has(ur.role.type))) return true;
+      // 3. Check full name heuristic (fallback for records without designation/user role)
       const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
       const name = personName(person).toUpperCase().replace(/\s+/g, ' ');
       return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
     };
-    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
+    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null) => {
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
       if (isPlatformAdmin(person)) return false;
@@ -2143,7 +2219,7 @@ status: ${item.status}`);
 
   /**
    * Synchronize and assign all unassigned or team-less activities for a customer to the customer's assigned team.
-   * Matches activities to team members based on their designation/specialization.
+   * Matches production activities using each active member's configured work permissions.
    */
   async syncCustomerTeamWorkAssignments(
     customerId: number | string,
@@ -2167,6 +2243,8 @@ status: ${item.status}`);
             employee: {
               select: {
                 id: true,
+                customerId: true,
+                status: true,
                 firstName: true,
                 lastName: true,
                 designation: { select: { name: true } },
@@ -2210,13 +2288,14 @@ status: ${item.status}`);
       if (work.teamId !== numTeamId) data.teamId = numTeamId;
 
       if (!isBpoTeam && !work.assignedToId) {
-        const matchedEmployeeId = this.resolveTeamMemberForActivity(
+        const eligibleMemberIds = await this.eligibleProductionMemberIds(
           work,
           team.members,
-          team.leaderId,
-          roleAssignmentIndex,
-          { roleMatchOnly: true },
+          team.customerId,
         );
+        const matchedEmployeeId = eligibleMemberIds.length > 0
+          ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
+          : null;
         if (matchedEmployeeId) {
           data.assignedToId = matchedEmployeeId;
           if (work.status === WorkStatus.SCHEDULED) data.status = WorkStatus.ASSIGNED;
@@ -3370,6 +3449,7 @@ assignedEmployee: ${item.assignedEmployee}`);
 
       const assignedTeamId = targetSub.customer?.assignedTeamId || null;
       let productionMembers: any[] = [];
+      let productionTeamCustomerId: number | null = null;
       if (assignedTeamId) {
         const team = await tx.team.findUnique({
           where: { id: assignedTeamId },
@@ -3379,6 +3459,8 @@ assignedEmployee: ${item.assignedEmployee}`);
                 employee: {
                   select: {
                     id: true,
+                    customerId: true,
+                    status: true,
                     firstName: true,
                     lastName: true,
                     designation: { select: { name: true } },
@@ -3390,7 +3472,10 @@ assignedEmployee: ${item.assignedEmployee}`);
           },
         });
         const teamLabel = `${team?.name || ''} ${team?.description || ''}`.toUpperCase();
-        if (team && !teamLabel.includes('BPO')) productionMembers = team.members || [];
+        if (team && !teamLabel.includes('BPO')) {
+          productionMembers = team.members || [];
+          productionTeamCustomerId = team.customerId;
+        }
       }
       let roleAssignmentIndex = 0;
 
@@ -3401,8 +3486,15 @@ assignedEmployee: ${item.assignedEmployee}`);
         }
 
         const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
-        const matchedEmployeeId = productionMembers.length
-          ? this.resolveTeamMemberForActivity(act, productionMembers, null, roleAssignmentIndex, { roleMatchOnly: true })
+        const eligibleMemberIds = productionMembers.length
+          ? await this.eligibleProductionMemberIds(
+              act,
+              productionMembers,
+              productionTeamCustomerId,
+            )
+          : [];
+        const matchedEmployeeId = eligibleMemberIds.length > 0
+          ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
           : null;
         if (matchedEmployeeId) roleAssignmentIndex++;
 
