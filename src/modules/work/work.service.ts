@@ -1882,6 +1882,54 @@ status: ${item.status}`);
   }
 
   /**
+   * Team members whose designation or team role matches this activity.
+   * Keyword rules are the existing production distribution rules.
+   */
+  private membersMatchingActivity(
+    act: { workType?: string; title?: string; description?: string; serviceName?: string },
+    members: Array<{
+      employeeId: number;
+      role?: string;
+      employee?: {
+        id?: number;
+        firstName?: string;
+        lastName?: string;
+        designation?: { name: string } | null;
+        department?: { name: string } | null;
+      };
+    }>,
+  ) {
+    const normalizedType = normalizeActivityType(act);
+    const memberMatches = (m: any, keywords: string[]) => {
+      const desName = (m.employee?.designation?.name || '').toLowerCase();
+      const deptName = (m.employee?.department?.name || '').toLowerCase();
+      const role = (m.role || '').toLowerCase();
+      const combined = `${desName} ${deptName} ${role}`;
+      return keywords.some((k) => combined.includes(k));
+    };
+
+    if (normalizedType === 'REEL_EDIT' || normalizedType === 'VIDEO_EDITING') {
+      return members.filter((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
+    }
+    if (normalizedType === 'POST_DESIGN') {
+      return members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));
+    }
+    if (normalizedType === 'STORY_DESIGN') {
+      return members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'story', 'creative']));
+    }
+    if (normalizedType === 'REEL_SHOOT') {
+      return members.filter((m) => memberMatches(m, ['photo', 'camera', 'shoot', 'videographer', 'photographer']));
+    }
+    if (normalizedType === 'REEL_POST' || normalizedType === 'STORY_POST') {
+      return members.filter((m) => memberMatches(m, ['social', 'media', 'manager', 'marketing', 'content', 'executive']));
+    }
+    if (normalizedType === 'INFLUENCER_PROMO') {
+      return members.filter((m) => memberMatches(m, ['influencer', 'promo', 'pr', 'marketing']));
+    }
+    return [];
+  }
+
+  /**
    * Helper to resolve the best-matching employee ID from a team's member list
    * based on activity workType, title, description, or serviceName.
    */
@@ -1906,31 +1954,7 @@ status: ${item.status}`);
       return leaderId || null;
     }
 
-    const normalizedType = normalizeActivityType(act);
-
-    const memberMatches = (m: any, keywords: string[]) => {
-      const desName = (m.employee?.designation?.name || '').toLowerCase();
-      const deptName = (m.employee?.department?.name || '').toLowerCase();
-      const role = (m.role || '').toLowerCase();
-      const combined = `${desName} ${deptName} ${role}`;
-      return keywords.some((k) => combined.includes(k));
-    };
-
-    let eligibleMembers: typeof members = [];
-
-    if (normalizedType === 'REEL_EDIT' || normalizedType === 'VIDEO_EDITING') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
-    } else if (normalizedType === 'POST_DESIGN') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));
-    } else if (normalizedType === 'STORY_DESIGN') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'story', 'creative']));
-    } else if (normalizedType === 'REEL_SHOOT') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['photo', 'camera', 'shoot', 'videographer', 'photographer']));
-    } else if (normalizedType === 'REEL_POST' || normalizedType === 'STORY_POST') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['social', 'media', 'manager', 'marketing', 'content', 'executive']));
-    } else if (normalizedType === 'INFLUENCER_PROMO') {
-      eligibleMembers = members.filter((m) => memberMatches(m, ['influencer', 'promo', 'pr', 'marketing']));
-    }
+    const eligibleMembers = this.membersMatchingActivity(act, members);
 
     if (eligibleMembers.length > 0) {
       const chosen = eligibleMembers[roundRobinIndex % eligibleMembers.length];
@@ -1956,36 +1980,58 @@ status: ${item.status}`);
         id: number;
         customerId?: number | null;
         status?: string | null;
+        designation?: { name?: string | null } | null;
+        department?: { name?: string | null } | null;
       } | null;
     }>,
     teamCustomerId?: number | null,
   ): Promise<number[]> {
     const normalizedType = normalizeActivityType(act);
-    const eligible: number[] = [];
-
-    for (const member of members || []) {
+    const activeMembers = (members || []).filter((member) => {
       const employeeId = Number(member.employeeId || member.employee?.id);
-      if (!Number.isInteger(employeeId) || employeeId <= 0) continue;
-      if (String(member.employee?.status || '').toUpperCase() !== 'ACTIVE') continue;
+      if (!Number.isInteger(employeeId) || employeeId <= 0) return false;
+      const status = String(member.employee?.status || 'ACTIVE').toUpperCase();
+      if (status === 'INACTIVE') return false;
       if (
         teamCustomerId &&
         member.employee?.customerId &&
         Number(member.employee.customerId) !== Number(teamCustomerId)
       ) {
-        continue;
+        return false;
       }
+      const designation = String(member.employee?.designation?.name || '').toUpperCase();
+      if (
+        designation.includes('PRODUCTION MANAGER') ||
+        designation.includes('PRODUCTION_MANAGER') ||
+        designation.includes('PROD MGR') ||
+        designation.includes('PRODUCTION LEAD')
+      ) {
+        return false;
+      }
+      return true;
+    });
+    const designationMatchIds = new Set(
+      this.membersMatchingActivity(act, activeMembers as any).map((member) =>
+        Number(member.employeeId || member.employee?.id),
+      ),
+    );
+    const eligible: number[] = [];
 
+    for (const member of activeMembers) {
+      const employeeId = Number(member.employeeId || member.employee?.id);
       try {
-        const permission =
-          await this.workPermissionService.getAllowedActivityTypesForEmployee(
-            employeeId,
-            member.employee?.customerId || teamCustomerId || undefined,
-          );
-        if (permission.isFullAccess || permission.isProductionManager) continue;
-        if (permission.allowedTypes.has(normalizedType)) {
+        const permission = this.workPermissionService?.getAllowedActivityTypesForEmployee
+          ? await this.workPermissionService.getAllowedActivityTypesForEmployee(
+              employeeId,
+              member.employee?.customerId || teamCustomerId || undefined,
+            )
+          : null;
+        if (permission?.isFullAccess || permission?.isProductionManager) continue;
+        if (designationMatchIds.has(employeeId) || permission?.allowedTypes?.has(normalizedType)) {
           eligible.push(employeeId);
         }
       } catch (err: any) {
+        if (designationMatchIds.has(employeeId)) eligible.push(employeeId);
         this.logger.warn(
           `Unable to resolve work eligibility for employee ${employeeId}: ${err?.message}`,
         );
