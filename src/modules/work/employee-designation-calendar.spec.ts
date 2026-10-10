@@ -18,6 +18,7 @@ describe('Employee designation calendar visibility', () => {
     work(9, WorkType.POST_DESIGN, null, 50, { id: 2, customerId: 1, isActive: true }),
     work(10, WorkType.UPLOADING, null, 50, { id: 2, customerId: 1, isActive: true }),
     work(11, WorkType.EDITING, null, 60, undefined, { customerId: 1, deletedAt: null }),
+    work(12, WorkType.SHOOT, 11, 1),
   ];
 
   function work(
@@ -155,7 +156,7 @@ describe('Employee designation calendar visibility', () => {
 
   it('shows a Reel Editor and a Video Editor only matching editing work', async () => {
     await expect(idsFor('Reel Editor', 10)).resolves.toEqual(['1', '2', '7', '11']);
-    await expect(idsFor('Video Editor', 11)).resolves.toEqual(['1', '2', '7', '11']);
+    await expect(idsFor('Video Editor', 11)).resolves.toEqual(['1', '2', '7', '11', '12']);
   });
 
   it('shows a Reel Shooter only shoot work and keeps the original date', async () => {

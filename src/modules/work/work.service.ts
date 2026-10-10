@@ -3884,8 +3884,27 @@ assignedEmployee: ${item.assignedEmployee}`);
         orderBy: { id: 'asc' },
       });
 
-      // If full set of activities already generated for this subscription, do NOT duplicate
+      // If full set of activities already generated for this subscription, do NOT duplicate.
+      // Still assign any unassigned production-team work to the eligible employee.
       if (existingWorks.length >= planActivities.length) {
+        const existingTeamId = targetSub.customer?.assignedTeamId || null;
+        if (existingTeamId) {
+          const existingTeam = await tx.team.findUnique({
+            where: { id: existingTeamId },
+            select: { name: true, description: true },
+          });
+          if (existingTeam && !this.isBpoOnlyTeam(existingTeam.name, existingTeam.description)) {
+            await this.syncCustomerTeamWorkAssignments(numCustomerId, existingTeamId, tx);
+            return tx.work.findMany({
+              where: {
+                customerId: numCustomerId,
+                subscriptionId: targetSub.id,
+                status: { not: WorkStatus.CANCELLED },
+              },
+              orderBy: { id: 'asc' },
+            });
+          }
+        }
         return existingWorks;
       }
 

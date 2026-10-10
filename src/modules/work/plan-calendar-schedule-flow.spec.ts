@@ -199,6 +199,54 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
       expect(result.createdCount).toBe(0);
       expect(prisma.work.create).not.toHaveBeenCalled();
     });
+
+    it('assigns existing schedules to the production employee without creating duplicates', async () => {
+      const customerId = 101;
+      const start = new Date('2026-08-20T00:00:00.000Z');
+      const end = new Date('2026-09-20T00:00:00.000Z');
+      const sub = mockPlanSub(customerId, ['1 Reel'], start, end);
+      (sub as any).customer = { id: customerId, assignedTeamId: 2 };
+      prisma.customerSubscription.findFirst.mockResolvedValue(sub);
+      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 1, scheduledQty: 1 });
+      prisma.planEntitlement.update.mockResolvedValue({});
+
+      const existingWorks = [
+        { id: 1, title: 'Reel #1: Shoot', customerId, subscriptionId: 501, workType: WorkType.SHOOT, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-20T10:00:00.000Z'), scheduledTime: '10:00 AM' },
+        { id: 2, title: 'Reel #1: Editing', customerId, subscriptionId: 501, workType: WorkType.EDITING, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-22T10:00:00.000Z'), scheduledTime: '10:00 AM' },
+        { id: 3, title: 'Reel #1: Post', customerId, subscriptionId: 501, workType: WorkType.POST_DESIGN, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-24T10:00:00.000Z'), scheduledTime: '10:00 AM' },
+      ];
+      prisma.work.findMany.mockImplementation(async () => existingWorks);
+      prisma.work.update = jest.fn().mockImplementation(async ({ where, data }) => {
+        const work = existingWorks.find((item) => item.id === where.id);
+        Object.assign(work, data);
+        return work;
+      });
+      prisma.workTask.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      prisma.team = {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 2,
+          name: 'Production Team_A',
+          description: '',
+          customerId: 1,
+          leader: null,
+          members: [
+            { employeeId: 12, employee: { id: 12, customerId: 1, status: 'ACTIVE', designation: { name: 'Senior Photographer' }, department: { name: 'Production' } } },
+            { employeeId: 10, employee: { id: 10, customerId: 1, status: 'ACTIVE', designation: { name: 'Video Editor' }, department: { name: 'Production' } } },
+            { employeeId: 11, employee: { id: 11, customerId: 1, status: 'ACTIVE', designation: { name: 'Graphic Designer' }, department: { name: 'Production' } } },
+          ],
+        }),
+      };
+
+      const result = await workService.generatePlanSchedules(customerId);
+
+      expect(result.createdCount).toBe(0);
+      expect(prisma.work.create).not.toHaveBeenCalled();
+      expect(existingWorks.find((work) => work.id === 1)?.assignedToId).toBe(12);
+      expect(existingWorks.find((work) => work.id === 2)?.assignedToId).toBe(10);
+      expect(existingWorks.find((work) => work.id === 3)?.assignedToId).toBe(11);
+      expect(existingWorks.find((work) => work.id === 1)?.scheduledDate).toEqual(new Date('2026-08-20T10:00:00.000Z'));
+      expect(existingWorks.find((work) => work.id === 1)?.scheduledTime).toBe('10:00 AM');
+    });
   });
 
   describe('3. Calendar Filtering & Isolation', () => {
