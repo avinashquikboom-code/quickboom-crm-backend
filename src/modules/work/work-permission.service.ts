@@ -966,10 +966,12 @@ export class WorkPermissionService {
 
     const roleName = (effective.role || '').toUpperCase();
     const isProductionManager =
-      roleName.includes('PRODUCTION') ||
-      roleName.includes('PROD_MGR') ||
       roleName.includes('PRODUCTION_MANAGER') ||
-      roleName.includes('PRODUCTION_LEAD');
+      roleName.includes('PRODUCTION MANAGER') ||
+      roleName.includes('PROD_MGR') ||
+      roleName.includes('PROD MGR') ||
+      roleName.includes('PRODUCTION_LEAD') ||
+      roleName.includes('PRODUCTION LEAD');
 
     const isFullAccess =
       isProductionManager ||

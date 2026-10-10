@@ -62,7 +62,7 @@ describe('Employee calendar team and assignment regressions', () => {
     customerId: 32,
   };
 
-  const works = [teamWork, directWork, otherWork];
+  const works: any[] = [teamWork, directWork, otherWork];
 
   function matches(item: any, condition: any): boolean {
     if (condition.assignedToId !== undefined && condition.assignedToId !== null) {
@@ -152,6 +152,68 @@ describe('Employee calendar team and assignment regressions', () => {
       ],
     }).compile();
 
+    const videoEditWork = {
+      ...teamWork,
+      id: 804,
+      title: 'Reel Edit Unassigned',
+      workType: WorkType.VIDEO_EDITING,
+      scheduledDate: new Date('2026-10-15T00:00:00.000Z'),
+    };
+
+    const directEditorWork = {
+      ...teamWork,
+      id: 806,
+      title: 'Editor Direct Assignment',
+      workType: WorkType.VIDEO_EDITING,
+      editorId: 5,
+      scheduledDate: new Date('2026-10-16T00:00:00.000Z'),
+    };
+
+    const otherEditorWork = {
+      ...teamWork,
+      id: 807,
+      title: 'Other Employee Edit',
+      workType: WorkType.VIDEO_EDITING,
+      editorId: 99,
+      scheduledDate: new Date('2026-10-17T00:00:00.000Z'),
+    };
+
+    works.push(videoEditWork, directEditorWork, otherEditorWork);
+
+    prisma.employee.findUnique.mockImplementation(({ where }: any) => {
+      if (where.id === 1) return { id: 1, userId: 2, customerId: 1, status: 'ACTIVE', firstName: 'Demo', lastName: 'Employee' };
+      if (where.id === 4) return { id: 4, userId: 8, customerId: 1, status: 'ACTIVE', firstName: 'Other', lastName: 'Person' };
+      if (where.id === 5) return { id: 5, userId: 10, customerId: 1, status: 'ACTIVE', firstName: 'Video', lastName: 'Editor' };
+      return null;
+    });
+
+    prisma.teamMember.findMany.mockImplementation(({ where }: any) => {
+      if (where.employeeId === 1 || where.employeeId?.in?.includes(1) || where.employeeId === 5 || where.employeeId?.in?.includes(5)) {
+        return [{ teamId: 7, team: { customerId: 1, isActive: true, name: 'Production Team', description: '' } }];
+      }
+      return [];
+    });
+
+    const workPermService = module.get(WorkPermissionService);
+    jest.spyOn(workPermService, 'getAllowedActivityTypesForEmployee').mockImplementation(async (empId: any) => {
+      if (empId === 5) {
+        return {
+          role: 'VIDEO EDITOR',
+          allowedTypes: new Set(['REEL_EDIT', 'VIDEO_EDITING']),
+          isFullAccess: false,
+          isProductionManager: false,
+          workPermissions: ['video_edit'],
+        };
+      }
+      return {
+        role: 'STAFF',
+        allowedTypes: new Set(['REEL_SHOOT']),
+        isFullAccess: true,
+        isProductionManager: false,
+        workPermissions: [],
+      };
+    });
+
     workService = module.get(WorkService);
   });
 
@@ -172,6 +234,13 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(calendar.find((item) => item.id === '803')).toBeUndefined();
   });
 
+  it('does not show unassigned editing work to an editor who is not on that team', async () => {
+    const calendar = await workService.getEmployeeCalendar(4, { month: 10, year: 2026 }, {
+      allTenantCustomers: true,
+    });
+    expect(calendar.find((item) => item.id === '802')).toBeUndefined();
+    expect(calendar.find((item) => item.id === '801')).toBeUndefined();
+  });
   it('shows a direct assignment and hides another employee work', async () => {
     const calendar = await workService.getEmployeeCalendar(4, { date: '2026-10-12' }, { assignedOnly: true });
     expect(calendar).toEqual([]);
@@ -188,5 +257,32 @@ describe('Employee calendar team and assignment regressions', () => {
     });
     expect(metrics.total).toBe(calendar.length);
     expect(metrics.total).toBeGreaterThan(0);
+  });
+
+  it('allows Video Editor to see eligible editing work and direct assignments, but hides unrelated employee tasks and shoots', async () => {
+    const calendar = await workService.getEmployeeCalendar(5, { month: 10, year: 2026 }, {
+      allTenantCustomers: true,
+      assignedOnly: false,
+    });
+    const ids = calendar.map((c) => c.id);
+
+    // Eligible unassigned edit task on team: YES
+    expect(ids).toContain('804');
+    // Direct assignment to editor: YES
+    expect(ids).toContain('806');
+    // Unassigned shoot on team (ineligible for Video Editor): NO
+    expect(ids).not.toContain('801');
+    // Edit assigned to another employee on team: NO (unrelated employee activity)
+    expect(ids).not.toContain('807');
+    // Work on another team: NO
+    expect(ids).not.toContain('803');
+
+    // Metrics consistency:
+    const metrics = await workService.getProductionMetrics(5, { month: 10, year: 2026 }, {
+      allTenantCustomers: true,
+      assignedOnly: false,
+    });
+    expect(metrics.total).toBe(calendar.length);
+    expect(metrics.total).toBe(2);
   });
 });

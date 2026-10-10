@@ -2770,6 +2770,44 @@ status: ${item.status}`);
       { customer: { deletedAt: null, NOT: { isActive: false } } },
     ];
 
+    if (process.env.NODE_ENV !== 'test' && typeof this.prisma.work?.count === 'function' && tenantCustomerId) {
+      const tenantWork = {
+        OR: [
+          { customerId: Number(tenantCustomerId) },
+          { customer: { assignedTeam: { customerId: Number(tenantCustomerId) } } },
+        ],
+      };
+      const activeWork = {
+        AND: [tenantWork, { status: { not: WorkStatus.CANCELLED }, customer: { deletedAt: null, NOT: { isActive: false } } }],
+      };
+      const countSafe = async (label: string, countWhere: any) => {
+        try {
+          return await this.prisma.work.count({ where: countWhere });
+        } catch (err: any) {
+          this.logger.warn(`[EMPLOYEE_CALENDAR_STAGE] ${label} skipped: ${err?.message}`);
+          return -1;
+        }
+      };
+      const stageTotal = await countSafe('tenant', tenantWork);
+      const stageActive = await countSafe('active', activeWork);
+      const stageDirect = await countSafe('direct', { AND: [activeWork, { OR: directAssignment() }] });
+      const stageTeam = membershipTeamIds.length === 0
+        ? 0
+        : await countSafe('team', { AND: [activeWork, { teamId: { in: membershipTeamIds } }] });
+      const stageCustomerTeam = membershipTeamIds.length === 0
+        ? 0
+        : await countSafe('customerTeam', {
+            AND: [activeWork, { customer: { deletedAt: null, assignedTeamId: { in: membershipTeamIds } } }],
+          });
+      this.logger.log(
+        `[EMPLOYEE_CALENDAR_STAGE] employeeId=${numEmployeeId} tenantId=${tenantCustomerId} ` +
+        `tenantWorks=${stageTotal} afterActiveDeleted=${stageActive} ` +
+        `directAssignments=${stageDirect} teamAssignments=${stageTeam} ` +
+        `customerTeamWorks=${stageCustomerTeam} ` +
+        `appliedMonth=${appliedMonth ?? 'none'} appliedYear=${appliedYear ?? 'none'}`,
+      );
+    }
+
     const items = await this.prisma.work.findMany({
       where,
       orderBy: { scheduledDate: 'asc' },
@@ -2889,7 +2927,7 @@ status: ${item.status}`);
       filteredItems = items.filter((w) => matchesTargetMonth(w.scheduledDate, targetYear!, targetMonth!));
     }
 
-    if (!isProductionManager && !allTenantCustomers) {
+    if (!isProductionManager) {
       const viewerIds = new Set<number>([numEmployeeId]);
       const directlyAssigned = (w: any) => {
         const ids = [
@@ -2917,8 +2955,19 @@ status: ${item.status}`);
           teamCustomerIds.includes(Number(w.customerId)) ||
           isMemberOfWorkTeam;
         if (!onAuthorizedTeam) return false;
-        // A null assignee, or a teammate assignee, still belongs on this employee's calendar
-        // when the work or customer is on a team they belong to.
+
+        // Hide work explicitly assigned to another employee (unrelated employee activities)
+        const hasOtherAssignee =
+          (Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && Number(w.assignedToId) !== numEmployeeId) ||
+          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && Number(w.editorId) !== numEmployeeId);
+        if (hasOtherAssignee) return false;
+
+        // For unassigned pool work on the team, check role/designation eligibility
+        if (!isFullAccess && allowedTypes.size > 0) {
+          const normType = normalizeActivityType(w);
+          return allowedTypes.has(normType);
+        }
+
         return true;
       });
     }
