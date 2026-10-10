@@ -111,6 +111,61 @@ describe('Production team assignment', () => {
     expect(updates.every((item) => item.teamId === 1)).toBe(true);
   });
 
+  it('assigns open production schedules when that employee opens the calendar', async () => {
+    const prisma: any = {
+      employee: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 10,
+          userId: 110,
+          customerId: 1,
+          firstName: 'Video',
+          lastName: 'Editor',
+          designation: { name: 'Video Editor' },
+          department: { name: 'Production' },
+        }),
+        findFirst: jest.fn().mockResolvedValue({ id: 10, userId: 110, customerId: 1, status: 'ACTIVE' }),
+      },
+      teamMember: {
+        findMany: jest.fn().mockResolvedValue([
+          { teamId: 2, team: { customerId: 1, isActive: true, name: 'Production Team_A', description: '' } },
+        ]),
+      },
+      team: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn(),
+      },
+      customer: {
+        findMany: jest.fn().mockResolvedValue([{ id: 8, assignedTeamId: 2 }]),
+      },
+      work: { findMany: jest.fn().mockResolvedValue([]) },
+      task: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        WorkService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: WorkPermissionService,
+          useValue: {
+            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+              role: 'VIDEO EDITOR',
+              allowedTypes: new Set<string>(),
+              isFullAccess: false,
+              isProductionManager: false,
+              workPermissions: [],
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const service = module.get(WorkService);
+    const assign = jest.spyOn(service, 'syncCustomerTeamWorkAssignments').mockResolvedValue(1);
+
+    await service.getEmployeeCalendar(10, { month: 10, year: 2026 }, { allTenantCustomers: true });
+
+    expect(assign).toHaveBeenCalledWith(8, 2);
+  });
+
   it('does not create a second schedule when assignment runs again', async () => {
     const works = freshWorks();
     const team = { id: 2, name: 'Production Team_A', members: productionMembers };

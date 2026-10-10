@@ -2542,6 +2542,29 @@ status: ${item.status}`);
     if (!isProductionManager && allTenantCustomers && productionTeamIds.length === 0) {
       productionTeamIds = await this.productionTeamIdsFromEmployeeWorks(numEmployeeId);
     }
+    if (
+      productionTeamIds.length > 0 &&
+      typeof this.prisma.customer?.findMany === 'function' &&
+      typeof this.prisma.team?.findUnique === 'function'
+    ) {
+      try {
+        const assignedCustomers = await this.prisma.customer.findMany({
+          where: {
+            deletedAt: null,
+            assignedTeamId: { in: productionTeamIds },
+          },
+          select: { id: true, assignedTeamId: true },
+        });
+        for (const customer of assignedCustomers) {
+          if (!customer.assignedTeamId) continue;
+          await this.syncCustomerTeamWorkAssignments(customer.id, customer.assignedTeamId);
+        }
+      } catch (assignErr: any) {
+        this.logger.warn(
+          `getEmployeeCalendar production assignment warning: ${assignErr?.message}`,
+        );
+      }
+    }
     const membershipTeamIds = await this.employeeTeamIds(
       numEmployeeId,
       tenantCustomerId,
