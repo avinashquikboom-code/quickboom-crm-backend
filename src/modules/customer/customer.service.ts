@@ -1129,14 +1129,18 @@ export class CustomerService {
     // Calendar customer picker (forCalendar + Calendar VIEW/CREATE) lists all active tenant customers.
     if (effectiveEmployeeId && !isPrivilegedAdmin && !skipAssignmentScope) {
       const [empTeams, empLedTeams] = await Promise.all([
-        this.prisma.teamMember.findMany({
-          where: { employeeId: effectiveEmployeeId },
-          select: { teamId: true },
-        }),
-        this.prisma.team.findMany({
-          where: { leaderId: effectiveEmployeeId },
-          select: { id: true },
-        }),
+        typeof this.prisma.teamMember?.findMany === 'function'
+          ? this.prisma.teamMember.findMany({
+              where: { employeeId: effectiveEmployeeId },
+              select: { teamId: true },
+            })
+          : [],
+        typeof this.prisma.team?.findMany === 'function'
+          ? this.prisma.team.findMany({
+              where: { leaderId: effectiveEmployeeId },
+              select: { id: true },
+            })
+          : [],
       ]);
       const myTeamIds = Array.from(
         new Set([
@@ -1578,7 +1582,9 @@ export class CustomerService {
             leadItem.status = 'UPCOMING';
             leadItem.hasUpcomingCall = true;
             unconvertedUpcomingLeads.push(leadItem);
-            unconvertedAllLeads.push(leadItem);
+            if (isWonLead) {
+              unconvertedAllLeads.push(leadItem);
+            }
             continue;
           }
 
@@ -2008,8 +2014,9 @@ export class CustomerService {
       effectiveTotal = completedItems.length;
       finalItems = completedItems.slice(skip, skip + limit);
     } else {
-      effectiveTotal = formatted.length;
-      finalItems = formatted.slice(skip, skip + limit);
+      const allCombined = [...formatted, ...unconvertedAllLeads];
+      effectiveTotal = allCombined.length;
+      finalItems = allCombined.slice(skip, skip + limit);
     }
 
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
@@ -3034,13 +3041,39 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
-    const resolvedTeamId = teamId ? Number(teamId) : null;
-    if (resolvedTeamId) {
-      const team = await this.prisma.team.findUnique({
+    // Tenant isolation check for customer: non-super-admins cannot operate across customer boundaries
+    if (user && !isUserSuperAdmin(user)) {
+      const callerCustomerId = Number(user.customerId);
+      if (callerCustomerId && callerCustomerId !== 1 && callerCustomerId !== numericId) {
+        throw new ForbiddenException(
+          'You do not have permission to assign teams to this customer.',
+        );
+      }
+    }
+
+    const resolvedTeamId = (teamId !== undefined && teamId !== null) ? Number(teamId) : null;
+    let team: any = null;
+    if (resolvedTeamId !== null) {
+      if (!Number.isInteger(resolvedTeamId) || resolvedTeamId <= 0) {
+        throw new BadRequestException(`Invalid team ID: ${teamId}. Team ID must be a positive integer.`);
+      }
+      team = await this.prisma.team.findUnique({
         where: { id: resolvedTeamId },
       });
       if (!team) {
         throw new NotFoundException(`Team #${resolvedTeamId} not found.`);
+      }
+
+      // Tenant isolation check for team: cannot assign a team belonging to another tenant
+      if (user && !isUserSuperAdmin(user)) {
+        const callerCustomerId = Number(user.customerId);
+        if (team && (team as any).customerId && callerCustomerId && callerCustomerId !== 1) {
+          if ((team as any).customerId !== callerCustomerId) {
+            throw new ForbiddenException(
+              'You do not have permission to assign a team belonging to another tenant.',
+            );
+          }
+        }
       }
     }
 
@@ -3090,7 +3123,7 @@ export class CustomerService {
           leader: assignedTeamObj.leader
             ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
             : null,
-          memberCount: (assignedTeamObj.members || []).length,
+          memberCount: assignedTeamObj._count?.members ?? (assignedTeamObj.members || []).length,
           members: (assignedTeamObj.members || []).map((m: any) => ({
             id: m.employee?.id || m.employeeId,
             name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Name unavailable',
@@ -3142,7 +3175,7 @@ export class CustomerService {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
-    if (numericId === 1 || existing._count.employees > 0) {
+    if (numericId === 1 || (existing._count?.employees ?? 0) > 0) {
       throw new ForbiddenException(
         `Customer #${numericId} (${existing.name}) is an organization account with employees and cannot be deleted.`,
       );
@@ -3216,10 +3249,12 @@ export class CustomerService {
       await tx.customerModuleOverride?.deleteMany?.({ where: { subjectCustomerId: numericId } });
 
       // 3. Client Portal Users
-      const clientUsers = await tx.user.findMany({
-        where: { customerId: numericId },
-        select: { id: true },
-      });
+      const clientUsers = (tx.user && typeof tx.user.findMany === 'function')
+        ? await tx.user.findMany({
+            where: { customerId: numericId },
+            select: { id: true },
+          })
+        : [];
       if (clientUsers.length > 0) {
         const clientUserIds = clientUsers.map((u) => u.id);
         await tx.userRole?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
@@ -3229,7 +3264,12 @@ export class CustomerService {
         await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
         await tx.user?.deleteMany?.({ where: { id: { in: clientUserIds } } });
       } else {
+        await tx.userRole?.deleteMany?.({ where: { user: { customerId: numericId } } });
+        await tx.userDeviceToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
+        await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numericId } } });
+        await tx.session?.deleteMany?.({ where: { user: { customerId: numericId } } });
         await tx.notification?.deleteMany?.({ where: { customerId: numericId } });
+        await tx.user?.deleteMany?.({ where: { customerId: numericId } });
       }
 
       // 4. Delete customer row
