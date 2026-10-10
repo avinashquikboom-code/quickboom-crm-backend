@@ -1,3 +1,28 @@
+/**
+ * Existing work categories for a designation. Department alone matches nothing.
+ * Keys follow the designation labels already stored on employees.
+ */
+const DESIGNATION_WORK_RULES: { pattern: RegExp; types: string[] }[] = [
+  { pattern: /content writer|copywriter|copy writer/, types: ['CONTENT_WRITING'] },
+  { pattern: /reel editor|video editor|\beditor\b|video edit|editing/, types: ['EDITING', 'VIDEO_EDITING', 'VIDEO'] },
+  { pattern: /reel shoot|shooter|photographer|videographer|\bphoto\b|camera/, types: ['SHOOT', 'REELS_SHOOT'] },
+  { pattern: /graphic|designer|\bdesign\b/, types: ['POST_DESIGN', 'GRAPHIC_DESIGN', 'CREATIVE_POST', 'STORY_DESIGN'] },
+  { pattern: /social media/, types: ['UPLOADING', 'SOCIAL_MEDIA_MANAGEMENT'] },
+  { pattern: /influencer/, types: ['INFLUENCER_PROMO', 'INFLUENCER_PROMOTION'] },
+];
+
+export function workTypesForDesignation(designation?: string | null): string[] {
+  const text = String(designation || '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+  const matched = new Set<string>();
+  for (const rule of DESIGNATION_WORK_RULES) {
+    if (rule.pattern.test(text)) {
+      rule.types.forEach((type) => matched.add(type));
+    }
+  }
+  return Array.from(matched);
+}
+
 /** Accepts month=10&year=2026 and month=YYYY-MM. */
 export function parseCalendarMonthYear(
   month?: string,

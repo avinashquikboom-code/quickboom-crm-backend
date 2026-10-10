@@ -1,4 +1,16 @@
-import { parseCalendarMonthYear } from './calendar-query.util';
+import { parseCalendarMonthYear, workTypesForDesignation } from './calendar-query.util';
+
+describe('workTypesForDesignation', () => {
+  it('maps reel editor, video editor, shooter, and designer to their work types', () => {
+    expect(workTypesForDesignation('Reel Editor')).toEqual(expect.arrayContaining(['EDITING', 'VIDEO_EDITING']));
+    expect(workTypesForDesignation('Video Editor')).toEqual(expect.arrayContaining(['VIDEO_EDITING', 'EDITING']));
+    expect(workTypesForDesignation('Reel Shooter')).toEqual(expect.arrayContaining(['SHOOT', 'REELS_SHOOT']));
+    expect(workTypesForDesignation('Photographer')).toEqual(expect.arrayContaining(['SHOOT']));
+    expect(workTypesForDesignation('Graphic Designer')).toEqual(expect.arrayContaining(['POST_DESIGN', 'GRAPHIC_DESIGN']));
+    expect(workTypesForDesignation('Production')).toEqual([]);
+    expect(workTypesForDesignation('Telecaller')).toEqual([]);
+  });
+});
 
 describe('parseCalendarMonthYear', () => {
   it('parses month=10 and year=2026', () => {

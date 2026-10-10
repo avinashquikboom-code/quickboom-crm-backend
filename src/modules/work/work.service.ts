@@ -20,6 +20,7 @@ import {
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
+import { workTypesForDesignation } from './calendar-query.util';
 import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
@@ -2537,11 +2538,36 @@ status: ${item.status}`);
             },
           ];
 
+    const designationTypes = workTypesForDesignation((empRecord as any)?.designation?.name);
+    const designationSchedule = () => {
+      if (designationTypes.length === 0 || !tenantCustomerId) return [];
+      return [
+        {
+          AND: [
+            { workType: { in: designationTypes } },
+            {
+              OR: [
+                { customerId: Number(tenantCustomerId) },
+                { customer: { assignedTeam: { customerId: Number(tenantCustomerId), isActive: true } } },
+              ],
+            },
+            {
+              OR: [
+                { AND: [{ assignedToId: null }, { editorId: null }] },
+                { assignedToId: numEmployeeId },
+                { editorId: numEmployeeId },
+              ],
+            },
+          ],
+        },
+      ];
+    };
+
     if (assignedOnly) {
       // Own assignments, plus customers allotted to this employee's teams.
       // Customer.assignedTeamId is the allotment. Company id is not.
       where = {
-        OR: [...directAssignment(), ...teamCustomerWork(membershipTeamIds)],
+        OR: [...directAssignment(), ...teamCustomerWork(membershipTeamIds), ...designationSchedule()],
         status: { not: WorkStatus.CANCELLED },
       };
       if (query.customerId) {
@@ -2555,6 +2581,7 @@ status: ${item.status}`);
       const orConditions: any[] = [
         ...directAssignment(),
         ...teamCustomerWork(membershipTeamIds),
+        ...designationSchedule(),
       ];
       if (productionTeamIds.length > 0) {
         orConditions.push(
@@ -2654,6 +2681,7 @@ status: ${item.status}`);
       const orConditions: any[] = [
         ...directAssignment(),
         ...teamCustomerWork(membershipTeamIds),
+        ...designationSchedule(),
       ];
 
       if (productionTeamIds.length > 0) {
@@ -2942,6 +2970,15 @@ status: ${item.status}`);
       };
       filteredItems = filteredItems.filter((w) => {
         if (directlyAssigned(w)) return true;
+        const otherAssignee =
+          (Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && Number(w.assignedToId) !== numEmployeeId) ||
+          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && Number(w.editorId) !== numEmployeeId);
+        if (
+          !otherAssignee &&
+          designationTypes.includes(String(w.workType || '').toUpperCase())
+        ) {
+          return true;
+        }
         const teamId = Number(w.teamId || w.team?.id || 0);
         const customerTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
         const isMemberOfWorkTeam =
