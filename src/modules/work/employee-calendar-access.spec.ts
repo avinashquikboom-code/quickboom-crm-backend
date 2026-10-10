@@ -316,6 +316,42 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(calendar.find((item) => item.id === '803')).toBeUndefined();
   });
 
+  it('returns customer schedule 2775 to a team member on October 11 even when assigned to Employee 2', async () => {
+    // Reproduce the supplied customer response. Team 7 is a fixture membership,
+    // not an assertion about the production team's numeric ID.
+    works.push({
+      ...teamWork,
+      id: 2775,
+      customerId: 100,
+      assignedToId: 2,
+      workType: WorkType.SHOOT,
+      title: 'Reel #1: Shoot',
+      scheduledDate: new Date('2026-10-11T10:00:00.000Z'),
+      scheduledTime: '10:00 AM',
+      status: WorkStatus.ASSIGNED,
+      assignedTo: { id: 2, firstName: 'Super', lastName: 'Admin' },
+      customer: {
+        ...teamWork.customer,
+        id: 100,
+        name: 'Friends Factory Cafe - Rooftop Candle Light Dinner',
+        assignedTeamId: 7,
+      },
+    });
+    const day = await workService.getEmployeeCalendar(1, { date: '2026-10-11' }, { assignedOnly: true });
+    expect(day.find((item) => item.id === '2775')).toMatchObject({
+      customerId: '100',
+      title: 'Reel #1: Shoot',
+      scheduledDate: '2026-10-11',
+      startTime: '10:00 AM',
+      workType: 'SHOOT',
+      status: 'ASSIGNED',
+    });
+    const previousDay = await workService.getEmployeeCalendar(1, { date: '2026-10-10' }, { assignedOnly: true });
+    expect(previousDay.some((item) => item.id === '2775')).toBe(false);
+    const month = await workService.getEmployeeCalendar(1, { month: 10, year: 2026 }, { assignedOnly: true });
+    expect(month.some((item) => item.id === '2775')).toBe(true);
+  });
+
   it('does not grant team visibility from a direct assignment without membership', async () => {
     works.push({ ...directWork, id: 808, assignedToId: 4, teamId: 99 });
     const calendar = await workService.getEmployeeCalendar(4, { month: 10, year: 2026 }, { assignedOnly: true });
