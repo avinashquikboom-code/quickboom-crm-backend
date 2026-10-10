@@ -1790,8 +1790,8 @@ returnedSchedules: 0`);
         lockMessage,
         assignedToId: taskAssignee.id,
         wonByName,
-        assignedEmployee: isLocked ? 'Unassigned' : taskAssignee.name,
-        assignedToName: isLocked ? 'Unassigned' : taskAssignee.name,
+        assignedEmployee: taskAssignee.name,
+        assignedToName: taskAssignee.name,
         editorId: w.editorId,
         editorName: isLocked ? null : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null),
         team: taskAssignee.teamName,
@@ -2106,6 +2106,11 @@ status: ${item.status}`);
   private productionTaskAssignee(w: any): { id: number | null; name: string; teamName: string | null } {
     const team = w.team || w.customer?.assignedTeam || null;
     const teamName = team?.name || null;
+    const memberIds = new Set<number>(
+      (team?.members || [])
+        .map((member: any) => Number(member.employeeId))
+        .filter((id: number) => Number.isInteger(id) && id > 0),
+    );
     const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
       `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
     const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
@@ -2120,15 +2125,20 @@ status: ${item.status}`);
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
       if (isPlatformAdmin(person)) return false;
+      if (memberIds.size > 0 && !memberIds.has(id)) return false;
       return true;
     };
 
-    const stored = [w.assignedTo, ...(w.tasks || []).map((task: any) => task.assignedTo), w.editor]
+    const stored = [
+      ...(w.tasks || []).map((task: any) => task.assignedTo),
+      w.assignedTo,
+      w.editor,
+    ]
       .find((person) => isTaskAssignee(person));
     if (stored) {
-      return { id: Number(stored.id), name: personName(stored) || 'Unassigned', teamName };
+      return { id: Number(stored.id), name: personName(stored) || 'Not assigned', teamName };
     }
-    return { id: null, name: 'Unassigned', teamName };
+    return { id: null, name: 'Not assigned', teamName };
   }
 
   /**
@@ -2839,10 +2849,10 @@ status: ${item.status}`);
         `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
 
       const scheduleAssignee = this.productionTaskAssignee(w);
-      const assignedEmpName = scheduleAssignee.name || 'Unassigned';
+      const assignedEmpName = scheduleAssignee.name || 'Not assigned';
 
       const assignedEmpList: string[] = [];
-      if (assignedEmpName && assignedEmpName !== 'Unassigned') assignedEmpList.push(assignedEmpName);
+      if (assignedEmpName && assignedEmpName !== 'Not assigned') assignedEmpList.push(assignedEmpName);
       const editorName = personName(w.editor);
       if (editorName && !assignedEmpList.includes(editorName)) assignedEmpList.push(editorName);
 
