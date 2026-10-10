@@ -100,6 +100,7 @@ describe('Employee calendar team and assignment regressions', () => {
         }),
         findFirst: jest.fn().mockImplementation(({ where }: any) => {
           if (where.userId === 2) return { id: 1, userId: 2 };
+          if (where.employeeCode?.equals === 'QB-EMP-019' && where.customerId === 1) return { id: 30, userId: 40 };
           if (where.id === 2) return { id: 2, userId: 3 };
           if (where.id === 1) return { id: 1, userId: 2, customerId: 1, status: 'ACTIVE' };
           return null;
@@ -220,6 +221,20 @@ describe('Employee calendar team and assignment regressions', () => {
   it('resolves User 2 to Employee 1 when Employee 2 shares that numeric id', async () => {
     const employeeId = await workService.resolveEmployeeIdForUser({ id: 2 });
     expect(employeeId).toBe(1);
+  });
+
+  it('resolves employee code QB-EMP-019 to Employee.id and does not use the code or User.id as Employee.id', async () => {
+    const byCode = await workService.resolveEmployeeIdForUser({
+      id: 19,
+      customerId: 1,
+      employeeCode: 'QB-EMP-019',
+    });
+    expect(byCode).toBe(30);
+    const linked = await workService.resolveEmployeeIdForUser({
+      id: 19,
+      employee: { id: 30, employeeCode: 'QB-EMP-019', userId: 40 },
+    });
+    expect(linked).toBe(30);
   });
 
   it('keeps unassigned team work in the current month when the request has no date', async () => {

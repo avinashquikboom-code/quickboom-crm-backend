@@ -232,6 +232,17 @@ describe('Employee designation calendar visibility', () => {
     expect(calendar.find((item) => item.id === '5')).toBeUndefined();
   });
 
+  it('shows editing work when the role permission is only REEL_EDIT', async () => {
+    const { service } = await serviceFor(
+      { id: 31, designation: 'Employee' },
+      { allowedTypes: ['REEL_EDIT'] },
+    );
+    const calendar = await service.getEmployeeCalendar(31, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    expect(calendar.map((item) => item.id)).toEqual(['1', '2', '7', '11']);
+    const outside = await service.getEmployeeCalendar(31, { date: '2026-11-15' }, { allTenantCustomers: true });
+    expect(outside).toEqual([]);
+  });
+
   it('uses role permissions when the designation text is only Production', async () => {
     const { service } = await serviceFor(
       { id: 30, designation: 'Production' },

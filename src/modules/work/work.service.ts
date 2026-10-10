@@ -2479,6 +2479,7 @@ status: ${item.status}`);
             firstName: true,
             lastName: true,
             customerId: true,
+            employeeCode: true,
             designation: { select: { name: true } },
             department: { select: { name: true } },
           },
@@ -2492,6 +2493,7 @@ status: ${item.status}`);
             firstName: true,
             lastName: true,
             customerId: true,
+            employeeCode: true,
             designation: { select: { name: true } },
             department: { select: { name: true } },
           },
@@ -2609,6 +2611,12 @@ status: ${item.status}`);
     if (visibleTypes.size === 0 && !isFullAccess && !isProductionManager) {
       for (const type of allowedTypes) {
         if (enumWorkTypes.has(type)) visibleTypes.add(type);
+      }
+      // video_edit permission is stored as REEL_EDIT. The Work rows use EDITING.
+      if (allowedTypes.has('REEL_EDIT') || visibleTypes.has('EDITING') || visibleTypes.has('VIDEO_EDITING')) {
+        for (const type of ['EDITING', 'VIDEO_EDITING', 'VIDEO']) {
+          if (enumWorkTypes.has(type)) visibleTypes.add(type);
+        }
       }
     }
     const designationSchedule = () => {
@@ -3467,18 +3475,27 @@ afterFilter: ${result.length}`);
       membershipTeamIds.includes(Number(w.customer?.assignedTeamId)) ||
       teamCustomerIds.includes(Number(w.customerId)),
     ).length;
-    const firstZeroStage = items.length > 0
-      ? (filteredItems.length === 0 ? 'dateOrVisibilityFilter' : 'none')
-      : membershipTeamIds.length === 0 && productionTeamIds.length === 0
-        ? 'teamIds'
-        : teamCustomerIds.length === 0
-          ? 'customerIdsAssignedToTeams'
-          : 'workQuery';
+    const firstZeroStage = filteredItems.length > 0
+      ? 'none'
+      : items.length > 0
+        ? 'dateOrVisibilityFilter'
+        : visibleTypes.size === 0
+          ? 'noAssignmentNoDesignation'
+          : 'noWorkInCompanyOrDateScope';
+
+    const workTaskRows = items.reduce((count: number, work: any) => count + (work.tasks?.length || 0), 0);
+    const workTaskAssigned = items.reduce(
+      (count: number, work: any) => count + (work.tasks || []).filter((task: any) => Number(task.assignedToId) > 0).length,
+      0,
+    );
 
     this.logger.log(
       `[EMPLOYEE_CALENDAR_DIAGNOSTICS] ` +
       `authUserId=${empRecord?.userId ?? 'none'} ` +
       `resolvedEmployeeId=${numEmployeeId} ` +
+      `employeeCode=${empRecord?.employeeCode ?? 'none'} ` +
+      `designation=${designationName || 'none'} ` +
+      `visibleTypes=${Array.from(visibleTypes).join(',') || 'none'} ` +
       `tenantId=${tenantCustomerId ?? 'none'} ` +
       `membershipTeams=${membershipTeamIds.join(',') || 'none'} ` +
       `productionTeams=${productionTeamIds.join(',') || 'none'} ` +
@@ -3487,12 +3504,15 @@ afterFilter: ${result.length}`);
       `teamWorkCount=${teamWorkCount} ` +
       `customerWorkCount=${customerWorkCount} ` +
       `rawWorkCount=${items.length} ` +
-      `requestedDate=${targetDateStr || 'ALL'} ` +
-      `month=${appliedMonth ?? query.month ?? 'ALL'} year=${appliedYear ?? query.year ?? 'ALL'} ` +
+      `workTaskRows=${workTaskRows} ` +
+      `workTaskAssigned=${workTaskAssigned} ` +
+      `requestedDate=${targetDateStr || 'none'} ` +
+      `dateFrom=${rangeFromKey || 'none'} dateTo=${rangeToKey || 'none'} ` +
+      `month=${appliedMonth ?? query.month ?? 'none'} year=${appliedYear ?? query.year ?? 'none'} ` +
       `workCount=${filteredItems.length} ` +
       `taskCount=${filteredTasks.length} ` +
       `finalCount=${result.length} ` +
-      `firstZeroStage=${firstZeroStage}`,
+      `exclusion=${firstZeroStage}`,
     );
 
     const minutesOfDay = (value?: string | null) => {
@@ -3704,6 +3724,19 @@ assignedEmployee: ${item.assignedEmployee}`);
         select: { id: true },
       });
       if (byUser?.id) return byUser.id;
+    }
+
+    const employeeCode = String(user.employeeCode || user.employee?.employeeCode || '').trim();
+    const codeCustomerId = Number(user.customerId || user.employee?.customerId);
+    if (employeeCode && Number.isInteger(codeCustomerId) && codeCustomerId > 0) {
+      const byCode = await this.prisma.employee.findFirst({
+        where: {
+          customerId: codeCustomerId,
+          employeeCode: { equals: employeeCode, mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (byCode?.id) return byCode.id;
     }
 
     const payloadEmployeeId = Number(user.employeeId);
