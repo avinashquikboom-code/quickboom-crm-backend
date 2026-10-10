@@ -2368,7 +2368,7 @@ status: ${item.status}`);
       workType?: string;
       search?: string;
     } = {},
-    options?: { allTenantCustomers?: boolean },
+    options?: { allTenantCustomers?: boolean; assignedOnly?: boolean },
   ) {
     const startTime = Date.now();
     const numEmployeeId = Number(employeeId);
@@ -2473,26 +2473,30 @@ status: ${item.status}`);
     }
 
     let where: any;
+    const assignedOnly = options?.assignedOnly === true;
 
-    if (allTenantCustomers) {
+    const directAssignment = (): any[] => [
+      { assignedToId: numEmployeeId },
+      { editorId: numEmployeeId },
+      { tasks: { some: { assignedToId: numEmployeeId } } },
+      { customer: { assignedEmployeeId: numEmployeeId } },
+    ];
+
+    if (assignedOnly) {
+      // Own assignments only. Company id is not an assignment.
+      where = {
+        OR: directAssignment(),
+        status: { not: WorkStatus.CANCELLED },
+      };
+      if (query.customerId) {
+        where.customerId = Number(query.customerId);
+      }
+    } else if (allTenantCustomers) {
       // Mobile Calendar and My Work always pass this flag. Visibility is the
       // employee's production teams, not customer.id = the company record.
       // That equality was returning only customer 91 when the employee
       // company id was 91, even though Team A has more customers.
-      const orConditions: any[] = [
-        { assignedToId: numEmployeeId },
-        { editorId: numEmployeeId },
-        { tasks: { some: { assignedToId: numEmployeeId } } },
-        { customer: { assignedEmployeeId: numEmployeeId } },
-      ];
-      if (empRecord?.userId) {
-        orConditions.push(
-          { assignedToId: empRecord.userId },
-          { editorId: empRecord.userId },
-          { tasks: { some: { assignedToId: empRecord.userId } } },
-          { customer: { assignedEmployeeId: empRecord.userId } },
-        );
-      }
+      const orConditions: any[] = directAssignment();
       if (productionTeamIds.length > 0) {
         orConditions.push(
           { teamId: { in: productionTeamIds } },
@@ -2507,22 +2511,6 @@ status: ${item.status}`);
         { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
         { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
       );
-      if (empRecord?.userId) {
-        orConditions.push(
-          { team: { members: { some: { employeeId: empRecord.userId } } } },
-          { team: { leaderId: empRecord.userId } },
-          { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: empRecord.userId } } } } },
-          { customer: { deletedAt: null, assignedTeam: { leaderId: empRecord.userId } } },
-        );
-      }
-      if (tenantCustomerId) {
-        orConditions.push(
-          { customerId: tenantCustomerId },
-          { customer: { id: tenantCustomerId, deletedAt: null } },
-          { team: { customerId: tenantCustomerId, isActive: true } },
-          { customer: { deletedAt: null, assignedTeam: { customerId: tenantCustomerId, isActive: true } } },
-        );
-      }
       if (teamCustomerIds.length > 0) {
         orConditions.push({ customerId: { in: teamCustomerIds } });
       }
@@ -3028,7 +3016,218 @@ status: ${item.status}`);
       };
     });
 
-    const result = mapped;
+    // Query assigned tasks from Task model
+    let tasksList: any[] = [];
+    if (typeof this.prisma.task?.findMany === 'function' && (!query.workType || query.workType === 'TASK')) {
+      const taskWhere: any = {
+        deletedAt: null,
+      };
+
+      if (query.status) {
+        taskWhere.status = query.status;
+      } else {
+        taskWhere.status = { not: TaskStatus.CANCELLED };
+      }
+
+      if (query.customerId) {
+        taskWhere.customerId = Number(query.customerId);
+      } else if (tenantCustomerId && !isProductionManager) {
+        taskWhere.customerId = tenantCustomerId;
+      }
+
+      // Preserve employee-level authorization. Never return tasks belonging to unrelated employees.
+      if (query.employeeId && isProductionManager) {
+        const filterEmpId = Number(query.employeeId);
+        taskWhere.OR = [
+          { employeeId: filterEmpId },
+          { assignedToId: filterEmpId },
+        ];
+      } else if (!isProductionManager) {
+        // Task.employeeId references Employee. Task.assignedToId references User.
+        // Do not compare those columns to the other id; employee 2 and user 2 can be different people.
+        const taskOr: any[] = [{ employeeId: numEmployeeId }];
+        if (empRecord?.userId) {
+          taskOr.push({ assignedToId: empRecord.userId });
+        }
+        taskWhere.OR = taskOr;
+      }
+
+      // Date range buffering for Prisma query
+      if (query.date) {
+        const d = new Date(query.date);
+        if (!isNaN(d.getTime())) {
+          const startWindow = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+          const endWindow = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+          taskWhere.AND = [
+            ...(taskWhere.AND || []),
+            {
+              OR: [
+                { dueDate: { gte: startWindow, lte: endWindow } },
+                { startDate: { gte: startWindow, lte: endWindow } },
+                { dueAt: { gte: startWindow, lte: endWindow } },
+              ],
+            },
+          ];
+        }
+      } else if (query.month && query.year) {
+        const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 0, 0, 0, 0, 0));
+        const endOfMonth = new Date(Date.UTC(query.year, query.month, 2, 23, 59, 59, 999));
+        taskWhere.AND = [
+          ...(taskWhere.AND || []),
+          {
+            OR: [
+              { dueDate: { gte: startOfMonth, lte: endOfMonth } },
+              { startDate: { gte: startOfMonth, lte: endOfMonth } },
+              { dueAt: { gte: startOfMonth, lte: endOfMonth } },
+            ],
+          },
+        ];
+      } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
+        const from = query.dateFrom || (query as any).startDate;
+        const to = query.dateTo || (query as any).endDate;
+        const fromDate = from ? new Date(new Date(from).getTime() - 24 * 60 * 60 * 1000) : undefined;
+        const toDate = to ? new Date(new Date(to).getTime() + 24 * 60 * 60 * 1000) : undefined;
+        const rangeCond: any = {};
+        if (fromDate) rangeCond.gte = fromDate;
+        if (toDate) rangeCond.lte = toDate;
+        taskWhere.AND = [
+          ...(taskWhere.AND || []),
+          {
+            OR: [
+              { dueDate: rangeCond },
+              { startDate: rangeCond },
+              { dueAt: rangeCond },
+            ],
+          },
+        ];
+      }
+
+      tasksList = await this.prisma.task.findMany({
+        where: taskWhere,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              companyName: true,
+              address: true,
+              city: true,
+              state: true,
+            },
+          },
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              department: { select: { name: true } },
+              designation: { select: { name: true } },
+            },
+          },
+          department: { select: { name: true } },
+          designation: { select: { name: true } },
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+    }
+
+    let filteredTasks = tasksList;
+    if (targetYear && targetMonth && targetDay) {
+      filteredTasks = tasksList.filter((t) =>
+        matchesTargetDate(t.dueDate, targetYear!, targetMonth!, targetDay!) ||
+        matchesTargetDate(t.startDate, targetYear!, targetMonth!, targetDay!) ||
+        matchesTargetDate(t.dueAt, targetYear!, targetMonth!, targetDay!)
+      );
+    } else if (targetYear && targetMonth) {
+      filteredTasks = tasksList.filter((t) =>
+        matchesTargetMonth(t.dueDate, targetYear!, targetMonth!) ||
+        matchesTargetMonth(t.startDate, targetYear!, targetMonth!) ||
+        matchesTargetMonth(t.dueAt, targetYear!, targetMonth!)
+      );
+    }
+
+    const formatTaskTime = (d: Date): string => {
+      const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      let hours = ist.getUTCHours();
+      const minutes = String(ist.getUTCMinutes()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12 || 12;
+      return `${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+    };
+
+    const mappedTasks = filteredTasks.map((t) => {
+      const taskScheduledDate =
+        this.scheduleDateKey(t.dueDate) ||
+        this.scheduleDateKey(t.startDate) ||
+        this.scheduleDateKey(t.dueAt) ||
+        targetDateStr ||
+        '';
+      const taskTime = t.dueTime || t.startTime || (t.dueAt ? formatTaskTime(t.dueAt) : '10:00 AM');
+      const assignedEmp = t.employee
+        ? `${t.employee.firstName || ''} ${t.employee.lastName || ''}`.trim()
+        : (t.assignedTo ? `${t.assignedTo.firstName || ''} ${t.assignedTo.lastName || ''}`.trim() : 'Not assigned');
+
+      return {
+        id: String(t.id),
+        activityId: String(t.id),
+        customerId: String(t.customerId),
+        companyName: t.customer?.companyName || t.customer?.name || 'Customer Workspace',
+        businessName: t.customer?.companyName || t.customer?.name || 'Customer Workspace',
+        customerName: t.customer?.name || 'Customer',
+        customerBusiness: t.customer?.companyName || t.customer?.name || 'Customer Workspace',
+        purchaseId: t.taskNumber || `TSK-${t.id}`,
+        productName: t.title,
+        serviceName: t.category || 'OPERATIONS',
+        planName: 'General Task',
+        title: t.title,
+        scheduledDate: taskScheduledDate,
+        scheduledAt: t.dueAt || t.dueDate || t.startDate || new Date(),
+        scheduledTime: taskTime,
+        originalScheduledDate: taskScheduledDate,
+        isCarriedForward: false,
+        carryForwardNote: null,
+        date: taskScheduledDate,
+        scheduleDate: taskScheduledDate,
+        time: taskTime,
+        startTime: taskTime,
+        endTime: taskTime,
+        type: 'TASK',
+        activityType: 'TASK',
+        workType: 'TASK',
+        status: t.status,
+        location: t.customer?.address ? `${t.customer.address}, ${t.customer.city || ''}`.trim() : 'Head Office',
+        canReschedule: true,
+        canRequestRework: false,
+        reworkActionLabel: null,
+        isLocked: false,
+        lockMessage: null,
+        assignedToId: t.employeeId || t.assignedToId || null,
+        assignedEmployee: assignedEmp,
+        assignedToName: assignedEmp,
+        assignedEmployees: assignedEmp && assignedEmp !== 'Not assigned' ? [assignedEmp] : [],
+        editorId: null,
+        editorName: null,
+        teamId: null,
+        team: t.department?.name || 'Operations',
+        assignedTeam: t.department?.name || 'Operations',
+        notes: t.notes || t.description || null,
+        outputUrl: null,
+        feedback: null,
+        revisionCount: 0,
+        socialMediaAccount: null,
+        platform: null,
+        tasks: [],
+        durationDays: 1,
+      };
+    });
+
+    const result = [...mapped, ...mappedTasks];
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
 employeeId: ${employeeId}
@@ -3038,13 +3237,16 @@ allowedTypes: ${Array.from(allowedTypes).join(', ')}
 beforeFilter: ${mapped.length}
 afterFilter: ${result.length}`);
 
-    this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG]
-employeeId: ${employeeId}
-selectedDate: ${targetDateStr || 'ALL'}
-month: ${query.month || 'ALL'}
-year: ${query.year || 'ALL'}
-returnedCount: ${result.length}
-durationMs: ${Date.now() - startTime}`);
+    this.logger.log(
+      `[EMPLOYEE_CALENDAR_DIAGNOSTICS] ` +
+      `authUserId=${empRecord?.userId ?? 'none'} ` +
+      `resolvedEmployeeId=${numEmployeeId} ` +
+      `requestedDate=${targetDateStr || 'ALL'} ` +
+      `month=${query.month ?? 'ALL'} year=${query.year ?? 'ALL'} ` +
+      `workCount=${filteredItems.length} ` +
+      `taskCount=${filteredTasks.length} ` +
+      `totalReturned=${result.length}`,
+    );
 
     const minutesOfDay = (value?: string | null) => {
       const match = /(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(String(value || ''));
@@ -3230,8 +3432,14 @@ assignedEmployee: ${item.assignedEmployee}`);
    */
   async resolveEmployeeIdForUser(user: any): Promise<number | null> {
     if (!user) return null;
-    if (user.employee?.id) return Number(user.employee.id);
-    if (user.employeeId) return Number(user.employeeId);
+    const directEmployeeId = Number(user.employee?.id);
+    if (Number.isInteger(directEmployeeId) && directEmployeeId > 0) {
+      return directEmployeeId;
+    }
+    const payloadEmployeeId = Number(user.employeeId);
+    if (Number.isInteger(payloadEmployeeId) && payloadEmployeeId > 0) {
+      return payloadEmployeeId;
+    }
 
     const rawId = Number(user.id);
     const email = user.email ? String(user.email).trim().toLowerCase() : undefined;

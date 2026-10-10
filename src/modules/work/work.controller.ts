@@ -26,6 +26,27 @@ import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 import { PermissionsGuard, userHasModulePermission } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
+/** Accepts month=10&year=2026 and the mobile contract month=YYYY-MM. */
+function parseCalendarMonthYear(
+  month?: string,
+  year?: string,
+): { month?: number; year?: number } {
+  const rawMonth = month?.trim();
+  if (rawMonth && /^\d{4}-\d{1,2}$/.test(rawMonth)) {
+    const [yearPart, monthPart] = rawMonth.split('-').map((part) => parseInt(part, 10));
+    if (yearPart >= 1970 && monthPart >= 1 && monthPart <= 12) {
+      return { year: yearPart, month: monthPart };
+    }
+  }
+  const parsedMonth = rawMonth ? parseInt(rawMonth, 10) : undefined;
+  const parsedYear = year?.trim() ? parseInt(year.trim(), 10) : undefined;
+  return {
+    month:
+      parsedMonth && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : undefined,
+    year: parsedYear && parsedYear >= 1970 ? parsedYear : undefined,
+  };
+}
+
 function mapWorkTypeToModule(workType?: WorkType | string): string {
   if (!workType) return 'video_edit';
   const wt = String(workType).toUpperCase();
@@ -395,7 +416,15 @@ export class WorkController {
     if (!authEmpId) {
       return [];
     }
-    if (!userHasModulePermission(user, 'CALENDAR', 'VIEW')) {
+    const canViewCalendar =
+      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
+      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
+    const period = parseCalendarMonthYear(month, year);
+    // Employees without the calendar module still receive rows assigned to them.
+    // Team-wide and company-wide schedules stay behind CALENDAR:VIEW.
+    const lookingAtAnotherEmployee =
+      Boolean(employeeId) && Number(employeeId) !== authEmpId;
+    if (lookingAtAnotherEmployee && !canViewCalendar) {
       throw new ForbiddenException(
         'Access denied: Missing required permission [CALENDAR:VIEW]',
       );
@@ -405,14 +434,17 @@ export class WorkController {
       date: date || startDate,
       dateFrom: startDate || dateFrom,
       dateTo: endDate || dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
+      month: period.month,
+      year: period.year,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
-    }, { allTenantCustomers: true });
+    }, {
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
+    });
   }
 
   @Get('production/metrics')
@@ -499,19 +531,21 @@ export class WorkController {
     if (isEmployeeRole && !req?.query?.customerId && !headerCustId) {
       const resolvedEmpId = employeeId ? Number(employeeId) : await this.workService.resolveEmployeeIdForUser(req?.user);
       if (resolvedEmpId) {
-        if (!userHasModulePermission(req?.user, 'CALENDAR', 'VIEW')) {
-          throw new ForbiddenException(
-            'Access denied: Missing required permission [CALENDAR:VIEW]',
-          );
-        }
+        const period = parseCalendarMonthYear(month, year);
+        const canViewCalendar =
+          userHasModulePermission(req?.user, 'CALENDAR', 'VIEW') ||
+          userHasModulePermission(req?.user, 'CALENDAR', 'VIEW_ASSIGNED');
         return this.workService.getEmployeeCalendar(resolvedEmpId, {
           date: date || startDate,
           dateFrom: dateFrom || startDate,
           dateTo: dateTo || endDate,
-          month: month ? parseInt(month, 10) : undefined,
-          year: year ? parseInt(year, 10) : undefined,
+          month: period.month,
+          year: period.year,
           status,
-        }, { allTenantCustomers: true });
+        }, {
+          allTenantCustomers: canViewCalendar,
+          assignedOnly: !canViewCalendar,
+        });
       }
     }
 

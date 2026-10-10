@@ -125,8 +125,62 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     },
   ];
 
+  const mockTaskItems = [
+    {
+      id: 501,
+      customerId: 10,
+      title: 'Store Verification & Client Meeting',
+      description: 'On-site verification',
+      priority: 'HIGH',
+      status: 'PENDING',
+      dueDate: new Date('2026-10-10T10:00:00.000Z'),
+      dueTime: '10:00 AM',
+      dueAt: new Date('2026-10-10T10:00:00.000Z'),
+      startDate: new Date('2026-10-10T10:00:00.000Z'),
+      startTime: '10:00 AM',
+      category: 'OPERATIONS',
+      employeeId: 1,
+      assignedToId: 1,
+      deletedAt: null,
+      notes: 'Check store setup and cameras',
+      customer: {
+        id: 10,
+        name: 'Acme Corp',
+        address: '123 Market St',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+      },
+      employee: {
+        id: 1,
+        firstName: 'John',
+        lastName: 'Photographer',
+        department: { name: 'Field Operations' },
+        designation: { name: 'Field Executive' },
+      },
+      department: { name: 'Field Operations' },
+      designation: { name: 'Field Executive' },
+      assignedTo: { id: 1, firstName: 'John', lastName: 'Photographer' },
+    },
+  ];
+
   beforeEach(async () => {
     prisma = {
+      task: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          return mockTaskItems.filter((t: any) => {
+            if (where.deletedAt === null && t.deletedAt !== null) return false;
+            if (where.OR) {
+              const matchesOr = where.OR.some((cond: any) => {
+                if (cond.employeeId !== undefined && cond.employeeId === t.employeeId) return true;
+                if (cond.assignedToId !== undefined && (cond.assignedToId === t.assignedToId || cond.assignedToId === t.employeeId)) return true;
+                return false;
+              });
+              if (!matchesOr) return false;
+            }
+            return true;
+          });
+        }),
+      },
       work: {
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           return mockWorkItems.filter((item: any) => {
@@ -343,5 +397,22 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     );
     expect(dateActivities.length).toBeGreaterThanOrEqual(1);
     expect(dateActivities.some((c) => c.id === '101')).toBe(true);
+  });
+
+  it('Employee 1 sees assigned Task 501 on 2026-10-10 (Admin panel Task table)', async () => {
+    const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-10' });
+    expect(calendar.length).toBeGreaterThanOrEqual(1);
+    const task501 = calendar.find((c) => c.id === '501');
+    expect(task501).toBeDefined();
+    expect(task501?.title).toBe('Store Verification & Client Meeting');
+    expect(task501?.activityType).toBe('TASK');
+    expect(task501?.customerName).toBe('Acme Corp');
+    expect(task501?.assignedEmployee).toBe('John Photographer');
+  });
+
+  it('Employee 2 (unassigned) does NOT see Task 501 on 2026-10-10', async () => {
+    const calendar = await workService.getEmployeeCalendar(2, { date: '2026-10-10' });
+    const task501 = calendar.find((c) => c.id === '501');
+    expect(task501).toBeUndefined();
   });
 });
