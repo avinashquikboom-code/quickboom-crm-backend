@@ -316,6 +316,30 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(calendar.find((item) => item.id === '803')).toBeUndefined();
   });
 
+  it('shows Senior Photographer all reel shoots for team-allotted customers, including other assignees', async () => {
+    const prisma = testingModule.get(PrismaService) as any;
+    const permissions = testingModule.get(WorkPermissionService) as any;
+    prisma.employee.findUnique.mockResolvedValue({
+      id: 1, userId: 2, customerId: 1, status: 'ACTIVE',
+      designation: { name: 'Senior Photographer' },
+    });
+    permissions.getAllowedActivityTypesForEmployee.mockResolvedValue({
+      role: 'SENIOR PHOTOGRAPHER',
+      allowedTypes: new Set(['REEL_SHOOT']),
+      isFullAccess: false,
+      isProductionManager: false,
+      workPermissions: ['reel_shoot'],
+    });
+    works.push({
+      ...teamWork, id: 910, customerId: 40, assignedToId: 9,
+      workType: WorkType.SHOOT,
+      customer: { ...teamWork.customer, id: 40 },
+    });
+    const calendar = await workService.getEmployeeCalendar(1, { month: 10, year: 2026 }, { assignedOnly: true });
+    expect(calendar.map((item) => item.id)).toEqual(expect.arrayContaining(['801', '910']));
+    expect(calendar.some((item) => item.id === '803')).toBe(false);
+  });
+
   it('returns customer schedule 2775 to a team member on October 11 even when assigned to Employee 2', async () => {
     // Reproduce the supplied customer response. Team 7 is a fixture membership,
     // not an assertion about the production team's numeric ID.
