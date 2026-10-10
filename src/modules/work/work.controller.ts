@@ -403,6 +403,9 @@ export class WorkController {
       );
       throw new NotFoundException('No employee profile is linked to this account');
     }
+    const canViewCalendar =
+      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
+      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
     const period = parseCalendarMonthYear(month, year);
     this.logger.log(
       `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
@@ -417,9 +420,9 @@ export class WorkController {
       : undefined;
     const isTargetSameAsAuth = !targetQueryEmpId || targetQueryEmpId === authEmpId;
     const lookingAtAnotherEmployee = !isTargetSameAsAuth;
-    if (lookingAtAnotherEmployee) {
+    if (lookingAtAnotherEmployee && !canViewCalendar) {
       throw new ForbiddenException(
-        'Employee My Calendar is scoped to the authenticated employee',
+        'Access denied: Missing required permission [CALENDAR:VIEW]',
       );
     }
 
@@ -438,8 +441,8 @@ export class WorkController {
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
     }, {
-      allTenantCustomers: false,
-      assignedOnly: true,
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
     });
   }
 
