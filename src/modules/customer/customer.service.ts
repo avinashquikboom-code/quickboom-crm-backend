@@ -538,7 +538,7 @@ export function isPersistedCustomerEligibleForList(
   if (!hasOriginLink) return true;
   if (originLead) return isLeadWonForCustomerEligibility(originLead, wonStageIds);
 
-  return true;
+  return false;
 }
 
 @Injectable()
@@ -1016,6 +1016,27 @@ export class CustomerService {
     const baseWhere: any = {
       deletedAt: null,
       NOT: SYSTEM_CUSTOMER_EXCLUSIONS,
+      OR: [
+        { leadId: null },
+        {
+          originLead: {
+            deletedAt: null,
+            OR: [
+              { status: { in: [LeadStatus.WON, LeadStatus.CONVERTED, LeadStatus.WORK_STARTED] } },
+              { stage: { key: { in: ['WON', 'CONVERTED', 'WORK_STARTED'] } } },
+              { stage: { name: { in: ['Won', 'WON', 'Converted', 'CONVERTED', 'Work Started', 'WORK_STARTED'] } } },
+            ],
+          },
+        },
+        {
+          subscriptions: {
+            some: {
+              deletedAt: null,
+              status: { in: ['ACTIVE', 'EXPIRED', 'CANCELLED'] },
+            },
+          },
+        },
+      ],
     };
 
     const [totalCustomers, activeCustomers, inactiveCustomers, newCustomers, customersWithDeals] =
@@ -1433,6 +1454,11 @@ export class CustomerService {
     const completedCustomerIds: number[] = [];
 
     for (const c of allCustomersForCounts) {
+      const wonEligible = isPersistedCustomerEligibleForList(c, wonStageIds);
+      if (!wonEligible) {
+        continue;
+      }
+
       if (c.isActive === false) {
         inactiveCount++;
         inactiveCustomerIds.push(c.id);
@@ -1440,7 +1466,6 @@ export class CustomerService {
       }
 
       const call = extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds);
-      const wonEligible = isPersistedCustomerEligibleForList(c, wonStageIds);
 
       // Priority 1: ACTIVE (valid, actually activated purchased plan)
       const activeSub = c.subscriptions?.find(
@@ -1448,18 +1473,15 @@ export class CustomerService {
       );
       const isSubActive = !!activeSub;
 
-      if (isSubActive && wonEligible) {
+      if (isSubActive) {
         activeCount++;
         activeCustomerIds.push(c.id);
-      } else if (!isSubActive && call !== null) {
-        // Upcoming includes Follow-up / Final Call even when the Lead is not WON
+      } else if (call !== null) {
         upcomingCount++;
         upcomingCustomerIds.push(c.id);
-      } else if (wonEligible) {
+      } else {
         inactiveCount++;
         inactiveCustomerIds.push(c.id);
-      } else {
-        continue;
       }
 
       const st = this.computeCustomerStatus(c, finalCallStageIds, followUpStageIds);
@@ -1573,8 +1595,15 @@ export class CustomerService {
             continue;
           }
 
-          const call = extractUpcomingCall({ leads: [l] }, now, finalCallStageIds, followUpStageIds);
           const isWonLead = isLeadWonForCustomerEligibility(l, wonStageIds);
+          if (!isWonLead) {
+            this.logger.log(
+              `[CUSTOMER_ELIGIBILITY_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.status}\nreason=lead_stage_is_not_won`,
+            );
+            continue;
+          }
+
+          const call = extractUpcomingCall({ leads: [l] }, now, finalCallStageIds, followUpStageIds);
           const leadItem = this.mapLeadToCustomerItem(l, call);
 
           if (call !== null) {
@@ -1582,25 +1611,13 @@ export class CustomerService {
             leadItem.status = 'UPCOMING';
             leadItem.hasUpcomingCall = true;
             unconvertedUpcomingLeads.push(leadItem);
-            if (isWonLead) {
-              unconvertedAllLeads.push(leadItem);
-            }
-            continue;
-          }
-
-          if (!isWonLead) {
-            this.logger.log(
-              `[CUSTOMER_ELIGIBILITY_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.status}\nreason=lead_stage_is_not_won_and_not_upcoming`,
-            );
+            unconvertedAllLeads.push(leadItem);
             continue;
           }
 
           leadItem.customerStatus = 'INACTIVE';
           leadItem.status = 'INACTIVE';
           leadItem.hasUpcomingCall = false;
-          this.logger.log(
-            `[UPCOMING_FILTERED]\nleadId=${l.id}\nstage=${l.stage?.key || l.stage?.name || l.stageId}\nreason=non_upcoming_stage`,
-          );
           unconvertedInactiveLeads.push(leadItem);
           unconvertedAllLeads.push(leadItem);
         }
@@ -1736,8 +1753,7 @@ export class CustomerService {
     });
 
     const eligibleItems = items.filter((c) => {
-      if (isPersistedCustomerEligibleForList(c, wonStageIds)) return true;
-      return extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds) !== null;
+      return isPersistedCustomerEligibleForList(c, wonStageIds);
     });
 
     let formatted = eligibleItems.map((c) => {
@@ -2295,7 +2311,7 @@ export class CustomerService {
             reminders: { where: { isCompleted: false }, orderBy: { remindAt: 'asc' } },
           },
         });
-        if (lead) {
+        if (lead && isLeadWonForCustomerEligibility(lead)) {
           const empId = user?.employeeId || user?.employee?.id;
           const uId = user?.id || user?.sub;
           const isPrivileged = isUserSuperAdmin(user) || isUserAdmin(user);
@@ -2311,6 +2327,10 @@ export class CustomerService {
           return this.mapLeadToCustomerItem(lead, call);
         }
       }
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
+    if (!isPersistedCustomerEligibleForList(customer)) {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
