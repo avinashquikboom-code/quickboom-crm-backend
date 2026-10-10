@@ -177,6 +177,8 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
                   }
                   return false;
                 }
+                if (condition.customerId !== undefined && item.customerId === condition.customerId) return true;
+                if (condition.customer?.id !== undefined && item.customerId === condition.customer.id) return true;
                 if (condition.assignedToId !== undefined && condition.assignedToId !== null && item.assignedToId === condition.assignedToId) return true;
                 if (condition.editorId !== undefined && condition.editorId !== null && item.editorId === condition.editorId) return true;
                 if (condition.tasks?.some?.assignedToId !== undefined) {
@@ -195,20 +197,20 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       },
       employee: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
-          if (where.id === 1) return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1 };
-          if (where.id === 2) return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2 };
-          if (where.id === 3) return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3 };
+          if (where.id === 1) return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1, customerId: 10 };
+          if (where.id === 2) return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2, customerId: 10 };
+          if (where.id === 3) return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3, customerId: 20 };
           return null;
         }),
         findFirst: jest.fn().mockImplementation(({ where }: any) => {
           if (where.id === 1 || where.OR?.some((cond: any) => cond.userId === 1 || cond.email === 'emp1@crm.com')) {
-            return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1 };
+            return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1, customerId: 10 };
           }
           if (where.id === 2 || where.OR?.some((cond: any) => cond.userId === 2 || cond.email === 'emp2@crm.com')) {
-            return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2 };
+            return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2, customerId: 10 };
           }
           if (where.id === 3 || where.OR?.some((cond: any) => cond.userId === 3 || cond.email === 'emp3@crm.com')) {
-            return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3 };
+            return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3, customerId: 20 };
           }
           return null;
         }),
@@ -318,5 +320,28 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(ids).toContain('103');
     expect(ids).toContain('104');
     expect(ids).not.toContain('101'); // 101 is September
+  });
+
+  it('When allTenantCustomers is true, employee sees scheduled company/tenant work for the month', async () => {
+    const septemberCalendar = await workService.getEmployeeCalendar(
+      1,
+      { year: 2026, month: 9 },
+      { allTenantCustomers: true },
+    );
+    expect(septemberCalendar.length).toBeGreaterThanOrEqual(1);
+    const item101 = septemberCalendar.find((c) => c.id === '101');
+    expect(item101).toBeDefined();
+    expect(item101?.customerName).toBe('Acme Corp');
+    expect(item101?.title).toBe('Reels Video Shoot');
+  });
+
+  it('When allTenantCustomers is true, employee sees scheduled work on target date', async () => {
+    const dateActivities = await workService.getEmployeeCalendar(
+      1,
+      { date: '2026-09-10' },
+      { allTenantCustomers: true },
+    );
+    expect(dateActivities.length).toBeGreaterThanOrEqual(1);
+    expect(dateActivities.some((c) => c.id === '101')).toBe(true);
   });
 });

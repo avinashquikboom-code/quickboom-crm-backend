@@ -57,6 +57,7 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
     const modules = service.getWorkModules();
     expect(modules.map((m) => m.key)).toEqual([
       'leads',
+      'data_capture',
       'video_edit',
       'post_design',
       'story_design',

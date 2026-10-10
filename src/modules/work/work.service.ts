@@ -2439,14 +2439,38 @@ status: ${item.status}`);
     // customer.id = the employee's company id, so only one customer came back.
     // A normal employee still uses team membership. A production manager keeps
     // the wider workspace view, scoped to this company.
-    let productionTeamIds = await this.activeProductionTeamIdsForEmployee(
-      numEmployeeId,
-      tenantCustomerId,
-    );
-    if (productionTeamIds.length === 0) {
+    let productionTeamIds = !isProductionManager
+      ? await this.activeProductionTeamIdsForEmployee(
+          numEmployeeId,
+          tenantCustomerId,
+        )
+      : [];
+    if (!isProductionManager && allTenantCustomers && productionTeamIds.length === 0) {
       productionTeamIds = await this.productionTeamIdsFromEmployeeWorks(numEmployeeId);
     }
-    const teamCustomerIds = await this.customerIdsAssignedToTeams(productionTeamIds);
+    const teamCustomerIds = !isProductionManager
+      ? await this.customerIdsAssignedToTeams(productionTeamIds)
+      : [];
+
+    if (productionTeamIds.length > 0 && typeof this.prisma.customer?.findMany === 'function') {
+      try {
+        const assignedCustomers = await this.prisma.customer.findMany({
+          where: {
+            assignedTeamId: { in: productionTeamIds },
+            deletedAt: null,
+          },
+          select: { id: true, assignedTeamId: true },
+        });
+        for (const customer of assignedCustomers) {
+          if (!customer.assignedTeamId) continue;
+          await this.syncCustomerTeamWorkAssignments(customer.id, customer.assignedTeamId);
+        }
+      } catch (syncErr: any) {
+        this.logger.warn(
+          `getEmployeeCalendar assignment sync warning: ${syncErr?.message}`,
+        );
+      }
+    }
 
     let where: any;
 
@@ -2491,20 +2515,16 @@ status: ${item.status}`);
           { customer: { deletedAt: null, assignedTeam: { leaderId: empRecord.userId } } },
         );
       }
+      if (tenantCustomerId) {
+        orConditions.push(
+          { customerId: tenantCustomerId },
+          { customer: { id: tenantCustomerId, deletedAt: null } },
+          { team: { customerId: tenantCustomerId, isActive: true } },
+          { customer: { deletedAt: null, assignedTeam: { customerId: tenantCustomerId, isActive: true } } },
+        );
+      }
       if (teamCustomerIds.length > 0) {
         orConditions.push({ customerId: { in: teamCustomerIds } });
-      }
-      if (teamCustomerIds.length === 0 && productionTeamIds.length === 0 && isProductionManager && tenantCustomerId) {
-        orConditions.push({
-          customer: {
-            deletedAt: null,
-            isActive: true,
-            assignedTeam: {
-              isActive: true,
-              customerId: tenantCustomerId,
-            },
-          },
-        });
       }
       where = {
         OR: orConditions,
@@ -2725,7 +2745,12 @@ status: ${item.status}`);
             },
             assignedTeamId: true,
             assignedTeam: {
-              select: { id: true, name: true },
+              select: {
+                id: true,
+                name: true,
+                leaderId: true,
+                members: { select: { employeeId: true } },
+              },
             },
             socialMediaHandlers: {
               take: 5,
@@ -2821,7 +2846,7 @@ status: ${item.status}`);
       filteredItems = items.filter((w) => matchesTargetMonth(w.scheduledDate, targetYear!, targetMonth!));
     }
 
-    if (!isProductionManager) {
+    if (!isProductionManager && !allTenantCustomers) {
       const viewerIds = new Set<number>([numEmployeeId]);
       if (empRecord?.userId) viewerIds.add(Number(empRecord.userId));
       const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
