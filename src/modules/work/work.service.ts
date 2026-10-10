@@ -20,7 +20,7 @@ import {
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
-import { workTypesForDesignation } from './calendar-query.util';
+import { workMatchesDesignation, workTypesForDesignation } from './calendar-query.util';
 import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
@@ -2494,26 +2494,6 @@ status: ${item.status}`);
       ? await this.customerIdsAssignedToTeams(authorizedTeamIds)
       : [];
 
-    if (productionTeamIds.length > 0 && typeof this.prisma.customer?.findMany === 'function') {
-      try {
-        const assignedCustomers = await this.prisma.customer.findMany({
-          where: {
-            assignedTeamId: { in: productionTeamIds },
-            deletedAt: null,
-          },
-          select: { id: true, assignedTeamId: true },
-        });
-        for (const customer of assignedCustomers) {
-          if (!customer.assignedTeamId) continue;
-          await this.syncCustomerTeamWorkAssignments(customer.id, customer.assignedTeamId);
-        }
-      } catch (syncErr: any) {
-        this.logger.warn(
-          `getEmployeeCalendar assignment sync warning: ${syncErr?.message}`,
-        );
-      }
-    }
-
     let where: any;
     const assignedOnly = options?.assignedOnly === true;
 
@@ -2538,19 +2518,26 @@ status: ${item.status}`);
             },
           ];
 
-    const designationTypes = workTypesForDesignation((empRecord as any)?.designation?.name);
+    const designationName = (empRecord as any)?.designation?.name;
+    const designationTypes = workTypesForDesignation(designationName);
     const designationSchedule = () => {
       if (designationTypes.length === 0 || !tenantCustomerId) return [];
+      const companyScope: any[] = [
+        { customerId: Number(tenantCustomerId) },
+        { customer: { assignedTeam: { customerId: Number(tenantCustomerId), isActive: true } } },
+        { customer: { assignedEmployeeRel: { customerId: Number(tenantCustomerId) } } },
+        { customer: { createdByEmployeeRel: { customerId: Number(tenantCustomerId) } } },
+      ];
+      if (authorizedTeamIds.length > 0) {
+        companyScope.push({
+          customer: { deletedAt: null, assignedTeamId: { in: authorizedTeamIds } },
+        });
+      }
       return [
         {
           AND: [
             { workType: { in: designationTypes } },
-            {
-              OR: [
-                { customerId: Number(tenantCustomerId) },
-                { customer: { assignedTeam: { customerId: Number(tenantCustomerId), isActive: true } } },
-              ],
-            },
+            { OR: companyScope },
             {
               OR: [
                 { AND: [{ assignedToId: null }, { editorId: null }] },
@@ -2975,7 +2962,8 @@ status: ${item.status}`);
           (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && Number(w.editorId) !== numEmployeeId);
         if (
           !otherAssignee &&
-          designationTypes.includes(String(w.workType || '').toUpperCase())
+          (workMatchesDesignation(designationName, w.workType) ||
+            workMatchesDesignation(designationName, normalizeActivityType(w)))
         ) {
           return true;
         }

@@ -23,6 +23,34 @@ export function workTypesForDesignation(designation?: string | null): string[] {
   return Array.from(matched);
 }
 
+/** Stored WorkType plus the normalized names the calendar already uses. */
+export function workMatchesDesignation(designation?: string | null, workType?: string | null): boolean {
+  const types = new Set(workTypesForDesignation(designation));
+  const raw = String(workType || '').toUpperCase();
+  if (!raw || types.size === 0) return false;
+  if (types.has(raw)) return true;
+  if ((types.has('SHOOT') || types.has('REELS_SHOOT')) && raw === 'REEL_SHOOT') return true;
+  if (
+    (types.has('EDITING') || types.has('VIDEO_EDITING') || types.has('VIDEO')) &&
+    raw === 'REEL_EDIT'
+  ) {
+    return true;
+  }
+  if (
+    (types.has('UPLOADING') || types.has('SOCIAL_MEDIA_MANAGEMENT')) &&
+    (raw === 'REEL_POST' || raw === 'STORY_POST')
+  ) {
+    return true;
+  }
+  if (
+    (types.has('POST_DESIGN') || types.has('GRAPHIC_DESIGN') || types.has('STORY_DESIGN') || types.has('CREATIVE_POST')) &&
+    raw === 'STORY'
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** Accepts month=10&year=2026 and month=YYYY-MM. */
 export function parseCalendarMonthYear(
   month?: string,

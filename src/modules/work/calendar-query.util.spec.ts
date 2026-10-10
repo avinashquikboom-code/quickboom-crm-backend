@@ -1,4 +1,4 @@
-import { parseCalendarMonthYear, workTypesForDesignation } from './calendar-query.util';
+import { parseCalendarMonthYear, workMatchesDesignation, workTypesForDesignation } from './calendar-query.util';
 
 describe('workTypesForDesignation', () => {
   it('maps reel editor, video editor, shooter, and designer to their work types', () => {
@@ -7,8 +7,22 @@ describe('workTypesForDesignation', () => {
     expect(workTypesForDesignation('Reel Shooter')).toEqual(expect.arrayContaining(['SHOOT', 'REELS_SHOOT']));
     expect(workTypesForDesignation('Photographer')).toEqual(expect.arrayContaining(['SHOOT']));
     expect(workTypesForDesignation('Graphic Designer')).toEqual(expect.arrayContaining(['POST_DESIGN', 'GRAPHIC_DESIGN']));
+    expect(workTypesForDesignation('Senior Photographer')).toEqual(expect.arrayContaining(['SHOOT', 'REELS_SHOOT']));
+    expect(workTypesForDesignation('Social Media Manager')).toEqual(expect.arrayContaining(['UPLOADING']));
     expect(workTypesForDesignation('Production')).toEqual([]);
     expect(workTypesForDesignation('Telecaller')).toEqual([]);
+  });
+
+  it('matches stored work types and the calendar names for the same designation', () => {
+    expect(workMatchesDesignation('Video Editor', 'EDITING')).toBe(true);
+    expect(workMatchesDesignation('Video Editor', 'REEL_EDIT')).toBe(true);
+    expect(workMatchesDesignation('Video Editor', 'SHOOT')).toBe(false);
+    expect(workMatchesDesignation('Senior Photographer', 'SHOOT')).toBe(true);
+    expect(workMatchesDesignation('Senior Photographer', 'REEL_SHOOT')).toBe(true);
+    expect(workMatchesDesignation('Graphic Designer', 'STORY_DESIGN')).toBe(true);
+    expect(workMatchesDesignation('Social Media Manager', 'UPLOADING')).toBe(true);
+    expect(workMatchesDesignation('Social Media Manager', 'REEL_POST')).toBe(true);
+    expect(workMatchesDesignation('Telecaller', 'EDITING')).toBe(false);
   });
 });
 
