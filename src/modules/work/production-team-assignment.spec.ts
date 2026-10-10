@@ -39,7 +39,7 @@ describe('Production team assignment', () => {
     member(15, 'Telecaller'),
   ];
 
-  async function sync(team: { id: number; name: string; members: any[] }, works = freshWorks()) {
+  async function sync(team: { id: number; name: string; members: any[] }, works: any[] = freshWorks()) {
     const updates: any[] = [];
     const prisma: any = {
       team: {
@@ -53,8 +53,11 @@ describe('Production team assignment', () => {
         }),
       },
       work: {
-        findMany: jest.fn().mockImplementation(async () =>
-          works.filter((work) => work.assignedToId == null || work.teamId == null || work.teamId !== team.id),
+        findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+          works.filter((work) => {
+            if (where?.customerId != null && work.customerId !== where.customerId) return false;
+            return work.assignedToId == null || work.teamId == null || work.teamId !== team.id;
+          }),
         ),
         update: jest.fn().mockImplementation(async ({ where, data }) => {
           const work = works.find((item) => item.id === where.id);
@@ -164,6 +167,34 @@ describe('Production team assignment', () => {
     await service.getEmployeeCalendar(10, { month: 10, year: 2026 }, { allTenantCustomers: true });
 
     expect(assign).toHaveBeenCalledWith(8, 2);
+  });
+
+  it('gives customer video-editing tasks to the Video Editor, not a Videographer', async () => {
+    const works = [
+      { id: 1, customerId: 8, teamId: null as number | null, assignedToId: null as number | null, status: WorkStatus.SCHEDULED, workType: WorkType.EDITING, title: 'Reel #1: Edit', description: 'Reel #1 Video Editing, Color Grading & Audio Sync' },
+      { id: 2, customerId: 8, teamId: null as number | null, assignedToId: null as number | null, status: WorkStatus.SCHEDULED, workType: WorkType.VIDEO_EDITING, title: 'Reel #2: Edit', description: 'Reel #2 Video Editing' },
+      { id: 3, customerId: 9, teamId: null as number | null, assignedToId: null as number | null, status: WorkStatus.SCHEDULED, workType: WorkType.EDITING, title: 'Other tenant edit' },
+    ];
+    const { updates, prisma } = await sync(
+      {
+        id: 2,
+        name: 'Production Team_A',
+        members: [member(16, 'Videographer'), member(10, 'Video Editor'), member(11, 'Graphic Designer')],
+      },
+      works,
+    );
+    const assignee = (id: number) => updates.find((item) => item.id === id)?.assignedToId;
+    expect(assignee(1)).toBe(10);
+    expect(assignee(2)).toBe(10);
+    expect(updates.find((item) => item.id === 3)).toBeUndefined();
+    expect(updates.map((item) => item.assignedToId)).not.toContain(16);
+    expect(updates.map((item) => item.assignedToId)).not.toContain(11);
+    expect(prisma.workTask.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workId: 1, assignedToId: null },
+        data: { assignedToId: 10 },
+      }),
+    );
   });
 
   it('does not create a second schedule when assignment runs again', async () => {

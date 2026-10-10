@@ -1909,7 +1909,9 @@ status: ${item.status}`);
     };
 
     if (normalizedType === 'REEL_EDIT' || normalizedType === 'VIDEO_EDITING') {
-      return members.filter((m) => memberMatches(m, ['editor', 'video edit', 'editing', 'video']));
+      // "video" alone also matches Videographer and would take the edit away
+      // from the Video Editor. Editor / editing are the existing editor titles.
+      return members.filter((m) => memberMatches(m, ['editor', 'video edit', 'editing']));
     }
     if (normalizedType === 'POST_DESIGN') {
       return members.filter((m) => memberMatches(m, ['graphic', 'design', 'designer', 'artist', 'creative']));

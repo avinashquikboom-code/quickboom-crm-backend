@@ -190,7 +190,21 @@ describe('Employee designation calendar visibility', () => {
 
   it('shows a Reel Editor and a Video Editor only matching editing work', async () => {
     await expect(idsFor('Reel Editor', 10)).resolves.toEqual(['1', '2', '7', '11']);
-    await expect(idsFor('Video Editor', 11)).resolves.toEqual(['1', '2', '7', '11', '12']);
+    const { service } = await serviceFor({ id: 11, designation: 'Video Editor' });
+    const calendar = await service.getEmployeeCalendar(11, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    const week = await service.getEmployeeCalendar(11, {
+      dateFrom: '2026-10-10',
+      dateTo: '2026-10-16',
+    }, { allTenantCustomers: true });
+    const metrics = await service.getProductionMetrics(11, { month: 10, year: 2026 }, { allTenantCustomers: true });
+    expect(calendar.map((item) => item.id)).toEqual(['1', '2', '7', '11', '12']);
+    expect(week.map((item) => item.id)).toEqual(calendar.map((item) => item.id));
+    expect(metrics.total).toBe(calendar.length);
+    expect(calendar.find((item) => item.id === '6')).toBeUndefined();
+  });
+
+  it('does not give video-editing tasks to a videographer', async () => {
+    await expect(idsFor('Videographer', 16)).resolves.toEqual(['3', '8']);
   });
 
   it('shows a Reel Shooter only shoot work and keeps the original date', async () => {
