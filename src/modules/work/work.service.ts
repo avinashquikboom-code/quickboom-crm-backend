@@ -3702,22 +3702,6 @@ afterFilter: ${result.length}`);
     );
 
     this.logger.log(
-      `[EMPLOYEE_WORK_DEBUG] ` +
-      `employeeId=${empRecord?.employeeCode ?? 'none'} ` +
-      `internalEmployeeId=${numEmployeeId} ` +
-      `teamIds=${membershipTeamIds.join(',') || 'none'} ` +
-      `companyId=${tenantCustomerId ?? 'none'} ` +
-      `calendar API record count=${result.length} ` +
-      `my work API record count=${result.length} ` +
-      `records before filters=${items.length} ` +
-      `records after employee filter=${directWorkCount} ` +
-      `records after team filter=${teamWorkCount + customerWorkCount} ` +
-      `records after status filter=${items.length} ` +
-      `records after date filter=${dateMatchedCount} ` +
-      `final returned count=${result.length}`,
-    );
-
-    this.logger.log(
       `[EMPLOYEE_CALENDAR_DEBUG] ` +
       `authUserId=${empRecord?.userId ?? 'none'} ` +
       `resolvedEmployeeId=${numEmployeeId} ` +
