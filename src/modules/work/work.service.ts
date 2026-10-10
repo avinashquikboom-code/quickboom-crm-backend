@@ -2471,6 +2471,17 @@ status: ${item.status}`);
     }
 
     const tenantCustomerId = (empRecord as any)?.customerId;
+    const designationName = (empRecord as any)?.designation?.name;
+    const designationLabel = String(designationName || '').toUpperCase();
+    if (
+      designationLabel.includes('PRODUCTION MANAGER') ||
+      designationLabel.includes('PRODUCTION_MANAGER') ||
+      designationLabel.includes('PROD MGR') ||
+      designationLabel.includes('PRODUCTION LEAD') ||
+      designationLabel.includes('PRODUCTION_LEAD')
+    ) {
+      isProductionManager = true;
+    }
     const allTenantCustomers = options?.allTenantCustomers === true;
     // Mobile calendar always passes allTenantCustomers. That flag used to set
     // customer.id = the employee's company id, so only one customer came back.
@@ -2518,15 +2529,17 @@ status: ${item.status}`);
             },
           ];
 
-    const designationName = (empRecord as any)?.designation?.name;
     const designationTypes = workTypesForDesignation(designationName);
     const designationSchedule = () => {
       if (designationTypes.length === 0 || !tenantCustomerId) return [];
+      const companyId = Number(tenantCustomerId);
       const companyScope: any[] = [
-        { customerId: Number(tenantCustomerId) },
-        { customer: { assignedTeam: { customerId: Number(tenantCustomerId), isActive: true } } },
-        { customer: { assignedEmployeeRel: { customerId: Number(tenantCustomerId) } } },
-        { customer: { createdByEmployeeRel: { customerId: Number(tenantCustomerId) } } },
+        { customerId: companyId },
+        { customer: { assignedTeam: { customerId: companyId, isActive: true } } },
+        { customer: { assignedEmployeeRel: { customerId: companyId } } },
+        { customer: { createdByEmployeeRel: { customerId: companyId } } },
+        { customer: { originLead: { customerId: companyId, deletedAt: null } } },
+        { customer: { leads: { some: { customerId: companyId, deletedAt: null } } } },
       ];
       if (authorizedTeamIds.length > 0) {
         companyScope.push({
