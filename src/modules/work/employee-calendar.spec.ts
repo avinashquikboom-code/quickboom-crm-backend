@@ -294,7 +294,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   });
 
   it('Employee 1 sees work assigned to them (as photographer)', async () => {
-    const calendar = await workService.getEmployeeCalendar(1);
+    const calendar = await workService.getEmployeeCalendar(1, { month: 9, year: 2026 });
     expect(calendar.length).toBeGreaterThanOrEqual(1);
     const item101 = calendar.find((c) => c.id === '101');
     expect(item101).toBeDefined();
@@ -306,7 +306,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   });
 
   it('Employee 2 sees work assigned to them (as video editor)', async () => {
-    const calendar = await workService.getEmployeeCalendar(2);
+    const calendar = await workService.getEmployeeCalendar(2, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(1);
     expect(calendar[0].id).toBe('101');
     expect(calendar[0].customerName).toBe('Acme Corp');
@@ -315,12 +315,12 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   });
 
   it('Employee 4 (unassigned) does NOT see Employee 1 or Employee 2 assigned work', async () => {
-    const calendar = await workService.getEmployeeCalendar(4);
+    const calendar = await workService.getEmployeeCalendar(4, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(0);
   });
 
   it('Employee 3 sees only their own work (Creative Post Design for Beta LLC)', async () => {
-    const calendar = await workService.getEmployeeCalendar(3);
+    const calendar = await workService.getEmployeeCalendar(3, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(1);
     expect(calendar[0].id).toBe('102');
     expect(calendar[0].customerName).toBe('Beta LLC');

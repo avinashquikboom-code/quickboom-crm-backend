@@ -2025,8 +2025,8 @@ status: ${item.status}`);
     if (!employee || String(employee.status || '').toUpperCase() === 'INACTIVE') return [];
 
     const tenantId = Number(tenantCustomerId || employee.customerId);
+    // TeamMember.employeeId and Team.leaderId store Employee.id, not User.id.
     const empIds = [employeeId];
-    if (employee.userId) empIds.push(Number(employee.userId));
 
     const [memberships, ledTeams] = await Promise.all([
       this.prisma.teamMember.findMany({
@@ -2076,17 +2076,53 @@ status: ${item.status}`);
   }
 
   /**
+   * Teams this employee belongs to or leads. Customer allotment uses
+   * Customer.assignedTeamId, so BPO membership is included here. Production-only
+   * helpers keep their own BPO exclusion.
+   */
+  private async employeeTeamIds(
+    employeeId: number,
+    tenantCustomerId?: number | null,
+  ): Promise<number[]> {
+    if (
+      typeof this.prisma.teamMember?.findMany !== 'function' ||
+      typeof this.prisma.team?.findMany !== 'function'
+    ) {
+      return [];
+    }
+    const tenantId = Number(tenantCustomerId);
+    const [memberships, ledTeams] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: { employeeId, team: { isActive: true } },
+        select: { teamId: true, team: { select: { customerId: true, isActive: true } } },
+      }),
+      this.prisma.team.findMany({
+        where: { leaderId: employeeId, isActive: true },
+        select: { id: true, customerId: true },
+      }),
+    ]);
+    const ids = new Set<number>();
+    for (const row of memberships || []) {
+      if (row.team?.isActive === false) continue;
+      const companyId = Number(row.team?.customerId);
+      if (Number.isInteger(tenantId) && tenantId > 0 && companyId !== tenantId) continue;
+      ids.add(row.teamId);
+    }
+    for (const team of ledTeams || []) {
+      const companyId = Number(team.customerId);
+      if (Number.isInteger(tenantId) && tenantId > 0 && companyId !== tenantId) continue;
+      ids.add(team.id);
+    }
+    return Array.from(ids);
+  }
+
+  /**
    * When the employee has no TeamMember row, the teams already stored on
    * their work still identify the production team whose customers they can view.
    */
   private async productionTeamIdsFromEmployeeWorks(employeeId: number): Promise<number[]> {
     if (typeof this.prisma.work?.findMany !== 'function') return [];
-    const empRecord = await this.prisma.employee.findFirst({
-      where: { id: employeeId },
-      select: { userId: true },
-    });
     const viewerIds = [employeeId];
-    if (empRecord?.userId) viewerIds.push(Number(empRecord.userId));
 
     const works = await this.prisma.work.findMany({
       where: {
@@ -2448,8 +2484,13 @@ status: ${item.status}`);
     if (!isProductionManager && allTenantCustomers && productionTeamIds.length === 0) {
       productionTeamIds = await this.productionTeamIdsFromEmployeeWorks(numEmployeeId);
     }
+    const membershipTeamIds = await this.employeeTeamIds(
+      numEmployeeId,
+      tenantCustomerId,
+    );
+    const authorizedTeamIds = [...new Set([...productionTeamIds, ...membershipTeamIds])];
     const teamCustomerIds = !isProductionManager
-      ? await this.customerIdsAssignedToTeams(productionTeamIds)
+      ? await this.customerIdsAssignedToTeams(authorizedTeamIds)
       : [];
 
     if (productionTeamIds.length > 0 && typeof this.prisma.customer?.findMany === 'function') {
@@ -2482,10 +2523,25 @@ status: ${item.status}`);
       { customer: { assignedEmployeeId: numEmployeeId } },
     ];
 
+    const teamCustomerWork = (teamIds: number[]) =>
+      teamIds.length === 0
+        ? []
+        : [
+            { teamId: { in: teamIds } },
+            {
+              customer: {
+                deletedAt: null,
+                NOT: { isActive: false },
+                assignedTeamId: { in: teamIds },
+              },
+            },
+          ];
+
     if (assignedOnly) {
-      // Own assignments only. Company id is not an assignment.
+      // Own assignments, plus customers allotted to this employee's teams.
+      // Customer.assignedTeamId is the allotment. Company id is not.
       where = {
-        OR: directAssignment(),
+        OR: [...directAssignment(), ...teamCustomerWork(membershipTeamIds)],
         status: { not: WorkStatus.CANCELLED },
       };
       if (query.customerId) {
@@ -2496,7 +2552,10 @@ status: ${item.status}`);
       // employee's production teams, not customer.id = the company record.
       // That equality was returning only customer 91 when the employee
       // company id was 91, even though Team A has more customers.
-      const orConditions: any[] = directAssignment();
+      const orConditions: any[] = [
+        ...directAssignment(),
+        ...teamCustomerWork(membershipTeamIds),
+      ];
       if (productionTeamIds.length > 0) {
         orConditions.push(
           { teamId: { in: productionTeamIds } },
@@ -2593,20 +2652,9 @@ status: ${item.status}`);
       // - Their assigned customers
       // - Their own task/status actions
       const orConditions: any[] = [
-        { assignedToId: numEmployeeId },
-        { editorId: numEmployeeId },
-        { tasks: { some: { assignedToId: numEmployeeId } } },
-        { customer: { assignedEmployeeId: numEmployeeId } },
+        ...directAssignment(),
+        ...teamCustomerWork(membershipTeamIds),
       ];
-
-      if (empRecord?.userId) {
-        orConditions.push(
-          { assignedToId: empRecord.userId },
-          { editorId: empRecord.userId },
-          { tasks: { some: { assignedToId: empRecord.userId } } },
-          { customer: { assignedEmployeeId: empRecord.userId } },
-        );
-      }
 
       if (productionTeamIds.length > 0) {
         orConditions.push(
@@ -2622,14 +2670,6 @@ status: ${item.status}`);
         { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
         { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
       );
-      if (empRecord?.userId) {
-        orConditions.push(
-          { team: { members: { some: { employeeId: empRecord.userId } } } },
-          { team: { leaderId: empRecord.userId } },
-          { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: empRecord.userId } } } } },
-          { customer: { deletedAt: null, assignedTeam: { leaderId: empRecord.userId } } },
-        );
-      }
       if (teamCustomerIds.length > 0) {
         orConditions.push({ customerId: { in: teamCustomerIds } });
       }
@@ -2667,6 +2707,21 @@ status: ${item.status}`);
     let targetYear: number | undefined;
     let targetMonth: number | undefined;
     let targetDay: number | undefined;
+    let appliedMonth = query.month;
+    let appliedYear = query.year;
+    const hasExplicitRange = Boolean(
+      query.date ||
+      query.dateFrom ||
+      query.dateTo ||
+      (query as any).startDate ||
+      (query as any).endDate ||
+      (query.month && query.year),
+    );
+    if (!hasExplicitRange) {
+      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      appliedYear = appliedYear && appliedYear >= 1970 ? appliedYear : istNow.getUTCFullYear();
+      appliedMonth = appliedMonth && appliedMonth >= 1 && appliedMonth <= 12 ? appliedMonth : istNow.getUTCMonth() + 1;
+    }
 
     if (query.date) {
       targetDateStr = query.date.trim();
@@ -2691,12 +2746,12 @@ status: ${item.status}`);
           where.scheduledDate = { gte: startWindow, lte: endWindow };
         }
       }
-    } else if (query.month && query.year) {
-      targetYear = query.year;
-      targetMonth = query.month;
+    } else if (appliedMonth && appliedYear) {
+      targetYear = appliedYear;
+      targetMonth = appliedMonth;
       // Buffer by +/- 1 day on month edges to avoid timezone truncation
-      const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 0, 0, 0, 0, 0));
-      const endOfMonth = new Date(Date.UTC(query.year, query.month, 2, 23, 59, 59, 999));
+      const startOfMonth = new Date(Date.UTC(appliedYear, appliedMonth - 1, 0, 0, 0, 0, 0));
+      const endOfMonth = new Date(Date.UTC(appliedYear, appliedMonth, 2, 23, 59, 59, 999));
       where.scheduledDate = { gte: startOfMonth, lte: endOfMonth };
     } else if (query.dateFrom || query.dateTo || (query as any).startDate || (query as any).endDate) {
       where.scheduledDate = {};
@@ -2836,18 +2891,6 @@ status: ${item.status}`);
 
     if (!isProductionManager && !allTenantCustomers) {
       const viewerIds = new Set<number>([numEmployeeId]);
-      if (empRecord?.userId) viewerIds.add(Number(empRecord.userId));
-      const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
-        `${person?.firstName || ''} ${person?.lastName || ''}`.trim().toUpperCase().replace(/\s+/g, ' ');
-      const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null } | null) => {
-        if (!person) return false;
-        const roleLabel = `${person.designation?.name || ''} ${person.department?.name || ''}`.toUpperCase();
-        if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
-        if (roleLabel.trim() === 'ADMIN') return true;
-        const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
-        const name = personName(person);
-        return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
-      };
       const directlyAssigned = (w: any) => {
         const ids = [
           w.assignedToId,
@@ -2859,53 +2902,23 @@ status: ${item.status}`);
           .filter((id: number) => Number.isInteger(id) && id > 0);
         return ids.some((id: number) => viewerIds.has(id));
       };
-      const matchesViewerRole = (w: any) => {
-        if (!empRecord) return false;
-        return this.resolveTeamMemberForActivity(
-          w,
-          [{
-            employeeId: numEmployeeId,
-            employee: {
-              id: numEmployeeId,
-              designation: (empRecord as any).designation,
-              department: (empRecord as any).department,
-            },
-          }],
-          null,
-          0,
-          { roleMatchOnly: true },
-        ) === numEmployeeId;
-      };
-      const ownedByAnotherRoleMatch = (w: any) => {
-        const people = [w.assignedTo, w.editor, ...(w.tasks || []).map((task: any) => task.assignedTo)];
-        return people.some((person) => {
-          const id = Number(person?.id);
-          if (!Number.isInteger(id) || id <= 0 || viewerIds.has(id) || isPlatformAdmin(person)) return false;
-          return this.resolveTeamMemberForActivity(
-            w,
-            [{ employeeId: id, employee: person }],
-            null,
-            0,
-            { roleMatchOnly: true },
-          ) === id;
-        });
-      };
       filteredItems = filteredItems.filter((w) => {
         if (directlyAssigned(w)) return true;
-        const teamId = Number(w.teamId || w.team?.id || w.customer?.assignedTeamId || w.customer?.assignedTeam?.id);
+        const teamId = Number(w.teamId || w.team?.id || 0);
+        const customerTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
         const isMemberOfWorkTeam =
           (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
           viewerIds.has(Number(w.team?.leaderId)) ||
           ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
           viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
-        const isTeamWork =
-          isMemberOfWorkTeam ||
-          (teamId > 0 && productionTeamIds.includes(teamId)) ||
-          teamCustomerIds.includes(Number(w.customerId));
-        if (!isTeamWork || this.isBpoOnlyTeam(w.team?.name, w.team?.description)) return false;
-        const roleMatch = isFullAccess || allowedTypes.has(normalizeActivityType(w)) || matchesViewerRole(w);
-        if (!roleMatch) return false;
-        if (ownedByAnotherRoleMatch(w)) return false;
+        const onAuthorizedTeam =
+          (teamId > 0 && (membershipTeamIds.includes(teamId) || productionTeamIds.includes(teamId))) ||
+          (customerTeamId > 0 && (membershipTeamIds.includes(customerTeamId) || productionTeamIds.includes(customerTeamId))) ||
+          teamCustomerIds.includes(Number(w.customerId)) ||
+          isMemberOfWorkTeam;
+        if (!onAuthorizedTeam) return false;
+        // A null assignee, or a teammate assignee, still belongs on this employee's calendar
+        // when the work or customer is on a team they belong to.
         return true;
       });
     }
@@ -3032,7 +3045,17 @@ status: ${item.status}`);
       if (query.customerId) {
         taskWhere.customerId = Number(query.customerId);
       } else if (tenantCustomerId && !isProductionManager) {
-        taskWhere.customerId = tenantCustomerId;
+        const tenantId = Number(tenantCustomerId);
+        const tenantScope: any[] = [{ customerId: tenantId }];
+        if (membershipTeamIds.length > 0) {
+          tenantScope.push({
+            customer: { deletedAt: null, assignedTeamId: { in: membershipTeamIds } },
+          });
+        }
+        tenantScope.push({
+          customer: { deletedAt: null, assignedTeam: { customerId: tenantId, isActive: true } },
+        });
+        taskWhere.AND = [...(taskWhere.AND || []), { OR: tenantScope }];
       }
 
       // Preserve employee-level authorization. Never return tasks belonging to unrelated employees.
@@ -3069,9 +3092,9 @@ status: ${item.status}`);
             },
           ];
         }
-      } else if (query.month && query.year) {
-        const startOfMonth = new Date(Date.UTC(query.year, query.month - 1, 0, 0, 0, 0, 0));
-        const endOfMonth = new Date(Date.UTC(query.year, query.month, 2, 23, 59, 59, 999));
+      } else if (appliedMonth && appliedYear) {
+        const startOfMonth = new Date(Date.UTC(appliedYear, appliedMonth - 1, 0, 0, 0, 0, 0));
+        const endOfMonth = new Date(Date.UTC(appliedYear, appliedMonth, 2, 23, 59, 59, 999));
         taskWhere.AND = [
           ...(taskWhere.AND || []),
           {
@@ -3237,15 +3260,44 @@ allowedTypes: ${Array.from(allowedTypes).join(', ')}
 beforeFilter: ${mapped.length}
 afterFilter: ${result.length}`);
 
+    const directWorkCount = items.filter((w) =>
+      Number(w.assignedToId) === numEmployeeId ||
+      Number(w.editorId) === numEmployeeId ||
+      Number(w.customer?.assignedEmployeeId) === numEmployeeId,
+    ).length;
+    const teamWorkCount = items.filter((w) =>
+      membershipTeamIds.includes(Number(w.teamId || w.team?.id)),
+    ).length;
+    const customerWorkCount = items.filter((w) =>
+      membershipTeamIds.includes(Number(w.customer?.assignedTeamId)) ||
+      teamCustomerIds.includes(Number(w.customerId)),
+    ).length;
+    const firstZeroStage = items.length > 0
+      ? (filteredItems.length === 0 ? 'dateOrVisibilityFilter' : 'none')
+      : membershipTeamIds.length === 0 && productionTeamIds.length === 0
+        ? 'teamIds'
+        : teamCustomerIds.length === 0
+          ? 'customerIdsAssignedToTeams'
+          : 'workQuery';
+
     this.logger.log(
       `[EMPLOYEE_CALENDAR_DIAGNOSTICS] ` +
       `authUserId=${empRecord?.userId ?? 'none'} ` +
       `resolvedEmployeeId=${numEmployeeId} ` +
+      `tenantId=${tenantCustomerId ?? 'none'} ` +
+      `membershipTeams=${membershipTeamIds.join(',') || 'none'} ` +
+      `productionTeams=${productionTeamIds.join(',') || 'none'} ` +
+      `teamCustomers=${teamCustomerIds.join(',') || 'none'} ` +
+      `directWorkCount=${directWorkCount} ` +
+      `teamWorkCount=${teamWorkCount} ` +
+      `customerWorkCount=${customerWorkCount} ` +
+      `rawWorkCount=${items.length} ` +
       `requestedDate=${targetDateStr || 'ALL'} ` +
-      `month=${query.month ?? 'ALL'} year=${query.year ?? 'ALL'} ` +
+      `month=${appliedMonth ?? query.month ?? 'ALL'} year=${appliedYear ?? query.year ?? 'ALL'} ` +
       `workCount=${filteredItems.length} ` +
       `taskCount=${filteredTasks.length} ` +
-      `totalReturned=${result.length}`,
+      `finalCount=${result.length} ` +
+      `firstZeroStage=${firstZeroStage}`,
     );
 
     const minutesOfDay = (value?: string | null) => {
@@ -3255,13 +3307,21 @@ afterFilter: ${result.length}`);
       if ((match[3] || '').toUpperCase() === 'PM') hours += 12;
       return hours * 60 + Number(match[2]);
     };
-    result.sort((a, b) => {
+    const seen = new Set<string>();
+    const uniqueResult = result.filter((item) => {
+      const key = `${item.activityType || item.workType || 'WORK'}:${item.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    uniqueResult.sort((a, b) => {
       const dateCompare = String(a.scheduledDate || '').localeCompare(String(b.scheduledDate || ''));
       if (dateCompare !== 0) return dateCompare;
       return minutesOfDay(a.scheduledTime || a.time) - minutesOfDay(b.scheduledTime || b.time);
     });
 
-    for (const item of result) {
+    for (const item of uniqueResult) {
       this.logger.log(`[EMPLOYEE_CALENDAR_ITEM]
 activityId: ${item.id}
 purchaseId: ${item.purchaseId}
@@ -3273,7 +3333,7 @@ status: ${item.status}
 assignedEmployee: ${item.assignedEmployee}`);
     }
 
-    return result;
+    return uniqueResult;
   }
 
   /**
@@ -3292,8 +3352,13 @@ assignedEmployee: ${item.assignedEmployee}`);
       month?: number;
       year?: number;
     } = {},
+    options?: { allTenantCustomers?: boolean; assignedOnly?: boolean },
   ) {
-    const works = await this.getEmployeeCalendar(employeeId, query, { allTenantCustomers: true });
+    const works = await this.getEmployeeCalendar(
+      employeeId,
+      query,
+      options ?? { allTenantCustomers: true },
+    );
 
     const total = works.length;
     let pending = 0;
@@ -3436,27 +3501,34 @@ assignedEmployee: ${item.assignedEmployee}`);
     if (Number.isInteger(directEmployeeId) && directEmployeeId > 0) {
       return directEmployeeId;
     }
+
+    const rawUserId = Number(user.id ?? user.userId);
+    if (Number.isInteger(rawUserId) && rawUserId > 0) {
+      const byUser = await this.prisma.employee.findFirst({
+        where: { userId: rawUserId },
+        select: { id: true },
+      });
+      if (byUser?.id) return byUser.id;
+    }
+
     const payloadEmployeeId = Number(user.employeeId);
     if (Number.isInteger(payloadEmployeeId) && payloadEmployeeId > 0) {
-      return payloadEmployeeId;
+      const byPk = await this.prisma.employee.findFirst({
+        where: { id: payloadEmployeeId },
+        select: { id: true },
+      });
+      if (byPk?.id) return byPk.id;
     }
 
-    const rawId = Number(user.id);
     const email = user.email ? String(user.email).trim().toLowerCase() : undefined;
     const phone = user.phone ? String(user.phone).trim() : undefined;
-
     const orConditions: any[] = [];
-    if (!isNaN(rawId) && rawId > 0) {
-      orConditions.push({ userId: rawId });
-      orConditions.push({ id: rawId });
-    }
     if (email) {
       orConditions.push({ email: { equals: email, mode: 'insensitive' } });
     }
     if (phone) {
       orConditions.push({ phone });
     }
-
     if (orConditions.length === 0) return null;
 
     const employee = await this.prisma.employee.findFirst({

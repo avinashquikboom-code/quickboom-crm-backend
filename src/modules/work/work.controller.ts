@@ -12,6 +12,7 @@ import {
   UseGuards,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
@@ -25,27 +26,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 import { PermissionsGuard, userHasModulePermission } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
-
-/** Accepts month=10&year=2026 and the mobile contract month=YYYY-MM. */
-function parseCalendarMonthYear(
-  month?: string,
-  year?: string,
-): { month?: number; year?: number } {
-  const rawMonth = month?.trim();
-  if (rawMonth && /^\d{4}-\d{1,2}$/.test(rawMonth)) {
-    const [yearPart, monthPart] = rawMonth.split('-').map((part) => parseInt(part, 10));
-    if (yearPart >= 1970 && monthPart >= 1 && monthPart <= 12) {
-      return { year: yearPart, month: monthPart };
-    }
-  }
-  const parsedMonth = rawMonth ? parseInt(rawMonth, 10) : undefined;
-  const parsedYear = year?.trim() ? parseInt(year.trim(), 10) : undefined;
-  return {
-    month:
-      parsedMonth && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : undefined,
-    year: parsedYear && parsedYear >= 1970 ? parsedYear : undefined,
-  };
-}
+import { parseCalendarMonthYear } from './calendar-query.util';
 
 function mapWorkTypeToModule(workType?: WorkType | string): string {
   if (!workType) return 'video_edit';
@@ -60,6 +41,8 @@ function mapWorkTypeToModule(workType?: WorkType | string): string {
 @ApiTags('Work & SSM Management')
 @Controller('works')
 export class WorkController {
+  private readonly logger = new Logger(WorkController.name);
+
   constructor(
     private readonly workService: WorkService,
     private readonly workPermissionService: WorkPermissionService,
@@ -413,13 +396,24 @@ export class WorkController {
     @Query('workType') workType?: string,
   ) {
     const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    const roleLabel = user?.role || (Array.isArray(user?.roles) ? user.roles.join(',') : 'UNKNOWN');
     if (!authEmpId) {
-      return [];
+      this.logger.warn(
+        `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} resolvedEmployeeId=none`,
+      );
+      throw new NotFoundException('No employee profile is linked to this account');
     }
     const canViewCalendar =
       userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
       userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
     const period = parseCalendarMonthYear(month, year);
+    this.logger.log(
+      `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
+      `resolvedEmployeeId=${authEmpId} employeeUserId=${user?.employee?.userId ?? 'none'} ` +
+      `tenantId=${user?.employee?.customerId ?? user?.customerId ?? 'none'} ` +
+      `parsedMonth=${period.month ?? 'none'} parsedYear=${period.year ?? 'none'} ` +
+      `date=${date || startDate || 'none'} dateFrom=${dateFrom || startDate || 'none'} dateTo=${dateTo || endDate || 'none'}`,
+    );
     // Employees without the calendar module still receive rows assigned to them.
     // Team-wide and company-wide schedules stay behind CALENDAR:VIEW.
     const lookingAtAnotherEmployee =
@@ -466,6 +460,10 @@ export class WorkController {
     if (!authEmpId) {
       return { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0, today: 0, overdue: 0 };
     }
+    const canViewCalendar =
+      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
+      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
+    const period = parseCalendarMonthYear(month, year);
     return this.workService.getProductionMetrics(authEmpId, {
       customerId: customerId ? parseInt(customerId, 10) : undefined,
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
@@ -473,8 +471,11 @@ export class WorkController {
       date,
       dateFrom,
       dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
+      month: period.month,
+      year: period.year,
+    }, {
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
     });
   }
 

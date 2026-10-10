@@ -23,6 +23,7 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { userHasModulePermission } from '../../common/guards/permissions.guard';
+import { parseCalendarMonthYear } from '../work/calendar-query.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -172,12 +173,13 @@ export class EmployeeController {
       );
     }
 
+    const period = parseCalendarMonthYear(month, year);
     return this.workService.getEmployeeCalendar(employeeId, {
       date: date || startDate,
       dateFrom: startDate || dateFrom,
       dateTo: endDate || dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
+      month: period.month,
+      year: period.year,
       status,
       customerId: customerId ? parseInt(customerId, 10) : undefined,
     }, { allTenantCustomers: true });

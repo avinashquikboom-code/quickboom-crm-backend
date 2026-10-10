@@ -114,7 +114,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
 
       prisma.work.findMany.mockResolvedValue(mockWorks);
 
-      const result = await workService.getEmployeeCalendar(50, {});
+      const result = await workService.getEmployeeCalendar(50, { month: 9, year: 2026 });
 
       expect(prisma.work.findMany).toHaveBeenCalled();
       const queryWhere = prisma.work.findMany.mock.calls[0][0].where;
