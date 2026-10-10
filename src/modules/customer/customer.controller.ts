@@ -75,7 +75,9 @@ export class CustomerController {
     const isCustomer =
       user?.role === 'CUSTOMER' ||
       (user?.customerId && !user?.employee && !user?.roles?.some((r: any) => ['ADMIN', 'SUPER_ADMIN', 'COMPANY_ADMIN'].includes(r)));
-    const targetCustId = isCustomer ? (user?.customerId || user?.id) : (customerId || user?.customerId || user?.id);
+    const targetCustId = isCustomer
+      ? user?.customerId
+      : (customerId || user?.customerId);
 
     return this.workService.getCalendar(targetCustId, {
       date: date || startDate,

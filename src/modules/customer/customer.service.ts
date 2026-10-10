@@ -2188,9 +2188,17 @@ export class CustomerService {
               select: { id: true, firstName: true, lastName: true, email: true, phone: true },
             },
             members: {
+              where: { employee: { status: 'ACTIVE' } },
               include: {
                 employee: {
-                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    phone: true,
+                    designation: { select: { id: true, name: true } },
+                  },
                 },
               },
             },
@@ -2930,6 +2938,27 @@ export class CustomerService {
     });
 
     if (!customer || customer.deletedAt) {
+      if (this.prisma.lead) {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: numericId, deletedAt: null },
+          select: { id: true },
+        });
+        if (lead) {
+          return {
+            statusCode: 200,
+            success: true,
+            message: 'Lead has no team assigned.',
+            data: {
+              customerId: numericId,
+              teamId: null,
+              team: null,
+            },
+            customerId: numericId,
+            teamId: null,
+            team: null,
+          };
+        }
+      }
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
@@ -2956,15 +2985,15 @@ export class CustomerService {
           leader: assignedTeamObj.leader
             ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
             : null,
-          memberCount:
-            assignedTeamObj._count?.members ||
-            (assignedTeamObj.members || []).length,
+          memberCount: (assignedTeamObj.members || []).length,
           members: (assignedTeamObj.members || []).map((m: any) => ({
             id: m.employee?.id || m.employeeId,
-            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Name unavailable',
             email: m.employee?.email,
             phone: m.employee?.phone,
             role: m.role,
+            designationId: m.employee?.designation?.id ?? null,
+            designation: m.employee?.designation?.name ?? null,
           })),
         }
       : null;
@@ -3023,9 +3052,17 @@ export class CustomerService {
           include: {
             leader: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
             members: {
+              where: { employee: { status: 'ACTIVE' } },
               include: {
                 employee: {
-                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    phone: true,
+                    designation: { select: { id: true, name: true } },
+                  },
                 },
               },
             },
@@ -3053,15 +3090,15 @@ export class CustomerService {
           leader: assignedTeamObj.leader
             ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
             : null,
-          memberCount:
-            assignedTeamObj._count?.members ||
-            (assignedTeamObj.members || []).length,
+          memberCount: (assignedTeamObj.members || []).length,
           members: (assignedTeamObj.members || []).map((m: any) => ({
             id: m.employee?.id || m.employeeId,
-            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+            name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Name unavailable',
             email: m.employee?.email,
             phone: m.employee?.phone,
             role: m.role,
+            designationId: m.employee?.designation?.id ?? null,
+            designation: m.employee?.designation?.name ?? null,
           })),
         }
       : null;
