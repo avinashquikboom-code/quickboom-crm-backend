@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Optional } from '@nestjs/common';
 import { Response } from 'express';
+import { isUserAdmin } from '../../common/utils/role.util';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -1266,20 +1267,35 @@ export class PayrollService {
       where: { id: Number(itemId), customerId: numCustomerId },
       include: { payroll: true, employee: true, salarySlips: true },
     });
-    if (!item) throw new NotFoundException('Payroll record not found');
+    if (!item) throw new NotFoundException(`Payroll item #${itemId} not found`);
     if (item.status === 'PAID') {
-      return { success: true, alreadyPaid: true, message: 'This payroll is already paid', data: item };
+      throw new ConflictException(`Payroll item #${item.id} is already paid`);
     }
     const snapshot = item.calculationSnapshot as any;
     if (snapshot?.blocked || Number(item.netSalary) < 0) {
       throw new BadRequestException(snapshot?.blockReason || 'Payroll deductions exceed payable salary. Please review deductions.');
     }
     const payroll = item.payroll;
+    const ineligible = ['CANCELLED', 'FAILED'];
+    if (ineligible.includes(String(item.status)) || ineligible.includes(String(payroll?.status))) {
+      throw new BadRequestException(
+        `Payroll item #${item.id} cannot be paid while its status is ${ineligible.includes(String(item.status)) ? item.status : `batch ${payroll.status}`}`,
+      );
+    }
     const periodEnd = new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999);
     const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const payPeriod = `${monthNames[payroll.month]} ${payroll.year}`;
 
     await this.prisma.$transaction(async (tx) => {
+      // Compare-and-set claim: a concurrent request blocks on this row and then matches 0 rows,
+      // so claims, loans and commission shares are settled at most once.
+      const claimed = await tx.payrollItem.updateMany({
+        where: { id: item.id, customerId: numCustomerId, status: item.status },
+        data: { status: 'PAID', paidAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException(`Payroll item #${item.id} was already paid or changed by another request`);
+      }
       if (item.reimbursement > 0) {
         await tx.employeeClaim.updateMany({
           where: {
@@ -1327,7 +1343,6 @@ export class PayrollService {
       } else {
         await tx.salarySlip.update({ where: { id: existing.id }, data: { status: 'PAID', payPeriod, grossSalary: item.grossSalary, totalDeductions: item.totalDeductions, netSalary: item.netSalary } });
       }
-      await tx.payrollItem.update({ where: { id: item.id }, data: { status: 'PAID', paidAt: new Date() } });
       await settleCommissionShares(tx, item.id);
       const unpaid = await tx.payrollItem.count({ where: { payrollId: payroll.id, status: { not: 'PAID' } } });
       await tx.payroll.update({
@@ -2024,23 +2039,18 @@ export class PayrollService {
         return;
       }
 
-      // Check tenant / ownership security
-      if (user) {
-        const isSuperOrAdmin =
-          String(user?.role).toUpperCase() === 'SUPER_ADMIN' ||
-          String(user?.role).toUpperCase() === 'COMPANY_ADMIN' ||
-          String(user?.roleType).toUpperCase() === 'SUPER_ADMIN' ||
-          String(user?.roleType).toUpperCase() === 'CUSTOMER_ADMIN' ||
-          String(user?.roleType).toUpperCase() === 'TENANT_ADMIN';
-        if (!isSuperOrAdmin) {
-          const currentEmpId = user?.employee?.id || user?.employeeId;
-          const slipEmpId = slip.employeeId || slip.employee?.id;
-          if (currentEmpId && slipEmpId && slipEmpId !== currentEmpId) {
-            if (!res.headersSent) {
-              res.status(403).json({ statusCode: 403, message: 'Forbidden' });
-            }
-            return;
-          }
+      // JWT supplies a user ID, not necessarily an embedded employee relation.
+      // Resolve ownership within the slip tenant and fail closed if none exists.
+      if (!user) {
+        return res.status(401).json({ statusCode: 401, message: 'Unauthorized' });
+      }
+      if (!isUserAdmin(user)) {
+        const employee = user.id ? await this.prisma.employee.findFirst({
+          where: { userId: Number(user.id), customerId: slip.customerId },
+          select: { id: true },
+        }) : null;
+        if (!employee || Number(slip.employeeId || slip.employee?.id) !== employee.id) {
+          return res.status(403).json({ statusCode: 403, message: 'Forbidden' });
         }
       }
 

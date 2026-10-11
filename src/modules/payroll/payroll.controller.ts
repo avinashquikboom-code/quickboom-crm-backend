@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Res } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Res, ParseIntPipe } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
@@ -70,11 +70,12 @@ export class PayrollController {
   }
 
   @Post('items/:itemId/pay')
+  @RequirePermissions({ module: 'SALARY', action: 'MANAGE' })
   @ApiOperation({ summary: 'Mark one employee payroll as paid and send the salary slip' })
   async payItem(
     @CurrentUser() user: any,
     @CurrentCustomer() currentCustomer: any,
-    @Param('itemId') itemId: string,
+    @Param('itemId', ParseIntPipe) itemId: number,
     @Body() body: { customerId?: string | number },
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
@@ -155,6 +156,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id/download')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Download salary slip PDF' })
   async downloadSlip(
     @CurrentUser() user: any,
@@ -169,6 +171,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id/pdf')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Download salary slip PDF' })
   async downloadSlipPdf(
     @CurrentUser() user: any,
