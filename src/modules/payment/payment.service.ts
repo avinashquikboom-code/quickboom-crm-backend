@@ -1050,11 +1050,11 @@ export class PaymentService {
   }) {
     const { customerId, planId, orderId, paymentId, billingCycle, activationDate } = params;
 
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: planId, deletedAt: null },
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: planId, deletedAt: null, isActive: true },
     });
     if (!plan) {
-      throw new NotFoundException(`Plan with ID ${planId} not found`);
+      throw new NotFoundException(`Plan with ID ${planId} not found or no longer available`);
     }
 
     const cycle = (billingCycle as SubscriptionBillingCycle) || SubscriptionBillingCycle.MONTHLY;

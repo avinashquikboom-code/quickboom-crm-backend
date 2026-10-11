@@ -1975,6 +1975,9 @@ export class SubscriptionService {
     if (!plan) {
       throw new NotFoundException(`Plan #${dto.planId} not found`);
     }
+    if (plan.deletedAt || !plan.isActive) {
+      throw new BadRequestException('This subscription plan is inactive or no longer available.');
+    }
 
     const cycle =
       dto.billingCycle === 'YEARLY'
@@ -2152,6 +2155,10 @@ export class SubscriptionService {
 
     if (!newPlan) {
       throw new NotFoundException(`New Plan #${dto.newPlanId} not found`);
+    }
+
+    if (newPlan.deletedAt || !newPlan.isActive) {
+      throw new BadRequestException('This subscription plan is no longer available. Please select an active plan.');
     }
 
     const cycle =
