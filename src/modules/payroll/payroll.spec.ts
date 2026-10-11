@@ -87,6 +87,7 @@ describe('PayrollService (HRM Payroll)', () => {
 
   beforeEach(async () => {
     prisma = {
+      commissionShare: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
       customer: {
         findFirst: jest.fn().mockResolvedValue({ id: 3 }),
       },
@@ -216,6 +217,19 @@ describe('PayrollService (HRM Payroll)', () => {
   });
 
   describe('calculatePayroll', () => {
+    it('adds the recipient share and reserves it for exactly one payroll item', async () => {
+      prisma.commissionShare.findMany.mockResolvedValue([{ id: 77, amount: 150 }]);
+      prisma.commissionShare.updateMany.mockImplementation(async ({ where }: any) => ({ count: where.id ? 1 : 0 }));
+      prisma.payrollItem.findMany.mockImplementation(async ({ where }: any) => where.status === 'PAID' ? [] : [{ id: 991, employeeId: 10 }]);
+      await service.calculatePayroll(3, 8, 2026);
+      expect(prisma.payrollItem.createMany.mock.calls[0][0].data[0].commission).toBe(150);
+      expect(prisma.commissionShare.updateMany).toHaveBeenCalledWith({ where: { id: { in: [77] }, status: 'APPROVED', payrollItemId: null }, data: { payrollItemId: 991 } });
+    });
+    it('does not rewrite finalized payroll', async () => {
+      prisma.payroll.findFirst.mockResolvedValue({ ...mockPayroll, status: 'GENERATED' });
+      await expect(service.calculatePayroll(3, 8, 2026)).rejects.toThrow('cannot be recalculated');
+      expect(prisma.payrollItem.deleteMany).not.toHaveBeenCalled();
+    });
     it('calculates gross, deductions, and net salary for active employees', async () => {
       prisma.payroll.findFirst.mockResolvedValue(null);
       prisma.payroll.create.mockResolvedValue(mockPayroll);

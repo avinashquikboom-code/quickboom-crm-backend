@@ -3,6 +3,7 @@ import { Response } from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { commissionForPayroll, settleCommissionShares } from '../commission/commission-payroll.util';
 import { NotificationService } from '../notification/notification.service';
 import { EmployeeCommunicationService } from '../notification/employee-communication.service';
 import PDFDocument = require('pdfkit');
@@ -10,9 +11,16 @@ import {
   buildPayrollAttendanceSummary,
   buildSalaryBreakdown,
   calculateOvertimeMinutes,
+  formatOvertimeMinutes,
   drawAttendanceSummarySection,
   drawSalaryBreakdownSection,
 } from './salary-slip-summary';
+import {
+  businessDayKey,
+  classifyPayrollDays,
+  isBpoPayrollEmployee,
+  prorateFixedDivisor,
+} from './payroll-attendance';
 
 @Injectable()
 export class PayrollService {
@@ -221,10 +229,11 @@ export class PayrollService {
     salaryDays: number;
     workingDaysPerWeek: number;
     holidays: Array<{ date: Date; officeId: number | null; name: string }>;
-    commissionEnabled: boolean;
-    commissionPct: number;
+    halfDayDeductionPct?: number;
+    absenceDeductionPct?: number;
     standardDailyMinutes?: number;
     overtimeEligible?: boolean;
+    overtimeMultiplier?: number;
   }) {
     const structure = input.employee.salaryStructures?.[0];
     const basic = structure ? Number(structure.basicSalary) || 0 : 0;
@@ -234,112 +243,88 @@ export class PayrollService {
     const bonus = structure ? Number(structure.bonus) || 0 : 0;
     const overtime = structure ? Number(structure.overtime) || 0 : 0;
     const otherEarnings = structure ? Number(structure.otherEarnings) || 0 : 0;
-    let commission = structure ? Number(structure.commission) || 0 : 0;
+    const bpoEligible = isBpoPayrollEmployee(input.employee);
+    const commission = structure && bpoEligible ? Number(structure.commission) || 0 : 0;
 
     const days = this.eachUtcDay(input.year, input.month);
-    const joining = input.employee.joiningDate ? this.utcDayKey(new Date(input.employee.joiningDate)) : null;
+    const dayMs = 24 * 60 * 60 * 1000;
+    // Attendance and leave dates are IST-midnight stamps, so widen by a day and key by business date.
+    const queryStart = new Date(days[0].getTime() - dayMs);
+    const queryEnd = new Date(input.periodEnd.getTime() + dayMs);
+    const joining = input.employee.joiningDate ? businessDayKey(input.employee.joiningDate) : null;
     const attendances = await tx.attendance.findMany({
       where: {
         customerId: input.customerId,
         employeeId: input.employee.id,
-        date: { gte: days[0], lte: input.periodEnd },
+        date: { gte: queryStart, lte: queryEnd },
       },
     });
-    const attendanceByDay = new Map<string, any>();
-    for (const row of attendances) {
-      attendanceByDay.set(this.utcDayKey(new Date(row.date)), row);
-    }
     const leaves = await tx.leaveRequest.findMany({
       where: {
         customerId: input.customerId,
         employeeId: input.employee.id,
         status: 'APPROVED',
-        fromDate: { lte: input.periodEnd },
-        toDate: { gte: days[0] },
+        fromDate: { lte: queryEnd },
+        toDate: { gte: queryStart },
       },
       include: { leaveType: true },
     });
-    const holidayByDay = new Map<string, string>();
+    const remoteRequests = tx.remoteRequest?.findMany
+      ? await tx.remoteRequest.findMany({
+          where: {
+            customerId: input.customerId,
+            employeeId: input.employee.id,
+            fromDate: { lte: queryEnd },
+            toDate: { gte: queryStart },
+          },
+        })
+      : [];
+    const holidayKeys = new Set<string>();
     for (const holiday of input.holidays) {
       if (holiday.officeId && input.employee.officeId && holiday.officeId !== input.employee.officeId) continue;
       if (holiday.officeId && !input.employee.officeId) continue;
-      holidayByDay.set(this.utcDayKey(new Date(holiday.date)), holiday.name);
+      holidayKeys.add(businessDayKey(holiday.date));
     }
 
-    let presentDays = 0;
-    let halfDays = 0;
-    let absentDays = 0;
-    let paidLeaveDays = 0;
-    let unpaidLeaveDays = 0;
-    let halfPaidLeave = 0;
-    let holidayDays = 0;
-    let weeklyOffDays = 0;
-    let payableDays = 0;
-    let lopDays = 0;
-    let wfhDays = 0;
-    let scheduledWorkingDays = 0;
+    const counts = classifyPayrollDays({
+      days,
+      joiningKey: joining,
+      isWeeklyOff: (day) => this.isWeeklyOff(day, input.employee.shift?.workingDays, input.workingDaysPerWeek),
+      attendances,
+      leaves,
+      holidayKeys,
+      remoteRequests,
+      halfDayDeductionPct: input.halfDayDeductionPct ?? 50,
+      absenceDeductionPct: input.absenceDeductionPct ?? 100,
+    });
+    const {
+      presentDays,
+      halfDays,
+      absentDays,
+      missingPunchDays,
+      paidLeaveDays,
+      unpaidLeaveDays,
+      holidayDays,
+      weeklyOffDays,
+      extraWorkingDays,
+      extraWorkingDates,
+      wfhDays,
+      lopDays,
+      scheduledWorkingDays,
+      attendanceByDay,
+    } = counts;
+    const halfPaidLeave = 0;
 
-    for (const day of days) {
-      const key = this.utcDayKey(day);
-      if (joining && key < joining) continue;
-      if (this.isWeeklyOff(day, input.employee.shift?.workingDays, input.workingDaysPerWeek)) {
-        weeklyOffDays += 1;
-        payableDays += 1;
-        continue;
-      }
-      if (holidayByDay.has(key)) {
-        holidayDays += 1;
-        payableDays += 1;
-        continue;
-      }
-      scheduledWorkingDays += 1;
-      const leave = leaves.find((row: any) => key >= this.utcDayKey(new Date(row.fromDate)) && key <= this.utcDayKey(new Date(row.toDate)));
-      const attendance = attendanceByDay.get(key);
-      const halfAttendance = attendance?.status === 'HALF_DAY';
-      if (leave) {
-        const code = String(leave.leaveType?.code || '').toUpperCase();
-        const name = String(leave.leaveType?.name || '').toLowerCase();
-        const unpaid = code === 'UL' || code === 'LOP' || name.includes('unpaid') || name.includes('loss of pay') || name.includes('lop');
-        const weight = halfAttendance ? 0.5 : 1;
-        if (unpaid) {
-          unpaidLeaveDays += weight;
-          lopDays += weight;
-          if (halfAttendance) halfDays += 1;
-        } else if (halfAttendance) {
-          halfPaidLeave += 1;
-          payableDays += 0.5;
-          lopDays += 0.5;
-          halfDays += 1;
-        } else {
-          paidLeaveDays += 1;
-          payableDays += 1;
-        }
-        continue;
-      }
-      if (attendance?.workMode === 'WFH' || attendance?.workMode === 'REMOTE' || attendance?.status === 'REMOTE') {
-        wfhDays += 1;
-      }
-      if (attendance?.status === 'PRESENT' || attendance?.status === 'LATE' || attendance?.status === 'REMOTE') {
-        presentDays += 1;
-        payableDays += 1;
-        continue;
-      }
-      if (halfAttendance) {
-        halfDays += 1;
-        payableDays += 0.5;
-        lopDays += 0.5;
-        continue;
-      }
-      absentDays += 1;
-      lopDays += 1;
-    }
-
-    const salaryDays = Math.max(1, input.salaryDays);
     const monthlyEarnings = basic + hra + allowances + specialAllowance + bonus + overtime + otherEarnings;
-    if (commission === 0 && input.commissionEnabled && input.commissionPct > 0) {
-      commission = this.roundMoney((basic * input.commissionPct) / 100);
-    }
-    const factor = payableDays / salaryDays;
+    const proration = prorateFixedDivisor({
+      divisor: input.salaryDays,
+      calendarDays: days.length,
+      employedDays: counts.employedDays,
+      lopDays,
+    });
+    const salaryDays = proration.divisor;
+    const payableDays = this.roundMoney(proration.payableUnits);
+    const factor = proration.factor;
     const paidBasic = this.roundMoney(basic * factor);
     const paidHra = this.roundMoney(hra * factor);
     const paidAllowances = this.roundMoney(allowances * factor);
@@ -348,7 +333,17 @@ export class PayrollService {
     const paidOvertime = this.roundMoney(overtime * factor);
     const paidOther = this.roundMoney(otherEarnings * factor);
     const paidCommission = this.roundMoney(commission * factor);
-    const lopDeduction = this.roundMoney(((monthlyEarnings + commission) * lopDays) / salaryDays);
+
+    // Extra working compensation on weekly offs & holidays
+    const dailyRate = salaryDays > 0 ? (basic / salaryDays) : 0;
+    const overtimeEligible = input.overtimeEligible ?? true;
+    const overtimeMultiplier = input.overtimeMultiplier || 1.5;
+    const extraWorkingPay = (extraWorkingDays > 0 && overtimeEligible)
+      ? this.roundMoney(dailyRate * overtimeMultiplier * extraWorkingDays)
+      : 0;
+
+    // Informational only: earnings above are already prorated, so this is never added to deductions.
+    const lopDeduction = this.roundMoney(((monthlyEarnings + commission) * (proration.baseUnits - proration.payableUnits)) / salaryDays);
 
     const claims = await tx.employeeClaim.findMany({
       where: {
@@ -397,19 +392,20 @@ export class PayrollService {
     const professionalTax = structure ? Number(structure.professionalTax) || 0 : 0;
     const tds = structure ? Number(structure.tds) || 0 : 0;
     const otherDeductions = structure ? Number(structure.otherDeductions) || 0 : 0;
-    const gross = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidCommission + paidOvertime + paidOther + reimbursement);
+    const gross = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidCommission + paidOvertime + extraWorkingPay + paidOther + reimbursement);
     const deductions = this.roundMoney(pf + esi + professionalTax + tds + otherDeductions + loanDeduction + advanceDeduction);
     const netBeforeFloor = this.roundMoney(gross - deductions);
     const blocked = netBeforeFloor < 0;
     const workingDays = scheduledWorkingDays;
     const periodStartKey = this.utcDayKey(days[0]);
     const standardDailyMinutes = input.standardDailyMinutes ?? 8 * 60;
-    const overtimeEligible = input.overtimeEligible ?? true;
     const overtimeMinutes = calculateOvertimeMinutes(attendanceByDay.values(), {
       standardDailyMinutes,
       eligible: overtimeEligible,
       employmentStartKey: joining,
     });
+    const monthlySalary = this.roundMoney(monthlyEarnings + commission);
+    const attendanceSalary = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidOther + paidCommission);
     const attendanceSummary = {
       periodStart: periodStartKey,
       periodEnd: this.utcDayKey(days[days.length - 1]),
@@ -423,7 +419,13 @@ export class PayrollService {
       unpaidLeaveDays,
       weeklyOffDays,
       holidayDays,
+      extraWorkingDays,
+      extraWorkingDates,
+      payableDays,
+      extraWorkingPay,
+      missingPunchDays,
       overtimeMinutes,
+      overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
       overtimeRule: { standardDailyMinutes, eligible: overtimeEligible },
     };
 
@@ -462,10 +464,15 @@ export class PayrollService {
       status: 'CALCULATED',
       calculationSnapshot: {
         salaryDays,
-        monthlySalary: this.roundMoney(monthlyEarnings + commission),
+        monthlySalary,
+        attendanceSalary,
+        extraWorkingPay,
+        extraWorkingDays,
+        extraWorkingDates,
         presentDays,
         halfDays,
         absentDays,
+        missingPunchDays,
         paidLeaveDays,
         halfPaidLeave,
         unpaidLeaveDays,
@@ -474,7 +481,17 @@ export class PayrollService {
         payableDays,
         lopDays,
         attendanceSummary,
-        attendanceSalary: this.roundMoney(gross - reimbursement),
+        salaryBasis: {
+          method: 'FIXED_DIVISOR',
+          divisor: salaryDays,
+          employedDays: counts.employedDays,
+          baseDays: proration.baseUnits,
+          payableDays,
+          halfDayDeductionPct: input.halfDayDeductionPct ?? 50,
+          absenceDeductionPct: input.absenceDeductionPct ?? 100,
+        },
+        bpoCommissionEligible: bpoEligible,
+        structureCommission: paidCommission,
         reimbursement,
         expenses: claims.map((claim: any) => ({
           id: claim.id,
@@ -564,6 +581,9 @@ export class PayrollService {
     const grossSalary = slip.grossSalary ?? (basicSalary + hra + allowances);
     const netSalary = slip.netSalary ?? Math.max(0, grossSalary - totalDeductions);
     const attendanceSummary = buildPayrollAttendanceSummary(pi, { year, month });
+    const extraWorkingPay = pi?.calculationSnapshot?.extraWorkingPay ?? 0;
+    const monthlySalary = pi?.calculationSnapshot?.monthlySalary ?? (basicSalary + hra + allowances);
+    const attendanceSalary = pi?.calculationSnapshot?.attendanceSalary ?? (grossSalary - reimbursement);
     const salaryBreakdown = buildSalaryBreakdown({
       basicSalary,
       hra,
@@ -571,7 +591,9 @@ export class PayrollService {
       specialAllowance,
       bonus,
       overtime,
+      extraWorkingPay,
       commission,
+      isBpo: isBpoPayrollEmployee(slip.employee || pi?.employee || {}),
       otherEarnings,
       reimbursement,
       pf,
@@ -581,9 +603,12 @@ export class PayrollService {
       otherDeductions,
       loanDeduction,
       advanceDeduction,
+      lopDeduction: pi?.lopDeduction ?? unpaidLeaveDeduction,
       grossSalary,
       totalDeductions,
       netSalary,
+      monthlySalary,
+      attendanceSalary,
     });
 
     return {
@@ -595,6 +620,7 @@ export class PayrollService {
       date: formattedDate,
       attendanceSummary,
       salaryBreakdown,
+      calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
       workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
       presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
       absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
@@ -604,6 +630,12 @@ export class PayrollService {
       wfhDays: pi?.wfhDays ?? 0,
       weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
       holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+      extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
+      extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
+      payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
+      extraWorkingPay,
+      monthlySalary,
+      attendanceSalary,
       overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
       overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
       basicSalary,
@@ -626,6 +658,7 @@ export class PayrollService {
       netSalary,
       payrollItem: {
         ...(pi || {}),
+        calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
         workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
         presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
         absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
@@ -634,6 +667,12 @@ export class PayrollService {
         unpaidLeaveDays: pi?.unpaidLeaveDays ?? attendanceSummary?.unpaidLeaveDays ?? 0,
         weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
         holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+        extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
+        extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
+        payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
+        extraWorkingPay,
+        monthlySalary,
+        attendanceSalary,
         overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
         overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
         basicSalary,
@@ -677,9 +716,9 @@ export class PayrollService {
       this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
     ]);
 
-    const commissionEnabled = salaryPolicy?.commissionEnabled ?? false;
-    const commissionPctConfig = salaryPolicy?.commissionPercentage ?? 0.0;
     const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
+    const halfDayDeductionPct = salaryPolicy?.halfDayDeductionPct ?? attendancePolicy?.halfDayDeductionPct ?? 50;
+    const absenceDeductionPct = salaryPolicy?.fullDayDeductionPct ?? attendancePolicy?.fullDayAbsenceDeductionPct ?? 100;
     const workingDaysPerWeek = attendancePolicy?.workingDaysPerWeek || 5;
     const standardDailyMinutes = Math.round((attendancePolicy?.workingHoursPerDay || 8) * 60);
     const overtimeEligible = attendancePolicy?.overtimeEligible ?? true;
@@ -725,7 +764,7 @@ export class PayrollService {
           },
         });
       }
-      if (payroll.status === 'PAID') {
+      if (['PAID', 'APPROVED', 'GENERATED'].includes(payroll.status)) {
         throw new BadRequestException('This payroll is already paid and cannot be recalculated.');
       }
 
@@ -733,7 +772,10 @@ export class PayrollService {
         where: {
           customerId: numCustomerId,
           isActive: true,
-          date: { gte: periodStart, lte: periodEnd },
+          date: {
+            gte: new Date(periodStart.getTime() - 24 * 60 * 60 * 1000),
+            lte: new Date(periodEnd.getTime() + 24 * 60 * 60 * 1000),
+          },
         },
       });
       const lockedItems = await tx.payrollItem.findMany({
@@ -745,6 +787,7 @@ export class PayrollService {
       let totalDeductions = 0;
       let totalNet = 0;
       const itemsData: any[] = [];
+      const shareClaims = new Map<number, number[]>();
 
       for (const locked of lockedItems) {
         totalGross += Number(locked.grossSalary) || 0;
@@ -763,11 +806,17 @@ export class PayrollService {
           salaryDays,
           workingDaysPerWeek,
           holidays,
-          commissionEnabled,
-          commissionPct: commissionPctConfig,
+          halfDayDeductionPct,
+          absenceDeductionPct,
           standardDailyMinutes,
           overtimeEligible,
+          overtimeMultiplier: salaryPolicy?.overtimeMultiplier || 1.5,
         });
+        const split = await commissionForPayroll(tx, numCustomerId, emp.id, periodStart, periodEnd, payroll.id, computed.commission);
+        computed.commission += split.amount;
+        computed.grossSalary += split.amount;
+        computed.netSalary += split.amount;
+        shareClaims.set(emp.id, split.shares.map(s => s.id));
         totalGross += computed.grossSalary;
         totalDeductions += computed.totalDeductions;
         totalNet += computed.netSalary;
@@ -781,6 +830,8 @@ export class PayrollService {
         });
       }
 
+      // Release only this unfinalized payroll's reservations before replacing items.
+      await tx.commissionShare.updateMany({ where: { status: 'APPROVED', payrollItem: { payrollId: payroll.id, status: { not: 'PAID' } } }, data: { payrollItemId: null } });
       await tx.payrollItem.deleteMany({
         where: { payrollId: payroll.id, status: { not: 'PAID' } },
       });
@@ -788,6 +839,12 @@ export class PayrollService {
       await tx.payrollItem.createMany({
         data: itemsData,
       });
+      for (const item of await tx.payrollItem.findMany({ where: { payrollId: payroll.id, status: { not: 'PAID' } } })) {
+        const ids = shareClaims.get(item.employeeId) || [];
+        if (!ids.length) continue;
+        const claim = await tx.commissionShare.updateMany({ where: { id: { in: ids }, status: 'APPROVED', payrollItemId: null }, data: { payrollItemId: item.id } });
+        if (claim.count !== ids.length) throw new BadRequestException('Commission already reserved by another payroll; retry calculation');
+      }
 
       const updatedPayroll = await tx.payroll.update({
         where: { id: payroll.id },
@@ -814,7 +871,7 @@ export class PayrollService {
       });
 
       return updatedPayroll;
-    });
+    }, { isolationLevel: 'Serializable' });
   }
 
   async previewPayroll(customerId: number | string | undefined, month: number, year: number, departmentId?: number | string) {
@@ -1154,6 +1211,7 @@ export class PayrollService {
           where: { id: item.id },
           data: { status: 'PAID', paidAt: new Date() },
         });
+        await settleCommissionShares(tx, item.id);
         await tx.salarySlip.updateMany({
           where: { payrollItemId: item.id },
           data: { status: 'PAID' },
@@ -1255,6 +1313,7 @@ export class PayrollService {
         await tx.salarySlip.update({ where: { id: existing.id }, data: { status: 'PAID', payPeriod, grossSalary: item.grossSalary, totalDeductions: item.totalDeductions, netSalary: item.netSalary } });
       }
       await tx.payrollItem.update({ where: { id: item.id }, data: { status: 'PAID', paidAt: new Date() } });
+      await settleCommissionShares(tx, item.id);
       const unpaid = await tx.payrollItem.count({ where: { payrollId: payroll.id, status: { not: 'PAID' } } });
       await tx.payroll.update({
         where: { id: payroll.id },

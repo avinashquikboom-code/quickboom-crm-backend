@@ -11,6 +11,9 @@ export interface PayrollAttendanceSummary {
   unpaidLeaveDays: number;
   weeklyOffDays: number;
   holidayDays: number;
+  extraWorkingDays: number;
+  extraWorkingDates?: string[];
+  payableDays: number;
   overtimeMinutes: number | null;
   overtimeLabel: string;
   source: 'PAYROLL_SNAPSHOT' | 'PAYROLL_RECORD';
@@ -28,6 +31,9 @@ export interface SalaryBreakdown {
   grossEarnings: number;
   totalDeductions: number;
   netSalary: number;
+  monthlySalary: number;
+  attendanceSalary: number;
+  extraWorkingPay: number;
   isReconciled: boolean;
 }
 
@@ -105,15 +111,19 @@ export function buildPayrollAttendanceSummary(
   if (!item || typeof item !== 'object') return null;
   const snapshot = item.calculationSnapshot && typeof item.calculationSnapshot === 'object' ? item.calculationSnapshot : null;
   const stored = snapshot?.attendanceSummary && typeof snapshot.attendanceSummary === 'object' ? snapshot.attendanceSummary : null;
+  const range = periodRange(period?.year, period?.month);
 
   if (stored) {
     const overtimeMinutes = stored.overtimeMinutes === null || stored.overtimeMinutes === undefined
       ? (snapshot?.overtimeMinutes !== undefined ? toNumber(snapshot.overtimeMinutes) : 0)
       : toNumber(stored.overtimeMinutes);
+    const extraWorkingDates = Array.isArray(stored.extraWorkingDates)
+      ? stored.extraWorkingDates
+      : (Array.isArray(snapshot?.extraWorkingDates) ? snapshot.extraWorkingDates : []);
     return {
-      periodStart: stored.periodStart ?? null,
-      periodEnd: stored.periodEnd ?? null,
-      calendarDays: stored.calendarDays ?? null,
+      periodStart: stored.periodStart ?? range.periodStart,
+      periodEnd: stored.periodEnd ?? range.periodEnd,
+      calendarDays: stored.calendarDays !== null && stored.calendarDays !== undefined ? toNumber(stored.calendarDays) : range.calendarDays,
       employmentStartDate: stored.employmentStartDate ?? null,
       workingDays: toNumber(stored.workingDays),
       presentDays: toNumber(stored.presentDays),
@@ -123,6 +133,9 @@ export function buildPayrollAttendanceSummary(
       unpaidLeaveDays: toNumber(stored.unpaidLeaveDays),
       weeklyOffDays: toNumber(stored.weeklyOffDays),
       holidayDays: toNumber(stored.holidayDays),
+      extraWorkingDays: toNumber(stored.extraWorkingDays ?? snapshot?.extraWorkingDays ?? item.extraWorkingDays ?? 0),
+      extraWorkingDates,
+      payableDays: stored.payableDays !== undefined && stored.payableDays !== null ? toNumber(stored.payableDays) : toNumber(item.payableDays ?? item.workingDays),
       overtimeMinutes,
       overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
       source: 'PAYROLL_SNAPSHOT',
@@ -138,9 +151,10 @@ export function buildPayrollAttendanceSummary(
     ? toNumber(snapshot.unpaidLeaveDays)
     : toNumber(item.unpaidLeaveDays);
   const overtimeMinutes = snapshot?.overtimeMinutes !== undefined ? toNumber(snapshot.overtimeMinutes) : 0;
+  const extraWorkingDates = Array.isArray(snapshot?.extraWorkingDates) ? snapshot.extraWorkingDates : [];
 
   return {
-    ...periodRange(period?.year, period?.month),
+    ...range,
     employmentStartDate: null,
     workingDays: toNumber(item.workingDays),
     presentDays: toNumber(item.presentDays),
@@ -150,6 +164,9 @@ export function buildPayrollAttendanceSummary(
     unpaidLeaveDays,
     weeklyOffDays: toNumber(item.weeklyOffDays),
     holidayDays: toNumber(item.holidayDays),
+    extraWorkingDays: toNumber(snapshot?.extraWorkingDays ?? item.extraWorkingDays ?? 0),
+    extraWorkingDates,
+    payableDays: toNumber(item.payableDays ?? item.workingDays),
     overtimeMinutes,
     overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
     source: 'PAYROLL_RECORD',
@@ -175,7 +192,11 @@ export function buildSalaryBreakdown(source: any): SalaryBreakdown {
   add(earnings, 'specialAllowance', 'Special Allowance', true);
   add(earnings, 'bonus', 'Bonus', false);
   add(earnings, 'overtime', 'Overtime Pay', false);
-  add(earnings, 'commission', 'Commission', false);
+  add(earnings, 'extraWorkingPay', 'Extra Working Pay', false);
+
+  const isBpo = src.isBpo || /bpo|telecall/i.test(`${src.department || ''} ${src.designation || ''} ${src.employee?.department?.name || ''} ${src.employee?.designation?.name || ''}`);
+  const commissionLabel = isBpo ? 'Approved BPO Commission' : 'Commission';
+  add(earnings, 'commission', commissionLabel, false);
   add(earnings, 'otherEarnings', 'Other Earnings', false);
   add(earnings, 'reimbursement', 'Expense Reimbursement', false);
 
@@ -183,6 +204,7 @@ export function buildSalaryBreakdown(source: any): SalaryBreakdown {
   add(deductions, 'esi', 'ESI Contribution', true);
   add(deductions, 'professionalTax', 'Professional Tax', true);
   add(deductions, 'tds', 'TDS / Income Tax', true);
+  add(deductions, 'lopDeduction', 'Loss of Pay (LOP)', false);
   add(deductions, 'otherDeductions', 'Other Deductions', false);
   add(deductions, 'loanDeduction', 'Loan EMI Deduction', false);
   add(deductions, 'advanceDeduction', 'Salary Advance Recovery', false);
@@ -195,12 +217,19 @@ export function buildSalaryBreakdown(source: any): SalaryBreakdown {
     ? roundMoney(Math.max(0, grossEarnings - totalDeductions))
     : roundMoney(toNumber(src.netSalary));
 
+  const monthlySalary = roundMoney(toNumber(src.monthlySalary ?? src.calculationSnapshot?.monthlySalary ?? grossEarnings));
+  const attendanceSalary = roundMoney(toNumber(src.attendanceSalary ?? src.calculationSnapshot?.attendanceSalary ?? (grossEarnings - roundMoney(toNumber(src.reimbursement)))));
+  const extraWorkingPay = roundMoney(toNumber(src.extraWorkingPay ?? src.calculationSnapshot?.extraWorkingPay ?? 0));
+
   return {
     earnings,
     deductions,
     grossEarnings,
     totalDeductions,
     netSalary,
+    monthlySalary,
+    attendanceSalary,
+    extraWorkingPay,
     isReconciled: Math.abs(earningsSum - grossEarnings) < 0.01 && Math.abs(deductionsSum - totalDeductions) < 0.01,
   };
 }
@@ -234,6 +263,7 @@ export function drawAttendanceSummarySection(
 
   const gridY = y + 14;
   const s = summary || {
+    calendarDays: 30,
     workingDays: 0,
     presentDays: 0,
     absentDays: 0,
@@ -242,44 +272,61 @@ export function drawAttendanceSummarySection(
     unpaidLeaveDays: 0,
     weeklyOffDays: 0,
     holidayDays: 0,
+    extraWorkingDays: 0,
+    extraWorkingDates: [],
+    payableDays: 0,
     overtimeLabel: '0h 00m',
   };
 
   const cells: [string, string][] = [
+    ['Total Calendar Days', formatSummaryDays(s.calendarDays)],
     ['Total Working Days', formatSummaryDays(s.workingDays)],
+    ['Payable Attendance Days', formatSummaryDays(s.payableDays)],
     ['Present Days', formatSummaryDays(s.presentDays)],
-    ['Absent Days', formatSummaryDays(s.absentDays)],
     ['Half Days', formatSummaryDays(s.halfDays)],
+    ['Absent Days', formatSummaryDays(s.absentDays)],
     ['Paid Leave Days', formatSummaryDays(s.paidLeaveDays)],
     ['Unpaid Leave Days', formatSummaryDays(s.unpaidLeaveDays)],
     ['Weekly Off Days', formatSummaryDays(s.weeklyOffDays)],
     ['Holidays', formatSummaryDays(s.holidayDays)],
+    ['Extra Working Days', formatSummaryDays(s.extraWorkingDays)],
     ['Overtime Hours', s.overtimeLabel || '0h 00m'],
   ];
 
   const columns = 3;
   const cellW = width / columns;
-  const cellH = 20;
-  const valueW = 64;
+  const cellH = 19;
+  const valueW = 60;
   cells.forEach(([label, value], index) => {
     const col = index % columns;
     const row = Math.floor(index / columns);
     const cx = x + col * cellW;
     const cy = gridY + row * cellH;
     doc.rect(cx, cy, cellW, cellH).fillAndStroke(row % 2 === 0 ? '#FFFFFF' : '#F8FAFC', '#E2E8F0');
-    doc.font(regularFont).fontSize(7.5).fillColor('#475569').text(label, cx + 8, cy + 6.5, {
-      width: cellW - valueW - 16,
+    doc.font(regularFont).fontSize(7.5).fillColor('#475569').text(label, cx + 8, cy + 5.5, {
+      width: cellW - valueW - 14,
       lineBreak: false,
       ellipsis: true,
     });
-    doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(value, cx + cellW - valueW - 8, cy + 5.5, {
+    doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(value, cx + cellW - valueW - 8, cy + 4.5, {
       width: valueW,
       align: 'right',
       lineBreak: false,
     });
   });
 
-  return gridY + Math.ceil(cells.length / columns) * cellH;
+  const baseBottom = gridY + Math.ceil(cells.length / columns) * cellH;
+  if (s.extraWorkingDates && s.extraWorkingDates.length > 0) {
+    doc.font(regularFont).fontSize(6.8).fillColor('#0F763E').text(
+      `Approved Extra Working Dates: ${s.extraWorkingDates.join(', ')}`,
+      x + 4,
+      baseBottom + 3,
+      { width: width - 8, lineBreak: false, ellipsis: true },
+    );
+    return baseBottom + 14;
+  }
+
+  return baseBottom;
 }
 
 /** Draws the SALARY BREAKDOWN table and returns the Y position below it. */
@@ -291,7 +338,14 @@ export function drawSalaryBreakdownSection(
   const { x, y, width, regularFont, boldFont, formatAmount } = opts;
   doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('SALARY BREAKDOWN', x, y);
 
-  const tableY = y + 14;
+  const headerY = y + 14;
+  doc.rect(x, headerY, width, 18).fillAndStroke('#F1F5F9', '#CBD5E1');
+  doc.font(regularFont).fontSize(7.5).fillColor('#475569').text('Configured Monthly Salary:', x + 8, headerY + 5);
+  doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatAmount(breakdown.monthlySalary), x + 125, headerY + 4.5);
+  doc.font(regularFont).fontSize(7.5).fillColor('#475569').text('Attendance-based Payable Salary:', x + 240, headerY + 5);
+  doc.font(boldFont).fontSize(8).fillColor('#0F763E').text(formatAmount(breakdown.attendanceSalary), x + 385, headerY + 4.5);
+
+  const tableY = headerY + 22;
   const col1W = 155;
   const col2W = (width - 310) / 2;
   const col3W = 155;

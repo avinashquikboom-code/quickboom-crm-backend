@@ -1023,6 +1023,10 @@ export class PaymentService {
             billingCycle,
             activationDate: notes.activationDate ? String(notes.activationDate) : undefined,
           });
+          const confirmedPayment = await this.prisma.paymentHistory.findFirst({ where: { paymentId, customerId, status: 'SUCCESS', deletedAt: null } });
+          if (confirmedPayment && this.commissionService) {
+            await this.commissionService.calculateAndAwardCommission({ customerId, purchaseId: confirmedPayment.id, purchaseAmount: confirmedPayment.amount, planId: confirmedPayment.planId, orderId });
+          }
           this.logger.log(`[WEBHOOK_ACTIVATION_SUCCESS] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
         } catch (err: any) {
           this.logger.error(`[WEBHOOK_ACTIVATION_FAILED] customerId=${customerId} paymentId=${paymentId} — ${err?.message}`);
@@ -1032,6 +1036,16 @@ export class PaymentService {
       }
     }
 
+    if (event === 'refund.processed' && this.commissionService) {
+      const refund = payload?.payload?.refund?.entity;
+      if (refund?.payment_id && refund?.id) {
+        const payment = await this.prisma.paymentHistory.findFirst({ where: { paymentId: String(refund.payment_id), deletedAt: null } });
+        if (payment) {
+          const full = Number(refund.amount) >= Math.round(Number(payment.totalAmount ?? payment.amount) * 100);
+          await this.commissionService.handleRefundOrCancellation(payment.id, payment.customerId, String(refund.id), !full);
+        }
+      }
+    }
     return { status: 'ok' };
   }
 

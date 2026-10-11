@@ -1299,6 +1299,7 @@ model Employee {
   createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
   commissionConfig         CommissionConfig?
   commissions              Commission[]
+  commissionShares         CommissionShare[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1797,6 +1798,7 @@ model Payroll {
 }
 
 model PayrollItem {
+  commissionShares CommissionShare[]
   id               Int          @id @default(autoincrement())
   payrollId        Int
   customerId       Int
@@ -3444,7 +3446,15 @@ model CommissionConfig {
 model Commission {
   id               Int              @id @default(autoincrement())
   customerId       Int
-  employeeId       Int
+  employeeId       Int?
+  tenantId         Int?
+  sourceKey        String? @unique
+  teamId           Int?
+  leaderId         Int?
+  reviewReason     String?
+  qualifyingAt     DateTime?
+  history          Json?
+  shares           CommissionShare[]
   leadId           Int?
   planId           Int?
   purchaseId       Int?             @unique @map("purchase_id")
@@ -3459,7 +3469,7 @@ model Commission {
   updatedAt        DateTime         @updatedAt
 
   customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee?       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
   plan     Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)
   purchase PaymentHistory? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
@@ -3472,5 +3482,26 @@ model Commission {
   @@index([orderId])
   @@index([status])
   @@index([createdAt])
+  @@index([tenantId, qualifyingAt])
   @@map("commissions")
+}
+
+model CommissionShare {
+  id Int @id @default(autoincrement())
+  commissionId Int
+  employeeId Int
+  recipientRole String
+  effectiveRate Float
+  amount Float
+  status CommissionStatus @default(APPROVED)
+  paidAt DateTime?
+  payrollItemId Int?
+  commission Commission @relation(fields: [commissionId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  payrollItem PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+  @@unique([commissionId, recipientRole])
+  @@unique([commissionId, employeeId])
+  @@index([employeeId, status])
+  @@index([payrollItemId])
+  @@map("commission_shares")
 }

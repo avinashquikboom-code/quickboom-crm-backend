@@ -134,4 +134,13 @@ export class CommissionController {
       query,
     );
   }
+
+  @Get('team')
+  async getTeamCommissions(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Query() query: CommissionFilterDto,
+  ) {
+    return this.commissionService.getLeaderCommissions(Number(customerId), Number(user.id), query);
+  }
 }
