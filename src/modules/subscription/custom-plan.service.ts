@@ -738,10 +738,13 @@ export class CustomPlanService {
         }
       }
 
-      // 6. Update Customer Seat limit
+      // 6. Update Customer Seat limit and set active status
       await tx.customer.update({
         where: { id: numCustomerId },
-        data: { userLimit: customUserLimit },
+        data: {
+          userLimit: customUserLimit,
+          isActive: true,
+        },
       });
 
       return {

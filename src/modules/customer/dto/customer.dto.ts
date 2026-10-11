@@ -77,6 +77,11 @@ export class CreateCustomerDto {
   @IsOptional()
   status?: string;
 
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
   @ApiPropertyOptional({ example: 2 })
   @IsNumber()
   @IsOptional()

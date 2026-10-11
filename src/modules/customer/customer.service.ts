@@ -1235,7 +1235,7 @@ export class CustomerService {
       });
     }
 
-    if (skipAssignmentScope && where.isActive === undefined) {
+    if (skipAssignmentScope && where.isActive === undefined && query.status !== 'ALL') {
       where.isActive = true;
     }
 
@@ -1805,7 +1805,7 @@ export class CustomerService {
       // Priority: 1. ACTIVE, 2. UPCOMING, 3. INACTIVE
       const upcomingCall = !isSubActive ? extractUpcomingCall(c, now, finalCallStageIds, followUpStageIds) : null;
       const hasUpcomingCall = upcomingCall !== null;
-      const customerStatus = isSubActive ? 'ACTIVE' : (hasUpcomingCall ? 'UPCOMING' : 'INACTIVE');
+      const customerStatus = !c.isActive ? 'INACTIVE' : (isSubActive ? 'ACTIVE' : (hasUpcomingCall ? 'UPCOMING' : 'INACTIVE'));
       const linkedLead = (c as any).originLead || (c as any).leads?.[0];
       const rawLeadId = linkedLead?.id ? String(linkedLead.id) : (c.leadId ? String(c.leadId) : null);
       const leadStatus = linkedLead?.status || (c.leads?.length > 0 || c.leadId ? 'WON' : null);
@@ -2118,6 +2118,9 @@ export class CustomerService {
     finalCallStageIds?: Set<number>,
     followUpStageIds?: Set<number>,
   ): 'ACTIVE' | 'UPCOMING' | 'INACTIVE' {
+    if (c.isActive === false) {
+      return 'INACTIVE';
+    }
     const now = new Date();
     const activeSub = c.subscriptions?.find(
       (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
@@ -2762,6 +2765,12 @@ export class CustomerService {
           createdByEmployeeId: createdByEmpId,
           department: resolvedDepartment,
           notes: dto.notes,
+          isActive:
+            dto.isActive !== undefined
+              ? dto.isActive
+              : dto.status !== undefined
+              ? dto.status === 'ACTIVE'
+              : false,
           userLimit: dto.userLimit || 15,
           leadLimit: dto.leadLimit || 1000,
         },
@@ -4293,6 +4302,7 @@ export class CustomerService {
     await this.prisma.customer.update({
       where: { id: numericId },
       data: {
+        ...(status === 'ACTIVE' ? { isActive: true } : {}),
         userLimit: customUserLimit,
         leadLimit: customLeadLimit,
       },

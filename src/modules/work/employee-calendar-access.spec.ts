@@ -549,5 +549,102 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(calendar.map((c) => c.id)).toEqual(expect.arrayContaining(['701', '702', '703']));
     expect(calendar.map((c) => c.customerName)).toEqual(expect.arrayContaining(['test pvt Ltd', 'Customer B', 'Customer C']));
   });
+
+  it('retrieves both mobile-created (isActive: true) and Admin Panel Won Lead (isActive: false) customers in Employee Calendar', async () => {
+    const prisma = testingModule.get(PrismaService) as any;
+    let capturedWhere: any = null;
+
+    const mixedCustomerWorks = [
+      {
+        id: 901,
+        customerId: 201,
+        teamId: 7,
+        assignedToId: 1,
+        workType: WorkType.REELS_SHOOT,
+        title: 'Mobile Created Reel Shoot',
+        scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
+        scheduledTime: '10:00 AM',
+        status: WorkStatus.SCHEDULED,
+        customer: {
+          id: 201,
+          name: 'Mobile Customer Pvt Ltd',
+          companyName: 'Mobile Customer Pvt Ltd',
+          deletedAt: null,
+          isActive: true, // Mobile-created customer
+          assignedTeamId: 7,
+          assignedEmployeeId: 1,
+        },
+      },
+      {
+        id: 902,
+        customerId: 202,
+        teamId: 7,
+        assignedToId: 1,
+        workType: WorkType.EDITING,
+        title: 'Admin Won Lead Video Edit',
+        scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
+        scheduledTime: '02:00 PM',
+        status: WorkStatus.SCHEDULED,
+        customer: {
+          id: 202,
+          name: 'Won Lead Customer Inc',
+          companyName: 'Won Lead Customer Inc',
+          deletedAt: null,
+          isActive: false, // Converted Won Lead customer without active plan
+          assignedTeamId: 7,
+          assignedEmployeeId: 1,
+          originLead: {
+            id: 88,
+            employeeId: 1,
+            assignedToId: 1,
+            convertedByEmployeeId: 1,
+          },
+        },
+      },
+    ];
+
+    prisma.customer.findMany.mockImplementation(async ({ where }: any) => {
+      // Return team-allotted customers including inactive ones
+      return [
+        { id: 201, assignedTeamId: 7, isActive: true },
+        { id: 202, assignedTeamId: 7, isActive: false },
+      ].filter((c) => {
+        if (where?.NOT?.isActive === false && c.isActive === false) return false;
+        return true;
+      });
+    });
+
+    prisma.work.findMany.mockImplementation(({ where }: any) => {
+      capturedWhere = where;
+      return mixedCustomerWorks.filter((item) => {
+        // If customer NOT: { isActive: false } was enforced, item with isActive: false would be excluded
+        const customerAndFilters = (where.AND || []).filter((clause: any) => clause.customer);
+        for (const f of customerAndFilters) {
+          if (f.customer?.NOT?.isActive === false && item.customer.isActive === false) {
+            return false;
+          }
+          if (f.customer?.deletedAt === null && item.customer.deletedAt !== null) {
+            return false;
+          }
+        }
+        return true;
+      });
+    });
+
+    const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-20' }, { assignedOnly: true });
+
+    // Verify Prisma query where.AND does not exclude inactive customers
+    const customerFilterClauses = (capturedWhere.AND || []).filter((clause: any) => clause.customer);
+    expect(customerFilterClauses).toContainEqual({ customer: { deletedAt: null } });
+    expect(capturedWhere.AND).not.toContainEqual({ customer: { deletedAt: null, NOT: { isActive: false } } });
+
+    // Both mobile-created customer and Admin Panel Won Lead customer are returned!
+    expect(calendar).toHaveLength(2);
+    expect(calendar.map((c) => c.id)).toEqual(['901', '902']);
+    expect(calendar.map((c) => c.customerName)).toEqual([
+      'Mobile Customer Pvt Ltd',
+      'Won Lead Customer Inc',
+    ]);
+  });
 });
 

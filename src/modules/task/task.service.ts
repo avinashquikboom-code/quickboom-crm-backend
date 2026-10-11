@@ -1020,7 +1020,6 @@ export class TaskService {
       workOr.push({
         customer: {
           deletedAt: null,
-          NOT: { isActive: false },
           OR: [
             { assignedTeamId: { in: teamIds } },
             { assignedTeam: { id: { in: teamIds } } },
@@ -1032,7 +1031,6 @@ export class TaskService {
       workOr.push({
         customer: {
           deletedAt: null,
-          NOT: { isActive: false },
           OR: [
             { assignedTeamId: { in: productionTeamIds } },
             { assignedTeam: { id: { in: productionTeamIds } } },
@@ -1044,7 +1042,7 @@ export class TaskService {
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
-        customer: { deletedAt: null, NOT: { isActive: false } },
+        customer: { deletedAt: null },
         OR: workOr,
       },
       orderBy: { scheduledDate: 'asc' },

@@ -2351,7 +2351,6 @@ status: ${item.status}`);
       const customers = await this.prisma.customer.findMany({
         where: {
           deletedAt: null,
-          NOT: { isActive: false },
           OR: [
             { assignedTeamId: { in: teamIds } },
             { assignedTeam: { id: { in: teamIds } } },
@@ -2766,6 +2765,8 @@ status: ${item.status}`);
               OR: [
                 { employeeId: numEmployeeId },
                 { convertedByEmployeeId: numEmployeeId },
+                { assignedToId: numEmployeeId },
+                ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }] : []),
               ],
             },
           },
@@ -2805,7 +2806,6 @@ status: ${item.status}`);
             {
               customer: {
                 deletedAt: null,
-                NOT: { isActive: false },
                 assignedTeamId: { in: teamIds },
               },
             },
@@ -3107,7 +3107,7 @@ status: ${item.status}`);
 
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : []),
-      { customer: { deletedAt: null, NOT: { isActive: false } } },
+      { customer: { deletedAt: null } },
     ];
 
     if (process.env.EMPLOYEE_CALENDAR_DEBUG === 'true' && typeof this.prisma.work?.count === 'function' && tenantCustomerId) {
@@ -3120,7 +3120,7 @@ status: ${item.status}`);
         ],
       };
       const activeWork = {
-        AND: [tenantWork, { status: { not: WorkStatus.CANCELLED }, customer: { deletedAt: null, NOT: { isActive: false } } }],
+        AND: [tenantWork, { status: { not: WorkStatus.CANCELLED }, customer: { deletedAt: null } }],
       };
       const countSafe = async (label: string, countWhere: any) => {
         try {
@@ -3539,7 +3539,7 @@ status: ${item.status}`);
 
       taskWhere.AND = [
         ...(taskWhere.AND || []),
-        { customer: { deletedAt: null, NOT: { isActive: false } } },
+        { customer: { deletedAt: null } },
       ];
 
       // My Calendar includes direct assignments and customers allotted to active teams.

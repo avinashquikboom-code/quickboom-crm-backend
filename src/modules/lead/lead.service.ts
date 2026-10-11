@@ -2116,6 +2116,27 @@ export class LeadService {
         if (!customer.createdByEmployeeId && targetWonByEmpId) {
           updateData.createdByEmployeeId = targetWonByEmpId;
         }
+
+        // A customer converted from a Won lead must remain INACTIVE if no active plan has been purchased/activated.
+        const now = new Date();
+        const activeSub = this.prisma.customerSubscription?.findFirst
+          ? await this.prisma.customerSubscription.findFirst({
+              where: {
+                customerId: customer.id,
+                status: 'ACTIVE',
+                deletedAt: null,
+                OR: [
+                  { endDate: null },
+                  { endDate: { gte: now } },
+                ],
+              },
+            })
+          : null;
+
+        if (!activeSub && customer.isActive) {
+          updateData.isActive = false;
+        }
+
         if (Object.keys(updateData).length > 0) {
           const updatedCust = await this.prisma.customer.update({
             where: { id: customer.id },
@@ -2151,6 +2172,7 @@ export class LeadService {
             customerType: 'ENTERPRISE',
             source: updatedLead.source || 'LEAD_CONVERSION',
             leadId,
+            isActive: false,
             assignedTeamId: resolvedTeamId,
             assignedEmployeeId: targetAssignedEmpId,
             assignedEmployee: targetAssignedEmpName,

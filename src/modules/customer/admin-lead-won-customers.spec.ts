@@ -233,4 +233,152 @@ describe('Admin Panel Only: Add Leads to Customers Only When Stage Is Won', () =
     expect(result.items.length).toBe(0);
     expect(result.meta.counts.all).toBe(0);
   });
+
+  // 7. Won Lead without a purchased/active plan -> Customer is INACTIVE
+  it('Scenario 7: Won Lead without a purchased/active plan has status INACTIVE', async () => {
+    const unpurchasedWonCustomer = {
+      id: 505,
+      name: 'Won Client No Plan',
+      companyName: 'Won Client No Plan',
+      isActive: false, // Persisted inactive upon conversion
+      leadId: 105,
+      originLead: {
+        id: 105,
+        status: LeadStatus.WON,
+        stage: { id: 26, key: 'WON', name: 'Won' },
+      },
+      subscriptions: [], // No plan purchased/activated
+      works: [],
+      leads: [],
+      tasks: [],
+      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+    };
+
+    mockPrisma.customer.findMany.mockResolvedValue([unpurchasedWonCustomer]);
+    mockPrisma.lead.findMany.mockResolvedValue([]);
+
+    // When querying all, customer status is INACTIVE
+    const resultAll = await customerService.findAll({ status: 'ALL' }, adminUser);
+    expect(resultAll.items.length).toBe(1);
+    expect(resultAll.items[0].id).toBe(505);
+    expect(resultAll.items[0].isActive).toBe(false);
+    expect(resultAll.items[0].customerStatus).toBe('INACTIVE');
+    expect(resultAll.items[0].status).toBe('INACTIVE');
+
+    // When querying ACTIVE, customer is absent
+    const resultActive = await customerService.findAll({ status: 'ACTIVE' }, adminUser);
+    expect(resultActive.items.length).toBe(0);
+
+    // When querying INACTIVE, customer is present
+    const resultInactive = await customerService.findAll({ status: 'INACTIVE' }, adminUser);
+    expect(resultInactive.items.length).toBe(1);
+    expect(resultInactive.items[0].id).toBe(505);
+  });
+
+  // 8. Customer with a successfully activated plan -> Customer is ACTIVE
+  it('Scenario 8: Customer with a successfully activated plan has status ACTIVE', async () => {
+    const activatedCustomer = {
+      id: 506,
+      name: 'Won Client Active Plan',
+      companyName: 'Won Client Active Plan',
+      isActive: true, // Updated to active upon plan activation
+      leadId: 106,
+      originLead: {
+        id: 106,
+        status: LeadStatus.WON,
+        stage: { id: 26, key: 'WON', name: 'Won' },
+      },
+      subscriptions: [
+        {
+          status: 'ACTIVE',
+          endDate: new Date('2028-01-01'),
+          plan: { id: 2, name: 'Growth Plan', code: 'GROWTH' },
+        },
+      ],
+      works: [],
+      leads: [],
+      tasks: [],
+      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+    };
+
+    mockPrisma.customer.findMany.mockResolvedValue([activatedCustomer]);
+    mockPrisma.lead.findMany.mockResolvedValue([]);
+
+    const resultActive = await customerService.findAll({ status: 'ACTIVE' }, adminUser);
+    expect(resultActive.items.length).toBe(1);
+    expect(resultActive.items[0].id).toBe(506);
+    expect(resultActive.items[0].isActive).toBe(true);
+    expect(resultActive.items[0].customerStatus).toBe('ACTIVE');
+    expect(resultActive.items[0].status).toBe('ACTIVE');
+  });
+
+  // 9. Failed or pending plan purchase -> Customer remains INACTIVE
+  it('Scenario 9: Failed or pending plan purchase leaves customer INACTIVE', async () => {
+    const pendingCustomer = {
+      id: 507,
+      name: 'Won Client Pending Purchase',
+      companyName: 'Won Client Pending Purchase',
+      isActive: false, // Remains inactive while pending
+      leadId: 107,
+      originLead: {
+        id: 107,
+        status: LeadStatus.WON,
+        stage: { id: 26, key: 'WON', name: 'Won' },
+      },
+      subscriptions: [
+        {
+          status: 'PENDING',
+          endDate: new Date('2028-01-01'),
+          plan: { id: 2, name: 'Growth Plan', code: 'GROWTH' },
+        },
+      ],
+      works: [],
+      leads: [],
+      tasks: [],
+      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+    };
+
+    mockPrisma.customer.findMany.mockResolvedValue([pendingCustomer]);
+    mockPrisma.lead.findMany.mockResolvedValue([]);
+
+    const resultActive = await customerService.findAll({ status: 'ACTIVE' }, adminUser);
+    expect(resultActive.items.length).toBe(0);
+
+    const resultInactive = await customerService.findAll({ status: 'INACTIVE' }, adminUser);
+    expect(resultInactive.items.length).toBe(1);
+    expect(resultInactive.items[0].id).toBe(507);
+    expect(resultInactive.items[0].customerStatus).toBe('INACTIVE');
+  });
+
+  // 10. Existing customer with a valid active plan remains ACTIVE
+  it('Scenario 10: Existing customer with a valid active plan remains ACTIVE', async () => {
+    const existingActiveCustomer = {
+      id: 508,
+      name: 'Existing Active Account',
+      companyName: 'Existing Active Account',
+      isActive: true,
+      leadId: null,
+      originLead: null,
+      subscriptions: [
+        {
+          status: 'ACTIVE',
+          endDate: new Date('2029-01-01'),
+          plan: { id: 1, name: 'Enterprise Plan', code: 'ENTERPRISE' },
+        },
+      ],
+      works: [],
+      leads: [],
+      tasks: [],
+      _count: { users: 2, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+    };
+
+    mockPrisma.customer.findMany.mockResolvedValue([existingActiveCustomer]);
+    mockPrisma.lead.findMany.mockResolvedValue([]);
+
+    const result = await customerService.findAll({ status: 'ACTIVE' }, adminUser);
+    expect(result.items.length).toBe(1);
+    expect(result.items[0].id).toBe(508);
+    expect(result.items[0].isActive).toBe(true);
+    expect(result.items[0].customerStatus).toBe('ACTIVE');
+  });
 });
