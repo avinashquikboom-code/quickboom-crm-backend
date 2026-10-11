@@ -284,7 +284,7 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(metrics.total).toBeGreaterThan(0);
   });
 
-  it('allows Video Editor to see eligible editing work and direct assignments, but hides unrelated employee tasks and shoots', async () => {
+  it('allows Video Editor to see eligible editing work, direct assignments and teammate work, but hides unassigned shoots', async () => {
     const calendar = await workService.getEmployeeCalendar(5, { month: 10, year: 2026 }, {
       allTenantCustomers: true,
       assignedOnly: false,
@@ -297,8 +297,8 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(ids).toContain('806');
     // Unassigned shoot on team (ineligible for Video Editor): NO
     expect(ids).not.toContain('801');
-    // Edit assigned to another employee on team: NO (unrelated employee activity)
-    expect(ids).not.toContain('807');
+    // Edit assigned to another member of the same team: YES (team-allotted customer)
+    expect(ids).toContain('807');
     // Work on another team: NO
     expect(ids).not.toContain('803');
 
@@ -308,7 +308,7 @@ describe('Employee calendar team and assignment regressions', () => {
       assignedOnly: false,
     });
     expect(metrics.total).toBe(calendar.length);
-    expect(metrics.total).toBe(2);
+    expect(metrics.total).toBe(3);
   });
   it('keeps every active team assignment regardless of designation or another assignee', async () => {
     const calendar = await workService.getEmployeeCalendar(5, { month: 10, year: 2026 }, { assignedOnly: true });
