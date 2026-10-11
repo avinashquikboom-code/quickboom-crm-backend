@@ -1207,11 +1207,10 @@ export class CustomerService {
               convertedByEmployeeId: effectiveEmployeeId,
             },
           },
-          // 4. Linked leads where originLead has no separate convertedByEmployeeId but is assigned to this employee
+          // 4. Linked originLead assigned to this employee
           {
             originLead: {
               deletedAt: null,
-              convertedByEmployeeId: null,
               OR: [
                 { employeeId: effectiveEmployeeId },
                 ...(user?.id ? [{ assignedToId: user.id }] : []),

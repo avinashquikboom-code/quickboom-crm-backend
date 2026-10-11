@@ -2052,16 +2052,44 @@ export class LeadService {
         }
       }
 
-      // Customer ownership: Belongs to the BPO employee who WON the lead!
-      const ownerEmpId: number | null = convertingEmpId || assignedEmpId;
-      const ownerEmpName: string | null = convertingEmpId
-        ? (convertingEmpName || assignedEmpName)
-        : assignedEmpName;
+      // Customer ownership & assignment resolution:
+      // If the lead was assigned to an employee, the converted customer is assigned to that employee.
+      // Won-by reflects the converting employee (or assigned employee if converted without an explicit caller).
+      const targetAssignedEmpId: number | null = assignedEmpId || convertingEmpId;
+      const targetAssignedEmpName: string | null = assignedEmpId ? assignedEmpName : (convertingEmpName || assignedEmpName);
+      const targetWonByEmpId: number | null = convertingEmpId || assignedEmpId;
+      const targetWonByEmpName: string | null = convertingEmpName || assignedEmpName;
       if (!resolvedDepartment && convertingEmp?.department?.name) {
         resolvedDepartment = convertingEmp.department.name;
       }
 
-      const createdByEmpId: number | null = ownerEmpId;
+      // Resolve team assignment: check lead's assignedTeam, or fallback to assigned employee's team
+      let resolvedTeamId: number | null = null;
+      if (updatedLead.assignedTeam && this.prisma.team) {
+        const numTeam = Number(updatedLead.assignedTeam);
+        if (!isNaN(numTeam) && numTeam > 0) {
+          const t = await this.prisma.team.findUnique({ where: { id: numTeam } });
+          if (t) resolvedTeamId = t.id;
+        }
+        if (!resolvedTeamId) {
+          const t = await this.prisma.team.findFirst({
+            where: {
+              name: { equals: String(updatedLead.assignedTeam).trim(), mode: 'insensitive' },
+              isActive: true,
+            },
+          });
+          if (t) resolvedTeamId = t.id;
+        }
+      }
+      if (!resolvedTeamId && targetAssignedEmpId && this.prisma.teamMember) {
+        const tm = await this.prisma.teamMember.findFirst({
+          where: { employeeId: targetAssignedEmpId },
+          include: { team: true },
+        });
+        if (tm?.team && tm.team.isActive !== false) {
+          resolvedTeamId = tm.teamId;
+        }
+      }
 
       let isNewCustomer = false;
 
@@ -2078,12 +2106,15 @@ export class LeadService {
         if (!customer.phone && normalizedPhone) {
           updateData.phone = normalizedPhone;
         }
-        if (!customer.assignedEmployeeId && ownerEmpId) {
-          updateData.assignedEmployeeId = ownerEmpId;
-          updateData.assignedEmployee = ownerEmpName;
+        if (!customer.assignedTeamId && resolvedTeamId) {
+          updateData.assignedTeamId = resolvedTeamId;
         }
-        if (!customer.createdByEmployeeId && createdByEmpId) {
-          updateData.createdByEmployeeId = createdByEmpId;
+        if (!customer.assignedEmployeeId && targetAssignedEmpId) {
+          updateData.assignedEmployeeId = targetAssignedEmpId;
+          updateData.assignedEmployee = targetAssignedEmpName;
+        }
+        if (!customer.createdByEmployeeId && targetWonByEmpId) {
+          updateData.createdByEmployeeId = targetWonByEmpId;
         }
         if (Object.keys(updateData).length > 0) {
           const updatedCust = await this.prisma.customer.update({
@@ -2120,9 +2151,10 @@ export class LeadService {
             customerType: 'ENTERPRISE',
             source: updatedLead.source || 'LEAD_CONVERSION',
             leadId,
-            assignedEmployeeId: ownerEmpId,
-            assignedEmployee: ownerEmpName,
-            createdByEmployeeId: createdByEmpId,
+            assignedTeamId: resolvedTeamId,
+            assignedEmployeeId: targetAssignedEmpId,
+            assignedEmployee: targetAssignedEmpName,
+            createdByEmployeeId: targetWonByEmpId,
             department: resolvedDepartment,
             notes: `Converted automatically from Lead #${leadId} upon transition to WON.`,
             userLimit: 15,
@@ -2244,7 +2276,7 @@ export class LeadService {
 
       this.logger.log(
         `[LEAD_WON_CONVERSION] Completed successfully. Lead #${leadId} -> Customer #${customer.id}. ` +
-        `AssignedEmp: ${ownerEmpId}, WonByEmp: ${convertingEmpId || ownerEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
+        `AssignedEmp: ${targetAssignedEmpId}, WonByEmp: ${targetWonByEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
       );
 
       const loginStatus = !validLoginEmail
@@ -2263,10 +2295,10 @@ export class LeadService {
           email: customer.email || validLoginEmail,
           name: customer.name,
           loginStatus,
-          assignedEmployeeId: customer.assignedEmployeeId || ownerEmpId,
-          createdByEmployeeId: customer.createdByEmployeeId || createdByEmpId,
-          wonByEmployeeId: convertingEmpId || customer.assignedEmployeeId || ownerEmpId,
-          wonByName: convertingEmpName || customer.assignedEmployee || ownerEmpName,
+          assignedEmployeeId: customer.assignedEmployeeId || targetAssignedEmpId,
+          createdByEmployeeId: customer.createdByEmployeeId || targetWonByEmpId,
+          wonByEmployeeId: targetWonByEmpId,
+          wonByName: targetWonByEmpName,
           wonAt: wonAtTimestamp,
         },
         customerId: customer.id,
@@ -2276,10 +2308,10 @@ export class LeadService {
         userCreated,
         userExisted,
         loginStatus,
-        assignedEmployeeId: customer.assignedEmployeeId || ownerEmpId,
-        createdByEmployeeId: customer.createdByEmployeeId || createdByEmpId,
-        wonByEmployeeId: convertingEmpId || customer.assignedEmployeeId || ownerEmpId,
-        wonByName: convertingEmpName || customer.assignedEmployee || ownerEmpName,
+        assignedEmployeeId: customer.assignedEmployeeId || targetAssignedEmpId,
+        createdByEmployeeId: customer.createdByEmployeeId || targetWonByEmpId,
+        wonByEmployeeId: targetWonByEmpId,
+        wonByName: targetWonByEmpName,
       };
     } catch (err: any) {
       this.logger.error(`[LEAD_WON_CONVERSION] Failed to convert Lead #${updatedLead?.id} to Customer: ${err?.message}`, err?.stack);

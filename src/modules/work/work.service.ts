@@ -2758,6 +2758,18 @@ status: ${item.status}`);
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
         { customer: { assignedEmployeeId: numEmployeeId } },
+        { customer: { createdByEmployeeId: numEmployeeId } },
+        {
+          customer: {
+            originLead: {
+              deletedAt: null,
+              OR: [
+                { employeeId: numEmployeeId },
+                { convertedByEmployeeId: numEmployeeId },
+              ],
+            },
+          },
+        },
       ];
       for (const cid of viewerCandidateIds) {
         if (cid !== numEmployeeId) {
@@ -2766,6 +2778,19 @@ status: ${item.status}`);
             { editorId: cid },
             { tasks: { some: { assignedToId: cid } } },
             { customer: { assignedEmployeeId: cid } },
+            { customer: { createdByEmployeeId: cid } },
+            {
+              customer: {
+                originLead: {
+                  deletedAt: null,
+                  OR: [
+                    { employeeId: cid },
+                    { assignedToId: cid },
+                    { convertedByEmployeeId: cid },
+                  ],
+                },
+              },
+            },
           );
         }
       }
@@ -3153,6 +3178,15 @@ status: ${item.status}`);
                 members: { select: { employeeId: true } },
               },
             },
+            createdByEmployeeId: true,
+            originLead: {
+              select: {
+                id: true,
+                employeeId: true,
+                assignedToId: true,
+                convertedByEmployeeId: true,
+              },
+            },
             socialMediaHandlers: {
               take: 5,
               select: { platform: true, accountName: true, accountUrl: true, status: true },
@@ -3262,6 +3296,10 @@ status: ${item.status}`);
         w.assignedToId,
         w.editorId,
         w.customer?.assignedEmployeeId,
+        w.customer?.createdByEmployeeId,
+        w.customer?.originLead?.employeeId,
+        w.customer?.originLead?.assignedToId,
+        w.customer?.originLead?.convertedByEmployeeId,
         ...(w.tasks || []).map((task: any) => task.assignedToId),
       ]
         .map((id: any) => Number(id))
