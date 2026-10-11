@@ -65,6 +65,28 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       designation: { name: 'Video Editor' },
       department: { name: 'Production' },
     },
+    1: {
+      id: 1,
+      userId: 101,
+      employeeCode: 'QB-EMP-001',
+      firstName: 'Demo',
+      lastName: 'Telecaller',
+      status: 'ACTIVE',
+      customerId: 1,
+      designation: { name: 'Telecaller' },
+      department: { name: 'BPO' },
+    },
+    99: {
+      id: 99,
+      userId: 199,
+      employeeCode: 'QB-EMP-099',
+      firstName: 'Other',
+      lastName: 'Tenant',
+      status: 'ACTIVE',
+      customerId: 999,
+      designation: { name: 'Video Editor' },
+      department: { name: 'Production' },
+    },
   };
 
   const mockWorks = [
@@ -187,7 +209,11 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
     },
   ];
 
+  let currentWorks: any[] = [];
+
   beforeEach(async () => {
+    currentWorks = mockWorks.map((w) => ({ ...w, tasks: [...(w.tasks || [])] }));
+
     prisma = {
       employee: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
@@ -214,7 +240,7 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       },
       customer: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
-          const w = mockWorks.find((work) => work.customer.id === where.id);
+          const w = currentWorks.find((work) => work.customer.id === where.id);
           return w ? w.customer : null;
         }),
         findMany: jest.fn().mockResolvedValue([]),
@@ -234,7 +260,7 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       },
       work: {
         findMany: jest.fn().mockImplementation(({ where }: any) => {
-          return mockWorks.filter((w) => {
+          return currentWorks.filter((w) => {
             if (where.status) {
               if (where.status.not && w.status === where.status.not) return false;
               if (where.status.in && !where.status.in.includes(w.status)) return false;
@@ -247,6 +273,10 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
               const matchesOr = where.OR.some((cond: any) => {
                 if (cond.assignedToId && w.assignedToId === cond.assignedToId) return true;
                 if (cond.editorId && w.editorId === cond.editorId) return true;
+                if (cond.teamId && w.teamId === cond.teamId) return true;
+                if (cond.customer?.assignedTeamId && w.customer.assignedTeamId === cond.customer.assignedTeamId) return true;
+                if (cond.customer?.originLead && w.customer.originLead) return true;
+                if (cond.AND) return true;
                 if (cond.tasks?.some?.assignedToId) {
                   return (w.tasks || []).some((t) => t.assignedToId === cond.tasks.some.assignedToId);
                 }
@@ -267,6 +297,14 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
 
     workPermissionService = {
       getAllowedActivityTypesForEmployee: jest.fn().mockImplementation(async (empId: number) => {
+        if (empId === 1) {
+          return {
+            role: 'Telecaller',
+            allowedTypes: new Set(['CALL', 'LEAD']),
+            isFullAccess: false,
+            isProductionManager: false,
+          };
+        }
         if (empId === 10) {
           return {
             role: 'Reel Shooter',
@@ -396,9 +434,9 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       expect(before40).toHaveLength(0);
 
       // Simulate reassigning Work #2 editorId from 20 to 40
-      mockWorks[1].editorId = 40;
-      mockWorks[1].editor = mockEmployees[40];
-      mockWorks[1].tasks[1].assignedToId = 40;
+      currentWorks[1].editorId = 40;
+      currentWorks[1].editor = mockEmployees[40];
+      currentWorks[1].tasks[1].assignedToId = 40;
 
       // After reassignment: Editor 20 no longer sees it, Editor 40 now sees it
       const after20 = await service.getEmployeeCalendar(20, { month: 10, year: 2026 }, { allTenantCustomers: true });
@@ -410,9 +448,9 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       expect(after40[0].editorName).toBe('Rohan Unassigned');
 
       // Restore
-      mockWorks[1].editorId = 20;
-      mockWorks[1].editor = mockEmployees[20];
-      mockWorks[1].tasks[1].assignedToId = 20;
+      currentWorks[1].editorId = 20;
+      currentWorks[1].editor = mockEmployees[20];
+      currentWorks[1].tasks[1].assignedToId = 20;
     });
 
     it('11: Completed, pending, and in-progress statuses display correctly', async () => {
@@ -424,6 +462,178 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
 
       const pendingTask = await service.getEmployeeCalendar(30, { status: 'PENDING' }, { allTenantCustomers: true });
       expect(pendingTask.map((i) => i.id)).toEqual(['3']);
+    });
+  });
+
+  describe('Won Lead Converted Customer Schedule Visibility Tests', () => {
+    beforeEach(() => {
+      currentWorks.push(
+        // Converted from WON Lead #83: Reel Shoot task
+        {
+          id: 51,
+          customerId: 5,
+          workType: WorkType.REEL,
+          title: 'Delhi Public School Annual Day Reel Shoot',
+          description: 'Shoot reel for school annual function',
+          scheduledDate: new Date('2026-10-18T04:30:00.000Z'),
+          scheduledTime: '10:00 AM',
+          status: WorkStatus.SCHEDULED,
+          assignedToId: 10,
+          editorId: null,
+          teamId: 1,
+          notes: null,
+          customer: {
+            id: 5,
+            leadId: 83,
+            name: 'Delhi Public School',
+            companyName: 'Delhi Public School',
+            address: 'Sector 4',
+            city: 'Delhi',
+            state: 'Delhi',
+            assignedEmployeeId: 1,
+            assignedTeamId: 1,
+            originLead: {
+              id: 83,
+              customerId: 1,
+              employeeId: 1,
+              assignedToId: 1,
+              convertedByEmployeeId: 1,
+            },
+          },
+          assignedTo: mockEmployees[10],
+          editor: null,
+          tasks: [],
+        },
+        // Converted from WON Lead #83: Video Edit task
+        {
+          id: 52,
+          customerId: 5,
+          workType: WorkType.EDITING,
+          title: 'Delhi Public School Annual Day Video Edit',
+          description: 'Edit and color grade school video',
+          scheduledDate: new Date('2026-10-19T04:30:00.000Z'),
+          scheduledTime: '11:00 AM',
+          status: WorkStatus.SCHEDULED,
+          assignedToId: 20,
+          editorId: 20,
+          teamId: 1,
+          notes: null,
+          customer: {
+            id: 5,
+            leadId: 83,
+            name: 'Delhi Public School',
+            companyName: 'Delhi Public School',
+            address: 'Sector 4',
+            city: 'Delhi',
+            state: 'Delhi',
+            assignedEmployeeId: 1,
+            assignedTeamId: 1,
+            originLead: {
+              id: 83,
+              customerId: 1,
+              employeeId: 1,
+              assignedToId: 1,
+              convertedByEmployeeId: 1,
+            },
+          },
+          assignedTo: mockEmployees[20],
+          editor: mockEmployees[20],
+          tasks: [],
+        },
+        // Converted from WON Lead #83: Graphic Design task
+        {
+          id: 53,
+          customerId: 5,
+          workType: WorkType.POST_DESIGN,
+          title: 'Delhi Public School Admission Banner Design',
+          description: 'Design admission announcement banner',
+          scheduledDate: new Date('2026-10-20T04:30:00.000Z'),
+          scheduledTime: '02:00 PM',
+          status: WorkStatus.SCHEDULED,
+          assignedToId: 30,
+          editorId: null,
+          teamId: 1,
+          notes: null,
+          customer: {
+            id: 5,
+            leadId: 83,
+            name: 'Delhi Public School',
+            companyName: 'Delhi Public School',
+            address: 'Sector 4',
+            city: 'Delhi',
+            state: 'Delhi',
+            assignedEmployeeId: 1,
+            assignedTeamId: 1,
+            originLead: {
+              id: 83,
+              customerId: 1,
+              employeeId: 1,
+              assignedToId: 1,
+              convertedByEmployeeId: 1,
+            },
+          },
+          assignedTo: mockEmployees[30],
+          editor: null,
+          tasks: [],
+        },
+      );
+    });
+
+    it('12: Reel Shooter (Employee 10) sees WON lead customer Reel Shoot (#51) but NOT Video Edit (#52) or Post Design (#53)', async () => {
+      const calendar = await service.getEmployeeCalendar(10, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      const ids = calendar.map((i) => i.id);
+      expect(ids).toContain('51');
+      expect(ids).not.toContain('52');
+      expect(ids).not.toContain('53');
+      const dpsShoot = calendar.find((i) => i.id === '51');
+      expect(dpsShoot?.customerName).toBe('Delhi Public School');
+      expect(dpsShoot?.customerId).toBe('5');
+      expect(dpsShoot?.activityType).toBe('REEL_SHOOT');
+    });
+
+    it('13: Video Editor (Employee 20) sees WON lead customer Video Edit (#52) but NOT Reel Shoot (#51) or Post Design (#53)', async () => {
+      const calendar = await service.getEmployeeCalendar(20, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      const ids = calendar.map((i) => i.id);
+      expect(ids).toContain('52');
+      expect(ids).not.toContain('51');
+      expect(ids).not.toContain('53');
+      const dpsEdit = calendar.find((i) => i.id === '52');
+      expect(dpsEdit?.customerName).toBe('Delhi Public School');
+      expect(dpsEdit?.customerId).toBe('5');
+      expect(dpsEdit?.activityType).toBe('REEL_EDIT');
+    });
+
+    it('14: Graphic Designer (Employee 30) sees WON lead customer Post Design (#53) but NOT Reel Shoot (#51) or Video Edit (#52)', async () => {
+      const calendar = await service.getEmployeeCalendar(30, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      const ids = calendar.map((i) => i.id);
+      expect(ids).toContain('53');
+      expect(ids).not.toContain('51');
+      expect(ids).not.toContain('52');
+      const dpsDesign = calendar.find((i) => i.id === '53');
+      expect(dpsDesign?.customerName).toBe('Delhi Public School');
+      expect(dpsDesign?.customerId).toBe('5');
+      expect(dpsDesign?.activityType).toBe('POST_DESIGN');
+    });
+
+    it('15: Telecaller / Sales rep (Employee 1) who won Lead #83 does NOT receive production tasks for Delhi Public School', async () => {
+      const calendar = await service.getEmployeeCalendar(1, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      const ids = calendar.map((i) => i.id);
+      expect(ids).not.toContain('51');
+      expect(ids).not.toContain('52');
+      expect(ids).not.toContain('53');
+    });
+
+    it('16: Employee from another tenant (tenantId: 999) receives empty calendar for tenant 1 works', async () => {
+      const calendar = await service.getEmployeeCalendar(99, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      expect(calendar).toHaveLength(0);
+    });
+
+    it('17: Scheduled work strictly references persisted customer primary key (Customer ID 5) and not Lead ID (83)', async () => {
+      const calendar = await service.getEmployeeCalendar(10, { month: 10, year: 2026 }, { allTenantCustomers: true });
+      const dpsWork = calendar.find((i) => i.id === '51');
+      expect(dpsWork?.customerId).toBe('5');
+      expect(dpsWork?.purchaseId).toBe('PUR-005');
+      expect(dpsWork?.customerName).toBe('Delhi Public School');
     });
   });
 });

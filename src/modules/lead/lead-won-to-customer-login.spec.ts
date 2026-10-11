@@ -14,6 +14,7 @@ import { AuthService } from '../auth/auth.service';
 import { MobileAuthController } from '../auth/mobile-auth.controller';
 import { CustomerService } from '../customer/customer.service';
 import { CustomerController } from '../customer/customer.controller';
+import { CustomerMobilePermissionService } from '../customer/customer-mobile-permission.service';
 import { WorkService } from '../work/work.service';
 import { AiCreditService } from '../ai-studio/ai-credit.service';
 import * as bcrypt from 'bcrypt';
@@ -133,6 +134,7 @@ describe('Won Lead -> Customer -> Customer Login Complete Business Flow', () => 
         { provide: PrismaService, useValue: mockPrisma },
         { provide: AuthService, useValue: mockAuthService },
         { provide: CustomerService, useValue: mockCustomerService },
+        { provide: CustomerMobilePermissionService, useValue: {} },
         { provide: NotificationService, useValue: {} },
         { provide: PlanAccessService, useValue: {} },
         { provide: LeadLimitService, useValue: {} },

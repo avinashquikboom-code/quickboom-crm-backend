@@ -103,7 +103,27 @@ export class LeadService {
   }
 
   async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto) {
-    return this.leadRepository.convertLead(customerId, leadId, userId, dto);
+    const conversionResult = await this.leadRepository.convertLead(customerId, leadId, userId, dto);
+    try {
+      const updatedLead = await this.getLeadById(customerId, leadId);
+      if (updatedLead) {
+        const customerConversion = await this.handleLeadWonCustomerConversion(
+          customerId,
+          updatedLead,
+          userId,
+          'Qualified',
+          'CONVERTED',
+          { id: userId },
+        );
+        return {
+          ...conversionResult,
+          customerConversion,
+        };
+      }
+    } catch (convErr: any) {
+      this.logger.warn(`convertLead customer conversion warning: ${convErr?.message}`);
+    }
+    return conversionResult;
   }
 
   /**
@@ -1169,6 +1189,21 @@ export class LeadService {
     }
 
     await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+
+    if (this.isWonOrConvertedStage(createdLead.status, initialStageName, createdLead.stage?.key || createdLead.stage?.name)) {
+      try {
+        await this.handleLeadWonCustomerConversion(
+          customerId,
+          createdLead,
+          userId,
+          '',
+          initialStageName,
+          user,
+        );
+      } catch (convErr: any) {
+        this.logger.warn(`createLead customer conversion warning: ${convErr?.message}`);
+      }
+    }
 
     return createdLead ?? lead;
   }
@@ -2284,7 +2319,7 @@ export class LeadService {
       if (this.prisma.lead) {
         const wonUpdateData: any = {
           convertedAt: wonAtTimestamp,
-          status: LeadStatus.WON,
+          status: updatedLead.status === LeadStatus.CONVERTED ? LeadStatus.CONVERTED : LeadStatus.WON,
         };
         // Explicitly set convertedByEmployeeId if not already set, preserving the original WON employee
         if (convertingEmpId && !updatedLead.convertedByEmployeeId) {

@@ -2517,10 +2517,13 @@ status: ${item.status}`);
 
     let updatedCount = 0;
     for (const work of unassignedWorks) {
-      const data: { teamId?: number; assignedToId?: number; status?: WorkStatus } = {};
+      const data: { teamId?: number; assignedToId?: number; editorId?: number; status?: WorkStatus } = {};
       if (work.teamId !== numTeamId) data.teamId = numTeamId;
 
-      if (!isBpoTeam && !work.assignedToId) {
+      const isAssignedToTeamMember = work.assignedToId
+        ? (team.members || []).some((m: any) => m.employeeId === work.assignedToId)
+        : false;
+      if (!isBpoTeam && (!work.assignedToId || !isAssignedToTeamMember)) {
         const eligibleMemberIds = await this.eligibleProductionMemberIds(
           work,
           team.members,
@@ -2533,6 +2536,25 @@ status: ${item.status}`);
           data.assignedToId = matchedEmployeeId;
           if (work.status === WorkStatus.SCHEDULED) data.status = WorkStatus.ASSIGNED;
           roleAssignmentIndex++;
+        }
+      }
+
+      const isReelOrVideo =
+        work.workType === WorkType.REEL ||
+        work.workType === WorkType.REELS_SHOOT ||
+        work.workType === WorkType.EDITING ||
+        (work.title && /reel|shoot|video|edit/i.test(work.title));
+      const isEditorOnTeam = work.editorId
+        ? (team.members || []).some((m: any) => m.employeeId === work.editorId)
+        : false;
+      if (!isBpoTeam && isReelOrVideo && (!work.editorId || !isEditorOnTeam)) {
+        const editorIds = await this.eligibleProductionMemberIds(
+          { workType: WorkType.EDITING, title: 'Video Editing' },
+          team.members,
+          team.customerId,
+        );
+        if (editorIds.length > 0) {
+          data.editorId = editorIds[0];
         }
       }
 
@@ -3292,19 +3314,35 @@ status: ${item.status}`);
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
     const directlyAssigned = (w: any) => {
-      const ids = [
+      const directTaskIds = [
         w.assignedToId,
         w.editorId,
+        ...(w.tasks || []).map((task: any) => task.assignedToId),
+      ]
+        .map((id: any) => Number(id))
+        .filter((id: number) => Number.isInteger(id) && id > 0);
+      if (directTaskIds.some((id: number) => viewerIds.has(id))) return true;
+
+      // Customer-level ownership (assigned/created staff or lead owner)
+      const customerLevelIds = [
         w.customer?.assignedEmployeeId,
         w.customer?.createdByEmployeeId,
         w.customer?.originLead?.employeeId,
         w.customer?.originLead?.assignedToId,
         w.customer?.originLead?.convertedByEmployeeId,
-        ...(w.tasks || []).map((task: any) => task.assignedToId),
       ]
         .map((id: any) => Number(id))
         .filter((id: number) => Number.isInteger(id) && id > 0);
-      return ids.some((id: number) => viewerIds.has(id));
+      if (customerLevelIds.some((id: number) => viewerIds.has(id))) {
+        const normType = normalizeActivityType(w);
+        return (
+          isFullAccess ||
+          visibleTypes.has(String(w.workType || '').toUpperCase()) ||
+          workMatchesDesignation(designationName, w.workType) ||
+          workMatchesDesignation(designationName, normType)
+        );
+      }
+      return false;
     };
 
     if (assignedOnly || !isProductionManager) {
@@ -3329,9 +3367,18 @@ status: ${item.status}`);
           );
         }
         const normType = normalizeActivityType(w);
+        const assigneeDept = String(w.assignedTo?.department?.name || '').toUpperCase();
+        const assigneeDesig = w.assignedTo?.designation?.name || '';
+        const isAssigneeProductionRelevant =
+          !assigneeDept.includes('BPO') &&
+          !assigneeDept.includes('SALES') &&
+          !assigneeDept.includes('CALL') &&
+          (assigneeDesig ? workMatchesDesignation(assigneeDesig, w.workType) : true);
+
         const otherAssignee =
-          (Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && !viewerIds.has(Number(w.assignedToId))) ||
-          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && !viewerIds.has(Number(w.editorId)));
+          isAssigneeProductionRelevant &&
+          ((Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && !viewerIds.has(Number(w.assignedToId))) ||
+          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && !viewerIds.has(Number(w.editorId))));
         if (
           !otherAssignee &&
           (visibleTypes.has(String(w.workType || '').toUpperCase()) ||
@@ -3356,7 +3403,12 @@ status: ${item.status}`);
 
         // Work for a customer allotted to the viewer's team stays visible when
         // the team sync assigned it to another member.
-        if (otherAssignee) return true;
+        if (otherAssignee) {
+          if (!isFullAccess && allowedTypes.size > 0) {
+            return allowedTypes.has(normType);
+          }
+          return true;
+        }
 
         // For unassigned pool work on the team, check role/designation eligibility
         if (!isFullAccess && allowedTypes.size > 0) {
@@ -4405,7 +4457,16 @@ assignedEmployee: ${item.assignedEmployee}`);
           ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
           : null;
         if (!matchedEmployeeId && targetSub.customer?.assignedEmployeeId) {
-          matchedEmployeeId = Number(targetSub.customer.assignedEmployeeId);
+          const custEmp = tx.employee?.findUnique
+            ? await tx.employee.findUnique({
+                where: { id: Number(targetSub.customer.assignedEmployeeId) },
+                select: { id: true, designation: { select: { name: true } }, department: { select: { name: true } } },
+              })
+            : null;
+          const desig = custEmp?.designation?.name || '';
+          if (workMatchesDesignation(desig, act.workType)) {
+            matchedEmployeeId = Number(targetSub.customer.assignedEmployeeId);
+          }
         }
         if (matchedEmployeeId) roleAssignmentIndex++;
 
