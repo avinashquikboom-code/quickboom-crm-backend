@@ -30,8 +30,24 @@ export class CustomerGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    const headerCustomerId = request.headers['x-customer-id'] || request.headers['x-target-customer-id'];
-    const queryCustomerId = request.query?.customerId || request.query?.clientId;
+    const rawHeaderId = request.headers['x-customer-id'] || request.headers['x-target-customer-id'];
+    const headerCustomerId =
+      rawHeaderId != null &&
+      String(rawHeaderId).trim() !== '' &&
+      String(rawHeaderId).trim() !== 'null' &&
+      String(rawHeaderId).trim() !== 'undefined'
+        ? String(rawHeaderId).trim()
+        : undefined;
+
+    const rawQueryId = request.query?.customerId || request.query?.clientId;
+    const queryCustomerId =
+      rawQueryId != null &&
+      String(rawQueryId).trim() !== '' &&
+      String(rawQueryId).trim() !== 'null' &&
+      String(rawQueryId).trim() !== 'undefined'
+        ? String(rawQueryId).trim()
+        : undefined;
+
     const requestedIdentifier = queryCustomerId || headerCustomerId;
 
     const isSuperAdmin = isUserSuperAdmin(user);
