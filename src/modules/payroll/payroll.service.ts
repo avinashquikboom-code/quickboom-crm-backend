@@ -6,6 +6,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { EmployeeCommunicationService } from '../notification/employee-communication.service';
 import PDFDocument = require('pdfkit');
+import {
+  buildPayrollAttendanceSummary,
+  buildSalaryBreakdown,
+  calculateOvertimeMinutes,
+  drawAttendanceSummarySection,
+  drawSalaryBreakdownSection,
+} from './salary-slip-summary';
 
 @Injectable()
 export class PayrollService {
@@ -216,6 +223,8 @@ export class PayrollService {
     holidays: Array<{ date: Date; officeId: number | null; name: string }>;
     commissionEnabled: boolean;
     commissionPct: number;
+    standardDailyMinutes?: number;
+    overtimeEligible?: boolean;
   }) {
     const structure = input.employee.salaryStructures?.[0];
     const basic = structure ? Number(structure.basicSalary) || 0 : 0;
@@ -268,6 +277,7 @@ export class PayrollService {
     let payableDays = 0;
     let lopDays = 0;
     let wfhDays = 0;
+    let scheduledWorkingDays = 0;
 
     for (const day of days) {
       const key = this.utcDayKey(day);
@@ -282,6 +292,7 @@ export class PayrollService {
         payableDays += 1;
         continue;
       }
+      scheduledWorkingDays += 1;
       const leave = leaves.find((row: any) => key >= this.utcDayKey(new Date(row.fromDate)) && key <= this.utcDayKey(new Date(row.toDate)));
       const attendance = attendanceByDay.get(key);
       const halfAttendance = attendance?.status === 'HALF_DAY';
@@ -390,7 +401,31 @@ export class PayrollService {
     const deductions = this.roundMoney(pf + esi + professionalTax + tds + otherDeductions + loanDeduction + advanceDeduction);
     const netBeforeFloor = this.roundMoney(gross - deductions);
     const blocked = netBeforeFloor < 0;
-    const workingDays = days.length - weeklyOffDays - holidayDays;
+    const workingDays = scheduledWorkingDays;
+    const periodStartKey = this.utcDayKey(days[0]);
+    const standardDailyMinutes = input.standardDailyMinutes ?? 8 * 60;
+    const overtimeEligible = input.overtimeEligible ?? true;
+    const overtimeMinutes = calculateOvertimeMinutes(attendanceByDay.values(), {
+      standardDailyMinutes,
+      eligible: overtimeEligible,
+      employmentStartKey: joining,
+    });
+    const attendanceSummary = {
+      periodStart: periodStartKey,
+      periodEnd: this.utcDayKey(days[days.length - 1]),
+      calendarDays: days.length,
+      employmentStartDate: joining && joining > periodStartKey ? joining : null,
+      workingDays: scheduledWorkingDays,
+      presentDays,
+      absentDays,
+      halfDays,
+      paidLeaveDays: paidLeaveDays + halfPaidLeave * 0.5,
+      unpaidLeaveDays,
+      weeklyOffDays,
+      holidayDays,
+      overtimeMinutes,
+      overtimeRule: { standardDailyMinutes, eligible: overtimeEligible },
+    };
 
     return {
       basicSalary: paidBasic,
@@ -438,6 +473,7 @@ export class PayrollService {
         weeklyOffDays,
         payableDays,
         lopDays,
+        attendanceSummary,
         attendanceSalary: this.roundMoney(gross - reimbursement),
         reimbursement,
         expenses: claims.map((claim: any) => ({
@@ -509,10 +545,13 @@ export class PayrollService {
     const basicSalary = pi?.basicSalary ?? slip.basicSalary ?? slip.grossSalary;
     const hra = pi?.hra ?? slip.hra ?? 0;
     const specialAllowance = pi?.specialAllowance ?? slip.specialAllowance ?? 0;
-    const allowances = (pi?.allowances ?? slip.allowances ?? 0) + specialAllowance;
+    const baseAllowances = pi?.allowances ?? slip.allowances ?? 0;
+    const allowances = baseAllowances + specialAllowance;
     const bonus = pi?.bonus ?? slip.bonus ?? 0;
     const commission = pi?.commission ?? slip.commission ?? 0;
     const overtime = pi?.overtime ?? slip.overtime ?? 0;
+    const otherEarnings = pi?.otherEarnings ?? slip.otherEarnings ?? 0;
+    const advanceDeduction = pi?.advanceDeduction ?? slip.advanceDeduction ?? 0;
     const reimbursement = pi?.reimbursement ?? slip.reimbursement ?? 0;
     const pf = pi?.pf ?? slip.pf ?? 0;
     const esi = pi?.esi ?? slip.esi ?? 0;
@@ -524,6 +563,28 @@ export class PayrollService {
     const totalDeductions = slip.totalDeductions ?? (pf + esi + professionalTax + tds + otherDeductions + loanDeduction + unpaidLeaveDeduction);
     const grossSalary = slip.grossSalary ?? (basicSalary + hra + allowances);
     const netSalary = slip.netSalary ?? Math.max(0, grossSalary - totalDeductions);
+    const attendanceSummary = buildPayrollAttendanceSummary(pi, { year, month });
+    const salaryBreakdown = buildSalaryBreakdown({
+      basicSalary,
+      hra,
+      allowances: baseAllowances,
+      specialAllowance,
+      bonus,
+      overtime,
+      commission,
+      otherEarnings,
+      reimbursement,
+      pf,
+      esi,
+      professionalTax,
+      tds,
+      otherDeductions,
+      loanDeduction,
+      advanceDeduction,
+      grossSalary,
+      totalDeductions,
+      netSalary,
+    });
 
     return {
       ...slip,
@@ -532,13 +593,19 @@ export class PayrollService {
       monthName,
       payPeriod,
       date: formattedDate,
-      workingDays: pi?.workingDays ?? 0,
-      presentDays: pi?.presentDays ?? 0,
-      absentDays: pi?.absentDays ?? 0,
-      halfDays: pi?.halfDays ?? 0,
-      paidLeaveDays: pi?.paidLeaveDays ?? 0,
-      unpaidLeaveDays: pi?.unpaidLeaveDays ?? 0,
+      attendanceSummary,
+      salaryBreakdown,
+      workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
+      presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
+      absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
+      halfDays: pi?.halfDays ?? attendanceSummary?.halfDays ?? 0,
+      paidLeaveDays: pi?.paidLeaveDays ?? attendanceSummary?.paidLeaveDays ?? 0,
+      unpaidLeaveDays: pi?.unpaidLeaveDays ?? attendanceSummary?.unpaidLeaveDays ?? 0,
       wfhDays: pi?.wfhDays ?? 0,
+      weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
+      holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+      overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
+      overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
       basicSalary,
       hra,
       allowances,
@@ -559,6 +626,16 @@ export class PayrollService {
       netSalary,
       payrollItem: {
         ...(pi || {}),
+        workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
+        presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
+        absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
+        halfDays: pi?.halfDays ?? attendanceSummary?.halfDays ?? 0,
+        paidLeaveDays: pi?.paidLeaveDays ?? attendanceSummary?.paidLeaveDays ?? 0,
+        unpaidLeaveDays: pi?.unpaidLeaveDays ?? attendanceSummary?.unpaidLeaveDays ?? 0,
+        weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
+        holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+        overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
+        overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
         basicSalary,
         hra,
         allowances,
@@ -604,6 +681,8 @@ export class PayrollService {
     const commissionPctConfig = salaryPolicy?.commissionPercentage ?? 0.0;
     const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
     const workingDaysPerWeek = attendancePolicy?.workingDaysPerWeek || 5;
+    const standardDailyMinutes = Math.round((attendancePolicy?.workingHoursPerDay || 8) * 60);
+    const overtimeEligible = attendancePolicy?.overtimeEligible ?? true;
 
     // 2. Fetch active employees
     const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
@@ -686,6 +765,8 @@ export class PayrollService {
           holidays,
           commissionEnabled,
           commissionPct: commissionPctConfig,
+          standardDailyMinutes,
+          overtimeEligible,
         });
         totalGross += computed.grossSalary;
         totalDeductions += computed.totalDeductions;
@@ -1443,6 +1524,19 @@ export class PayrollService {
         if (existingCurrentIndex >= 0) {
           items[existingCurrentIndex] = {
             ...items[existingCurrentIndex],
+            salaryBreakdown: buildSalaryBreakdown({
+              basicSalary: basic,
+              hra,
+              allowances,
+              specialAllowance,
+              pf,
+              esi,
+              professionalTax,
+              tds,
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            }),
             basicSalary: basic,
             hra,
             allowances,
@@ -1490,6 +1584,38 @@ export class PayrollService {
             professionalTax,
             tds,
             status: 'ACTIVE',
+            attendanceSummary: buildPayrollAttendanceSummary({
+              workingDays: new Date(curYear, curMonth, 0).getDate(),
+              presentDays: new Date(curYear, curMonth, 0).getDate(),
+              absentDays: 0,
+              halfDays: 0,
+              paidLeaveDays: 0,
+              unpaidLeaveDays: 0,
+              weeklyOffDays: 0,
+              holidayDays: 0,
+            }, { year: curYear, month: curMonth }),
+            workingDays: new Date(curYear, curMonth, 0).getDate(),
+            presentDays: new Date(curYear, curMonth, 0).getDate(),
+            absentDays: 0,
+            halfDays: 0,
+            paidLeaveDays: 0,
+            unpaidLeaveDays: 0,
+            weeklyOffDays: 0,
+            holidayDays: 0,
+            overtimeHours: '0h 00m',
+            salaryBreakdown: buildSalaryBreakdown({
+              basicSalary: basic,
+              hra,
+              allowances,
+              specialAllowance,
+              pf,
+              esi,
+              professionalTax,
+              tds,
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            }),
             employee: {
               id: currentEmployee.id,
               firstName: currentEmployee.firstName,
@@ -1618,6 +1744,20 @@ export class PayrollService {
             professionalTax,
             tds,
             status: 'ACTIVE',
+            attendanceSummary: null,
+            salaryBreakdown: buildSalaryBreakdown({
+              basicSalary: basic,
+              hra,
+              allowances,
+              specialAllowance,
+              pf,
+              esi,
+              professionalTax,
+              tds,
+              grossSalary,
+              totalDeductions,
+              netSalary,
+            }),
             employee: emp,
           };
         }
@@ -1750,80 +1890,22 @@ export class PayrollService {
         doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Account No:', leftX + 390, cardY + 32);
         doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(maskAccount(bDetails?.accountNumber), leftX + 390, cardY + 42, { width: 120, ellipsis: true });
 
-        // 3. Salary Breakdown Table
-        const breakdownTitleY = cardY + 66 + 14;
-        doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('SALARY BREAKDOWN', leftX, breakdownTitleY);
+        // 3. Attendance Summary
+        const sectionOpts = { x: leftX, width: contentWidth, regularFont, boldFont };
+        const attendanceSummary = slip.attendanceSummary !== undefined
+          ? slip.attendanceSummary
+          : buildPayrollAttendanceSummary(slip.payrollItem, { year: slip.year, month: slip.month });
+        const attendanceEndY = drawAttendanceSummarySection(doc, attendanceSummary, { ...sectionOpts, y: cardY + 66 + 14 });
 
-        const tableY = breakdownTitleY + 14;
-        const col1W = 155;
-        const col2W = 106.64;
-        const col3W = 155;
-        const col4W = 106.64;
+        // 4. Salary Breakdown Table
+        const breakdown = slip.salaryBreakdown || buildSalaryBreakdown(slip);
+        const currRowY = drawSalaryBreakdownSection(doc, breakdown, {
+          ...sectionOpts,
+          y: attendanceEndY + 14,
+          formatAmount: formatInr,
+        });
 
-        // Header Row
-        doc.rect(leftX, tableY, contentWidth, 20).fill('#0F763E');
-        doc.font(boldFont).fontSize(8.5).fillColor('#FFFFFF');
-        doc.text('EARNINGS', leftX + 8, tableY + 5);
-        doc.text('AMOUNT', leftX + col1W - 8, tableY + 5, { width: col2W, align: 'right' });
-        doc.text('DEDUCTIONS', leftX + col1W + col2W + 8, tableY + 5);
-        doc.text('AMOUNT', leftX + col1W + col2W + col3W - 8, tableY + 5, { width: col4W, align: 'right' });
-
-        // Prepare line items
-        const earnings: [string, number][] = [
-          ['Basic Salary', slip.basicSalary || 0],
-          ['HRA Allowance', slip.hra || 0],
-          ['Allowances & Special', (slip.allowances || 0) + (slip.specialAllowance || 0)],
-        ];
-        if (slip.commission && slip.commission > 0) earnings.push(['Earned Commission', slip.commission]);
-        if (slip.reimbursement && slip.reimbursement > 0) earnings.push(['Expense Reimbursement', slip.reimbursement]);
-
-        const deductions: [string, number][] = [
-          ['Provident Fund (PF)', slip.pf || 0],
-          ['ESI Contribution', slip.esi || 0],
-          ['TDS / Income Tax', slip.tds || 0],
-        ];
-        if (slip.loanDeduction && slip.loanDeduction > 0) deductions.push(['Loan EMI Deduction', slip.loanDeduction]);
-        if (slip.unpaidLeaveDeduction && slip.unpaidLeaveDeduction > 0) deductions.push(['Loss of Pay (LOP)', slip.unpaidLeaveDeduction]);
-        if (slip.professionalTax && slip.professionalTax > 0) deductions.push(['Professional Tax', slip.professionalTax]);
-
-        const numRows = Math.max(earnings.length, deductions.length);
-        let currRowY = tableY + 20;
-
-        for (let i = 0; i < numRows; i++) {
-          const earn = earnings[i];
-          const ded = deductions[i];
-          const isEven = i % 2 === 0;
-
-          // Row background & border
-          doc.rect(leftX, currRowY, contentWidth, 18).fillAndStroke(isEven ? '#FFFFFF' : '#F8FAFC', '#E2E8F0');
-
-          // Earnings
-          if (earn) {
-            doc.font(regularFont).fontSize(8).fillColor('#334155').text(earn[0], leftX + 8, currRowY + 4, { width: col1W - 12 });
-            doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatInr(earn[1]), leftX + col1W - 8, currRowY + 4, { width: col2W, align: 'right' });
-          }
-
-          // Deductions
-          if (ded) {
-            doc.font(regularFont).fontSize(8).fillColor('#334155').text(ded[0], leftX + col1W + col2W + 8, currRowY + 4, { width: col3W - 12 });
-            doc.font(boldFont).fontSize(8).fillColor('#DC2626').text(formatInr(ded[1]), leftX + col1W + col2W + col3W - 8, currRowY + 4, { width: col4W, align: 'right' });
-          }
-
-          currRowY += 18;
-        }
-
-        // Totals Row
-        doc.rect(leftX, currRowY, contentWidth, 22).fillAndStroke('#F1F5F9', '#CBD5E1');
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A');
-        doc.text('Total Gross Salary', leftX + 8, currRowY + 6);
-        doc.text(formatInr(slip.grossSalary), leftX + col1W - 8, currRowY + 6, { width: col2W, align: 'right' });
-
-        doc.text('Total Deductions', leftX + col1W + col2W + 8, currRowY + 6);
-        doc.fillColor('#DC2626').text(formatInr(slip.totalDeductions ?? slip.deductions), leftX + col1W + col2W + col3W - 8, currRowY + 6, { width: col4W, align: 'right' });
-
-        currRowY += 22;
-
-        // 4. Net Payable Section
+        // 5. Net Payable Section
         const netBannerY = currRowY + 12;
         doc.roundedRect(leftX, netBannerY, contentWidth, 48, 5).fillAndStroke('#E8F9EE', '#23C45E');
 
@@ -1837,7 +1919,7 @@ export class PayrollService {
           { width: 266, align: 'right' }
         );
 
-        // 5. Footer Note
+        // 6. Footer Note
         const footerY = netBannerY + 48 + 14;
         doc.font(regularFont).fontSize(7).fillColor('#94A3B8').text(
           'This is a computer generated salary slip and does not require a physical signature. For any payroll queries, please contact HR/Accounts.',

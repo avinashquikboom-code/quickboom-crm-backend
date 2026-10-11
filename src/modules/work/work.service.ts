@@ -3252,19 +3252,20 @@ status: ${item.status}`);
     }
 
     const dateMatchedCount = filteredItems.length;
+    const viewerIds = new Set<number>(viewerCandidateIds);
+    const directlyAssigned = (w: any) => {
+      const ids = [
+        w.assignedToId,
+        w.editorId,
+        w.customer?.assignedEmployeeId,
+        ...(w.tasks || []).map((task: any) => task.assignedToId),
+      ]
+        .map((id: any) => Number(id))
+        .filter((id: number) => Number.isInteger(id) && id > 0);
+      return ids.some((id: number) => viewerIds.has(id));
+    };
+
     if (assignedOnly || !isProductionManager) {
-      const viewerIds = new Set<number>(viewerCandidateIds);
-      const directlyAssigned = (w: any) => {
-        const ids = [
-          w.assignedToId,
-          w.editorId,
-          w.customer?.assignedEmployeeId,
-          ...(w.tasks || []).map((task: any) => task.assignedToId),
-        ]
-          .map((id: any) => Number(id))
-          .filter((id: number) => Number.isInteger(id) && id > 0);
-        return ids.some((id: number) => viewerIds.has(id));
-      };
       filteredItems = filteredItems.filter((w) => {
         if (directlyAssigned(w)) return true;
         // My Calendar uses assignment visibility, independently of designation.
@@ -3301,10 +3302,7 @@ status: ${item.status}`);
         if (!onAuthorizedTeam) return false;
 
         // Hide work explicitly assigned to another employee (unrelated employee activities)
-        const hasOtherAssignee =
-          (Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && !viewerIds.has(Number(w.assignedToId))) ||
-          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && !viewerIds.has(Number(w.editorId)));
-        if (hasOtherAssignee) return false;
+        if (otherAssignee) return false;
 
         // For unassigned pool work on the team, check role/designation eligibility
         if (!isFullAccess && allowedTypes.size > 0) {
@@ -3354,19 +3352,51 @@ status: ${item.status}`);
 
       const scheduleAssignee = this.productionTaskAssignee(w);
       const assignedEmpName = scheduleAssignee.name || 'Not assigned';
+      const editorName = personName(w.editor);
+
+      const isViewerEditor =
+        viewerCandidateIds.some((cid) => cid === Number(w.editorId)) ||
+        (w.tasks || []).some(
+          (t: any) =>
+            viewerCandidateIds.includes(Number(t.assignedToId)) &&
+            /edit|color|grade/i.test(t.title || ''),
+        );
+      const isViewerShooter =
+        viewerCandidateIds.some((cid) => cid === Number(w.assignedToId)) ||
+        (w.tasks || []).some(
+          (t: any) =>
+            viewerCandidateIds.includes(Number(t.assignedToId)) &&
+            /shoot|camera|photo/i.test(t.title || ''),
+        );
+
+      let itemActivityType = normalizeActivityType(w);
+      if (isViewerEditor && !isViewerShooter) {
+        itemActivityType = 'REEL_EDIT';
+      } else if (isViewerShooter) {
+        if (w.workType === 'REEL' || w.workType === 'REELS_SHOOT' || w.workType === 'SHOOT') {
+          itemActivityType = 'REEL_SHOOT';
+        }
+      }
 
       const assignedEmpList: string[] = [];
-      if (assignedEmpName && assignedEmpName !== 'Not assigned') assignedEmpList.push(assignedEmpName);
-      const editorName = personName(w.editor);
-      if (editorName && !assignedEmpList.includes(editorName)) assignedEmpList.push(editorName);
+      if (assignedEmpName && assignedEmpName !== 'Not assigned') {
+        assignedEmpList.push(assignedEmpName);
+      }
+      if (editorName && !assignedEmpList.includes(editorName)) {
+        assignedEmpList.push(editorName);
+      }
+      if (empRecord && viewerCandidateIds.includes(numEmployeeId) && directlyAssigned(w)) {
+        const myName = personName(empRecord);
+        if (myName && !assignedEmpList.includes(myName)) {
+          assignedEmpList.push(myName);
+        }
+      }
 
       const smHandler = w.customer?.socialMediaHandlers?.[0];
       const platform = smHandler?.platform || 'Instagram';
       const smAccount = smHandler?.accountName
         ? `${platform} — @${smHandler.accountName}`
         : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\s+/g, '')}` : 'Instagram');
-
-      const normalizedType = normalizeActivityType(w);
 
       return {
         id: String(w.id),
@@ -3392,8 +3422,8 @@ status: ${item.status}`);
         time: startTime,
         startTime: startTime,
         endTime: endTime,
-        type: normalizedType,
-        activityType: normalizedType,
+        type: itemActivityType,
+        activityType: itemActivityType,
         workType: w.workType,
         status: w.status,
         location: customerLocation,
@@ -3407,7 +3437,7 @@ status: ${item.status}`);
         assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
         editorId: w.editorId,
-        editorName: w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null,
+        editorName: editorName || null,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,
@@ -3927,9 +3957,22 @@ assignedEmployee: ${item.assignedEmployee}`);
    */
   async resolveEmployeeIdForUser(user: any): Promise<number | null> {
     if (!user) return null;
-    const directEmployeeId = Number(user.employee?.id);
+    const directEmployeeId = Number(user.employee?.id ?? user.employeeId);
     if (Number.isInteger(directEmployeeId) && directEmployeeId > 0) {
       return directEmployeeId;
+    }
+
+    const employeeCode = String(user.employeeCode || user.employee?.employeeCode || '').trim();
+    if (employeeCode) {
+      const codeCustomerId = Number(user.customerId || user.employee?.customerId);
+      const byCode = await this.prisma.employee.findFirst({
+        where: {
+          ...(Number.isInteger(codeCustomerId) && codeCustomerId > 0 ? { customerId: codeCustomerId } : {}),
+          employeeCode: { equals: employeeCode, mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (byCode?.id) return byCode.id;
     }
 
     const rawUserId = Number(user.id ?? user.userId);
@@ -3939,19 +3982,6 @@ assignedEmployee: ${item.assignedEmployee}`);
         select: { id: true },
       });
       if (byUser?.id) return byUser.id;
-    }
-
-    const employeeCode = String(user.employeeCode || user.employee?.employeeCode || '').trim();
-    const codeCustomerId = Number(user.customerId || user.employee?.customerId);
-    if (employeeCode && Number.isInteger(codeCustomerId) && codeCustomerId > 0) {
-      const byCode = await this.prisma.employee.findFirst({
-        where: {
-          customerId: codeCustomerId,
-          employeeCode: { equals: employeeCode, mode: 'insensitive' },
-        },
-        select: { id: true },
-      });
-      if (byCode?.id) return byCode.id;
     }
 
     const payloadEmployeeId = Number(user.employeeId);

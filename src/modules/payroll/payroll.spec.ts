@@ -157,13 +157,15 @@ describe('PayrollService (HRM Payroll)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.status).toBe('APPROVED');
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'APPROVED',
-          approvedAt: expect.any(Date),
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'APPROVED',
+            approvedAt: expect.any(Date),
+          }),
         }),
-      });
+      );
     });
 
     it('approves payroll with numeric ID', async () => {
@@ -177,12 +179,14 @@ describe('PayrollService (HRM Payroll)', () => {
       const result = await service.approvePayroll(3, 101);
 
       expect(result.success).toBe(true);
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'APPROVED',
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'APPROVED',
+          }),
         }),
-      });
+      );
     });
   });
 
@@ -199,13 +203,15 @@ describe('PayrollService (HRM Payroll)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.status).toBe('PAID');
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'PAID',
-          disbursedAt: expect.any(Date),
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'PAID',
+            disbursedAt: expect.any(Date),
+          }),
         }),
-      });
+      );
     });
   });
 

@@ -6,6 +6,14 @@ import PDFDocument = require('pdfkit');
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import {
+  PayrollAttendanceSummary,
+  SalaryBreakdown,
+  buildPayrollAttendanceSummary,
+  buildSalaryBreakdown,
+  drawAttendanceSummarySection,
+  drawSalaryBreakdownSection,
+} from '../payroll/salary-slip-summary';
 
 export type EmployeeChannel = 'EMAIL' | 'WHATSAPP' | 'BOTH';
 
@@ -155,7 +163,7 @@ export class EmployeeCommunicationService {
       designation: employee.designation?.name,
       department: employee.department?.name,
       joiningDate: employee.joiningDate,
-      snapshot: slip.payrollItem?.calculationSnapshot,
+      ...this.salarySlipSections(slip),
     });
     const text = [
       `Dear ${name},`,
@@ -349,7 +357,6 @@ export class EmployeeCommunicationService {
     });
     if (!slip || (customerId && slip.customerId !== customerId)) return null;
     const employee = slip.employee;
-    const item = slip.payrollItem;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
     const buffer = await this.buildSalaryPdf({
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -363,19 +370,22 @@ export class EmployeeCommunicationService {
       department: employee.department?.name || null,
       joiningDate: employee.joiningDate,
       bankDetails: employee.bankDetails,
-      basicSalary: item.basicSalary,
-      hra: item.hra,
-      allowances: item.allowances + item.specialAllowance,
-      commission: item.commission,
-      reimbursement: item.reimbursement,
-      pf: item.pf,
-      esi: item.esi,
-      tds: item.tds,
-      professionalTax: item.professionalTax,
-      loanDeduction: item.loanDeduction,
-      unpaidLeaveDeduction: item.lopDeduction,
+      ...this.salarySlipSections(slip),
     });
     return { filename, buffer };
+  }
+
+  private salarySlipSections(slip: any) {
+    const item = slip.payrollItem;
+    return {
+      attendanceSummary: buildPayrollAttendanceSummary(item, { year: item?.payroll?.year, month: item?.payroll?.month }),
+      breakdown: buildSalaryBreakdown({
+        ...(item || {}),
+        grossSalary: slip.grossSalary,
+        totalDeductions: slip.totalDeductions,
+        netSalary: slip.netSalary,
+      }),
+    };
   }
 
   async attendanceFile(employeeId: number, year: number, month: number, customerId?: number) {
@@ -660,18 +670,8 @@ export class EmployeeCommunicationService {
     department?: string | null;
     joiningDate?: Date | null;
     bankDetails?: any;
-    basicSalary?: number;
-    hra?: number;
-    allowances?: number;
-    commission?: number;
-    reimbursement?: number;
-    pf?: number;
-    esi?: number;
-    tds?: number;
-    professionalTax?: number;
-    loanDeduction?: number;
-    unpaidLeaveDeduction?: number;
-    snapshot?: any;
+    attendanceSummary: PayrollAttendanceSummary | null;
+    breakdown: SalaryBreakdown;
   }) {
     return this.renderPdf((doc) => {
       const fontPaths = this.resolveFontPaths();
@@ -763,76 +763,18 @@ export class EmployeeCommunicationService {
       doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Account No:', leftX + 390, cardY + 32);
       doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(maskAccount(bDetails?.accountNumber), leftX + 390, cardY + 42, { width: 120, ellipsis: true });
 
-      // 3. Salary Breakdown Table
-      const breakdownTitleY = cardY + 66 + 14;
-      doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('SALARY BREAKDOWN', leftX, breakdownTitleY);
+      // 3. Attendance Summary
+      const sectionOpts = { x: leftX, width: contentWidth, regularFont, boldFont };
+      const attendanceEndY = drawAttendanceSummarySection(doc, data.attendanceSummary, { ...sectionOpts, y: cardY + 66 + 14 });
 
-      const tableY = breakdownTitleY + 14;
-      const col1W = 155;
-      const col2W = 106.64;
-      const col3W = 155;
-      const col4W = 106.64;
+      // 4. Salary Breakdown Table
+      const currRowY = drawSalaryBreakdownSection(doc, data.breakdown, {
+        ...sectionOpts,
+        y: attendanceEndY + 14,
+        formatAmount: formatInr,
+      });
 
-      // Table Header
-      doc.rect(leftX, tableY, contentWidth, 20).fill('#0F763E');
-      doc.font(boldFont).fontSize(8.5).fillColor('#FFFFFF');
-      doc.text('EARNINGS', leftX + 8, tableY + 5);
-      doc.text('AMOUNT', leftX + col1W - 8, tableY + 5, { width: col2W, align: 'right' });
-      doc.text('DEDUCTIONS', leftX + col1W + col2W + 8, tableY + 5);
-      doc.text('AMOUNT', leftX + col1W + col2W + col3W - 8, tableY + 5, { width: col4W, align: 'right' });
-
-      const earnings: [string, number][] = [
-        ['Basic Salary', data.basicSalary || data.gross],
-        ['HRA Allowance', data.hra || 0],
-        ['Allowances & Special', data.allowances || 0],
-      ];
-      if (data.commission && data.commission > 0) earnings.push(['Earned Commission', data.commission]);
-      if (data.reimbursement && data.reimbursement > 0) earnings.push(['Expense Reimbursement', data.reimbursement]);
-
-      const deductions: [string, number][] = [
-        ['Provident Fund (PF)', data.pf || 0],
-        ['ESI Contribution', data.esi || 0],
-        ['TDS / Income Tax', data.tds || 0],
-      ];
-      if (data.loanDeduction && data.loanDeduction > 0) deductions.push(['Loan EMI Deduction', data.loanDeduction]);
-      if (data.unpaidLeaveDeduction && data.unpaidLeaveDeduction > 0) deductions.push(['Loss of Pay (LOP)', data.unpaidLeaveDeduction]);
-      if (data.professionalTax && data.professionalTax > 0) deductions.push(['Professional Tax', data.professionalTax]);
-
-      const numRows = Math.max(earnings.length, deductions.length);
-      let currRowY = tableY + 20;
-
-      for (let i = 0; i < numRows; i++) {
-        const earn = earnings[i];
-        const ded = deductions[i];
-        const isEven = i % 2 === 0;
-
-        doc.rect(leftX, currRowY, contentWidth, 18).fillAndStroke(isEven ? '#FFFFFF' : '#F8FAFC', '#E2E8F0');
-
-        if (earn) {
-          doc.font(regularFont).fontSize(8).fillColor('#334155').text(earn[0], leftX + 8, currRowY + 4, { width: col1W - 12 });
-          doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatInr(earn[1]), leftX + col1W - 8, currRowY + 4, { width: col2W, align: 'right' });
-        }
-
-        if (ded) {
-          doc.font(regularFont).fontSize(8).fillColor('#334155').text(ded[0], leftX + col1W + col2W + 8, currRowY + 4, { width: col3W - 12 });
-          doc.font(boldFont).fontSize(8).fillColor('#DC2626').text(formatInr(ded[1]), leftX + col1W + col2W + col3W - 8, currRowY + 4, { width: col4W, align: 'right' });
-        }
-
-        currRowY += 18;
-      }
-
-      // Totals Row
-      doc.rect(leftX, currRowY, contentWidth, 22).fillAndStroke('#F1F5F9', '#CBD5E1');
-      doc.font(boldFont).fontSize(8.5).fillColor('#0F172A');
-      doc.text('Total Gross Salary', leftX + 8, currRowY + 6);
-      doc.text(formatInr(data.gross), leftX + col1W - 8, currRowY + 6, { width: col2W, align: 'right' });
-
-      doc.text('Total Deductions', leftX + col1W + col2W + 8, currRowY + 6);
-      doc.fillColor('#DC2626').text(formatInr(data.deductions), leftX + col1W + col2W + col3W - 8, currRowY + 6, { width: col4W, align: 'right' });
-
-      currRowY += 22;
-
-      // 4. Net Payable Section
+      // 5. Net Payable Section
       const netBannerY = currRowY + 12;
       doc.roundedRect(leftX, netBannerY, contentWidth, 48, 5).fillAndStroke('#E8F9EE', '#23C45E');
 
@@ -846,7 +788,7 @@ export class EmployeeCommunicationService {
         { width: 266, align: 'right' }
       );
 
-      // 5. Footer Note
+      // 6. Footer Note
       const footerY = netBannerY + 48 + 14;
       doc.font(regularFont).fontSize(7).fillColor('#94A3B8').text(
         'This is a computer generated salary slip and does not require a physical signature. For any payroll queries, please contact HR/Accounts.',

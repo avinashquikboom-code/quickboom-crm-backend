@@ -429,7 +429,8 @@ export class WorkController {
     const rangeStart = dateFrom || startDate;
     const rangeEnd = dateTo || endDate;
     const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
-    return this.workService.getEmployeeCalendar(authEmpId, {
+    const effectiveTargetEmpId = targetQueryEmpId || authEmpId;
+    return this.workService.getEmployeeCalendar(effectiveTargetEmpId, {
       date: multiDayRange ? undefined : (date || rangeStart),
       dateFrom: multiDayRange ? rangeStart : (startDate || dateFrom),
       dateTo: multiDayRange ? rangeEnd : (endDate || dateTo),
