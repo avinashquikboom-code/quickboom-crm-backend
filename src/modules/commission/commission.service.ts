@@ -84,6 +84,7 @@ export class CommissionService {
     const bpo = isBpoPayrollEmployee;
     if (employee && !bpo(employee)) return null;
     const config = employee?.commissionConfig;
+    if (!reviewReason && config?.customerId && config.customerId !== tenantId) reviewReason = 'CONFIG_TENANT_MISMATCH';
     if (config && config.status !== CommissionConfigStatus.ACTIVE) return null;
     if (employee && !config && !employee.designation?.commissionEnabled) return null;
     const commissionType = config?.commissionType || employee?.designation?.commissionType || CommissionType.PERCENTAGE;
