@@ -239,6 +239,29 @@ describe('Employee designation calendar visibility', () => {
     await expect(idsFor('Videographer', 16)).resolves.toEqual(['3', '8']);
   });
 
+  it('uses the full IST day at midnight and includes Monday through Sunday in a week', async () => {
+    const count = works.length;
+    works.push(
+      { ...work(101, WorkType.EDITING, null, 1), scheduledDate: new Date('2026-10-11T18:29:59.999Z') },
+      { ...work(102, WorkType.EDITING, null, 1), scheduledDate: new Date('2026-10-11T18:30:00.000Z') },
+    );
+    try {
+      const { service } = await serviceFor({ id: 10, designation: 'Video Editor' });
+      const today = await service.getEmployeeCalendar(10, { date: '2026-10-11' }, { allTenantCustomers: true });
+      const tomorrow = await service.getEmployeeCalendar(10, { date: '2026-10-12' }, { allTenantCustomers: true });
+      const week = await service.getEmployeeCalendar(10, { dateFrom: '2026-10-05', dateTo: '2026-10-11' }, { allTenantCustomers: true });
+      expect(today.map(w => w.id)).toEqual(['101']);
+      expect(week.map(w => w.id)).toEqual(['101']);
+      expect(tomorrow.map(w => w.id)).toContain('102');
+      expect(tomorrow.map(w => w.id)).not.toContain('101');
+      expect(tomorrow.map(w => w.id)).not.toContain('3'); // shoot category
+      expect(tomorrow.map(w => w.id)).not.toContain('6'); // other tenant
+      expect((await service.getEmployeeCalendar(10, { date: '2026-10-13' }, { allTenantCustomers: true }))).toEqual([]);
+    } finally {
+      works.splice(count);
+    }
+  });
+
   it('shows a Reel Shooter only shoot work and keeps the original date', async () => {
     const { service, prisma } = await serviceFor({ id: 12, designation: 'Reel Shooter' });
     const calendar = await service.getEmployeeCalendar(12, { month: 10, year: 2026 }, { allTenantCustomers: true });
