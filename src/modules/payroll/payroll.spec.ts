@@ -247,7 +247,7 @@ describe('PayrollService (HRM Payroll)', () => {
     it('does not regenerate or downgrade paid payroll', async () => {
       prisma.payroll.findFirst.mockResolvedValue({ ...mockPayroll, status: 'PAID' });
       const result = await service.generatePayroll(3, 101);
-      expect(result.alreadyPaid).toBe(true);
+      expect(result).toMatchObject({ alreadyPaid: true });
       expect(prisma.salarySlip.update).not.toHaveBeenCalled();
       expect(prisma.payroll.update).not.toHaveBeenCalled();
     });
