@@ -478,7 +478,7 @@ describe('Advance Payment & Installment Renewal Business Logic (Final Rules)', (
       expect(res.data.bufferPeriodActive).toBe(false);
       expect(res.data.daysRemaining).toBe(0);
       expect(res.data.nextInstallment).toBeNull();
-      expect(res.data.newPlanRequired).toBe(true);
+      expect(res.data.newPlanRequired).toBe(false);
     });
 
     // Case D: Customer with expired subscription

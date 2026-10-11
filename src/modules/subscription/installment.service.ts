@@ -470,11 +470,11 @@ export class InstallmentService {
         const isFirstExpired = now > new Date(dueInstallment.expiryDate);
         if (isFirstExpired) {
           isAccessAllowed = false;
-          isRenewalFailed = true;
+          isRenewalFailed = false;
           canRenewCurrentPlan = false;
-          planStatus = 'RENEWAL_FAILED';
-          statusMessage = 'First installment payment period has expired. Please start a new plan.';
-          failureMessage = 'Initial installment payment deadline missed. Please start a new plan.';
+          planStatus = 'EXPIRED';
+          statusMessage = 'First installment payment period has expired. Please select a plan.';
+          failureMessage = 'Initial installment payment deadline missed. Please select a plan.';
           termsMessage = TERMS_CONDITIONS_RENEWAL_FAILED;
         } else {
           isAccessAllowed = false;
@@ -1234,7 +1234,7 @@ renewalStatus: ${summary ? summary.planStatus : (sub ? sub.status : 'NO_SUBSCRIP
           daysRemaining: 0,
           originalPlanValue: 0,
           nextInstallment: null,
-          newPlanRequired: true,
+          newPlanRequired: false,
         },
       };
     }
