@@ -147,4 +147,17 @@ describe('BPO commission split, attribution, access and settlement', () => {
     expect(paid.summary.paidCommission).toBe(150);
     expect((await service.getLeaderCommissions(1, 200, {})).summary.approvedCommission).toBe(150);
   });
+  it('admin totals aggregate share states without counting the full event twice', async () => {
+    await award();
+    db.commission.count = jest.fn().mockResolvedValue(1);
+    db.commission.groupBy = jest.fn().mockResolvedValue([]);
+    db.commissionShare.groupBy = jest.fn().mockResolvedValue([
+      { status: 'PAID', _sum: { amount: 150 }, _count: { id: 1 } },
+      { status: 'APPROVED', _sum: { amount: 150 }, _count: { id: 1 } },
+    ]);
+    const ledger = await service.getAdminCommissions(1, { employeeId: 20, search: 'Customer' });
+    expect(ledger.summary.totalCommission).toBe(300); expect(ledger.summary.paidCommission).toBe(150); expect(ledger.summary.approvedCommission).toBe(150);
+    const where = db.commission.findMany.mock.calls[0][0].where;
+    expect(where.OR[0]).toEqual({ tenantId: 1 }); expect(where.AND).toHaveLength(2);
+  });
 });

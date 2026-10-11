@@ -765,7 +765,7 @@ export class PayrollService {
         });
       }
       if (['PAID', 'APPROVED', 'GENERATED'].includes(payroll.status)) {
-        throw new BadRequestException('This payroll is already paid and cannot be recalculated.');
+        throw new BadRequestException('This payroll is finalized and cannot be recalculated.');
       }
 
       const holidays = await tx.publicHoliday.findMany({

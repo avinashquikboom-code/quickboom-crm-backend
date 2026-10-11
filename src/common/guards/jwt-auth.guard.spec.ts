@@ -48,23 +48,25 @@ function modelMock(overrides: Record<string, jest.Mock> = {}) {
   });
 }
 
-const prismaMock: any = new Proxy(
-  {
-    user: modelMock({
-      findUnique: jest.fn(({ where }) => Promise.resolve(users[where.id] ?? null)),
+const prismaMock: any = {
+  user: modelMock({
+    findUnique: jest.fn(({ where }) => Promise.resolve(users[where.id] ?? null)),
+  }),
+  customer: modelMock({
+    findFirst: jest.fn(({ where }) => {
+      const c = customers[Number(where?.id)];
+      if (!c) return Promise.resolve(null);
+      if (where.isActive === true && !c.isActive) return Promise.resolve(null);
+      return Promise.resolve(c);
     }),
-    customer: modelMock({
-      findFirst: jest.fn(({ where }) => {
-        const c = customers[Number(where?.id)];
-        if (!c) return Promise.resolve(null);
-        if (where.isActive === true && !c.isActive) return Promise.resolve(null);
-        return Promise.resolve(c);
-      }),
-      findUnique: jest.fn(({ where }) => Promise.resolve(customers[Number(where?.id)] ?? null)),
-    }),
-  } as Record<string, any>,
-  { get: (target, prop: string) => target[prop] ?? modelMock() },
-);
+    findUnique: jest.fn(({ where }) => Promise.resolve(customers[Number(where?.id)] ?? null)),
+  }),
+  designation: modelMock(),
+  role: modelMock(),
+  permission: modelMock(),
+  rolePermission: modelMock(),
+  employeeModuleOverride: modelMock(),
+};
 
 const employeeServiceMock = {
   findOne: jest.fn(({ id, customerId }) =>
@@ -203,8 +205,8 @@ describe('JwtAuthGuard + JwtStrategy on GET /employees/:id', () => {
     const ok = await request(app.getHttpServer()).get('/employees/12').set('x-request-id', 'req-abc_123');
     expect(ok.headers['x-correlation-id']).toBe('req-abc_123');
 
-    const bad = await request(app.getHttpServer()).get('/employees/12').set('x-request-id', 'bad id\r\ninjected');
-    expect(bad.headers['x-correlation-id']).not.toContain('injected');
+    const bad = await request(app.getHttpServer()).get('/employees/12').set('x-request-id', 'bad id <script>');
+    expect(bad.headers['x-correlation-id']).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('10. other employee routes keep working with the same valid token', async () => {

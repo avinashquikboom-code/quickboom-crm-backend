@@ -257,9 +257,9 @@ export class CommissionService {
     ]);
 
     // Summary totals calculated across entire tenant dataset (or filtered search)
-    const summaryAgg = await this.prisma.commission.groupBy({
+    const legacyAgg = await this.prisma.commission.groupBy({
       by: ['status'],
-      where: { OR: [{ tenantId: customerId }, { tenantId: null, employee: { customerId } }] },
+      where: { shares: { none: {} }, reviewReason: null, OR: [{ tenantId: customerId }, { tenantId: null, employee: { customerId } }] },
       _sum: {
         commissionAmount: true,
       },
@@ -267,6 +267,8 @@ export class CommissionService {
         id: true,
       },
     });
+    const splitAgg = await this.prisma.commissionShare.groupBy({ by: ['status'], where: { commission: { tenantId: customerId } }, _sum: { amount: true }, _count: { id: true } });
+    const summaryAgg = [...legacyAgg, ...splitAgg.map(group => ({ status: group.status, _sum: { commissionAmount: group._sum.amount }, _count: { id: group._count.id } }))];
 
     let totalAmount = 0;
     let pendingAmount = 0;

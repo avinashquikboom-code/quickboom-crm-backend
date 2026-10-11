@@ -5,6 +5,7 @@ export async function settleCommissionShares(tx: any, payrollItemId: number) {
   if (shares.some(s => s.status === 'CANCELLED' || s.commission.reviewReason)) {
     throw new BadRequestException('Commission reversal/review requires payroll recalculation or an authorized adjustment');
   }
+  if (!shares.some(s => s.status === 'APPROVED')) return;
   await tx.commissionShare.updateMany({ where: { payrollItemId, status: 'APPROVED' }, data: { status: 'PAID', paidAt: new Date() } });
   for (const commissionId of new Set(shares.map(s => s.commissionId))) {
     if (!(await tx.commissionShare.count({ where: { commissionId, status: { not: 'PAID' } } }))) {
