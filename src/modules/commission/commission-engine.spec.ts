@@ -9,7 +9,7 @@ describe('BPO commission split, attribution, access and settlement', () => {
     event = null;
     employee = { id: 10, userId: 100, customerId: 1, status: 'ACTIVE', firstName: 'Seller', lastName: '', employeeCode: 'E10', designation: { name: 'Telecaller', commissionEnabled: true, commissionType: 'PERCENTAGE', commissionRate: 3 }, department: { name: 'BPO' }, commissionConfig: null };
     leader = { ...employee, id: 20, userId: 200, firstName: 'Leader', designation: { name: 'BPO Team Leader' } };
-    payment = { id: 30, customerId: 50, amount: 10000, status: 'SUCCESS', planId: 2, createdAt: new Date('2026-10-11T12:00:00Z'), deletedAt: null };
+    payment = { id: 30, customerId: 50, amount: 10000, status: 'SUCCESS', planId: 2, createdAt: new Date('2026-10-11T12:00:00Z'), deletedAt: null, paymentId: 'pay-fixture', paymentMethod: 'RAZORPAY' };
     team = { id: 4, customerId: 1, name: 'BPO Alpha', description: '', updatedAt: new Date('2026-10-01'), leader };
     db = {
       $transaction: jest.fn(async fn => fn(db)),
@@ -18,7 +18,8 @@ describe('BPO commission split, attribution, access and settlement', () => {
       employee: { findUnique: jest.fn(async ({ where }) => where.id === 10 ? employee : leader), findFirst: jest.fn(async ({ where }) => [employee, leader].find(e => e.userId === where.userId && e.customerId === where.customerId)) },
       teamMember: { findMany: jest.fn(async () => [{ team }]) },
       commission: {
-        findUnique: jest.fn(async () => event),
+        findUnique: jest.fn(async ({ where }) => event && (where.id ? event.id === where.id : event.purchaseId === where.purchaseId) ? event : null),
+        findFirst: jest.fn(async () => event),
         create: jest.fn(async ({ data }) => {
           event = { ...data, id: 1, createdAt: payment.createdAt, shares: (data.shares?.create || []).map((s, i) => ({ ...s, id: i + 1, commissionId: 1, status: 'APPROVED', payrollItemId: null })), customer: { id: 50, name: 'Customer' }, lead: { id: 60 }, employee: { id: 10, firstName: 'Seller', lastName: '' } };
           return event;
@@ -77,7 +78,7 @@ describe('BPO commission split, attribution, access and settlement', () => {
     expect((await award()).reviewReason).toBe('HISTORICAL_TEAM_REVIEW_REQUIRED');
   });
   it('preserves previously paid historical unsplit commissions', async () => {
-    event = { id: 99, customerId: 50, status: 'PAID', commissionAmount: 300, shares: [] };
+    event = { id: 99, purchaseId: 30, customerId: 50, status: 'PAID', commissionAmount: 300, shares: [] };
     expect(await award()).toBe(event); expect(db.paymentHistory.findUnique).not.toHaveBeenCalled(); expect(db.commission.create).not.toHaveBeenCalled();
   });
   it('cancels unpaid shares on refunds without deleting history', async () => {
@@ -115,5 +116,35 @@ describe('BPO commission split, attribution, access and settlement', () => {
     await award(); db.commissionShare.count.mockResolvedValue(2);
     await expect(service.updateCommissionStatus(1, 1, { status: 'PAID' as any }, { id: 1 })).rejects.toThrow('payroll');
     event.status = 'PAID'; await expect(service.updateCommissionStatus(1, 1, { status: 'CANCELLED' as any }, { id: 1 })).rejects.toThrow('adjustment');
+  });
+  it('duplicate gateway transaction on another PaymentHistory row reuses the same event', async () => {
+    const original = await award(); payment.id = 31;
+    expect(await service.calculateAndAwardCommission({ ...params, purchaseId: 31 })).toBe(original);
+    expect(db.commission.create).toHaveBeenCalledTimes(1);
+  });
+  it('retries serializable contention without issuing another event', async () => {
+    db.$transaction.mockRejectedValueOnce({ code: 'P2034' });
+    expect((await award()).shares).toHaveLength(2);
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+  });
+  it('partial refunds hold shares and repeated refund events do not duplicate history', async () => {
+    await award(); await service.handleRefundOrCancellation(30, 50, 'refund-fixture', true);
+    const count = event.history.length;
+    await service.handleRefundOrCancellation(30, 50, 'refund-fixture', true);
+    expect(event.reviewReason).toBe('PARTIAL_REFUND_REQUIRES_REVIEW');
+    expect(event.shares.every(s => s.status === 'PENDING')).toBe(true);
+    expect(event.history).toHaveLength(count);
+  });
+  it('end-to-end fixture: award, ledger, correct recipient settlement, paid mobile ledger', async () => {
+    await award();
+    const own = await service.getEmployeeCommissions(1, 100, {});
+    expect(own.data[0].customerId).toBe(50); expect(own.data[0].customerCommissionTotal).toBe(150);
+    const split = await commissionForPayroll(db, 1, 10, new Date('2026-10-01'), new Date('2026-10-31'), 7, 0);
+    expect(split.amount).toBe(150);
+    event.shares[0].payrollItemId = 700;
+    await settleCommissionShares(db, 700);
+    const paid = await service.getEmployeeCommissions(1, 100, {});
+    expect(paid.summary.paidCommission).toBe(150);
+    expect((await service.getLeaderCommissions(1, 200, {})).summary.approvedCommission).toBe(150);
   });
 });

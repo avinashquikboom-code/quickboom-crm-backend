@@ -156,7 +156,7 @@ export class CommissionService {
     }
 
     if (query.employeeId) {
-      where.employeeId = Number(query.employeeId);
+      where.AND = [{ OR: [{ employeeId: Number(query.employeeId) }, { shares: { some: { employeeId: Number(query.employeeId) } } }] }];
     }
 
     if (query.designationId) {
@@ -179,7 +179,7 @@ export class CommissionService {
 
     if (query.search && query.search.trim()) {
       const search = query.search.trim();
-      where.AND = [{ OR: [
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: [
         { employee: { firstName: { contains: search, mode: 'insensitive' } } },
         { employee: { lastName: { contains: search, mode: 'insensitive' } } },
         { employee: { employeeCode: { contains: search, mode: 'insensitive' } } },
@@ -346,7 +346,7 @@ export class CommissionService {
     const records = events.map(event => {
       const share = event.shares.find(s => s.employeeId === employee.id && (!leaderOnly || s.recipientRole === 'LEADER'));
       const unresolved = !share && event.tenantId !== null && !!event.reviewReason;
-      return { ...event, shares: undefined, originalCommissionRate: event.commissionRate, totalCommissionAmount: event.commissionAmount,
+      return { ...event, employeeId: share?.employeeId ?? event.employeeId, sourceEmployeeId: event.employeeId, shares: undefined, originalCommissionRate: event.commissionRate, totalCommissionAmount: event.commissionAmount,
         commissionRate: share?.effectiveRate ?? (unresolved ? 0 : event.commissionRate), commissionAmount: share?.amount ?? (unresolved ? 0 : event.commissionAmount),
         employeeShareAmount: share?.recipientRole === 'LEADER' ? Math.round((event.commissionAmount - share.amount) * 100) / 100 : share?.amount, leaderShareAmount: share?.recipientRole === 'LEADER' ? share.amount : share ? Math.round((event.commissionAmount - share.amount) * 100) / 100 : null,
         status: share?.status ?? event.status, paidAt: share?.paidAt ?? event.paidAt, recipientRole: share?.recipientRole ?? 'LEGACY',
