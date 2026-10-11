@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { getBusinessDayRange } from '../../common/utils/timezone.util';
 
 export async function settleCommissionShares(tx: any, payrollItemId: number) {
   const shares = await tx.commissionShare.findMany({ where: { payrollItemId }, include: { commission: true } });
@@ -15,8 +16,10 @@ export async function settleCommissionShares(tx: any, payrollItemId: number) {
 }
 
 export async function commissionForPayroll(tx: any, tenantId: number, employeeId: number, start: Date, end: Date, payrollId: number, existingCommission: number) {
+  const earnedStart = getBusinessDayRange(start.toISOString().slice(0, 10)).start;
+  const earnedEnd = getBusinessDayRange(end.toISOString().slice(0, 10)).end;
   const shares = await tx.commissionShare.findMany({
-    where: { employeeId, status: 'APPROVED', commission: { tenantId, reviewReason: null, qualifyingAt: { gte: start, lte: end } }, OR: [{ payrollItemId: null }, { payrollItem: { payrollId } }] },
+    where: { employeeId, status: 'APPROVED', commission: { tenantId, reviewReason: null, qualifyingAt: { gte: earnedStart, lte: earnedEnd } }, OR: [{ payrollItemId: null }, { payrollItem: { payrollId } }] },
   });
   const amount = Math.round(shares.reduce((sum, share) => sum + share.amount, 0) * 100) / 100;
   if (shares.length && existingCommission !== 0) throw new BadRequestException('Commission compensation overlap requires review before payroll calculation');

@@ -9,6 +9,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { ScheduleService } from '../schedule/schedule.service';
+import { CommissionService } from '../commission/commission.service';
+import { awardCommissionForPayment } from '../commission/commission-trigger.util';
 import {
   InstallmentStatus,
   SubscriptionStatus,
@@ -94,6 +96,7 @@ export class InstallmentService {
     private readonly prisma: PrismaService,
     @Optional() private readonly notificationService?: NotificationService,
     @Optional() private readonly scheduleService?: ScheduleService,
+    @Optional() private readonly commissionService?: CommissionService,
   ) {}
 
   /**
@@ -717,6 +720,8 @@ export class InstallmentService {
       };
     });
 
+    await awardCommissionForPayment(this.commissionService, this.logger, result.payment, 'installment');
+
     this.logger.log(
       `[INSTALLMENT_PAYMENT] installmentNumber: ${installment.installmentNumber}, amount: ${payAmount}, paymentStatus: SUCCESS`,
     );
@@ -951,6 +956,8 @@ export class InstallmentService {
         invoice,
       };
     });
+
+    await awardCommissionForPayment(this.commissionService, this.logger, newSubResult.payment, 'installment-new-plan');
 
     this.logger.log(
       `[NEW_PLAN] oldSubscriptionId: ${oldSub?.id || null}, newSubscriptionId: ${newSubResult.newSub.id}, originalPlanValue: ${fullTotalAmount}, newPlanValue: ${fullTotalAmount}`,

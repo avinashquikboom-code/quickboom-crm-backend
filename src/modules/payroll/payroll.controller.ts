@@ -199,11 +199,12 @@ export class PayrollController {
   async getStructures(
     @CurrentUser() user: any,
     @CurrentCustomer() currentCustomer?: any,
-    @Query('customerId') customerIdQuery?: string
+    @Query('customerId') customerIdQuery?: string,
+    @Query('employeeId') employeeIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
-    return this.payrollService.getSalaryStructures(customerId);
+    return this.payrollService.getSalaryStructures(customerId, employeeIdQuery);
   }
 
   @Post('structures')

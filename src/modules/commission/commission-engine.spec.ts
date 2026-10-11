@@ -109,7 +109,7 @@ describe('BPO commission split, attribution, access and settlement', () => {
   it('payroll uses exact employee, tenant and earned period; blocks overlapping salary commission', async () => {
     await award(); const start = new Date('2026-10-01'); const end = new Date('2026-10-31');
     const split = await commissionForPayroll(db, 1, 10, start, end, 5, 0); expect(split.amount).toBe(150);
-    expect(db.commissionShare.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ employeeId: 10, status: 'APPROVED', commission: { tenantId: 1, reviewReason: null, qualifyingAt: { gte: start, lte: end } } }) }));
+    expect(db.commissionShare.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ employeeId: 10, status: 'APPROVED', commission: { tenantId: 1, reviewReason: null, qualifyingAt: { gte: new Date('2026-09-30T18:30:00Z'), lte: new Date('2026-10-31T18:29:59.999Z') } } }) }));
     await expect(commissionForPayroll(db, 1, 10, start, end, 5, 100)).rejects.toThrow('overlap');
   });
   it('blocks manual payment of split commissions and paid history changes', async () => {
@@ -159,5 +159,12 @@ describe('BPO commission split, attribution, access and settlement', () => {
     expect(ledger.summary.totalCommission).toBe(300); expect(ledger.summary.paidCommission).toBe(150); expect(ledger.summary.approvedCommission).toBe(150);
     const where = db.commission.findMany.mock.calls[0][0].where;
     expect(where.OR[0]).toEqual({ tenantId: 1 }); expect(where.AND).toHaveLength(2);
+  });
+  it('offline payment earns commission in approval month, not pending request month', async () => {
+    payment.paymentMethod = 'BANK_TRANSFER';
+    payment.createdAt = new Date('2026-09-29'); payment.updatedAt = new Date('2026-10-11');
+    const result = await award();
+    expect(result.qualifyingAt).toEqual(payment.updatedAt);
+    expect(result.shares).toHaveLength(2);
   });
 });

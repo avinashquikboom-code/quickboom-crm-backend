@@ -25,6 +25,7 @@ import { EmailTemplateService, renderEmailTemplate } from '../email/email-templa
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';
+import { awardCommissionForPayment, QualifyingPayment } from '../commission/commission-trigger.util';
 import { CouponService } from './coupon.service';
 import { extractDeliverableQuotas } from '../../common/utils/plan-deliverable.util';
 import {
@@ -2000,6 +2001,7 @@ export class SubscriptionService {
     const gst = Math.round(basePrice * 0.18);
     const totalAmount = basePrice + gst;
 
+    let qualifyingPayment: QualifyingPayment | null = null;
     const newSub = await this.prisma.$transaction(async (tx) => {
       // 1. Deactivate any existing active subscriptions for this customer
       await tx.customerSubscription.updateMany({
@@ -2032,7 +2034,7 @@ export class SubscriptionService {
       });
 
       // 3. Record payment history as PAID / SUCCESS
-      await tx.paymentHistory.create({
+      qualifyingPayment = await tx.paymentHistory.create({
         data: {
           customerId: numCustomerId,
           subscriptionId: sub.id,
@@ -2061,6 +2063,8 @@ export class SubscriptionService {
 
       return sub;
     });
+
+    await awardCommissionForPayment(this.commissionService, this.logger, qualifyingPayment, 'admin-manual-activation');
 
     // 5. Generate Monthly Schedules and Work deliverables for the subscription period
     try {
@@ -2182,6 +2186,7 @@ export class SubscriptionService {
     const gst = Math.round(basePrice * 0.18);
     const totalAmount = basePrice + gst;
 
+    let qualifyingPayment: QualifyingPayment | null = null;
     const newSub = await this.prisma.$transaction(async (tx) => {
       // 1. Mark current and older subscriptions as EXPIRED
       await tx.customerSubscription.updateMany({
@@ -2210,7 +2215,7 @@ export class SubscriptionService {
       });
 
       // 3. Record payment history
-      await tx.paymentHistory.create({
+      qualifyingPayment = await tx.paymentHistory.create({
         data: {
           customerId: oldSub.customerId,
           subscriptionId: sub.id,
@@ -2239,6 +2244,8 @@ export class SubscriptionService {
 
       return sub;
     });
+
+    await awardCommissionForPayment(this.commissionService, this.logger, qualifyingPayment, 'admin-plan-change');
 
     // 5. Generate schedules for new plan
     try {
@@ -2326,6 +2333,7 @@ export class SubscriptionService {
     const gst = Math.round(basePrice * 0.18);
     const totalAmount = basePrice + gst;
 
+    let qualifyingPayment: QualifyingPayment | null = null;
     await this.prisma.$transaction(async (tx) => {
       await tx.customerSubscription.update({
         where: { id: sub.id },
@@ -2338,7 +2346,7 @@ export class SubscriptionService {
         },
       });
 
-      await tx.paymentHistory.create({
+      qualifyingPayment = await tx.paymentHistory.create({
         data: {
           customerId: sub.customerId,
           subscriptionId: sub.id,
@@ -2364,6 +2372,8 @@ export class SubscriptionService {
         },
       });
     });
+
+    await awardCommissionForPayment(this.commissionService, this.logger, qualifyingPayment, 'admin-renewal');
 
     // Generate schedules
     try {

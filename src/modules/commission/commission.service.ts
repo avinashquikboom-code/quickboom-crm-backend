@@ -20,6 +20,19 @@ import {
   UpdateDesignationCommissionDto,
 } from './dto/commission.dto';
 
+/**
+ * Tax-exclusive commission base. Admin manual activation, plan change and renewal
+ * store the GST-inclusive total in `amount` (amount === totalAmount with tax > 0).
+ */
+export function commissionBaseOf(payment: { amount: number; taxAmount?: number | null; totalAmount?: number | null }): number {
+  const amount = Number(payment.amount);
+  const tax = Number(payment.taxAmount || 0);
+  if (tax > 0 && payment.totalAmount != null && Math.abs(amount - Number(payment.totalAmount)) < 0.005) {
+    return Math.round((amount - tax) * 100) / 100;
+  }
+  return amount;
+}
+
 @Injectable()
 export class CommissionService {
   private readonly logger = new Logger(CommissionService.name);
@@ -61,6 +74,8 @@ export class CommissionService {
     } // Historical entries are never resplit.
     const payment = await db.paymentHistory.findUnique({ where: { id: params.purchaseId } });
     if (!payment || payment.customerId !== params.customerId || payment.deletedAt || payment.status !== 'SUCCESS') return null;
+    // Offline receipts start PENDING; their approval update is the earning event.
+    const qualifyingAt = ['BANK_TRANSFER', 'CASH', 'OTHER'].includes(payment.paymentMethod) ? payment.updatedAt : payment.createdAt;
     const sourceKey = payment.paymentId ? `gateway:${payment.paymentMethod}:${payment.paymentId}` : `purchase:${payment.id}`;
     if (payment.paymentId) {
       const duplicate = await db.commission.findFirst({ where: { OR: [{ sourceKey }, { purchase: { paymentId: payment.paymentId, paymentMethod: payment.paymentMethod } }] }, include: { shares: true } });
@@ -78,6 +93,8 @@ export class CommissionService {
       const assigned = await db.employee.findFirst({ where: { userId: lead.assignedToId, customerId: lead.customerId } });
       employeeId = assigned?.id;
     }
+    // A purchase with no source lead and no assigned seller is not a BPO sale.
+    if (!lead && !employeeId) return null;
     const employee = employeeId ? await db.employee.findUnique({ where: { id: employeeId }, include: { designation: true, department: true, commissionConfig: true } }) : null;
     const tenantId = lead?.customerId || employee?.customerId || customer.id;
     let reviewReason: string | null = !employee ? 'SALE_EMPLOYEE_UNRESOLVED' : employee.customerId !== tenantId ? 'EMPLOYEE_TENANT_MISMATCH' : employee.status !== 'ACTIVE' ? 'EMPLOYEE_INACTIVE' : null;
@@ -91,26 +108,27 @@ export class CommissionService {
     const commissionRate = Number(config?.commissionValue ?? employee?.designation?.commissionRate ?? 0);
     if (!Number.isFinite(commissionRate) || commissionRate < 0) throw new BadRequestException('Invalid commission configuration');
     const rateUpdatedAt = config?.updatedAt || employee?.designation?.updatedAt;
-    if (!reviewReason && rateUpdatedAt && rateUpdatedAt > payment.createdAt) reviewReason = 'HISTORICAL_RATE_REVIEW_REQUIRED';
+    if (!reviewReason && rateUpdatedAt && rateUpdatedAt > qualifyingAt) reviewReason = 'HISTORICAL_RATE_REVIEW_REQUIRED';
     if (employee && commissionRate === 0) return null;
-    const purchaseAmount = Number(payment.amount); // Existing tax-exclusive paid base.
+    const purchaseAmount = commissionBaseOf(payment);
     if (!Number.isFinite(purchaseAmount) || purchaseAmount < 0) throw new BadRequestException('Invalid commission base');
+    if (purchaseAmount === 0) return null;
     const commissionAmount = Math.round((commissionType === CommissionType.PERCENTAGE ? purchaseAmount * commissionRate / 100 : commissionRate) * 100) / 100;
-    const memberships = employee ? await db.teamMember.findMany({ where: { employeeId: employee.id, joinedAt: { lte: payment.createdAt }, team: { customerId: tenantId, isActive: true } }, include: { team: { include: { leader: { include: { designation: true, department: true } } } } } }) : [];
+    const memberships = employee ? await db.teamMember.findMany({ where: { employeeId: employee.id, joinedAt: { lte: qualifyingAt }, team: { customerId: tenantId, isActive: true } }, include: { team: { include: { leader: { include: { designation: true, department: true } } } } } }) : [];
     const teams = memberships.filter(m => /bpo|telecall|telesales|business process/i.test(`${m.team.name} ${m.team.description || ''}`));
     const team = teams.length === 1 ? teams[0].team : null;
     const leader = team?.leader;
     if (!reviewReason && !team) reviewReason = teams.length > 1 ? 'AMBIGUOUS_BPO_TEAM' : 'BPO_TEAM_UNRESOLVED';
     if (!reviewReason && (!leader || leader.id === employeeId || leader.customerId !== tenantId || leader.status !== 'ACTIVE' || !bpo(leader))) reviewReason = 'BPO_LEADER_UNRESOLVED';
     // Membership/leader history is not stored. Do not guess historical leadership.
-    if (!reviewReason && team!.updatedAt > payment.createdAt) reviewReason = 'HISTORICAL_TEAM_REVIEW_REQUIRED';
+    if (!reviewReason && team!.updatedAt > qualifyingAt) reviewReason = 'HISTORICAL_TEAM_REVIEW_REQUIRED';
     const employeeAmount = Math.round(commissionAmount * 100 / 2) / 100;
     const leaderAmount = Math.round((commissionAmount - employeeAmount) * 100) / 100;
     return db.commission.create({
       data: {
         customerId: customer.id, tenantId, sourceKey, employeeId: employee?.id || null, leadId: customer.leadId || null,
         planId: payment.planId || params.planId || null, purchaseId: payment.id, orderId: payment.orderId || params.orderId || null,
-        purchaseAmount, commissionType, commissionRate, commissionAmount, qualifyingAt: payment.createdAt,
+        purchaseAmount, commissionType, commissionRate, commissionAmount, qualifyingAt,
         teamId: team?.id || null, leaderId: leader?.id || null, reviewReason,
         status: reviewReason ? CommissionStatus.PENDING : CommissionStatus.APPROVED,
         shares: reviewReason ? undefined : { create: [
@@ -127,7 +145,11 @@ export class CommissionService {
    */
   async handleRefundOrCancellation(purchaseId: number, customerId: number, reference = `purchase-${purchaseId}`, partial = false): Promise<void> {
     await this.prisma.$transaction(async tx => {
-      const event = await tx.commission.findUnique({ where: { purchaseId }, include: { shares: true } });
+      let event = await tx.commission.findUnique({ where: { purchaseId }, include: { shares: true } });
+      if (!event) {
+        const payment = await tx.paymentHistory.findUnique({ where: { id: purchaseId } });
+        if (payment?.customerId === customerId && payment.paymentId) event = await tx.commission.findFirst({ where: { sourceKey: `gateway:${payment.paymentMethod}:${payment.paymentId}` }, include: { shares: true } });
+      }
       if (!event || event.customerId !== customerId) return;
       const history = Array.isArray(event.history) ? event.history : [];
       if (history.some((entry: any) => entry?.reference === reference)) return;
@@ -149,15 +171,15 @@ export class CommissionService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.CommissionWhereInput = {
-      OR: [{ tenantId: customerId }, { tenantId: null, employee: { customerId } }],
+      OR: [{ tenantId: customerId }, { tenantId: null, OR: [{ customerId }, { customer: { originLead: { customerId } } }] }],
     };
 
     if (query.status) {
-      where.status = query.status;
+      where.AND = [{ OR: [{ shares: { some: { status: query.status } } }, { shares: { none: {} }, status: query.status }] }];
     }
 
     if (query.employeeId) {
-      where.AND = [{ OR: [{ employeeId: Number(query.employeeId) }, { shares: { some: { employeeId: Number(query.employeeId) } } }] }];
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: [{ employeeId: Number(query.employeeId) }, { shares: { some: { employeeId: Number(query.employeeId) } } }] }];
     }
 
     if (query.designationId) {
@@ -260,7 +282,8 @@ export class CommissionService {
     // Summary totals calculated across entire tenant dataset (or filtered search)
     const legacyAgg = await this.prisma.commission.groupBy({
       by: ['status'],
-      where: { shares: { none: {} }, reviewReason: null, OR: [{ tenantId: customerId }, { tenantId: null, employee: { customerId } }] },
+      // Unsplit events: legacy rows plus review-required events (PENDING until resolved).
+      where: { shares: { none: {} }, OR: [{ tenantId: customerId }, { tenantId: null, OR: [{ customerId }, { customer: { originLead: { customerId } } }] }] },
       _sum: {
         commissionAmount: true,
       },
@@ -342,7 +365,7 @@ export class CommissionService {
     const events = await this.prisma.commission.findMany({
       where: { OR: [
         { tenantId, shares: { some: { employeeId: employee.id, ...(leaderOnly ? { recipientRole: 'LEADER' } : {}) } } },
-        ...(!leaderOnly ? [{ tenantId: null, employeeId: employee.id, employee: { customerId: tenantId } }, { tenantId, employeeId: employee.id, reviewReason: { not: null } }] : []),
+        ...(!leaderOnly ? [{ tenantId: null, employeeId: employee.id, OR: [{ customerId: tenantId }, { customer: { originLead: { customerId: tenantId } } }] }, { tenantId, employeeId: employee.id, reviewReason: { not: null } }] : []),
       ] }, orderBy: { createdAt: 'desc' },
       include: { shares: { include: { payrollItem: { include: { payroll: true } } } }, customer: { select: { id: true, name: true, companyName: true } }, lead: { select: { id: true, title: true, companyName: true } }, plan: { select: { id: true, name: true } }, purchase: { select: { id: true, amount: true, totalAmount: true, orderNumber: true, createdAt: true } }, employee: { select: { id: true, firstName: true, lastName: true } } },
     });
@@ -392,10 +415,10 @@ export class CommissionService {
   ) {
     const commission = await this.prisma.commission.findUnique({
       where: { id: commissionId },
-      include: { employee: true },
+      include: { employee: true, customer: { select: { originLead: { select: { customerId: true } } } } },
     });
 
-    if (!commission || (commission.tenantId ?? commission.employee?.customerId) !== customerId) {
+    if (!commission || (commission.tenantId ?? commission.customer?.originLead?.customerId ?? commission.customerId) !== customerId) {
       throw new NotFoundException('Commission record not found');
     }
 

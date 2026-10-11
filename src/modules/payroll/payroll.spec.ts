@@ -244,6 +244,13 @@ describe('PayrollService (HRM Payroll)', () => {
   });
 
   describe('generatePayroll', () => {
+    it('does not regenerate or downgrade paid payroll', async () => {
+      prisma.payroll.findFirst.mockResolvedValue({ ...mockPayroll, status: 'PAID' });
+      const result = await service.generatePayroll(3, 101);
+      expect(result.alreadyPaid).toBe(true);
+      expect(prisma.salarySlip.update).not.toHaveBeenCalled();
+      expect(prisma.payroll.update).not.toHaveBeenCalled();
+    });
     it('generates salary slips for payroll batch', async () => {
       prisma.payroll.findFirst.mockResolvedValue(mockPayroll);
       prisma.payroll.update.mockResolvedValue({
@@ -255,6 +262,101 @@ describe('PayrollService (HRM Payroll)', () => {
 
       expect(result.success).toBe(true);
       expect(prisma.salarySlip.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('Salary Structure Builder & Formulas', () => {
+    it('getSalaryStructures filters by employeeId when provided', async () => {
+      prisma.salaryStructure.findMany = jest.fn().mockResolvedValue([
+        { id: 1, employeeId: 10, basicSalary: 25000 },
+      ]);
+
+      const result = await service.getSalaryStructures(3, 10);
+
+      expect(prisma.salaryStructure.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ customerId: 3, employeeId: 10 }),
+        }),
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].basicSalary).toBe(25000);
+    });
+
+    it('getSalaryStructures returns all structures when employeeId is omitted', async () => {
+      prisma.salaryStructure.findMany = jest.fn().mockResolvedValue([
+        { id: 1, employeeId: 10, basicSalary: 25000 },
+        { id: 2, employeeId: 11, basicSalary: 30000 },
+      ]);
+
+      const result = await service.getSalaryStructures(3);
+
+      expect(prisma.salaryStructure.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { customerId: 3 },
+        }),
+      );
+      expect(result).toHaveLength(2);
+    });
+
+    it('saveSalaryStructure does not impose arbitrary statutory defaults when values are 0', async () => {
+      prisma.salaryStructure.create = jest.fn().mockImplementation(({ data }: any) => ({
+        id: 99,
+        ...data,
+      }));
+      prisma.employee.findUnique = jest.fn().mockResolvedValue({ id: 10, customerId: 3, bankDetails: {} });
+      prisma.employee.update = jest.fn().mockResolvedValue({ id: 10 });
+
+      const payload = {
+        employeeId: 10,
+        basicSalary: 20000,
+        hra: 8000,
+        allowances: 2000,
+        specialAllowance: 0,
+        pf: 0,
+        esi: 0,
+        professionalTax: 0,
+        tds: 0,
+      };
+
+      const result = await service.saveSalaryStructure(3, payload);
+
+      expect(prisma.salaryStructure.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          customerId: 3,
+          employeeId: 10,
+          basicSalary: 20000,
+          hra: 8000,
+          allowances: 2000,
+          specialAllowance: 0,
+          pf: 0,
+          esi: 0,
+          professionalTax: 0,
+          tds: 0,
+          grossSalary: 30000,
+          totalDeductions: 0,
+          netSalary: 30000,
+        }),
+      });
+      expect(result.netSalary).toBe(30000);
+    });
+
+    it('previewPayroll uses 0 and does not invent hardcoded 35000 when employee has no structure', async () => {
+      prisma.employee.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 10,
+          employeeCode: 'EMP001',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          salaryStructures: [],
+          department: { name: 'Tech' },
+        },
+      ]);
+
+      const result = await service.previewPayroll(3, 8, 2026);
+
+      expect(result.estimatedGross).toBe(0);
+      expect(result.estimatedDeductions).toBe(0);
+      expect(result.totalEmployees).toBe(1);
     });
   });
 });

@@ -813,9 +813,18 @@ export class PayrollService {
           overtimeMultiplier: salaryPolicy?.overtimeMultiplier || 1.5,
         });
         const split = await commissionForPayroll(tx, numCustomerId, emp.id, periodStart, periodEnd, payroll.id, computed.commission);
-        computed.commission += split.amount;
-        computed.grossSalary += split.amount;
-        computed.netSalary += split.amount;
+        if (split.shares.length) {
+          computed.commission = this.roundMoney(computed.commission + split.amount);
+          computed.grossSalary = this.roundMoney(computed.grossSalary + split.amount);
+          const net = this.roundMoney(computed.grossSalary - computed.totalDeductions);
+          computed.netSalary = Math.max(0, net);
+          Object.assign(computed.calculationSnapshot, {
+            blocked: net < 0,
+            blockReason: net < 0 ? 'Payroll deductions exceed payable salary. Please review deductions.' : null,
+            saleCommissionAmount: split.amount,
+            saleCommissionShareIds: split.shares.map(s => s.id),
+          });
+        }
         shareClaims.set(emp.id, split.shares.map(s => s.id));
         totalGross += computed.grossSalary;
         totalDeductions += computed.totalDeductions;
@@ -899,10 +908,10 @@ export class PayrollService {
 
     const list = employees.map((e) => {
       const st = e.salaryStructures[0];
-      const basic = st?.basicSalary || 35000;
-      const gross = st?.grossSalary || basic * 1.5;
-      const ded = st?.totalDeductions || basic * 0.15;
-      const net = st?.netSalary || gross - ded;
+      const basic = st?.basicSalary || 0;
+      const gross = st?.grossSalary || basic;
+      const ded = st?.totalDeductions || 0;
+      const net = st?.netSalary || Math.max(0, gross - ded);
 
       estGross += gross;
       estDeductions += ded;
@@ -951,6 +960,9 @@ export class PayrollService {
       payroll = await this.calculatePayroll(numCustomerId, currentMonth, currentYear);
     }
 
+    if (['PAID', 'GENERATED', 'APPROVED'].includes(payroll.status)) {
+      return { success: true, message: 'Payroll is already finalized', data: payroll };
+    }
     const updated = await this.prisma.payroll.update({
       where: { id: payroll.id },
       data: {
@@ -1009,6 +1021,9 @@ export class PayrollService {
 
     if (!payroll) {
       throw new NotFoundException('Payroll record not found. Please calculate payroll first.');
+    }
+    if (payroll.status === 'PAID') {
+      return { success: true, alreadyPaid: true, message: 'Paid payroll is preserved; use existing salary slips', data: payroll };
     }
 
     const FULL_MONTH_NAMES = [
@@ -2093,10 +2108,14 @@ export class PayrollService {
     }));
   }
 
-  async getSalaryStructures(customerId?: number | string) {
+  async getSalaryStructures(customerId?: number | string, employeeId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
+    const where: any = { customerId: numCustomerId };
+    if (employeeId !== undefined && employeeId !== null && employeeId !== '') {
+      where.employeeId = Number(employeeId);
+    }
     return this.prisma.salaryStructure.findMany({
-      where: { customerId: numCustomerId },
+      where,
       include: {
         employee: {
           select: {
@@ -2124,9 +2143,9 @@ export class PayrollService {
     const overtime = Number(data.overtime) || 0;
     const otherEarnings = Number(data.otherEarnings) || 0;
 
-    const pf = data.pf !== undefined && data.pf !== null && data.pf !== '' ? Number(data.pf) : Math.round(basicSalary * 0.12);
-    const esi = data.esi !== undefined && data.esi !== null && data.esi !== '' ? Number(data.esi) : Math.round(basicSalary * 0.0075);
-    const professionalTax = data.professionalTax !== undefined && data.professionalTax !== null && data.professionalTax !== '' ? Number(data.professionalTax) : 200;
+    const pf = data.pf !== undefined && data.pf !== null && data.pf !== '' ? Number(data.pf) : 0;
+    const esi = data.esi !== undefined && data.esi !== null && data.esi !== '' ? Number(data.esi) : 0;
+    const professionalTax = data.professionalTax !== undefined && data.professionalTax !== null && data.professionalTax !== '' ? Number(data.professionalTax) : 0;
     const tds = data.tds !== undefined && data.tds !== null && data.tds !== '' ? Number(data.tds) : 0;
     const otherDeductions = data.otherDeductions !== undefined && data.otherDeductions !== null && data.otherDeductions !== '' ? Number(data.otherDeductions) : 0;
 

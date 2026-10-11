@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { NotificationService } from '../notification/notification.service';
+import { CommissionService } from '../commission/commission.service';
+import { awardCommissionForPayment, QualifyingPayment } from '../commission/commission-trigger.util';
 import {
   PreviewCustomPlanDto,
   CreateCustomPlanDto,
@@ -62,6 +64,7 @@ export class CustomPlanService {
     private readonly workService: WorkService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly commissionService?: CommissionService,
   ) {}
 
   /**
@@ -596,6 +599,7 @@ export class CustomPlanService {
     const seatOption = items.find((it) => it.code === 'OPT_CRM_SEATS');
     const customUserLimit = seatOption ? Number(seatOption.quantity) + 5 : 10;
 
+    let qualifyingPayment: QualifyingPayment | null = null;
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Cancel previous active subscription if any
       await tx.customerSubscription.updateMany({
@@ -654,6 +658,7 @@ export class CustomPlanService {
           transactionId: `TXN-CP-${Date.now()}`,
         },
       });
+      qualifyingPayment = paymentRecord;
 
       let contact = await tx.contact.findFirst({
         where: { customerId: numCustomerId, deletedAt: null },
@@ -766,6 +771,8 @@ export class CustomPlanService {
         order: updatedOrder,
       };
     });
+
+    await awardCommissionForPayment(this.commissionService, this.logger, qualifyingPayment, 'custom-plan');
 
     // 7. Auto-generate Work deliverable schedules across subscription period avoiding Sundays
     try {
