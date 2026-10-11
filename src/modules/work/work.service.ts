@@ -2173,6 +2173,7 @@ status: ${item.status}`);
     employeeId: number,
     tenantCustomerId?: number | null,
     candidateIds?: number[],
+    strictTenant = false,
   ): Promise<number[]> {
     if (
       typeof this.prisma.employee?.findFirst !== 'function' ||
@@ -2234,7 +2235,7 @@ status: ${item.status}`);
     const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
       Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
     );
-    if (sameCompany.length > 0) {
+    if (Number.isInteger(tenantId) && tenantId > 0) {
       return sameCompany.map(([teamId]) => teamId);
     }
 
@@ -2283,7 +2284,7 @@ status: ${item.status}`);
     const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
       Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
     );
-    if (strictTenant || sameCompany.length > 0) {
+    if (strictTenant || (Number.isInteger(tenantId) && tenantId > 0)) {
       return sameCompany.map(([teamId]) => teamId);
     }
     return Array.from(rows.keys());
@@ -2696,16 +2697,16 @@ status: ${item.status}`);
     // customer.id = the employee's company id, so only one customer came back.
     // A normal employee still uses team membership. A production manager keeps
     // the wider workspace view, scoped to this company.
-    let productionTeamIds = !options?.assignedOnly && !isProductionManager
+    let productionTeamIds = !isProductionManager
       ? await this.activeProductionTeamIdsForEmployee(
           numEmployeeId,
           tenantCustomerId,
+          viewerCandidateIds,
+          options?.assignedOnly === true,
         )
       : [];
     if (
-      !options?.assignedOnly &&
       !isProductionManager &&
-      allTenantCustomers &&
       productionTeamIds.length === 0 &&
       typeof this.prisma.teamMember?.findMany !== 'function'
     ) {
@@ -2714,9 +2715,15 @@ status: ${item.status}`);
         viewerCandidateIds,
       );
     }
+    const membershipTeamIds = await this.employeeTeamIds(
+      numEmployeeId,
+      tenantCustomerId,
+      viewerCandidateIds,
+      options?.assignedOnly === true,
+    );
+    const authorizedTeamIds = [...new Set([...productionTeamIds, ...membershipTeamIds])];
     if (
-      !options?.assignedOnly &&
-      productionTeamIds.length > 0 &&
+      authorizedTeamIds.length > 0 &&
       typeof this.prisma.customer?.findMany === 'function' &&
       typeof this.prisma.team?.findUnique === 'function'
     ) {
@@ -2724,7 +2731,7 @@ status: ${item.status}`);
         const assignedCustomers = await this.prisma.customer.findMany({
           where: {
             deletedAt: null,
-            assignedTeamId: { in: productionTeamIds },
+            assignedTeamId: { in: authorizedTeamIds },
           },
           select: { id: true, assignedTeamId: true },
         });
@@ -2738,13 +2745,6 @@ status: ${item.status}`);
         );
       }
     }
-    const membershipTeamIds = await this.employeeTeamIds(
-      numEmployeeId,
-      tenantCustomerId,
-      viewerCandidateIds,
-      options?.assignedOnly === true,
-    );
-    const authorizedTeamIds = [...new Set([...productionTeamIds, ...membershipTeamIds])];
     const teamCustomerIds = !isProductionManager
       ? await this.customerIdsAssignedToTeams(authorizedTeamIds)
       : [];
@@ -2840,7 +2840,11 @@ status: ${item.status}`);
       // Own assignments, plus customers allotted to this employee's teams.
       // Customer.assignedTeamId is the allotment. Company id is not.
       where = {
-        OR: [...directAssignment(), ...teamCustomerWork(membershipTeamIds)],
+        OR: [
+          ...directAssignment(),
+          ...teamCustomerWork(authorizedTeamIds),
+          ...(teamCustomerIds.length > 0 ? [{ customerId: { in: teamCustomerIds } }] : []),
+        ],
         status: { not: WorkStatus.CANCELLED },
         ...(query.teamId ? { AND: [{ OR: [
           { teamId: Number(query.teamId) },
@@ -2857,15 +2861,15 @@ status: ${item.status}`);
       // company id was 91, even though Team A has more customers.
       const orConditions: any[] = [
         ...directAssignment(),
-        ...teamCustomerWork(membershipTeamIds),
+        ...teamCustomerWork(authorizedTeamIds),
         ...designationSchedule(),
       ];
-      if (productionTeamIds.length > 0) {
+      if (authorizedTeamIds.length > 0) {
         orConditions.push(
-          { teamId: { in: productionTeamIds } },
-          { customer: { deletedAt: null, assignedTeamId: { in: productionTeamIds } } },
-          { customer: { deletedAt: null, assignedTeam: { id: { in: productionTeamIds }, isActive: true } } },
-          { team: { id: { in: productionTeamIds }, isActive: true } },
+          { teamId: { in: authorizedTeamIds } },
+          { customer: { deletedAt: null, assignedTeamId: { in: authorizedTeamIds } } },
+          { customer: { deletedAt: null, assignedTeam: { id: { in: authorizedTeamIds }, isActive: true } } },
+          { team: { id: { in: authorizedTeamIds }, isActive: true } },
         );
       }
       orConditions.push(
@@ -3271,11 +3275,22 @@ status: ${item.status}`);
         // My Calendar uses assignment visibility, independently of designation.
         // An explicit employee assignee does not revoke an active team's assignment.
         if (assignedOnly) {
-          return membershipTeamIds.includes(Number(w.teamId || w.team?.id)) ||
-            membershipTeamIds.includes(Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id)) ||
-            productionTeamIds.includes(Number(w.teamId || w.team?.id)) ||
-            productionTeamIds.includes(Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id));
+          const wTeamId = Number(w.teamId || w.team?.id || 0);
+          const cTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
+          const custId = Number(w.customerId || w.customer?.id || 0);
+          const isMemberOfWorkTeam =
+            (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+            viewerIds.has(Number(w.team?.leaderId)) ||
+            ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+            viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
+          return (
+            (wTeamId > 0 && authorizedTeamIds.includes(wTeamId)) ||
+            (cTeamId > 0 && authorizedTeamIds.includes(cTeamId)) ||
+            (custId > 0 && teamCustomerIds.includes(custId)) ||
+            isMemberOfWorkTeam
+          );
         }
+        const normType = normalizeActivityType(w);
         const otherAssignee =
           (Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && !viewerIds.has(Number(w.assignedToId))) ||
           (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && !viewerIds.has(Number(w.editorId)));
@@ -3283,7 +3298,7 @@ status: ${item.status}`);
           !otherAssignee &&
           (visibleTypes.has(String(w.workType || '').toUpperCase()) ||
             workMatchesDesignation(designationName, w.workType) ||
-            workMatchesDesignation(designationName, normalizeActivityType(w)))
+            workMatchesDesignation(designationName, normType))
         ) {
           return true;
         }
@@ -3295,18 +3310,18 @@ status: ${item.status}`);
           ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
           viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
         const onAuthorizedTeam =
-          (teamId > 0 && (membershipTeamIds.includes(teamId) || productionTeamIds.includes(teamId))) ||
-          (customerTeamId > 0 && (membershipTeamIds.includes(customerTeamId) || productionTeamIds.includes(customerTeamId))) ||
+          (teamId > 0 && authorizedTeamIds.includes(teamId)) ||
+          (customerTeamId > 0 && authorizedTeamIds.includes(customerTeamId)) ||
           teamCustomerIds.includes(Number(w.customerId)) ||
           isMemberOfWorkTeam;
         if (!onAuthorizedTeam) return false;
 
-        // Hide work explicitly assigned to another employee (unrelated employee activities)
-        if (otherAssignee) return false;
+        // Work for a customer allotted to the viewer's team stays visible when
+        // the team sync assigned it to another member.
+        if (otherAssignee) return true;
 
         // For unassigned pool work on the team, check role/designation eligibility
         if (!isFullAccess && allowedTypes.size > 0) {
-          const normType = normalizeActivityType(w);
           return allowedTypes.has(normType);
         }
 
@@ -3470,14 +3485,17 @@ status: ${item.status}`);
       } else if (!assignedOnly && tenantCustomerId && !isProductionManager) {
         const tenantId = Number(tenantCustomerId);
         const tenantScope: any[] = [{ customerId: tenantId }];
-        if (membershipTeamIds.length > 0) {
+        if (authorizedTeamIds.length > 0) {
           tenantScope.push({
-            customer: { deletedAt: null, assignedTeamId: { in: membershipTeamIds } },
+            customer: { deletedAt: null, assignedTeamId: { in: authorizedTeamIds } },
           });
         }
         tenantScope.push({
           customer: { deletedAt: null, assignedTeam: { customerId: tenantId, isActive: true } },
         });
+        if (teamCustomerIds.length > 0) {
+          tenantScope.push({ customerId: { in: teamCustomerIds } });
+        }
         taskWhere.AND = [...(taskWhere.AND || []), { OR: tenantScope }];
       }
 
@@ -3500,10 +3518,13 @@ status: ${item.status}`);
         if (empRecord?.userId) {
           taskOr.push({ assignedToId: empRecord.userId });
         }
-        if (assignedOnly && membershipTeamIds.length > 0) {
+        if (authorizedTeamIds.length > 0) {
           taskOr.push({
-            customer: { assignedTeamId: { in: membershipTeamIds } },
+            customer: { assignedTeamId: { in: authorizedTeamIds } },
           });
+        }
+        if (teamCustomerIds.length > 0) {
+          taskOr.push({ customerId: { in: teamCustomerIds } });
         }
         taskWhere.OR = taskOr;
       }

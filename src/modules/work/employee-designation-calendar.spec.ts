@@ -305,13 +305,13 @@ describe('Employee designation calendar visibility', () => {
     expect(laterWeek).toEqual([]);
   });
 
-  it('shows a team member that team schedule and hides another tenant and another assignee', async () => {
+  it('shows a team member the whole team schedule, including work assigned to a teammate, and hides another tenant', async () => {
     const { service } = await serviceFor(
       { id: 23, designation: 'Video Editor' },
       { teamIds: [2] },
     );
     const calendar = await service.getEmployeeCalendar(23, { month: 10, year: 2026 }, { allTenantCustomers: true });
-    expect(calendar.map((item) => item.id)).toEqual(['1', '2', '7', '8', '9', '10', '11', '15']);
+    expect(calendar.map((item) => item.id)).toEqual(['1', '2', '7', '8', '9', '10', '11', '14', '15']);
     const assigned = await serviceFor({ id: 22, designation: 'Video Editor' });
     const own = await assigned.service.getEmployeeCalendar(22, { month: 10, year: 2026 }, { allTenantCustomers: true });
     expect(own.map((item) => item.id)).toEqual(['1', '2', '7', '11', '14']);

@@ -470,4 +470,84 @@ describe('Employee calendar team and assignment regressions', () => {
     }
   });
 
+  it('retrieves all eligible tasks across multiple customers assigned to employee production team on selected date', async () => {
+    const multiCustomerWorks = [
+      {
+        id: 701,
+        customerId: 101,
+        teamId: 7,
+        assignedToId: 1,
+        workType: WorkType.EDITING,
+        title: 'Reel #2: Edit',
+        scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
+        scheduledTime: '10:00 AM',
+        status: WorkStatus.SCHEDULED,
+        customer: {
+          id: 101,
+          name: 'test pvt Ltd',
+          companyName: 'test pvt Ltd',
+          deletedAt: null,
+          isActive: true,
+          assignedTeamId: 7,
+        },
+      },
+      {
+        id: 702,
+        customerId: 102,
+        teamId: 7,
+        assignedToId: 1,
+        workType: WorkType.VIDEO_EDITING,
+        title: 'Video Editing',
+        scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
+        scheduledTime: '11:00 AM',
+        status: WorkStatus.SCHEDULED,
+        customer: {
+          id: 102,
+          name: 'Customer B',
+          companyName: 'Customer B Ltd',
+          deletedAt: null,
+          isActive: true,
+          assignedTeamId: 7,
+        },
+      },
+      {
+        id: 703,
+        customerId: 103,
+        teamId: 7,
+        assignedToId: null,
+        workType: WorkType.POST_DESIGN,
+        title: 'Post Design',
+        scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
+        scheduledTime: '12:00 PM',
+        status: WorkStatus.SCHEDULED,
+        customer: {
+          id: 103,
+          name: 'Customer C',
+          companyName: 'Customer C Corp',
+          deletedAt: null,
+          isActive: true,
+          assignedTeamId: 7,
+        },
+      },
+    ];
+
+    const prisma = testingModule.get(PrismaService) as any;
+    prisma.customer.findMany.mockResolvedValue([
+      { id: 101, assignedTeamId: 7 },
+      { id: 102, assignedTeamId: 7 },
+      { id: 103, assignedTeamId: 7 },
+    ]);
+    prisma.work.findMany.mockImplementation(({ where }: any) => {
+      return multiCustomerWorks.filter((item) => {
+        if (where?.status?.not && item.status === where.status.not) return false;
+        return true;
+      });
+    });
+
+    const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-20' }, { assignedOnly: true });
+    expect(calendar).toHaveLength(3);
+    expect(calendar.map((c) => c.id)).toEqual(expect.arrayContaining(['701', '702', '703']));
+    expect(calendar.map((c) => c.customerName)).toEqual(expect.arrayContaining(['test pvt Ltd', 'Customer B', 'Customer C']));
+  });
 });
+
