@@ -711,9 +711,17 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // Fallback: If still no assigned employee, check customer's direct assigned employee
+      // A lead's customer owner is not automatically its production task assignee.
       if (!resolvedAssignedToId && customerRecord?.assignedEmployeeId) {
-        resolvedAssignedToId = Number(customerRecord.assignedEmployeeId);
+        const owner = await tx.employee.findUnique({
+          where: { id: Number(customerRecord.assignedEmployeeId) },
+          select: { id: true, customerId: true, status: true, designation: { select: { name: true } }, department: { select: { name: true } } },
+        });
+        const eligibleOwners = owner ? await this.eligibleProductionMemberIds(
+          { workType: dto.workType, title: dto.title, description: dto.description },
+          [{ employeeId: owner.id, employee: owner }], owner.customerId,
+        ) : [];
+        resolvedAssignedToId = eligibleOwners[0] ?? null;
       }
 
       if (dto.workType === WorkType.EDITING && resolvedEditorId) {
@@ -2088,6 +2096,12 @@ status: ${item.status}`);
     return leaderId || null;
   }
 
+  private isSalesOrBpoEmployee(employee: any): boolean {
+    return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
+      `${employee?.department?.name || ''} ${employee?.designation?.name || ''}`,
+    );
+  }
+
   private async eligibleProductionMemberIds(
     act: { workType?: string; title?: string; description?: string; serviceName?: string },
     members: Array<{
@@ -2107,7 +2121,7 @@ status: ${item.status}`);
       const employeeId = Number(member.employeeId || member.employee?.id);
       if (!Number.isInteger(employeeId) || employeeId <= 0) return false;
       const status = String(member.employee?.status || 'ACTIVE').toUpperCase();
-      if (status === 'INACTIVE') return false;
+      if (status === 'INACTIVE' || this.isSalesOrBpoEmployee(member.employee)) return false;
       if (
         teamCustomerId &&
         member.employee?.customerId &&
@@ -2430,7 +2444,7 @@ status: ${item.status}`);
     const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null, requireTeam = true) => {
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
-      if (isPlatformAdmin(person)) return false;
+      if (isPlatformAdmin(person) || this.isSalesOrBpoEmployee(person)) return false;
       if (requireTeam && memberIds.size > 0 && !memberIds.has(id)) return false;
       return true;
     };
@@ -2503,9 +2517,13 @@ status: ${item.status}`);
           { assignedToId: null },
           { teamId: null },
           { teamId: { not: numTeamId } },
+          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { assignedTo: { department: { name: { contains: 'BPO', mode: 'insensitive' } } } }] },
+          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { assignedTo: { department: { name: { contains: 'SALES', mode: 'insensitive' } } } }] },
+          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { editor: { department: { name: { contains: 'BPO', mode: 'insensitive' } } } }] },
         ],
       },
       orderBy: { id: 'asc' },
+      include: { assignedTo: { select: { department: true, designation: true } } },
     });
 
     if (unassignedWorks.length === 0) {
@@ -2520,15 +2538,10 @@ status: ${item.status}`);
       const data: { teamId?: number; assignedToId?: number; editorId?: number; status?: WorkStatus } = {};
       if (work.teamId !== numTeamId) data.teamId = numTeamId;
 
-      const isAssignedToTeamMember = work.assignedToId
-        ? (team.members || []).some((m: any) => m.employeeId === work.assignedToId)
-        : false;
-      if (!isBpoTeam && (!work.assignedToId || !isAssignedToTeamMember)) {
-        const eligibleMemberIds = await this.eligibleProductionMemberIds(
-          work,
-          team.members,
-          team.customerId,
-        );
+      const eligibleMemberIds = !isBpoTeam
+        ? await this.eligibleProductionMemberIds(work, team.members, team.customerId)
+        : [];
+      if (!isBpoTeam && !eligibleMemberIds.includes(Number(work.assignedToId))) {
         const matchedEmployeeId = eligibleMemberIds.length > 0
           ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
           : null;
@@ -2544,26 +2557,38 @@ status: ${item.status}`);
         work.workType === WorkType.REELS_SHOOT ||
         work.workType === WorkType.EDITING ||
         (work.title && /reel|shoot|video|edit/i.test(work.title));
-      const isEditorOnTeam = work.editorId
-        ? (team.members || []).some((m: any) => m.employeeId === work.editorId)
-        : false;
-      if (!isBpoTeam && isReelOrVideo && (!work.editorId || !isEditorOnTeam)) {
+      if (!isBpoTeam && isReelOrVideo) {
         const editorIds = await this.eligibleProductionMemberIds(
-          { workType: WorkType.EDITING, title: 'Video Editing' },
-          team.members,
-          team.customerId,
+          { workType: WorkType.EDITING, title: 'Video Editing' }, team.members, team.customerId,
         );
-        if (editorIds.length > 0) {
-          data.editorId = editorIds[0];
-        }
+        if (editorIds.length > 0 && !editorIds.includes(Number(work.editorId))) data.editorId = editorIds[0];
       }
 
       if (Object.keys(data).length === 0) continue;
 
+      const previousAssigneeId = work.assignedToId;
+      const previousPerson = work.assignedTo || (team.members || []).find((member: any) => member.employeeId === previousAssigneeId)?.employee;
       await prisma.work.update({
         where: { id: work.id },
         data,
       });
+
+      if (data.assignedToId && previousAssigneeId && this.isSalesOrBpoEmployee(previousPerson)) {
+        // Correct only pending workflow steps owned by the misplaced BPO owner.
+        // Editing steps use the eligible production editor; completed work is preserved.
+        const editStep = { OR: ['edit', 'color', 'grade'].map((text) => ({ title: { contains: text, mode: 'insensitive' } })) };
+        const editorId = data.editorId || work.editorId;
+        if (editorId) {
+          await prisma.workTask.updateMany({
+            where: { workId: work.id, assignedToId: previousAssigneeId, status: TaskStatus.PENDING, AND: [editStep] },
+            data: { assignedToId: editorId },
+          });
+        }
+        await prisma.workTask.updateMany({
+          where: { workId: work.id, assignedToId: previousAssigneeId, status: TaskStatus.PENDING, ...(editorId ? { NOT: editStep } : {}) },
+          data: { assignedToId: data.assignedToId },
+        });
+      }
 
       if (data.assignedToId) {
         await prisma.workTask.updateMany({
@@ -4476,13 +4501,13 @@ assignedEmployee: ${item.assignedEmployee}`);
           const custEmp = tx.employee?.findUnique
             ? await tx.employee.findUnique({
                 where: { id: Number(targetSub.customer.assignedEmployeeId) },
-                select: { id: true, designation: { select: { name: true } }, department: { select: { name: true } } },
+                select: { id: true, customerId: true, status: true, designation: { select: { name: true } }, department: { select: { name: true } } },
               })
             : null;
-          const desig = custEmp?.designation?.name || '';
-          if (workMatchesDesignation(desig, act.workType)) {
-            matchedEmployeeId = Number(targetSub.customer.assignedEmployeeId);
-          }
+          const eligibleOwners = custEmp ? await this.eligibleProductionMemberIds(
+            act, [{ employeeId: custEmp.id, employee: custEmp }], productionTeamCustomerId,
+          ) : [];
+          matchedEmployeeId = eligibleOwners[0] ?? null;
         }
         if (matchedEmployeeId) roleAssignmentIndex++;
 

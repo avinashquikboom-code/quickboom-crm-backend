@@ -56,7 +56,9 @@ describe('Production team assignment', () => {
         findMany: jest.fn().mockImplementation(async ({ where }: any) =>
           works.filter((work) => {
             if (where?.customerId != null && work.customerId !== where.customerId) return false;
-            return work.assignedToId == null || work.teamId == null || work.teamId !== team.id;
+            const assignee = team.members.find((member) => member.employeeId === work.assignedToId)?.employee;
+            const wrongBpoOwner = ['SCHEDULED', 'ASSIGNED'].includes(work.status) && /BPO|SALES/i.test(assignee?.department?.name || '');
+            return work.assignedToId == null || work.teamId == null || work.teamId !== team.id || wrongBpoOwner;
           }),
         ),
         update: jest.fn().mockImplementation(async ({ where, data }) => {
@@ -89,6 +91,37 @@ describe('Production team assignment', () => {
     await module.get(WorkService).syncCustomerTeamWorkAssignments(8, team.id);
     return { updates, prisma, works };
   }
+
+  it('replaces a pending same-team BPO owner with an eligible production member', async () => {
+    const bpo = member(90, 'Video Editor');
+    bpo.employee.department.name = 'BPO';
+    const works = [{ ...freshWorks()[1], teamId: 2, assignedToId: 90, status: WorkStatus.ASSIGNED }];
+    const { updates, prisma } = await sync({ id: 2, name: 'Production Team_A', members: [...productionMembers, bpo] }, works);
+    expect(updates[0].assignedToId).toBe(12);
+    expect(prisma.workTask.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ assignedToId: 90, status: 'PENDING' }),
+      data: { assignedToId: 12 },
+    }));
+    expect(updates.map((row) => row.assignedToId)).not.toContain(90);
+  });
+
+  it('does not rewrite a completed same-team BPO assignment during pending correction', async () => {
+    const bpo = member(90, 'Video Editor');
+    bpo.employee.department.name = 'BPO';
+    const works = [{ ...freshWorks()[1], teamId: 2, assignedToId: 90, status: WorkStatus.COMPLETED }];
+    const { updates } = await sync({ id: 2, name: 'Production Team_A', members: [...productionMembers, bpo] }, works);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('does not display a sales/BPO lead owner as the production assignee', () => {
+    const service = new WorkService({} as any);
+    const bpo = member(90, 'Telecaller').employee;
+    bpo.department.name = 'BPO';
+    const shooter = member(12, 'Senior Photographer').employee;
+    const work = { assignedTo: bpo, customer: { assignedTeam: { name: 'Production Team_A', members: [{ employeeId: 12 }] } } };
+    expect((service as any).productionTaskAssignee(work).id).toBeNull();
+    expect((service as any).productionTaskAssignee({ ...work, tasks: [{ assignedTo: shooter }] }).id).toBe(12);
+  });
 
   it('assigns each production schedule to the matching designation only', async () => {
     const { updates } = await sync({ id: 2, name: 'Production Team_A', members: productionMembers });
