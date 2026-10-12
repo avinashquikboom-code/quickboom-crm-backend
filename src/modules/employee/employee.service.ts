@@ -58,6 +58,8 @@ export interface UpdateEmployeeParams {
   dto: UpdateEmployeeDto;
 }
 
+import { PayrollService } from '../payroll/payroll.service';
+
 import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
@@ -69,6 +71,7 @@ export class EmployeeService {
     private readonly planAccessService?: PlanAccessService,
     @Inject(forwardRef(() => PlanScheduleGateway))
     private readonly planScheduleGateway?: PlanScheduleGateway,
+    private readonly payrollService?: PayrollService,
   ) {}
 
   async findAll(params: FindAllEmployeesParams) {
@@ -219,6 +222,7 @@ export class EmployeeService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
+          salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
           department: true,
           designation: true,
           office: true,
@@ -310,6 +314,7 @@ export class EmployeeService {
         address: e.address || null,
         documents: e.documents || null,
         bankDetails: e.bankDetails || null,
+        salaryStructure: e.salaryStructures?.[0] || null,
         emergencyContact: e.emergencyContact || null,
         managerId: e.managerId || null,
         employmentType: e.employmentType || 'FULL_TIME',
@@ -1710,66 +1715,20 @@ export class EmployeeService {
           }).catch(() => null);
         }
 
-        // Synchronize active SalaryStructure from salaryStructure or bankDetails if provided
-        const rawStruct = dto.salaryStructure || (typeof dto.bankDetails === 'object' ? dto.bankDetails?.salaryStructure : null) || {};
-        let parsedBank = dto.bankDetails;
-        if (typeof parsedBank === 'string') {
-          try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
+        // Persist compensation through the same transactional salary flow as payroll edits.
+        let bank: any = dto.bankDetails;
+        if (typeof bank === 'string') {
+          try { bank = JSON.parse(bank); } catch { bank = {}; }
         }
-        const rawSalary = rawStruct.basicSalary ?? parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
-        if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
-          const basicSalary = Number(rawSalary) || 0;
-          if (basicSalary > 0) {
-            const hra = rawStruct.hra !== undefined && rawStruct.hra !== null && rawStruct.hra !== '' ? Number(rawStruct.hra) : (parsedBank?.hra !== undefined ? Number(parsedBank.hra) : 0);
-            const allowances = rawStruct.allowances !== undefined && rawStruct.allowances !== null && rawStruct.allowances !== '' ? Number(rawStruct.allowances) : (parsedBank?.allowances !== undefined ? Number(parsedBank.allowances) : 0);
-            const specialAllowance = rawStruct.specialAllowance !== undefined && rawStruct.specialAllowance !== null && rawStruct.specialAllowance !== '' ? Number(rawStruct.specialAllowance) : (parsedBank?.specialAllowance !== undefined ? Number(parsedBank.specialAllowance) : 0);
-            const pf = rawStruct.pf !== undefined && rawStruct.pf !== null && rawStruct.pf !== '' ? Number(rawStruct.pf) : (parsedBank?.pf !== undefined ? Number(parsedBank.pf) : Math.round(basicSalary * 0.12));
-            const esi = rawStruct.esi !== undefined && rawStruct.esi !== null && rawStruct.esi !== '' ? Number(rawStruct.esi) : (parsedBank?.esi !== undefined ? Number(parsedBank.esi) : Math.round(basicSalary * 0.0075));
-            const professionalTax = rawStruct.professionalTax !== undefined && rawStruct.professionalTax !== null && rawStruct.professionalTax !== '' ? Number(rawStruct.professionalTax) : (parsedBank?.professionalTax !== undefined ? Number(parsedBank.professionalTax) : 200);
-            const tds = rawStruct.tds !== undefined && rawStruct.tds !== null && rawStruct.tds !== '' ? Number(rawStruct.tds) : (parsedBank?.tds !== undefined ? Number(parsedBank.tds) : 0);
-
-            const grossSalary = basicSalary + hra + allowances + specialAllowance;
-            const totalDeductions = pf + esi + professionalTax + tds;
-            const netSalary = Math.max(0, grossSalary - totalDeductions);
-
-            await tx.salaryStructure.create({
-              data: {
-                customerId: numCustomerId,
-                employeeId: createdEmployee.id,
-                basicSalary,
-                hra,
-                allowances,
-                specialAllowance,
-                grossSalary,
-                totalDeductions,
-                netSalary,
-                pf,
-                esi,
-                professionalTax,
-                tds,
-                status: 'ACTIVE',
-              },
-            });
-
-            const syncBank = (typeof createdEmployee.bankDetails === 'object' && createdEmployee.bankDetails !== null)
-              ? { ...(createdEmployee.bankDetails as any) }
-              : (typeof parsedBank === 'object' && parsedBank !== null ? { ...parsedBank } : {});
-            syncBank.basicSalary = basicSalary;
-            syncBank.hra = hra;
-            syncBank.allowances = allowances;
-            syncBank.specialAllowance = specialAllowance;
-            syncBank.pf = pf;
-            syncBank.esi = esi;
-            syncBank.professionalTax = professionalTax;
-            syncBank.tds = tds;
-            syncBank.grossSalary = grossSalary;
-            syncBank.totalDeductions = totalDeductions;
-            syncBank.netSalary = netSalary;
-            await tx.employee.update({
-              where: { id: createdEmployee.id },
-              data: { bankDetails: syncBank },
-            });
-          }
+        const structure = dto.salaryStructure || bank?.salaryStructure || {};
+        const basicSalary = structure.basicSalary ?? bank?.basicSalary ?? bank?.monthlySalary ?? bank?.salary;
+        if (basicSalary !== undefined && basicSalary !== null && basicSalary !== '') {
+          const compensation: any = { ...bank, ...structure, basicSalary, employeeId: createdEmployee.id };
+          compensation.pf ??= Math.round(Number(basicSalary) * 0.12);
+          compensation.esi ??= Math.round(Number(basicSalary) * 0.0075);
+          compensation.professionalTax ??= 200;
+          const saved = await this.payrollService!.saveSalaryStructure(numCustomerId, compensation, tx);
+          createdEmployee.bankDetails = { ...(bank || createdEmployee.bankDetails as any || {}), ...saved, monthlySalary: saved.grossSalary, salaryStructure: saved };
         }
 
         return createdEmployee;
@@ -2289,131 +2248,17 @@ export class EmployeeService {
         }
       }
 
-      // Synchronize active SalaryStructure & current salary slips from salaryStructure or bankDetails
-      const rawStruct = dto.salaryStructure || (typeof dto.bankDetails === 'object' ? dto.bankDetails?.salaryStructure : null) || {};
-      let parsedBank = dto.bankDetails;
-      if (typeof parsedBank === 'string') {
-        try { parsedBank = JSON.parse(parsedBank); } catch (e) {}
+      // Persist compensation through the same transactional salary flow as payroll edits.
+      let bank: any = dto.bankDetails;
+      if (typeof bank === 'string') {
+        try { bank = JSON.parse(bank); } catch { bank = {}; }
       }
-      const rawSalary = rawStruct.basicSalary ?? parsedBank?.basicSalary ?? parsedBank?.monthlySalary ?? parsedBank?.salary;
-      if (rawSalary !== undefined && rawSalary !== null && rawSalary !== '') {
-        const basicSalary = Number(rawSalary) || 0;
-        if (basicSalary > 0) {
-          const hra = rawStruct.hra !== undefined && rawStruct.hra !== null && rawStruct.hra !== '' ? Number(rawStruct.hra) : (parsedBank?.hra !== undefined ? Number(parsedBank.hra) : 0);
-          const allowances = rawStruct.allowances !== undefined && rawStruct.allowances !== null && rawStruct.allowances !== '' ? Number(rawStruct.allowances) : (parsedBank?.allowances !== undefined ? Number(parsedBank.allowances) : 0);
-          const specialAllowance = rawStruct.specialAllowance !== undefined && rawStruct.specialAllowance !== null && rawStruct.specialAllowance !== '' ? Number(rawStruct.specialAllowance) : (parsedBank?.specialAllowance !== undefined ? Number(parsedBank.specialAllowance) : 0);
-          const pf = rawStruct.pf !== undefined && rawStruct.pf !== null && rawStruct.pf !== '' ? Number(rawStruct.pf) : (parsedBank?.pf !== undefined ? Number(parsedBank.pf) : Math.round(basicSalary * 0.12));
-          const esi = rawStruct.esi !== undefined && rawStruct.esi !== null && rawStruct.esi !== '' ? Number(rawStruct.esi) : (parsedBank?.esi !== undefined ? Number(parsedBank.esi) : Math.round(basicSalary * 0.0075));
-          const professionalTax = rawStruct.professionalTax !== undefined && rawStruct.professionalTax !== null && rawStruct.professionalTax !== '' ? Number(rawStruct.professionalTax) : (parsedBank?.professionalTax !== undefined ? Number(parsedBank.professionalTax) : 200);
-          const tds = rawStruct.tds !== undefined && rawStruct.tds !== null && rawStruct.tds !== '' ? Number(rawStruct.tds) : (parsedBank?.tds !== undefined ? Number(parsedBank.tds) : 0);
-
-          const grossSalary = basicSalary + hra + allowances + specialAllowance;
-          const totalDeductions = pf + esi + professionalTax + tds;
-          const netSalary = Math.max(0, grossSalary - totalDeductions);
-
-          const existingStructure = await tx.salaryStructure.findFirst({
-            where: { employeeId: updatedEmployee.id, customerId: targetCustId, status: 'ACTIVE' },
-            orderBy: { createdAt: 'desc' },
-          });
-
-          if (existingStructure) {
-            await tx.salaryStructure.update({
-              where: { id: existingStructure.id },
-              data: {
-                basicSalary,
-                hra,
-                allowances,
-                specialAllowance,
-                grossSalary,
-                totalDeductions,
-                netSalary,
-                pf,
-                esi,
-                professionalTax,
-                tds,
-              },
-            });
-          } else {
-            await tx.salaryStructure.create({
-              data: {
-                customerId: targetCustId,
-                employeeId: updatedEmployee.id,
-                basicSalary,
-                hra,
-                allowances,
-                specialAllowance,
-                grossSalary,
-                totalDeductions,
-                netSalary,
-                pf,
-                esi,
-                professionalTax,
-                tds,
-                status: 'ACTIVE',
-              },
-            });
-          }
-
-          // Also keep updatedEmployee bankDetails in sync so any bankDetails readers are consistent
-          const currentBank = (typeof updatedEmployee.bankDetails === 'object' && updatedEmployee.bankDetails !== null)
-            ? { ...(updatedEmployee.bankDetails as any) }
-            : (typeof parsedBank === 'object' && parsedBank !== null ? { ...parsedBank } : {});
-          currentBank.basicSalary = basicSalary;
-          currentBank.hra = hra;
-          currentBank.allowances = allowances;
-          currentBank.specialAllowance = specialAllowance;
-          currentBank.pf = pf;
-          currentBank.esi = esi;
-          currentBank.professionalTax = professionalTax;
-          currentBank.tds = tds;
-          currentBank.grossSalary = grossSalary;
-          currentBank.totalDeductions = totalDeductions;
-          currentBank.netSalary = netSalary;
-          await tx.employee.update({
-            where: { id: updatedEmployee.id },
-            data: { bankDetails: currentBank },
-          });
-
-          // Update any existing non-final salary slips for this employee so they reflect immediately, preserving historical final/paid slips
-          const slips = await tx.salarySlip.findMany({
-            where: {
-              employeeId: updatedEmployee.id,
-              customerId: targetCustId,
-            },
-            include: { payrollItem: true },
-          });
-
-          for (const slip of slips) {
-            if (['GENERATED', 'CALCULATED', 'DRAFT'].includes(slip.status) || slip.grossSalary === 59000 || slip.payrollItem?.basicSalary === 35000) {
-              await tx.salarySlip.update({
-                where: { id: slip.id },
-                data: {
-                  grossSalary,
-                  totalDeductions,
-                  netSalary,
-                },
-              });
-              if (slip.payrollItemId) {
-                await tx.payrollItem.update({
-                  where: { id: slip.payrollItemId },
-                  data: {
-                    basicSalary,
-                    hra,
-                    allowances,
-                    specialAllowance,
-                    pf,
-                    esi,
-                    professionalTax,
-                    tds,
-                    grossSalary,
-                    totalDeductions,
-                    netSalary,
-                  },
-                });
-              }
-            }
-          }
-        }
+      const structure = dto.salaryStructure || bank?.salaryStructure || {};
+      const basicSalary = structure.basicSalary ?? bank?.basicSalary ?? bank?.monthlySalary ?? bank?.salary;
+      if (basicSalary !== undefined && basicSalary !== null && basicSalary !== '') {
+        const compensation: any = { ...bank, ...structure, basicSalary, employeeId: updatedEmployee.id };
+        const saved = await this.payrollService!.saveSalaryStructure(targetCustId, compensation, tx);
+        updatedEmployee.bankDetails = { ...(bank || updatedEmployee.bankDetails as any || {}), ...saved, monthlySalary: saved.grossSalary, salaryStructure: saved };
       }
 
       return updatedEmployee;
@@ -3018,6 +2863,7 @@ export class EmployeeService {
         ],
       },
       include: {
+        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
         department: true,
         designation: true,
         office: true,
@@ -3043,6 +2889,7 @@ export class EmployeeService {
         employee = await this.prisma.employee.findFirst({
           where: { customerId: numCustomerId, status: 'ACTIVE' },
           include: {
+        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
             department: true,
             designation: true,
             office: true,
@@ -3096,6 +2943,7 @@ export class EmployeeService {
       address: employee.address || '',
       emergencyContact: employee.emergencyContact || '',
       bankDetails: employee.bankDetails || {},
+      salaryStructure: employee.salaryStructures?.[0] || null,
       documents: employee.documents || [],
       status: employee.status || 'ACTIVE',
       organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',

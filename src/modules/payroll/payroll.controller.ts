@@ -211,6 +211,7 @@ export class PayrollController {
   }
 
   @Post('structures')
+  @RequirePermissions({ module: 'PAYROLL', action: 'MANAGE' })
   @ApiOperation({ summary: 'Save or update employee salary structure' })
   async saveStructure(
     @CurrentUser() user: any,

@@ -195,6 +195,7 @@ handledBy: NestJS
     exposedHeaders: [
       'Content-Range',
       'X-Content-Range',
+      'Content-Disposition',
       'x-customer-id',
       'x-tenant-id',
       'x-total-count',

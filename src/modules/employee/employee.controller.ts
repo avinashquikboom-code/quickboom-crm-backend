@@ -330,6 +330,14 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
+    let salaryBank: any = dto.bankDetails;
+    if (typeof salaryBank === 'string') {
+      try { salaryBank = JSON.parse(salaryBank); } catch { salaryBank = {}; }
+    }
+    if ((dto.salaryStructure || salaryBank?.salaryStructure || salaryBank?.basicSalary !== undefined || salaryBank?.monthlySalary !== undefined || salaryBank?.salary !== undefined)
+      && !isUserAdmin(user) && !userHasModulePermission(user, 'PAYROLL', 'MANAGE')) {
+      throw new ForbiddenException('Access denied: salary changes require payroll management permission');
+    }
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
