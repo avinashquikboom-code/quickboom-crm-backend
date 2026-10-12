@@ -21,11 +21,14 @@ describe('Customer calendar editor response', () => {
 
   it('returns the actual editor relation independently of the primary assignee', async () => {
     const row = await response({ id: 20, firstName: 'Actual', lastName: 'Editor' }, 20);
-    expect(row).toMatchObject({ assignedToId: 13, assignedEmployee: 'Primary Employee', assignedToName: 'Primary Employee', editorId: 20, editorName: 'Actual Editor' });
+    expect(row).toMatchObject({ editorId: 20, editorName: 'Actual Editor' });
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(row).not.toHaveProperty(field);
+    }
   });
 
   it('returns null editor fields when there is no editor relation', async () => {
     const row = await response(null, null);
-    expect(row).toMatchObject({ assignedToId: 13, editorId: null, editorName: null });
+    expect(row).toMatchObject({ editorId: null, editorName: null });
   });
 });
