@@ -1,3 +1,4 @@
+import { businessDayKey, classifyPayrollDays, isScheduledWeeklyOff } from '../payroll/payroll-attendance';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { AttendanceStatus } from '@prisma/client';
 import * as path from 'path';
@@ -603,38 +604,52 @@ export class EmployeeCommunicationService {
 
   private async buildAttendanceSummary(employeeId: number, customerId: number, year: number, month: number) {
     const start = new Date(Date.UTC(year, month - 1, 1));
-    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59));
-    const rows = await this.prisma.attendance.findMany({
-      where: { employeeId, customerId, date: { gte: start, lte: end } },
-      orderBy: { date: 'asc' },
+    const calendarDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const periodDays = Array.from({ length: calendarDays }, (_, i) => new Date(Date.UTC(year, month - 1, i + 1)));
+    const queryStart = new Date(start.getTime() - 86400000);
+    const queryEnd = new Date(Date.UTC(year, month, 1) + 86400000 - 1);
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, customerId }, include: { shift: true },
     });
-    const monthName = start.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
-    let present = 0;
-    let absent = 0;
-    let halfDay = 0;
-    let leave = 0;
-    let wfh = 0;
-    let late = 0;
-    let early = 0;
-    let hours = 0;
-    let overtime = 0;
-    const days = rows.map((row) => {
+    if (!employee) throw new Error('Employee not found for attendance summary');
+    const [rows, leaves, holidays, policies] = await Promise.all([
+      this.prisma.attendance.findMany({ where: { employeeId, customerId, date: { gte: queryStart, lte: queryEnd } }, orderBy: { date: 'asc' } }),
+      this.prisma.leaveRequest.findMany({ where: { employeeId, customerId, status: 'APPROVED', fromDate: { lte: queryEnd }, toDate: { gte: queryStart } }, include: { leaveType: true } }),
+      this.prisma.publicHoliday.findMany({ where: { customerId, isActive: true, date: { gte: queryStart, lte: queryEnd }, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] } }),
+      this.prisma.attendancePolicy.findMany({ where: { customerId, isActive: true, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] }, orderBy: [{ officeId: 'desc' }, { id: 'desc' }] }),
+    ]);
+    const policy = policies.find((p) => employee.officeId != null && p.officeId === employee.officeId) ?? policies.find((p) => p.officeId == null);
+    const joiningKey = employee.joiningDate ? businessDayKey(employee.joiningDate) : null;
+    const counts = classifyPayrollDays({
+      days: periodDays, joiningKey,
+      isWeeklyOff: (day) => isScheduledWeeklyOff(day, employee.shift?.workingDays, policy?.workingDaysPerWeek ?? 5),
+      attendances: rows, leaves, holidayKeys: new Set(holidays.map((h) => businessDayKey(h.date))),
+      halfDayDeductionPct: policy?.halfDayDeductionPct ?? 50,
+      absenceDeductionPct: policy?.fullDayAbsenceDeductionPct ?? 100,
+    });
+    const firstKey = start.toISOString().slice(0, 10);
+    const lastKey = periodDays[calendarDays - 1].toISOString().slice(0, 10);
+    const days = Array.from(counts.attendanceByDay.entries())
+      .filter(([key]) => key >= firstKey && key <= lastKey && (!joiningKey || key >= joiningKey))
+      .sort(([a], [b]) => a.localeCompare(b)).map(([, row]) => row);
+    let late = 0, early = 0, hours = 0, overtime = 0;
+    for (const row of days) {
       const worked = Number(row.workingHours || 0);
       hours += worked;
       if (worked > 8) overtime += worked - 8;
       if (row.isLate) late += 1;
-      if (row.status === AttendanceStatus.PRESENT || row.status === AttendanceStatus.LATE) present += 1;
-      if (row.status === AttendanceStatus.ABSENT) absent += 1;
-      if (row.status === AttendanceStatus.HALF_DAY) halfDay += 1;
-      if (row.status === AttendanceStatus.LEAVE) leave += 1;
-      if (row.status === AttendanceStatus.REMOTE || (row.workMode || '').toUpperCase().includes('WFH')) wfh += 1;
       if (row.punchOut && worked > 0 && worked < 8 && row.status === AttendanceStatus.PRESENT) early += 1;
-      return row;
-    });
-    const workingDays = days.length || new Date(year, month, 0).getDate();
-    const attended = present + halfDay * 0.5;
-    const percentage = workingDays > 0 ? Math.round((attended / workingDays) * 1000) / 10 : 0;
-    return { monthName, year, present, absent, halfDay, leave, wfh, late, early, hours: Math.round(hours * 10) / 10, overtime: Math.round(overtime * 10) / 10, workingDays, percentage, days };
+    }
+    const workingDays = counts.scheduledWorkingDays;
+    const percentage = workingDays > 0 ? Math.round((counts.presentDays + counts.halfDays * 0.5) / workingDays * 1000) / 10 : 0;
+    return {
+      monthName: start.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' }), year, calendarDays,
+      present: counts.presentDays, absent: counts.absentDays, halfDay: counts.halfDays,
+      leave: counts.paidLeaveDays + counts.unpaidLeaveDays, paidLeaveDays: counts.paidLeaveDays,
+      unpaidLeaveDays: counts.unpaidLeaveDays, weeklyOffDays: counts.weeklyOffDays, holidayDays: counts.holidayDays,
+      wfh: counts.wfhDays, late, early, hours: Math.round(hours * 10) / 10,
+      overtime: Math.round(overtime * 10) / 10, workingDays, percentage, days,
+    };
   }
 
   private resolveFontPaths(): { regular: string; bold: string } | null {

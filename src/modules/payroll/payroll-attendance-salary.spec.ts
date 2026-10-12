@@ -369,3 +369,31 @@ describe('PayrollService attendance-based salary (test data)', () => {
     expect(prisma.employee.findMany.mock.calls[0][0].where.customerId).toBe(TENANT);
   });
 });
+
+
+describe('Calendar count regression checks', () => {
+  it('preserves actual October 2026 five/six-day calendar counts', () => {
+    const service = new PayrollService({} as any);
+    expect(service.calculateWorkingDays(2026, 10, 5)).toBe(22);
+    expect(service.calculateWorkingDays(2026, 10, 6)).toBe(27);
+    expect(service.calculateWorkingDays(2026, 2, 5)).toBe(20);
+    expect(service.calculateWorkingDays(2024, 2, 7)).toBe(29);
+  });
+  it('selects a qualifying punched duplicate rather than an unordered absent row', () => {
+    const input: any = { days: [new Date('2026-10-01T00:00:00Z')], joiningKey: null, isWeeklyOff: () => false,
+      leaves: [], holidayKeys: new Set(), halfDayDeductionPct: 50, absenceDeductionPct: 100 };
+    const valid = present('2026-10-01');
+    const absent = { ...valid, status: 'ABSENT' };
+    for (const attendances of [[absent, valid], [valid, absent]]) {
+      expect(classifyPayrollDays({ ...input, attendances })).toMatchObject({ presentDays: 1, absentDays: 0, scheduledWorkingDays: 1 });
+    }
+  });
+  it('honors a non-Sunday weekly off and office-scoped company schedule', async () => {
+    const result = await runPayroll({ employees: [employee(91, { officeId: 4 })], attendancePolicy: { workingDaysPerWeek: 6 },
+      attendanceByEmployee: { 91: fullMonth(2026, 10) } });
+    expect(result.byEmployee(91).workingDays).toBe(27);
+    expect(result.prisma.attendancePolicy.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ officeId: 4 }) }));
+    const service = new PayrollService({} as any);
+    expect(service.calculateWorkingDays(2026, 10, 5, ['Sunday'])).toBe(4);
+  });
+});

@@ -20,6 +20,16 @@ export function businessRangeEndKey(value: Date | string): string {
   return utcMidnight || istMidnight ? businessDayKey(date) : date.toISOString().slice(0, 10);
 }
 
+/** Uses explicit employee shift days before the existing company week-length fallback. */
+export function isScheduledWeeklyOff(day: Date, shiftDays?: string[], workingDaysPerWeek = 5): boolean {
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const weekday = day.getUTCDay();
+  if (shiftDays?.length) return !shiftDays.some((name) => name.trim().toLowerCase() === names[weekday].toLowerCase());
+  if (workingDaysPerWeek >= 7) return false;
+  if (workingDaysPerWeek === 6) return weekday === 0;
+  return weekday === 0 || weekday === 6;
+}
+
 /** Same designation/department rule the commission engine uses for BPO eligibility. */
 export function isBpoPayrollEmployee(employee: any): boolean {
   return BPO_PATTERN.test(`${employee?.designation?.name || ''} ${employee?.department?.name || ''}`);
@@ -70,7 +80,16 @@ export function classifyPayrollDays(input: PayrollDayInput): PayrollDayCounts {
   for (const row of input.attendances) {
     const key = businessDayKey(row.date);
     const current = attendanceByDay.get(key);
-    if (!current || (!current.punchIn && row.punchIn)) attendanceByDay.set(key, row);
+    const hasPunch = Boolean(row.punchIn);
+    const currentHasPunch = Boolean(current?.punchIn);
+    const updated = new Date(row.updatedAt ?? row.createdAt ?? 0).getTime();
+    const currentUpdated = new Date(current?.updatedAt ?? current?.createdAt ?? 0).getTime();
+    const qualifies = PRESENT_STATUSES.has(row.status) || row.status === 'HALF_DAY';
+    const currentQualifies = PRESENT_STATUSES.has(current?.status) || current?.status === 'HALF_DAY';
+    if (!current || (hasPunch && !currentHasPunch) || (hasPunch === currentHasPunch &&
+      (updated > currentUpdated || (updated === currentUpdated && qualifies && !currentQualifies)))) {
+      attendanceByDay.set(key, row);
+    }
   }
   const leaveRanges = input.leaves.map((leave) => ({
     leave,
