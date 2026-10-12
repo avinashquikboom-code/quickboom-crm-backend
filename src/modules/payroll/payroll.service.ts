@@ -20,6 +20,7 @@ import {
 import {
   businessDayKey,
   classifyPayrollDays,
+  isScheduledWeeklyOff,
   isBpoPayrollEmployee,
   prorateFixedDivisor,
 } from './payroll-attendance';
@@ -138,34 +139,7 @@ export class PayrollService {
    * taking into account company AttendancePolicy or employee Shift working days.
    */
   calculateWorkingDays(year: number, month: number, workingDaysPerWeek = 5, shiftDays?: string[]): number {
-    const daysInMonth = new Date(year, month, 0).getDate();
-    let workingDays = 0;
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(year, month - 1, day);
-      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-
-      if (shiftDays && Array.isArray(shiftDays) && shiftDays.length > 0) {
-        const dayName = dayNames[dayOfWeek];
-        if (shiftDays.some((sd) => sd.toLowerCase() === dayName.toLowerCase())) {
-          workingDays++;
-        }
-      } else if (workingDaysPerWeek === 6) {
-        // Mon-Sat
-        if (dayOfWeek >= 1 && dayOfWeek <= 6) {
-          workingDays++;
-        }
-      } else if (workingDaysPerWeek === 7) {
-        workingDays++;
-      } else {
-        // Default 5-day work week: Monday to Friday
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-          workingDays++;
-        }
-      }
-    }
-    return workingDays;
+    return this.eachUtcDay(year, month).filter((day) => !isScheduledWeeklyOff(day, shiftDays, workingDaysPerWeek)).length;
   }
 
   private utcDayKey(value: Date): string {
@@ -179,14 +153,7 @@ export class PayrollService {
   }
 
   private isWeeklyOff(date: Date, shiftDays?: string[], workingDaysPerWeek = 5): boolean {
-    const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const name = names[date.getUTCDay()];
-    if (shiftDays && shiftDays.length > 0) {
-      return !shiftDays.some((day) => day.toLowerCase() === name.toLowerCase());
-    }
-    if (workingDaysPerWeek >= 7) return false;
-    if (workingDaysPerWeek === 6) return date.getUTCDay() === 0;
-    return date.getUTCDay() === 0 || date.getUTCDay() === 6;
+    return isScheduledWeeklyOff(date, shiftDays, workingDaysPerWeek);
   }
 
   private roundMoney(value: number): number {
@@ -288,10 +255,16 @@ export class PayrollService {
       holidayKeys.add(businessDayKey(holiday.date));
     }
 
+    const officePolicy = input.employee.officeId
+      ? await tx.attendancePolicy.findFirst({
+          where: { customerId: input.customerId, officeId: input.employee.officeId, isActive: true },
+          orderBy: { id: 'desc' },
+        })
+      : null;
     const counts = classifyPayrollDays({
       days,
       joiningKey: joining,
-      isWeeklyOff: (day) => this.isWeeklyOff(day, input.employee.shift?.workingDays, input.workingDaysPerWeek),
+      isWeeklyOff: (day) => this.isWeeklyOff(day, input.employee.shift?.workingDays, officePolicy?.workingDaysPerWeek ?? input.workingDaysPerWeek),
       attendances,
       leaves,
       holidayKeys,
@@ -637,15 +610,15 @@ export class PayrollService {
       salaryBreakdown,
       salaryDataWarnings,
       calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
-      workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
-      presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
-      absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
-      halfDays: pi?.halfDays ?? attendanceSummary?.halfDays ?? 0,
-      paidLeaveDays: pi?.paidLeaveDays ?? attendanceSummary?.paidLeaveDays ?? 0,
-      unpaidLeaveDays: pi?.unpaidLeaveDays ?? attendanceSummary?.unpaidLeaveDays ?? 0,
+      workingDays: attendanceSummary?.workingDays ?? pi?.workingDays ?? 0,
+      presentDays: attendanceSummary?.presentDays ?? pi?.presentDays ?? 0,
+      absentDays: attendanceSummary?.absentDays ?? pi?.absentDays ?? 0,
+      halfDays: attendanceSummary?.halfDays ?? pi?.halfDays ?? 0,
+      paidLeaveDays: attendanceSummary?.paidLeaveDays ?? pi?.paidLeaveDays ?? 0,
+      unpaidLeaveDays: attendanceSummary?.unpaidLeaveDays ?? pi?.unpaidLeaveDays ?? 0,
       wfhDays: pi?.wfhDays ?? 0,
-      weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
-      holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+      weeklyOffDays: attendanceSummary?.weeklyOffDays ?? pi?.weeklyOffDays ?? 0,
+      holidayDays: attendanceSummary?.holidayDays ?? pi?.holidayDays ?? 0,
       extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
       extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
       payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
@@ -675,14 +648,14 @@ export class PayrollService {
       payrollItem: {
         ...(pi || {}),
         calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
-        workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
-        presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,
-        absentDays: pi?.absentDays ?? attendanceSummary?.absentDays ?? 0,
-        halfDays: pi?.halfDays ?? attendanceSummary?.halfDays ?? 0,
-        paidLeaveDays: pi?.paidLeaveDays ?? attendanceSummary?.paidLeaveDays ?? 0,
-        unpaidLeaveDays: pi?.unpaidLeaveDays ?? attendanceSummary?.unpaidLeaveDays ?? 0,
-        weeklyOffDays: pi?.weeklyOffDays ?? attendanceSummary?.weeklyOffDays ?? 0,
-        holidayDays: pi?.holidayDays ?? attendanceSummary?.holidayDays ?? 0,
+        workingDays: attendanceSummary?.workingDays ?? pi?.workingDays ?? 0,
+        presentDays: attendanceSummary?.presentDays ?? pi?.presentDays ?? 0,
+        absentDays: attendanceSummary?.absentDays ?? pi?.absentDays ?? 0,
+        halfDays: attendanceSummary?.halfDays ?? pi?.halfDays ?? 0,
+        paidLeaveDays: attendanceSummary?.paidLeaveDays ?? pi?.paidLeaveDays ?? 0,
+        unpaidLeaveDays: attendanceSummary?.unpaidLeaveDays ?? pi?.unpaidLeaveDays ?? 0,
+        weeklyOffDays: attendanceSummary?.weeklyOffDays ?? pi?.weeklyOffDays ?? 0,
+        holidayDays: attendanceSummary?.holidayDays ?? pi?.holidayDays ?? 0,
         extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
         extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
         payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
@@ -729,7 +702,7 @@ export class PayrollService {
     const [payrollPolicy, salaryPolicy, attendancePolicy] = await Promise.all([
       this.prisma.payrollPolicy.findUnique({ where: { customerId: numCustomerId } }),
       this.prisma.salaryPolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
-      this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
+      this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, officeId: null, isActive: true } }),
     ]);
 
     const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
@@ -1786,9 +1759,47 @@ export class PayrollService {
       });
     }
 
+    if (!slip && !isNaN(numId) && numId > 0 && customerId === undefined) {
+      slip = await this.prisma.salarySlip.findFirst({
+        where: { id: numId },
+        include: {
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+            },
+          },
+          payrollItem: {
+            include: {
+              payroll: true,
+            },
+          },
+        },
+      });
+    }
+
     if (!slip && typeof id === 'string' && id.trim()) {
       slip = await this.prisma.salarySlip.findFirst({
         where: { slipNumber: id.trim(), customerId: numCustomerId },
+        include: {
+          employee: {
+            include: {
+              department: true,
+              designation: true,
+            },
+          },
+          payrollItem: {
+            include: {
+              payroll: true,
+            },
+          },
+        },
+      });
+    }
+
+    if (!slip && typeof id === 'string' && id.trim() && customerId === undefined) {
+      slip = await this.prisma.salarySlip.findFirst({
+        where: { slipNumber: id.trim() },
         include: {
           employee: {
             include: {
