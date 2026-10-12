@@ -1753,7 +1753,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             user: {
               select: {
                 userRoles: {
-                  select: { role: { select: { type: true } } },
+                  select: { role: { select: { type: true, name: true } } },
                 },
               },
             },
@@ -1769,7 +1769,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             user: {
               select: {
                 userRoles: {
-                  select: { role: { select: { type: true } } },
+                  select: { role: { select: { type: true, name: true } } },
                 },
               },
             },
@@ -1788,7 +1788,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
                 user: {
                   select: {
                     userRoles: {
-                      select: { role: { select: { type: true } } },
+                      select: { role: { select: { type: true, name: true } } },
                     },
                   },
                 },
@@ -2089,7 +2089,7 @@ status: ${item.status}`);
 
   private isSalesOrBpoEmployee(employee: any): boolean {
     return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
-      `${employee?.department?.name || ''} ${employee?.designation?.name || ''}`,
+      `${employee?.department?.name || ''} ${employee?.designation?.name || ''} ${(employee?.user?.userRoles || []).map((entry: any) => entry.role?.name || '').join(' ')}`,
     );
   }
 
@@ -2446,9 +2446,6 @@ status: ${item.status}`);
       w.editor,
     ];
     let stored = candidates.find((person) => isTaskAssignee(person, true));
-    if (!stored) {
-      stored = candidates.find((person) => isTaskAssignee(person, false));
-    }
     if (stored) {
       return { id: Number(stored.id), name: personName(stored) || 'Not assigned', teamName };
     }

@@ -123,6 +123,21 @@ describe('Production team assignment', () => {
     expect((service as any).productionTaskAssignee({ ...work, tasks: [{ assignedTo: shooter }] }).id).toBe(12);
   });
 
+  it('excludes a BPO user role even when department and designation are missing', () => {
+    const service = new WorkService({} as any);
+    const bpo = { id: 90, firstName: 'Sales', user: { userRoles: [{ role: { name: 'BPO Executive' } }] } };
+    const shooter = member(12, 'Senior Photographer').employee;
+    const work = { assignedTo: bpo, team: { members: [{ employeeId: 90 }, { employeeId: 12 }] } };
+    expect((service as any).productionTaskAssignee(work).id).toBeNull();
+    expect((service as any).productionTaskAssignee({ ...work, tasks: [{ assignedTo: shooter }] }).id).toBe(12);
+  });
+
+  it('does not display an employee outside the assigned production team', () => {
+    const service = new WorkService({} as any);
+    const work = { assignedTo: member(20, 'Photographer').employee, team: { members: [{ employeeId: 12 }] } };
+    expect((service as any).productionTaskAssignee(work).id).toBeNull();
+  });
+
   it('assigns each production schedule to the matching designation only', async () => {
     const { updates } = await sync({ id: 2, name: 'Production Team_A', members: productionMembers });
     const assignee = (id: number) => updates.find((item) => item.id === id)?.assignedToId;
