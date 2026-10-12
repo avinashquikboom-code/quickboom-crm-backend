@@ -87,12 +87,9 @@ export class CommissionService {
     const customer = await db.customer.findUnique({ where: { id: payment.customerId }, include: { originLead: true } });
     if (!customer || customer.deletedAt) return null;
     const lead = customer.originLead;
-    // Persisted sale attribution, never the current caller/customer creator.
-    let employeeId = lead?.convertedByEmployeeId || lead?.employeeId || customer.assignedEmployeeId;
-    if (!employeeId && lead?.assignedToId) {
-      const assigned = await db.employee.findFirst({ where: { userId: lead.assignedToId, customerId: lead.customerId } });
-      employeeId = assigned?.id;
-    }
+    // New sale commissions belong to the customer's assigned employee.
+    // Existing duplicate/recorded events above retain their stored attribution.
+    const employeeId = customer.assignedEmployeeId;
     // A purchase with no source lead and no assigned seller is not a BPO sale.
     if (!lead && !employeeId) return null;
     const employee = employeeId ? await db.employee.findUnique({ where: { id: employeeId }, include: { designation: true, department: true, commissionConfig: true } }) : null;

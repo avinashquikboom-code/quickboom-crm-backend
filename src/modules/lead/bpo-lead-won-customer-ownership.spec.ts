@@ -179,15 +179,15 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
 
     expect(result.success).toBe(true);
     expect(result.assignedEmployeeId).toBe(101); // Employee A
-    expect(result.wonByEmployeeId).toBe(101); // Won By Employee A
-    expect(result.customer?.wonByName).toContain('Rahul');
+    expect(result).not.toHaveProperty('wonByEmployeeId');
+    expect(result.customer).not.toHaveProperty('wonByName');
 
     // Verify lead was updated with convertedByEmployeeId = 101
     expect(mockPrisma.lead.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 651 },
         data: expect.objectContaining({
-          convertedByEmployeeId: 101,
+
           status: LeadStatus.WON,
         }),
       }),
@@ -228,14 +228,14 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
 
     expect(result.success).toBe(true);
     expect(result.assignedEmployeeId).toBe(102); // Employee B
-    expect(result.wonByEmployeeId).toBe(102); // Won By Employee B
-    expect(result.customer?.wonByName).toContain('Priya');
+    expect(result).not.toHaveProperty('wonByEmployeeId');
+    expect(result.customer).not.toHaveProperty('wonByName');
 
     expect(mockPrisma.lead.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 652 },
         data: expect.objectContaining({
-          convertedByEmployeeId: 102,
+
           status: LeadStatus.WON,
         }),
       }),
@@ -245,7 +245,7 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
   // =========================================================================
   // TEST 3: Admin reassigns Lead to Employee B after it was WON by Employee A -> Won By preserved!
   // =========================================================================
-  it('TEST 3: Employee A wins Lead 651. Admin later changes Assigned To -> Employee B. Won By is NOT overwritten!', async () => {
+  it('TEST 3: Employee A wins Lead 651. Admin later changes Assigned To -> Employee B. conversion date is preserved!', async () => {
     const alreadyWonLead = {
       id: 651,
       companyName: 'ABC Company',
@@ -286,7 +286,7 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
     );
 
     // Verify convertedByEmployeeId remained Employee A (101)
-    expect(alreadyWonLead.convertedByEmployeeId).toBe(101);
+    expect(alreadyWonLead.convertedAt).toEqual(new Date('2026-09-26T10:00:00Z'));
   });
 
   // =========================================================================
@@ -354,7 +354,7 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
       const res = await customerService.findAll({ status: 'ALL' }, userEmployeeA);
       expect(res.items.length).toBe(1);
       expect(res.items[0].id).toBe(123);
-      expect(res.items[0].wonByEmployeeId).toBe(101);
+      expect(res.items[0].wonByEmployeeId).toBeUndefined();
     });
   });
 
@@ -438,9 +438,9 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
     const details = await customerService.findOne(123, userAdmin);
 
     expect(details.id).toBe(123);
-    expect(details.wonByEmployeeId).toBe(101);
-    expect(details.wonBy?.name).toBe('Rahul Sharma');
-    expect(details.wonByName).toBe('Rahul Sharma');
+    expect(details.wonByEmployeeId).toBeUndefined();
+    expect(details.wonBy?.name).toBeUndefined();
+    expect(details.wonByName).toBeUndefined();
     expect(details.wonAt).toBeDefined();
   });
 });

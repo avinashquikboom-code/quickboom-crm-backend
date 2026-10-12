@@ -258,7 +258,7 @@ describe('FOLLOW UP LEADS → EMPLOYEE MOBILE → CUSTOMERS → UPCOMING', () =>
       const activeResult = await customerService.findAll({ status: 'ACTIVE' }, userEmployeeA);
       expect(activeResult.items.length).toBe(1);
       expect(activeResult.items[0].id).toBe(501);
-      expect(activeResult.items[0].wonByEmployeeId).toBe(1);
+      expect(activeResult.items[0].wonByEmployeeId).toBeUndefined();
     });
   });
 

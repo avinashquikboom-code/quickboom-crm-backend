@@ -16,7 +16,7 @@ describe('Commission qualifying events, base and admin metrics', () => {
     event = null;
     employee = { id: 10, userId: 100, customerId: 1, status: 'ACTIVE', firstName: 'Seller', lastName: '', designation: { name: 'Telecaller', commissionEnabled: true, commissionType: 'PERCENTAGE', commissionRate: 3 }, department: { name: 'BPO' }, commissionConfig: null };
     leader = { ...employee, id: 20, userId: 200, firstName: 'Leader', designation: { name: 'BPO Team Leader' } };
-    customer = { id: 50, leadId: 60, originLead: { id: 60, customerId: 1, convertedByEmployeeId: 10 }, assignedEmployeeId: null };
+    customer = { id: 50, leadId: 60, originLead: { id: 60, customerId: 1, employeeId: 99 }, assignedEmployeeId: 10 };
     payment = { id: 30, customerId: 50, amount: 10000, taxAmount: 1800, totalAmount: 11800, status: 'SUCCESS', planId: 2, orderId: 'ORD-1', createdAt: new Date('2026-10-11T12:00:00Z'), updatedAt: new Date('2026-10-11T12:00:00Z'), deletedAt: null, paymentId: null, paymentMethod: 'RAZORPAY' };
     const team = { id: 4, customerId: 1, name: 'BPO Alpha', description: '', updatedAt: new Date('2026-10-01'), leader };
     db = {
@@ -94,7 +94,7 @@ describe('Commission qualifying events, base and admin metrics', () => {
   });
 
   it('4. source lead without a resolvable seller is held for review in the lead tenant, without shares', async () => {
-    customer = { ...customer, originLead: { id: 60, customerId: 1 } };
+    customer = { ...customer, assignedEmployeeId: null, originLead: { id: 60, customerId: 1 } };
     const result = await award();
     expect(result.status).toBe('PENDING');
     expect(result.reviewReason).toBe('SALE_EMPLOYEE_UNRESOLVED');

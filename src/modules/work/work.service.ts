@@ -1723,8 +1723,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             createdByEmployeeRel: { select: { id: true, firstName: true, lastName: true } },
             originLead: {
               select: {
-                convertedByEmployeeId: true,
-                convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
               },
             },
             assignedTeam: {
@@ -1899,12 +1897,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
       }
 
       const normalizedType = normalizeActivityType(w);
-      const wonEmployee =
-        w.customer?.originLead?.convertedByEmployee ||
-        w.customer?.createdByEmployeeRel;
-      const wonByName = wonEmployee
-        ? `${wonEmployee.firstName || ''} ${wonEmployee.lastName || ''}`.trim() || null
-        : null;
       const taskAssignee = this.productionTaskAssignee(w);
 
       return {
@@ -1939,7 +1931,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         isLocked,
         lockMessage,
         assignedToId: taskAssignee.id,
-        wonByName,
         assignedEmployee: taskAssignee.name,
         assignedToName: taskAssignee.name,
         editorId: w.editorId,
@@ -2811,7 +2802,6 @@ status: ${item.status}`);
               deletedAt: null,
               OR: [
                 { employeeId: numEmployeeId },
-                { convertedByEmployeeId: numEmployeeId },
                 { assignedToId: numEmployeeId },
                 ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }] : []),
               ],
@@ -2834,7 +2824,6 @@ status: ${item.status}`);
                   OR: [
                     { employeeId: cid },
                     { assignedToId: cid },
-                    { convertedByEmployeeId: cid },
                   ],
                 },
               },
@@ -3246,7 +3235,6 @@ status: ${item.status}`);
                 id: true,
                 employeeId: true,
                 assignedToId: true,
-                convertedByEmployeeId: true,
               },
             },
             socialMediaHandlers: {
@@ -3369,7 +3357,6 @@ status: ${item.status}`);
         w.customer?.createdByEmployeeId,
         w.customer?.originLead?.employeeId,
         w.customer?.originLead?.assignedToId,
-        w.customer?.originLead?.convertedByEmployeeId,
       ]
         .map((id: any) => Number(id))
         .filter((id: number) => Number.isInteger(id) && id > 0);

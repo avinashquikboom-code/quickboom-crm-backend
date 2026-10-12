@@ -1200,13 +1200,6 @@ export class CustomerService {
           },
           // 2. Created by this employee
           { createdByEmployeeId: effectiveEmployeeId },
-          // 3. Won by this employee via originLead
-          {
-            originLead: {
-              deletedAt: null,
-              convertedByEmployeeId: effectiveEmployeeId,
-            },
-          },
           // 4. Linked originLead assigned to this employee
           {
             originLead: {
@@ -1706,9 +1699,6 @@ export class CustomerService {
         originLead: {
           include: {
             stage: true,
-            convertedByEmployee: {
-              select: { id: true, firstName: true, lastName: true, email: true },
-            },
             reminders: {
               where: { isCompleted: false },
               orderBy: { remindAt: 'asc' },
@@ -1914,23 +1904,6 @@ export class CustomerService {
         assignedEmployeeId: c.assignedEmployeeId,
         assignedEmployee: resolvedAssignedName,
         department: resolvedDepartment,
-        wonByEmployeeId: (c as any).originLead?.convertedByEmployeeId || (c as any).originLead?.employeeId || c.createdByEmployeeId || null,
-        wonBy: (c as any).originLead?.convertedByEmployee
-          ? {
-              id: (c as any).originLead.convertedByEmployee.id,
-              name: `${(c as any).originLead.convertedByEmployee.firstName || ''} ${(c as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null,
-            }
-          : (c as any).createdByEmployeeRel
-          ? {
-              id: (c as any).createdByEmployeeRel.id,
-              name: `${(c as any).createdByEmployeeRel.firstName || ''} ${(c as any).createdByEmployeeRel.lastName || ''}`.trim() || null,
-            }
-          : null,
-        wonByName: (c as any).originLead?.convertedByEmployee
-          ? `${(c as any).originLead.convertedByEmployee.firstName || ''} ${(c as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null
-          : (c as any).createdByEmployeeRel
-          ? `${(c as any).createdByEmployeeRel.firstName || ''} ${(c as any).createdByEmployeeRel.lastName || ''}`.trim() || null
-          : null,
         wonAt: (c as any).originLead?.convertedAt || c.createdAt || null,
         notes: c.notes || linkedLead?.workNotes,
         isActive: c.isActive,
@@ -2269,9 +2242,6 @@ export class CustomerService {
         originLead: {
           include: {
             stage: true,
-            convertedByEmployee: {
-              select: { id: true, firstName: true, lastName: true, email: true },
-            },
             reminders: {
               where: { isCompleted: false },
               select: { id: true, remindAt: true, title: true, isCompleted: true },
@@ -2352,10 +2322,9 @@ export class CustomerService {
       const isAssignedEmployee =
         Boolean(effectiveEmployeeId && customer.assignedEmployeeId === effectiveEmployeeId);
 
-      const isWonByEmployee =
+      const isCustomerCreator =
         Boolean(effectiveEmployeeId && (
-          customer.createdByEmployeeId === effectiveEmployeeId ||
-          (customer as any).originLead?.convertedByEmployeeId === effectiveEmployeeId
+          customer.createdByEmployeeId === effectiveEmployeeId
         ));
 
       const isAssignedTeamMember = await this.employeeHasActiveTeamAssignment(
@@ -2376,7 +2345,7 @@ export class CustomerService {
         ),
       );
 
-      if (!isCustomerUser && !isAssignedEmployee && !isWonByEmployee && !isLeadEmployee && !isAssignedTeamMember) {
+      if (!isCustomerUser && !isAssignedEmployee && !isCustomerCreator && !isLeadEmployee && !isAssignedTeamMember) {
         throw new ForbiddenException(
           'You do not have permission to access details for this customer.',
         );
@@ -2549,23 +2518,6 @@ export class CustomerService {
       assignedEmployeeId: customer.assignedEmployeeId,
       assignedEmployee: resolvedAssignedName,
       department: resolvedDepartment,
-      wonByEmployeeId: (customer as any).originLead?.convertedByEmployeeId || (customer as any).originLead?.employeeId || customer.createdByEmployeeId || null,
-      wonBy: (customer as any).originLead?.convertedByEmployee
-        ? {
-            id: (customer as any).originLead.convertedByEmployee.id,
-            name: `${(customer as any).originLead.convertedByEmployee.firstName || ''} ${(customer as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null,
-          }
-        : (customer as any).createdByEmployeeRel
-        ? {
-            id: (customer as any).createdByEmployeeRel.id,
-            name: `${(customer as any).createdByEmployeeRel.firstName || ''} ${(customer as any).createdByEmployeeRel.lastName || ''}`.trim() || null,
-          }
-        : null,
-      wonByName: (customer as any).originLead?.convertedByEmployee
-        ? `${(customer as any).originLead.convertedByEmployee.firstName || ''} ${(customer as any).originLead.convertedByEmployee.lastName || ''}`.trim() || null
-        : (customer as any).createdByEmployeeRel
-        ? `${(customer as any).createdByEmployeeRel.firstName || ''} ${(customer as any).createdByEmployeeRel.lastName || ''}`.trim() || null
-        : null,
       wonAt: (customer as any).originLead?.convertedAt || customer.createdAt || null,
       plan: planName,
       planCode: activeSub?.plan?.code || 'NONE',

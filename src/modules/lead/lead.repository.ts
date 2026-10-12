@@ -1041,7 +1041,6 @@ export class LeadRepository {
             assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
             createdBy: { select: { id: true, firstName: true, lastName: true } },
             employee: { select: { id: true, firstName: true, lastName: true } },
-            convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             socialProfiles: true,
           },
         }),
@@ -1061,7 +1060,6 @@ export class LeadRepository {
               assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
               createdBy: { select: { id: true, firstName: true, lastName: true } },
               employee: { select: { id: true, firstName: true, lastName: true } },
-              convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             },
           }),
           this.prisma.lead.count({ where }),
@@ -1250,57 +1248,6 @@ export class LeadRepository {
   public async resolveMissingLeadVisitedAndWonEmployees(leads: any[]) {
     if (!Array.isArray(leads) || leads.length === 0) return;
 
-    // 1. Resolve missing convertedByEmployee for Won leads from status history
-    const wonLeadsWithoutEmp = leads.filter(
-      (l) => (l.status === 'WON' || l.stage?.key === 'WON' || l.stage?.name?.toLowerCase() === 'won') && !l.convertedByEmployeeId && !l.convertedByEmployee,
-    );
-    if (wonLeadsWithoutEmp.length > 0) {
-      try {
-        const leadIds = wonLeadsWithoutEmp.map((l) => l.id);
-        const wonHistories = await this.prisma.leadStatusHistory.findMany({
-          where: {
-            leadId: { in: leadIds },
-            toStatus: 'WON',
-            changedById: { not: null },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        if (wonHistories.length > 0) {
-          const userIds = Array.from(new Set(wonHistories.map((h) => h.changedById!).filter(Boolean)));
-          const employees = await this.prisma.employee.findMany({
-            where: { userId: { in: userIds } },
-            select: { id: true, firstName: true, lastName: true, userId: true },
-          });
-
-          const empByUser = new Map<number, any>();
-          for (const emp of employees) {
-            if (emp.userId) empByUser.set(emp.userId, emp);
-          }
-
-          const wonHistoryByLead = new Map<number, any>();
-          for (const h of wonHistories) {
-            if (!wonHistoryByLead.has(h.leadId)) {
-              wonHistoryByLead.set(h.leadId, h);
-            }
-          }
-
-          for (const lead of wonLeadsWithoutEmp) {
-            const h = wonHistoryByLead.get(lead.id);
-            if (h && h.changedById) {
-              const emp = empByUser.get(h.changedById);
-              if (emp) {
-                lead.convertedByEmployeeId = emp.id;
-                lead.convertedByEmployee = emp;
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        this.logger.warn(`[resolveMissingLeadVisitedAndWonEmployees] Won history error: ${err?.message || err}`);
-      }
-    }
-
     // 2. Resolve missing employee for Visit Done leads from completed visits
     const visitedLeadsWithoutEmp = leads.filter(
       (l) => (l.status === 'VISIT_DONE' || l.stage?.key === 'VISIT_DONE' || l.stage?.name?.toLowerCase() === 'visit done') && !l.employeeId && !l.employee,
@@ -1417,27 +1364,6 @@ export class LeadRepository {
       employeeName: lead.employee
         ? `${lead.employee.firstName || ''} ${lead.employee.lastName || ''}`.trim() || null
         : null,
-      convertedByEmployeeName: lead.convertedByEmployee
-        ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
-        : null,
-      wonByEmployeeId: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployeeId)
-        ? (lead.convertedByEmployeeId || null)
-        : null,
-      wonBy: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployee)
-        ? (lead.convertedByEmployee
-          ? {
-              id: lead.convertedByEmployee.id,
-              name: `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null,
-              firstName: lead.convertedByEmployee.firstName,
-              lastName: lead.convertedByEmployee.lastName,
-            }
-          : null)
-        : null,
-      wonByName: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won' || lead.convertedByEmployee)
-        ? (lead.convertedByEmployee
-          ? `${lead.convertedByEmployee.firstName || ''} ${lead.convertedByEmployee.lastName || ''}`.trim() || null
-          : null)
-        : null,
       wonAt: (lead.status === 'WON' || lead.stage?.key === 'WON' || lead.stage?.name?.toLowerCase() === 'won')
         ? (lead.convertedAt || null)
         : null,
@@ -1505,7 +1431,6 @@ export class LeadRepository {
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
           employee: { select: { id: true, firstName: true, lastName: true } },
-          convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
           notes: {
             include: { user: { select: { id: true, firstName: true, lastName: true } } },
             orderBy: { createdAt: 'desc' },
@@ -1547,7 +1472,6 @@ export class LeadRepository {
           assignedTo: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true } },
           employee: { select: { id: true, firstName: true, lastName: true } },
-          convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
           notes: {
             include: { user: { select: { id: true, firstName: true, lastName: true } } },
             orderBy: { createdAt: 'desc' },
@@ -2052,13 +1976,12 @@ export class LeadRepository {
           await this.prisma.lead.update({
             where: { id: numId },
             data: {
-              convertedByEmployeeId: emp.id,
               convertedAt: new Date(),
             },
           }).catch(() => {});
         }
       } catch (err: any) {
-        this.logger.warn(`[updateStatus] Failed to sync won conversion employee: ${err.message}`);
+        this.logger.warn(`[updateStatus] Failed to sync lead conversion date: ${err.message}`);
       }
     }
   }

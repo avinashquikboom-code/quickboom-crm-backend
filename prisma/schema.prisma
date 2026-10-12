@@ -471,8 +471,6 @@ model Lead {
   customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employeeId           Int?
   employee             Employee?              @relation("EmployeeLeads", fields: [employeeId], references: [id])
-  convertedByEmployeeId Int?
-  convertedByEmployee  Employee?              @relation("ConvertedLeads", fields: [convertedByEmployeeId], references: [id])
   convertedCustomer    Customer?              @relation("CustomerOriginLead")
   timeline             LeadActivityTimeline[]
   notes                LeadNote[]
@@ -491,7 +489,6 @@ model Lead {
   @@index([stageId])
   @@index([assignedToId])
   @@index([employeeId])
-  @@index([convertedByEmployeeId])
   @@index([googlePlaceId])
   @@index([captureRequestId])
   @@index([createdFrom])
@@ -1294,7 +1291,6 @@ model Employee {
   ledTeams                 Team[]                   @relation("TeamLeader")
   leadLimit                EmployeeLeadLimit?
   leads                    Lead[]                   @relation("EmployeeLeads")
-  convertedLeads           Lead[]                   @relation("ConvertedLeads")
   assignedCustomers        Customer[]               @relation("CustomerAssignedStaff")
   createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
   commissionConfig         CommissionConfig?

@@ -1973,11 +1973,9 @@ export class LeadService {
     userExisted?: boolean;
     loginStatus?: string;
     lead?: { id: number; stage: string };
-    customer?: { id: number; leadId: number; email: string | null; name: string; loginStatus: string; assignedEmployeeId?: number | null; createdByEmployeeId?: number | null; wonByEmployeeId?: number | null; wonByName?: string | null; wonAt?: any };
+    customer?: { id: number; leadId: number; email: string | null; name: string; loginStatus: string; assignedEmployeeId?: number | null; createdByEmployeeId?: number | null; wonAt?: any };
     assignedEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
-    wonByEmployeeId?: number | null;
-    wonByName?: string | null;
     error?: string;
   }> {
     try {
@@ -2092,8 +2090,7 @@ export class LeadService {
       // Won-by reflects the converting employee (or assigned employee if converted without an explicit caller).
       const targetAssignedEmpId: number | null = assignedEmpId || convertingEmpId;
       const targetAssignedEmpName: string | null = assignedEmpId ? assignedEmpName : (convertingEmpName || assignedEmpName);
-      const targetWonByEmpId: number | null = convertingEmpId || assignedEmpId;
-      const targetWonByEmpName: string | null = convertingEmpName || assignedEmpName;
+      const customerCreatorId: number | null = convertingEmpId || assignedEmpId;
       if (!resolvedDepartment && convertingEmp?.department?.name) {
         resolvedDepartment = convertingEmp.department.name;
       }
@@ -2148,8 +2145,8 @@ export class LeadService {
           updateData.assignedEmployeeId = targetAssignedEmpId;
           updateData.assignedEmployee = targetAssignedEmpName;
         }
-        if (!customer.createdByEmployeeId && targetWonByEmpId) {
-          updateData.createdByEmployeeId = targetWonByEmpId;
+        if (!customer.createdByEmployeeId && customerCreatorId) {
+          updateData.createdByEmployeeId = customerCreatorId;
         }
 
         // A customer converted from a Won lead must remain INACTIVE if no active plan has been purchased/activated.
@@ -2211,7 +2208,7 @@ export class LeadService {
             assignedTeamId: resolvedTeamId,
             assignedEmployeeId: targetAssignedEmpId,
             assignedEmployee: targetAssignedEmpName,
-            createdByEmployeeId: targetWonByEmpId,
+            createdByEmployeeId: customerCreatorId,
             department: resolvedDepartment,
             notes: `Converted automatically from Lead #${leadId} upon transition to WON.`,
             userLimit: 15,
@@ -2314,17 +2311,13 @@ export class LeadService {
         this.logger.log(`[LEAD_WON_CONVERSION] Lead #${leadId} has no valid email. Customer created but login user skipped (status: EMAIL_REQUIRED).`);
       }
 
-      // 5. Update Lead convertedAt, status, and convertedByEmployeeId
+      // 5. Update Lead conversion date and status
       const wonAtTimestamp = updatedLead.convertedAt || new Date();
       if (this.prisma.lead) {
         const wonUpdateData: any = {
           convertedAt: wonAtTimestamp,
           status: updatedLead.status === LeadStatus.CONVERTED ? LeadStatus.CONVERTED : LeadStatus.WON,
         };
-        // Explicitly set convertedByEmployeeId if not already set, preserving the original WON employee
-        if (convertingEmpId && !updatedLead.convertedByEmployeeId) {
-          wonUpdateData.convertedByEmployeeId = convertingEmpId;
-        }
         await this.prisma.lead.update({
           where: { id: leadId },
           data: wonUpdateData,
@@ -2333,7 +2326,7 @@ export class LeadService {
 
       this.logger.log(
         `[LEAD_WON_CONVERSION] Completed successfully. Lead #${leadId} -> Customer #${customer.id}. ` +
-        `AssignedEmp: ${targetAssignedEmpId}, WonByEmp: ${targetWonByEmpId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
+        `AssignedEmp: ${targetAssignedEmpId}, CreatedByEmp: ${customerCreatorId}, UserCreated: ${userCreated}, UserExisted: ${userExisted}`,
       );
 
       const loginStatus = !validLoginEmail
@@ -2353,9 +2346,7 @@ export class LeadService {
           name: customer.name,
           loginStatus,
           assignedEmployeeId: customer.assignedEmployeeId || targetAssignedEmpId,
-          createdByEmployeeId: customer.createdByEmployeeId || targetWonByEmpId,
-          wonByEmployeeId: targetWonByEmpId,
-          wonByName: targetWonByEmpName,
+          createdByEmployeeId: customer.createdByEmployeeId || customerCreatorId,
           wonAt: wonAtTimestamp,
         },
         customerId: customer.id,
@@ -2366,9 +2357,7 @@ export class LeadService {
         userExisted,
         loginStatus,
         assignedEmployeeId: customer.assignedEmployeeId || targetAssignedEmpId,
-        createdByEmployeeId: customer.createdByEmployeeId || targetWonByEmpId,
-        wonByEmployeeId: targetWonByEmpId,
-        wonByName: targetWonByEmpName,
+        createdByEmployeeId: customer.createdByEmployeeId || customerCreatorId,
       };
     } catch (err: any) {
       this.logger.error(`[LEAD_WON_CONVERSION] Failed to convert Lead #${updatedLead?.id} to Customer: ${err?.message}`, err?.stack);

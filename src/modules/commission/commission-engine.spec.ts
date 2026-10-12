@@ -14,7 +14,7 @@ describe('BPO commission split, attribution, access and settlement', () => {
     db = {
       $transaction: jest.fn(async fn => fn(db)),
       paymentHistory: { findUnique: jest.fn(async () => payment) },
-      customer: { findUnique: jest.fn(async () => ({ id: 50, leadId: 60, originLead: { id: 60, customerId: 1, convertedByEmployeeId: 10 }, assignedEmployeeId: 99, createdByEmployeeId: 99 })) },
+      customer: { findUnique: jest.fn(async () => ({ id: 50, leadId: 60, originLead: { id: 60, customerId: 1, employeeId: 99 }, assignedEmployeeId: 10, createdByEmployeeId: 99 })) },
       employee: { findUnique: jest.fn(async ({ where }) => where.id === 10 ? employee : leader), findFirst: jest.fn(async ({ where }) => [employee, leader].find(e => e.userId === where.userId && e.customerId === where.customerId)) },
       teamMember: { findMany: jest.fn(async () => [{ team }]) },
       commission: {
