@@ -584,7 +584,19 @@ export class PayrollService {
     const netSalary = slip.netSalary ?? Math.max(0, grossSalary - totalDeductions);
     const attendanceSummary = buildPayrollAttendanceSummary(pi, { year, month });
     const extraWorkingPay = pi?.calculationSnapshot?.extraWorkingPay ?? 0;
+    const monthlySalaryRecorded = pi?.calculationSnapshot?.monthlySalary != null;
     const monthlySalary = pi?.calculationSnapshot?.monthlySalary ?? (basicSalary + hra + allowances);
+    const salaryDataWarnings: string[] = [];
+    const snapshot = pi?.calculationSnapshot;
+    if (snapshot?.gross != null && Number(snapshot.gross) !== Number(grossSalary)) {
+      salaryDataWarnings.push('Stored salary-slip gross differs from its calculation snapshot. Payroll correction review is required.');
+    }
+    if (snapshot?.netSalary != null && Number(snapshot.netSalary) !== Number(netSalary)) {
+      salaryDataWarnings.push('Stored net salary differs from its calculation snapshot. Payroll correction review is required.');
+    }
+    if (snapshot?.monthlySalary === 0 && Number(snapshot?.attendanceSalary) > 0) {
+      salaryDataWarnings.push('The calculation snapshot records zero configured salary with positive attendance salary. Payroll correction review is required.');
+    }
     const attendanceSalary = pi?.calculationSnapshot?.attendanceSalary ?? (grossSalary - reimbursement);
     const salaryBreakdown = buildSalaryBreakdown({
       basicSalary,
@@ -610,6 +622,7 @@ export class PayrollService {
       totalDeductions,
       netSalary,
       monthlySalary,
+      monthlySalaryRecorded,
       attendanceSalary,
     });
 
@@ -622,6 +635,7 @@ export class PayrollService {
       date: formattedDate,
       attendanceSummary,
       salaryBreakdown,
+      salaryDataWarnings,
       calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
       workingDays: pi?.workingDays ?? attendanceSummary?.workingDays ?? 0,
       presentDays: pi?.presentDays ?? attendanceSummary?.presentDays ?? 0,

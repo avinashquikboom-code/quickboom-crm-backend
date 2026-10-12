@@ -32,6 +32,7 @@ export interface SalaryBreakdown {
   totalDeductions: number;
   netSalary: number;
   monthlySalary: number;
+  monthlySalaryRecorded?: boolean;
   attendanceSalary: number;
   extraWorkingPay: number;
   isReconciled: boolean;
@@ -135,7 +136,7 @@ export function buildPayrollAttendanceSummary(
       holidayDays: toNumber(stored.holidayDays),
       extraWorkingDays: toNumber(stored.extraWorkingDays ?? snapshot?.extraWorkingDays ?? item.extraWorkingDays ?? 0),
       extraWorkingDates,
-      payableDays: stored.payableDays !== undefined && stored.payableDays !== null ? toNumber(stored.payableDays) : toNumber(item.payableDays ?? item.workingDays),
+      payableDays: stored.payableDays !== undefined && stored.payableDays !== null ? toNumber(stored.payableDays) : toNumber(snapshot?.payableDays ?? snapshot?.salaryBasis?.payableDays ?? item.payableDays),
       overtimeMinutes,
       overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
       source: 'PAYROLL_SNAPSHOT',
@@ -166,7 +167,7 @@ export function buildPayrollAttendanceSummary(
     holidayDays: toNumber(item.holidayDays),
     extraWorkingDays: toNumber(snapshot?.extraWorkingDays ?? item.extraWorkingDays ?? 0),
     extraWorkingDates,
-    payableDays: toNumber(item.payableDays ?? item.workingDays),
+    payableDays: toNumber(snapshot?.payableDays ?? snapshot?.salaryBasis?.payableDays ?? item.payableDays),
     overtimeMinutes,
     overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
     source: 'PAYROLL_RECORD',
@@ -228,6 +229,7 @@ export function buildSalaryBreakdown(source: any): SalaryBreakdown {
     totalDeductions,
     netSalary,
     monthlySalary,
+    monthlySalaryRecorded: src.monthlySalaryRecorded ?? (src.monthlySalary != null || src.calculationSnapshot?.monthlySalary != null),
     attendanceSalary,
     extraWorkingPay,
     isReconciled: Math.abs(earningsSum - grossEarnings) < 0.01 && Math.abs(deductionsSum - totalDeductions) < 0.01,
@@ -341,7 +343,7 @@ export function drawSalaryBreakdownSection(
   const headerY = y + 14;
   doc.rect(x, headerY, width, 18).fillAndStroke('#F1F5F9', '#CBD5E1');
   doc.font(regularFont).fontSize(7.5).fillColor('#475569').text('Configured Monthly Salary:', x + 8, headerY + 5);
-  doc.font(boldFont).fontSize(8).fillColor('#0F172A').text(formatAmount(breakdown.monthlySalary), x + 125, headerY + 4.5);
+  doc.font(boldFont).fontSize(8).fillColor('#0F172A').text((breakdown.monthlySalaryRecorded === false ? 'Not recorded' : formatAmount(breakdown.monthlySalary)), x + 125, headerY + 4.5);
   doc.font(regularFont).fontSize(7.5).fillColor('#475569').text('Attendance-based Payable Salary:', x + 240, headerY + 5);
   doc.font(boldFont).fontSize(8).fillColor('#0F763E').text(formatAmount(breakdown.attendanceSalary), x + 385, headerY + 4.5);
 

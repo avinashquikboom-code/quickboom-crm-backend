@@ -171,3 +171,21 @@ describe('Salary Slip Attendance Summary & Calculation Rules', () => {
     });
   });
 });
+
+
+describe('Legacy salary-slip snapshot mapping', () => {
+  it('uses snapshot payable days instead of a default-zero payroll column', () => {
+    expect(buildPayrollAttendanceSummary({ workingDays: 30, presentDays: 20, payableDays: 0, calculationSnapshot: { payableDays: 22 } })?.payableDays).toBe(22);
+    expect(buildPayrollAttendanceSummary({ workingDays: 30, payableDays: 0, calculationSnapshot: { payableDays: 22, attendanceSummary: { workingDays: 30 } } })?.payableDays).toBe(22);
+  });
+  it('preserves an explicit zero in the attendance snapshot', () => {
+    expect(buildPayrollAttendanceSummary({ workingDays: 30, payableDays: 22, calculationSnapshot: { payableDays: 22, attendanceSummary: { payableDays: 0 } } })?.payableDays).toBe(0);
+  });
+  it('does not assume all working days are payable when payable days are missing', () => {
+    expect(buildPayrollAttendanceSummary({ workingDays: 30, presentDays: 0 })?.payableDays).toBe(0);
+  });
+  it('distinguishes unavailable configured salary from a recorded zero', () => {
+    expect(buildSalaryBreakdown({ grossSalary: 59000 }).monthlySalaryRecorded).toBe(false);
+    expect(buildSalaryBreakdown({ monthlySalary: 0, grossSalary: 59000 }).monthlySalaryRecorded).toBe(true);
+  });
+});
