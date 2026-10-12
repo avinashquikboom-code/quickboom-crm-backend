@@ -2873,9 +2873,24 @@ status: ${item.status}`);
             { OR: companyScope },
             {
               OR: [
-                { AND: [{ assignedToId: null }, { editorId: null }] },
                 { assignedToId: numEmployeeId },
                 { editorId: numEmployeeId },
+                {
+                  AND: ['assignedTo', 'editor'].map((relation) => ({
+                    OR: [
+                      { [`${relation}Id`]: null },
+                      {
+                        [relation]: {
+                          department: {
+                            OR: ['BPO', 'SALES', 'CALL'].map((name) => ({
+                              name: { contains: name, mode: 'insensitive' },
+                            })),
+                          },
+                        },
+                      },
+                    ],
+                  })),
+                },
               ],
             },
           ],
@@ -3367,18 +3382,19 @@ status: ${item.status}`);
           );
         }
         const normType = normalizeActivityType(w);
-        const assigneeDept = String(w.assignedTo?.department?.name || '').toUpperCase();
-        const assigneeDesig = w.assignedTo?.designation?.name || '';
-        const isAssigneeProductionRelevant =
-          !assigneeDept.includes('BPO') &&
-          !assigneeDept.includes('SALES') &&
-          !assigneeDept.includes('CALL') &&
-          (assigneeDesig ? workMatchesDesignation(assigneeDesig, w.workType) : true);
-
-        const otherAssignee =
-          isAssigneeProductionRelevant &&
-          ((Number.isInteger(Number(w.assignedToId)) && Number(w.assignedToId) > 0 && !viewerIds.has(Number(w.assignedToId))) ||
-          (Number.isInteger(Number(w.editorId)) && Number(w.editorId) > 0 && !viewerIds.has(Number(w.editorId))));
+        // Lead/customer Sales owners do not reserve production work. Check each
+        // assignment independently so a genuine production editor remains protected.
+        const productionRelevant = (person: any) => {
+          const department = String(person?.department?.name || '').toUpperCase();
+          const designation = person?.designation?.name || '';
+          return !['BPO', 'SALES', 'CALL'].some((part) => department.includes(part)) &&
+            (designation ? workMatchesDesignation(designation, w.workType) : true);
+        };
+        const otherAssignee = [
+          { id: w.assignedToId, person: w.assignedTo },
+          { id: w.editorId, person: w.editor },
+        ].some(({ id, person }) => Number.isInteger(Number(id)) && Number(id) > 0 &&
+          !viewerIds.has(Number(id)) && productionRelevant(person));
         if (
           !otherAssignee &&
           (visibleTypes.has(String(w.workType || '').toUpperCase()) ||

@@ -98,6 +98,16 @@ describe('Employee designation calendar visibility', () => {
         lead.customerId === condition.customer.originLead.customerId,
       );
     }
+    if (condition.editor?.department?.OR) {
+      return condition.editor.department.OR.some((part: any) =>
+        String(item.editor?.department?.name || '').toLowerCase().includes(part.name.contains.toLowerCase()),
+      );
+    }
+    if (condition.assignedTo?.department?.OR) {
+      return condition.assignedTo.department.OR.some((part: any) =>
+        String(item.assignedTo?.department?.name || '').toLowerCase().includes(part.name.contains.toLowerCase()),
+      );
+    }
     if (condition.customer?.leads) return false;
     if (condition.customer?.assignedEmployeeRel || condition.customer?.createdByEmployeeRel) return false;
     if (condition.customer?.assignedEmployeeId !== undefined) return false;
@@ -201,6 +211,31 @@ describe('Employee designation calendar visibility', () => {
     const calendar = await service.getEmployeeCalendar(id, { month: 10, year: 2026 }, { allTenantCustomers: true });
     return calendar.map((item) => item.id);
   }
+
+  it('shows lead-customer editing work owned by Sales, but protects an assigned production editor and other tenants', async () => {
+    const salesOwner = { id: 90, firstName: 'Sales', lastName: 'Owner', department: { name: 'Sales' }, designation: { name: 'Sales Executive' } };
+    const pool: any = work(901, WorkType.EDITING, 90, 901, undefined, { customerId: 1, deletedAt: null });
+    pool.assignedTo = salesOwner;
+    pool.scheduledDate = new Date('2026-10-18T00:00:00Z');
+    const assignedEditor: any = { ...pool, id: 902, editorId: 22 };
+    const otherCompany: any = work(903, WorkType.EDITING, 90, 903, undefined, { customerId: 2, deletedAt: null });
+    otherCompany.assignedTo = salesOwner;
+    otherCompany.scheduledDate = pool.scheduledDate;
+    const salesEditor: any = { ...pool, id: 904, assignedToId: null, assignedTo: null, editorId: 90, editor: salesOwner };
+    works.push(pool, assignedEditor, otherCompany, salesEditor);
+    try {
+      const { service } = await serviceFor({ id: 10, designation: 'Reel Editor' });
+      const result = await service.getEmployeeCalendar(10, { date: '2026-10-18' }, { allTenantCustomers: true });
+      expect(result.map((row) => row.id)).toContain('901');
+      expect(result.map((row) => row.id)).toContain('904');
+      expect(result.map((row) => row.id)).not.toContain('902');
+      expect(result.map((row) => row.id)).not.toContain('903');
+      const assignedOnly = await service.getEmployeeCalendar(10, { date: '2026-10-18' }, { assignedOnly: true });
+      expect(assignedOnly.map((row) => row.id)).not.toContain('901');
+    } finally {
+      works.splice(works.findIndex((row) => row.id === 901), 4);
+    }
+  });
 
   it('shows a Reel Editor and a Video Editor only matching editing work', async () => {
     await expect(idsFor('Reel Editor', 10)).resolves.toEqual(['1', '2', '7', '11']);
