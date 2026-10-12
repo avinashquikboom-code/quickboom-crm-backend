@@ -1930,11 +1930,11 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         reworkActionLabel,
         isLocked,
         lockMessage,
-        assignedToId: taskAssignee.id,
-        assignedEmployee: taskAssignee.name,
-        assignedToName: taskAssignee.name,
-        editorId: w.editorId,
-        editorName: isLocked ? null : (w.editor ? `${w.editor.firstName} ${w.editor.lastName}`.trim() : null),
+        assignedToId: w.assignedToId ?? null,
+        assignedEmployee: w.assignedTo ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Not assigned' : 'Not assigned',
+        assignedToName: w.assignedTo ? `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim() || 'Not assigned' : 'Not assigned',
+        editorId: w.editor?.id ?? null,
+        editorName: isLocked ? null : (w.editor ? `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim() || null : null),
         team: taskAssignee.teamName,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
