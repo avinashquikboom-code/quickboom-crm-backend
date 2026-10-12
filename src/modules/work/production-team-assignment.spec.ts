@@ -57,8 +57,8 @@ describe('Production team assignment', () => {
           works.filter((work) => {
             if (where?.customerId != null && work.customerId !== where.customerId) return false;
             const assignee = team.members.find((member) => member.employeeId === work.assignedToId)?.employee;
-            const wrongBpoOwner = ['SCHEDULED', 'ASSIGNED'].includes(work.status) && /BPO|SALES/i.test(assignee?.department?.name || '');
-            return work.assignedToId == null || work.teamId == null || work.teamId !== team.id || wrongBpoOwner;
+            const pending = ['SCHEDULED', 'ASSIGNED'].includes(work.status);
+            return work.assignedToId == null || work.teamId == null || work.teamId !== team.id || pending;
           }),
         ),
         update: jest.fn().mockImplementation(async ({ where, data }) => {
@@ -136,6 +136,21 @@ describe('Production team assignment', () => {
     const service = new WorkService({} as any);
     const work = { assignedTo: member(20, 'Photographer').employee, team: { members: [{ employeeId: 12 }] } };
     expect((service as any).productionTaskAssignee(work).id).toBeNull();
+  });
+
+  it('corrects a pending same-team assignment to the task role and preserves completed work', async () => {
+    const works = freshWorks().map((work) => ({ ...work, teamId: 2, assignedToId: 10, status: WorkStatus.ASSIGNED }));
+    works[4].status = WorkStatus.COMPLETED as any;
+    const { updates } = await sync({ id: 2, name: 'Production Team_A', members: productionMembers }, works);
+    expect(updates.find((item) => item.id === 2)?.assignedToId).toBe(12);
+    expect(updates.find((item) => item.id === 3)?.assignedToId).toBe(11);
+    expect(updates.find((item) => item.id === 5)).toBeUndefined();
+  });
+
+  it('displays the parent production assignee before a different workflow step employee', () => {
+    const service = new WorkService({} as any);
+    const work = { assignedTo: member(12, 'Photographer').employee, tasks: [{ assignedTo: member(10, 'Video Editor').employee }], team: { members: [{ employeeId: 12 }, { employeeId: 10 }] } };
+    expect((service as any).productionTaskAssignee(work).id).toBe(12);
   });
 
   it('assigns each production schedule to the matching designation only', async () => {

@@ -2441,8 +2441,8 @@ status: ${item.status}`);
     };
 
     const candidates = [
-      ...(w.tasks || []).map((task: any) => task.assignedTo),
       w.assignedTo,
+      ...(w.tasks || []).map((task: any) => task.assignedTo),
       w.editor,
     ];
     let stored = candidates.find((person) => isTaskAssignee(person, true));
@@ -2484,6 +2484,7 @@ status: ${item.status}`);
                 lastName: true,
                 designation: { select: { name: true } },
                 department: { select: { name: true } },
+                user: { select: { userRoles: { select: { role: { select: { name: true, type: true } } } } } },
               },
             },
           },
@@ -2505,13 +2506,11 @@ status: ${item.status}`);
           { assignedToId: null },
           { teamId: null },
           { teamId: { not: numTeamId } },
-          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { assignedTo: { department: { name: { contains: 'BPO', mode: 'insensitive' } } } }] },
-          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { assignedTo: { department: { name: { contains: 'SALES', mode: 'insensitive' } } } }] },
-          { AND: [{ status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } }, { editor: { department: { name: { contains: 'BPO', mode: 'insensitive' } } } }] },
+          { status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } },
         ],
       },
       orderBy: { id: 'asc' },
-      include: { assignedTo: { select: { department: true, designation: true } } },
+      include: { assignedTo: { select: { department: true, designation: true, user: { select: { userRoles: { select: { role: { select: { name: true } } } } } } } } },
     });
 
     if (unassignedWorks.length === 0) {
