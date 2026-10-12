@@ -41,4 +41,24 @@ describe('Canonical salary updates', () => {
     await expect(service.saveSalaryStructure(2, { employeeId: 7, basicSalary: -1 })).rejects.toThrow('Invalid basicSalary');
     expect(tx.employee.update).not.toHaveBeenCalled();
   });
+  it('returns an existing current-month paid slip without overlaying current salary', async () => {
+    const now = new Date();
+    const snapshot = { id: 9, month: now.getMonth() + 1, year: now.getFullYear(), basicSalary: 1000, grossSalary: 1000, status: 'PAID' };
+    const prisma: any = {
+      employee: { findFirst: jest.fn().mockResolvedValue({ id: 7, salaryStructures: [{ basicSalary: 2000, grossSalary: 2000 }] }) },
+      salarySlip: { findMany: jest.fn().mockResolvedValue([snapshot]), count: jest.fn().mockResolvedValue(1) },
+    };
+    const service = new PayrollService(prisma);
+    jest.spyOn(service as any, 'formatSalarySlip').mockImplementation((slip) => slip);
+    const result = await service.getSalarySlips(2, { user: { id: 10, email: 'employee@example.test', role: 'EMPLOYEE' } });
+    expect(result.items).toEqual([snapshot]);
+    expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ customerId: 2 }) }));
+  });
+
+  it('requires recalculation before approving an invalidated draft', async () => {
+    const prisma: any = { payroll: { findFirst: jest.fn().mockResolvedValue({ id: 9, status: 'DRAFT' }), update: jest.fn() } };
+    await expect(new PayrollService(prisma).approvePayroll(2, 9)).rejects.toThrow('recalculate draft payroll');
+    expect(prisma.payroll.update).not.toHaveBeenCalled();
+  });
+
 });
