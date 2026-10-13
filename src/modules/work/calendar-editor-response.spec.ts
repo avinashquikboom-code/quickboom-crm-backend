@@ -57,13 +57,13 @@ describe('Customer calendar editor response', () => {
     const rows = await service.getEmployeeCalendar(10, { date: '2026-10-13' }, { allTenantCustomers: true });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      assignedToId: null,
-      assignedEmployee: 'Not assigned',
-      assignedToName: 'Not assigned',
       editorId: null,
       editorName: null,
       team: 'PRODUCTION TEAM_A',
     });
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(rows[0]).not.toHaveProperty(field);
+    }
     expect(rows[0].assignedEmployees).toEqual([]);
   });
 });

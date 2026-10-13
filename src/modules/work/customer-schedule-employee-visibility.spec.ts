@@ -242,9 +242,10 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
 
       expect(calendarItems).toHaveLength(1);
       expect(calendarItems[0].id).toBe('501');
-      expect(calendarItems[0].scheduledDate).toBe('2026-10-15');
-      expect(calendarItems[0].assignedToId).toBe(10);
-      expect(calendarItems[0].assignedEmployee).toBe('Sam Shooter');
+      expect(calendarItems[0].assignedEmployees).toContain('Sam Shooter');
+      for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+        expect(calendarItems[0]).not.toHaveProperty(field);
+      }
     });
   });
 

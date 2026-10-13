@@ -3637,9 +3637,6 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedToId: scheduleAssignee.id,
-        assignedEmployee: assignedEmpName,
-        assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName && assignedEmpName !== 'Not assigned' ? [assignedEmpName] : []),
         editorId: resolvedEditorId,
         editorName: resolvedEditorName,
@@ -3885,9 +3882,6 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedToId: t.employeeId || t.assignedToId || null,
-        assignedEmployee: assignedEmp,
-        assignedToName: assignedEmp,
         assignedEmployees: assignedEmp && assignedEmp !== 'Not assigned' ? [assignedEmp] : [],
         editorId: null,
         editorName: null,
@@ -4000,8 +3994,7 @@ customer: ${item.customerName}
 type: ${item.activityType}
 scheduledDate: ${item.scheduledDate}
 time: ${item.time}
-status: ${item.status}
-assignedEmployee: ${item.assignedEmployee}`);
+status: ${item.status}`);
     }
 
     return uniqueResult;

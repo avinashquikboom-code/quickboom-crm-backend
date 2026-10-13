@@ -309,8 +309,10 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     const calendar = await workService.getEmployeeCalendar(2, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(1);
     expect(calendar[0].id).toBe('101');
-    expect(calendar[0].customerName).toBe('Acme Corp');
-    expect(calendar[0].assignedEmployee).toBe('John Photographer');
+    expect(calendar[0].assignedEmployees).toContain('John Photographer');
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(calendar[0]).not.toHaveProperty(field);
+    }
     expect(calendar[0].editorName).toBe('Alice Editor');
   });
 
@@ -406,8 +408,10 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(task501).toBeDefined();
     expect(task501?.title).toBe('Store Verification & Client Meeting');
     expect(task501?.activityType).toBe('TASK');
-    expect(task501?.customerName).toBe('Acme Corp');
-    expect(task501?.assignedEmployee).toBe('John Photographer');
+    expect(task501?.assignedEmployees).toContain('John Photographer');
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(task501).not.toHaveProperty(field);
+    }
   });
 
   it('Employee 2 (unassigned) does NOT see Task 501 on 2026-10-10', async () => {

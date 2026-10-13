@@ -121,8 +121,12 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
 
       // Notice: For Production Manager, where should NOT restrict to assignedToId == 50!
       expect(queryWhere.OR).toBeUndefined();
-      expect(result.length).toBe(3);
-      expect(result.map((w) => w.assignedEmployee)).toEqual(['Employee A', 'Employee B', 'Employee A']);
+      expect(result.map((w) => w.assignedEmployees)).toEqual([['Employee A'], ['Employee B'], ['Employee A']]);
+      for (const w of result) {
+        for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+          expect(w).not.toHaveProperty(field);
+        }
+      }
     });
 
     it('strictly restricts Normal Employee to only their assigned work', async () => {
