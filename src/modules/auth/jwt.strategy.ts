@@ -507,6 +507,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
         }
       }
+
+      // Ensure mutual attendance action compatibility across legacy and granular naming
+      if (permissionsMap.has('ATTENDANCE:PUNCH_IN') || permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
+        if (!permissionsMap.has('ATTENDANCE:CREATE')) {
+          permissionsMap.set('ATTENDANCE:CREATE', { module: 'ATTENDANCE', action: 'CREATE' });
+        }
+      }
+      if (permissionsMap.has('ATTENDANCE:CREATE')) {
+        if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
+          permissionsMap.set('ATTENDANCE:PUNCH_IN', { module: 'ATTENDANCE', action: 'PUNCH_IN' });
+        }
+        if (!permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
+          permissionsMap.set('ATTENDANCE:PUNCH_OUT', { module: 'ATTENDANCE', action: 'PUNCH_OUT' });
+        }
+      }
     }
 
     // 4. Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
@@ -537,6 +552,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               });
             } else if (ovType === 'DENY') {
               permissionsMap.delete(permKey);
+              if (permKey === 'ATTENDANCE:PUNCH_IN' || permKey === 'ATTENDANCE:CREATE') {
+                permissionsMap.delete('ATTENDANCE:PUNCH_IN');
+                permissionsMap.delete('ATTENDANCE:CREATE');
+              }
+              if (permKey === 'ATTENDANCE:PUNCH_OUT') {
+                permissionsMap.delete('ATTENDANCE:PUNCH_OUT');
+                if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
+                  permissionsMap.delete('ATTENDANCE:CREATE');
+                }
+              }
             }
           } else {
             const modUpper = modKey.toUpperCase().replace(/\s+/g, '_');

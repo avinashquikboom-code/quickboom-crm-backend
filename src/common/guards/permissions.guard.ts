@@ -27,6 +27,22 @@ export function userHasModulePermission(
       : uMod === rMod ||
         uMod === rMod.replace(/_/g, '') ||
         normalizeMod(uMod) === normalizeMod(rMod);
+    const isAttendanceEquivalent =
+      (rMod === 'ATTENDANCE' || normalizeMod(rMod) === 'ATTENDANCE') &&
+      (uMod === 'ATTENDANCE' || normalizeMod(uMod) === 'ATTENDANCE') &&
+      (
+        ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN' || rAct === 'CREATE') &&
+          (uAct === 'PUNCH_IN' || uAct === 'CHECK_IN' || uAct === 'CREATE')) ||
+        ((rAct === 'PUNCH_OUT' || rAct === 'CHECK_OUT' || rAct === 'CREATE') &&
+          (uAct === 'PUNCH_OUT' || uAct === 'CHECK_OUT' || uAct === 'CREATE')) ||
+        ((rAct === 'START_BREAK' || rAct === 'END_BREAK') &&
+          (uAct === 'CREATE' || uAct === rAct))
+      );
+
+    if (isAttendanceEquivalent) {
+      return true;
+    }
+
     const actMatches =
       uAct === rAct ||
       uAct === 'MANAGE' ||
@@ -105,6 +121,22 @@ export class PermissionsGuard implements CanActivate {
         (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE' || uAct === 'CHANGE_STAGE'));
 
       if (isLeadScheduleVisitEquivalent) {
+        return true;
+      }
+
+      const isAttendanceEquivalent =
+        (rMod === 'ATTENDANCE' || normalizeMod(rMod) === 'ATTENDANCE') &&
+        (uMod === 'ATTENDANCE' || normalizeMod(uMod) === 'ATTENDANCE') &&
+        (
+          ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN' || rAct === 'CREATE') &&
+            (uAct === 'PUNCH_IN' || uAct === 'CHECK_IN' || uAct === 'CREATE')) ||
+          ((rAct === 'PUNCH_OUT' || rAct === 'CHECK_OUT' || rAct === 'CREATE') &&
+            (uAct === 'PUNCH_OUT' || uAct === 'CHECK_OUT' || uAct === 'CREATE')) ||
+          ((rAct === 'START_BREAK' || rAct === 'END_BREAK') &&
+            (uAct === 'CREATE' || uAct === rAct))
+        );
+
+      if (isAttendanceEquivalent) {
         return true;
       }
 
