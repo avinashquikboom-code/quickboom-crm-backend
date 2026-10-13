@@ -2964,6 +2964,21 @@ export class AuthService {
         }
       }
 
+      if (mod === 'ATTENDANCE') {
+        if (
+          permissionsMap.has('ATTENDANCE:PUNCH_IN') ||
+          permissionsMap.has('ATTENDANCE:PUNCH_OUT') ||
+          permissionsMap.has('ATTENDANCE:START_BREAK') ||
+          permissionsMap.has('ATTENDANCE:END_BREAK')
+        ) {
+          modPerms.create = true;
+        }
+        if (permissionsMap.has('ATTENDANCE:CREATE')) {
+          modPerms.punch_in = true;
+          modPerms.punch_out = true;
+        }
+      }
+
       effectivePermissions[lowerMod] = modPerms;
       effectivePermissions[mod] = modPerms;
     });
