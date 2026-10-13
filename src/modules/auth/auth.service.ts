@@ -1,3 +1,4 @@
+import { applyAttendancePermissions, isAttendanceOverride } from '../../common/utils/attendance-permissions.util';
 import {
   Injectable,
   UnauthorizedException,
@@ -2868,6 +2869,8 @@ export class AuthService {
       }
     }
 
+    applyAttendancePermissions(permissionsMap);
+
     // Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
     const employeeId = user.employee?.id;
     if (employeeId && !isSuperAdmin && !isCustomerAdmin) {
@@ -2879,8 +2882,10 @@ export class AuthService {
             })
           : []);
 
+      applyAttendancePermissions(permissionsMap, overrides || []);
       if (overrides && overrides.length > 0) {
         for (const ov of overrides) {
+          if (isAttendanceOverride(ov)) continue;
           const modKey = (ov.moduleKey || '').trim();
           const ovType = String(ov.override).toUpperCase();
           if (ovType === 'DEFAULT' || ovType === 'INHERIT') continue;
@@ -2964,20 +2969,6 @@ export class AuthService {
         }
       }
 
-      if (mod === 'ATTENDANCE') {
-        if (
-          permissionsMap.has('ATTENDANCE:PUNCH_IN') ||
-          permissionsMap.has('ATTENDANCE:PUNCH_OUT') ||
-          permissionsMap.has('ATTENDANCE:START_BREAK') ||
-          permissionsMap.has('ATTENDANCE:END_BREAK')
-        ) {
-          modPerms.create = true;
-        }
-        if (permissionsMap.has('ATTENDANCE:CREATE')) {
-          modPerms.punch_in = true;
-          modPerms.punch_out = true;
-        }
-      }
 
       effectivePermissions[lowerMod] = modPerms;
       effectivePermissions[mod] = modPerms;

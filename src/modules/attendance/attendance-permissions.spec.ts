@@ -2,6 +2,8 @@ import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AttendanceController } from './attendance.controller';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { applyAttendancePermissions } from '../../common/utils/attendance-permissions.util';
+import { ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
 
 describe('Attendance check-in authorization', () => {
@@ -95,6 +97,58 @@ describe('Attendance check-in authorization', () => {
     });
   }
 
+  describe('effective attendance permissions', () => {
+    function resolved(actions: string[], overrides: { moduleKey: string; override: string }[] = []) {
+      const permissions = new Map(actions.map(action => [
+        `ATTENDANCE:${action}`, { module: 'ATTENDANCE', action },
+      ]));
+      applyAttendancePermissions(permissions, overrides);
+      return [...permissions.values()];
+    }
+
+    it('does not turn punch-out into punch-in or legacy CREATE', () => {
+      const permissions = resolved(['PUNCH_OUT']);
+      expect(permissions).toEqual([{ module: 'ATTENDANCE', action: 'PUNCH_OUT' }]);
+      expect(() => guard.canActivate(context(AttendanceController.prototype.checkIn, permissions))).toThrow(ForbiddenException);
+    });
+
+    it.each(['PUNCH_IN', 'PUNCH_OUT'])('preserves explicit %s DENY against legacy CREATE', action => {
+      const permissions = resolved(['CREATE'], [{ moduleKey: `employee.attendance.${action.toLowerCase()}`, override: 'DENY' }]);
+      const deniedHandler = action === 'PUNCH_IN' ? 'checkIn' : 'checkOut';
+      const allowedHandler = action === 'PUNCH_IN' ? 'checkOut' : 'checkIn';
+      expect(() => guard.canActivate(context(AttendanceController.prototype[deniedHandler], permissions))).toThrow(ForbiddenException);
+      expect(guard.canActivate(context(AttendanceController.prototype[allowedHandler], permissions))).toBe(true);
+    });
+
+    it('keeps module DENY ahead of a later granular ALLOW', () => {
+      expect(resolved(['MANAGE'], [
+        { moduleKey: 'ATTENDANCE', override: 'DENY' },
+        { moduleKey: 'ATTENDANCE:PUNCH_IN', override: 'ALLOW' },
+      ])).toEqual([]);
+    });
+
+    it('supports INHERIT and explicit ALLOW without granting other punch actions', () => {
+      const permissions = resolved(['VIEW'], [
+        { moduleKey: 'ATTENDANCE', override: 'INHERIT' },
+        { moduleKey: 'ATTENDANCE:PUNCH_IN', override: 'ALLOW' },
+      ]);
+      expect(guard.canActivate(context(AttendanceController.prototype.checkIn, permissions))).toBe(true);
+      expect(() => guard.canActivate(context(AttendanceController.prototype.checkOut, permissions))).toThrow(ForbiddenException);
+    });
+
+    it('authorizes the existing eligible role templates and blocks templates without attendance grants', () => {
+      for (const grants of Object.values(ROLE_PERMISSION_DEFAULTS)) {
+        const attendance = grants.filter(p => p.module === 'ATTENDANCE').map(p => p.action);
+        const permissions = resolved(attendance);
+        if (attendance.some(action => ['CREATE', 'PUNCH_IN', 'ALL', 'MANAGE'].includes(action))) {
+          expect(guard.canActivate(context(AttendanceController.prototype.checkIn, permissions))).toBe(true);
+        } else {
+          expect(() => guard.canActivate(context(AttendanceController.prototype.checkIn, permissions))).toThrow(ForbiddenException);
+        }
+      }
+    });
+  });
+
   describe('Legacy ATTENDANCE:CREATE endpoint check-in compatibility', () => {
     class LegacyAttendanceController {
       checkIn() {}
@@ -107,19 +161,12 @@ describe('Attendance check-in authorization', () => {
 
     const legacyHandler = LegacyAttendanceController.prototype.checkIn;
 
-    it('allows employee with ATTENDANCE:PUNCH_IN to pass when route requires ATTENDANCE:CREATE', () => {
-      expect(
-        guard.canActivate(
-          context(
-            legacyHandler,
-            [
-              { module: 'ATTENDANCE', action: 'VIEW' },
-              { module: 'ATTENDANCE', action: 'PUNCH_IN' },
-            ],
-            LegacyAttendanceController,
-          ),
-        ),
-      ).toBe(true);
+    it('does not promote a granular punch-in grant to the broader legacy CREATE permission', () => {
+      expect(() => guard.canActivate(context(
+        legacyHandler,
+        [{ module: 'ATTENDANCE', action: 'PUNCH_IN' }],
+        LegacyAttendanceController,
+      ))).toThrow(ForbiddenException);
     });
 
     it('allows employee with ATTENDANCE:CREATE to pass when route requires ATTENDANCE:CREATE', () => {
@@ -140,6 +187,7 @@ describe('Attendance check-in authorization', () => {
     it('rejects employee with 403 Forbidden when ATTENDANCE:CREATE is required and user lacks punch permissions', () => {
       for (const permissions of [
         [],
+        [{ module: 'ATTENDANCE', action: 'PUNCH_OUT' }],
         [{ module: 'ATTENDANCE', action: 'VIEW' }],
         [{ module: 'LEADS', action: 'CREATE' }],
       ]) {

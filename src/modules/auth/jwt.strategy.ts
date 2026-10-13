@@ -1,3 +1,4 @@
+import { applyAttendancePermissions, isAttendanceOverride } from '../../common/utils/attendance-permissions.util';
 import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -507,22 +508,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
         }
       }
-
-      // Ensure mutual attendance action compatibility across legacy and granular naming
-      if (permissionsMap.has('ATTENDANCE:PUNCH_IN') || permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
-        if (!permissionsMap.has('ATTENDANCE:CREATE')) {
-          permissionsMap.set('ATTENDANCE:CREATE', { module: 'ATTENDANCE', action: 'CREATE' });
-        }
-      }
-      if (permissionsMap.has('ATTENDANCE:CREATE')) {
-        if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
-          permissionsMap.set('ATTENDANCE:PUNCH_IN', { module: 'ATTENDANCE', action: 'PUNCH_IN' });
-        }
-        if (!permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
-          permissionsMap.set('ATTENDANCE:PUNCH_OUT', { module: 'ATTENDANCE', action: 'PUNCH_OUT' });
-        }
-      }
     }
+
+    applyAttendancePermissions(permissionsMap);
 
     // 4. Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
     let overrideCount = 0;
@@ -535,9 +523,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             })
           : []);
 
+      applyAttendancePermissions(permissionsMap, overrides || []);
       if (overrides && overrides.length > 0) {
         overrideCount = overrides.length;
         for (const ov of overrides) {
+          if (isAttendanceOverride(ov)) continue;
           const modKey = (ov.moduleKey || '').trim();
           const ovType = String(ov.override).toUpperCase();
           if (ovType === 'DEFAULT' || ovType === 'INHERIT') continue;
@@ -552,16 +542,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
               });
             } else if (ovType === 'DENY') {
               permissionsMap.delete(permKey);
-              if (permKey === 'ATTENDANCE:PUNCH_IN' || permKey === 'ATTENDANCE:CREATE') {
-                permissionsMap.delete('ATTENDANCE:PUNCH_IN');
-                permissionsMap.delete('ATTENDANCE:CREATE');
-              }
-              if (permKey === 'ATTENDANCE:PUNCH_OUT') {
-                permissionsMap.delete('ATTENDANCE:PUNCH_OUT');
-                if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
-                  permissionsMap.delete('ATTENDANCE:CREATE');
-                }
-              }
             }
           } else {
             const modUpper = modKey.toUpperCase().replace(/\s+/g, '_');
