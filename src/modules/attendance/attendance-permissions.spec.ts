@@ -161,12 +161,19 @@ describe('Attendance check-in authorization', () => {
 
     const legacyHandler = LegacyAttendanceController.prototype.checkIn;
 
-    it('does not promote a granular punch-in grant to the broader legacy CREATE permission', () => {
-      expect(() => guard.canActivate(context(
-        legacyHandler,
-        [{ module: 'ATTENDANCE', action: 'PUNCH_IN' }],
-        LegacyAttendanceController,
-      ))).toThrow(ForbiddenException);
+    it('allows employee with ATTENDANCE:PUNCH_IN to pass when route requires ATTENDANCE:CREATE', () => {
+      expect(
+        guard.canActivate(
+          context(
+            legacyHandler,
+            [
+              { module: 'ATTENDANCE', action: 'VIEW' },
+              { module: 'ATTENDANCE', action: 'PUNCH_IN' },
+            ],
+            LegacyAttendanceController,
+          ),
+        ),
+      ).toBe(true);
     });
 
     it('allows employee with ATTENDANCE:CREATE to pass when route requires ATTENDANCE:CREATE', () => {

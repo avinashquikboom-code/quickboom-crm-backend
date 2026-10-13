@@ -31,7 +31,7 @@ export function userHasModulePermission(
       (rMod === 'ATTENDANCE' || normalizeMod(rMod) === 'ATTENDANCE') &&
       (uMod === 'ATTENDANCE' || normalizeMod(uMod) === 'ATTENDANCE') &&
       (
-        ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN') &&
+        ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN' || rAct === 'CREATE') &&
           (uAct === 'PUNCH_IN' || uAct === 'CHECK_IN' || uAct === 'CREATE')) ||
         ((rAct === 'PUNCH_OUT' || rAct === 'CHECK_OUT') &&
           (uAct === 'PUNCH_OUT' || uAct === 'CHECK_OUT' || uAct === 'CREATE')) ||
@@ -128,7 +128,7 @@ export class PermissionsGuard implements CanActivate {
         (rMod === 'ATTENDANCE' || normalizeMod(rMod) === 'ATTENDANCE') &&
         (uMod === 'ATTENDANCE' || normalizeMod(uMod) === 'ATTENDANCE') &&
         (
-          ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN') &&
+          ((rAct === 'PUNCH_IN' || rAct === 'CHECK_IN' || rAct === 'CREATE') &&
             (uAct === 'PUNCH_IN' || uAct === 'CHECK_IN' || uAct === 'CREATE')) ||
           ((rAct === 'PUNCH_OUT' || rAct === 'CHECK_OUT') &&
             (uAct === 'PUNCH_OUT' || uAct === 'CHECK_OUT' || uAct === 'CREATE')) ||

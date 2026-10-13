@@ -54,11 +54,14 @@ export function applyAttendancePermissions(
       for (const denied of ['CREATE', 'PUNCH_IN', 'PUNCH_OUT', 'START_BREAK', 'END_BREAK']) {
         permissions.delete(`ATTENDANCE:${denied}`);
       }
+    } else if (action === 'PUNCH_IN') {
+      permissions.delete('ATTENDANCE:PUNCH_IN');
+      permissions.delete('ATTENDANCE:CREATE');
+    } else if (action === 'PUNCH_OUT') {
+      permissions.delete('ATTENDANCE:PUNCH_OUT');
+      permissions.delete('ATTENDANCE:CREATE');
     } else {
       permissions.delete(`ATTENDANCE:${action}`);
-      if (['PUNCH_IN', 'PUNCH_OUT', 'START_BREAK', 'END_BREAK'].includes(action)) {
-        permissions.delete('ATTENDANCE:CREATE');
-      }
     }
   }
 }
