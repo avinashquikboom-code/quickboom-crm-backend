@@ -2084,6 +2084,56 @@ status: ${item.status}`);
     return leaderId || null;
   }
 
+  private isPlatformAdmin(person?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    department?: { name?: string | null } | null;
+    designation?: { name?: string | null } | null;
+    user?: {
+      userRoles?: Array<{
+        role?: { type?: string; name?: string } | null;
+      }> | null;
+    } | null;
+  } | null): boolean {
+    if (!person) return false;
+    const adminRoleTypes = new Set(['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'ADMIN']);
+    const first = String(person?.firstName || '').trim().toUpperCase();
+    const last = String(person?.lastName || '').trim().toUpperCase();
+    const fullName = `${first} ${last}`.trim().replace(/\s+/g, ' ');
+    if (
+      fullName === 'SUPER ADMIN' ||
+      fullName === 'COMPANY ADMIN' ||
+      fullName === 'SYSTEM ADMIN' ||
+      fullName === 'TENANT ADMIN' ||
+      fullName === 'ADMIN' ||
+      first === 'SUPER ADMIN' ||
+      last === 'SUPER ADMIN' ||
+      /\bSUPER[\s_]*ADMIN\b|\bCOMPANY[\s_]*ADMIN\b|\bTENANT[\s_]*ADMIN\b|\bSYSTEM[\s_]*ADMIN\b/i.test(fullName)
+    ) {
+      return true;
+    }
+    const desName = String(person?.designation?.name || '').toUpperCase();
+    const depName = String(person?.department?.name || '').toUpperCase();
+    const roleLabel = `${desName} ${depName}`.trim();
+    if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN|\bADMIN\b/i.test(roleLabel)) {
+      return true;
+    }
+    const userRoles = person?.user?.userRoles || [];
+    if (
+      userRoles.some((ur: any) => {
+        const rType = String(ur?.role?.type || '').toUpperCase();
+        const rName = String(ur?.role?.name || '').toUpperCase();
+        return (
+          adminRoleTypes.has(rType) ||
+          /SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN|\bADMIN\b/i.test(rName)
+        );
+      })
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   private isSalesOrBpoEmployee(employee: any): boolean {
     return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
       `${employee?.department?.name || ''} ${employee?.designation?.name || ''} ${(employee?.user?.userRoles || []).map((entry: any) => entry.role?.name || '').join(' ')}`,
@@ -2100,6 +2150,7 @@ status: ${item.status}`);
         status?: string | null;
         designation?: { name?: string | null } | null;
         department?: { name?: string | null } | null;
+        user?: { userRoles?: Array<{ role?: { type?: string; name?: string } | null }> | null } | null;
       } | null;
     }>,
     teamCustomerId?: number | null,
@@ -2109,7 +2160,13 @@ status: ${item.status}`);
       const employeeId = Number(member.employeeId || member.employee?.id);
       if (!Number.isInteger(employeeId) || employeeId <= 0) return false;
       const status = String(member.employee?.status || 'ACTIVE').toUpperCase();
-      if (status === 'INACTIVE' || this.isSalesOrBpoEmployee(member.employee)) return false;
+      if (
+        status === 'INACTIVE' ||
+        this.isSalesOrBpoEmployee(member.employee) ||
+        this.isPlatformAdmin(member.employee)
+      ) {
+        return false;
+      }
       if (
         teamCustomerId &&
         member.employee?.customerId &&
@@ -2413,26 +2470,11 @@ status: ${item.status}`);
     );
     const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
       `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
-    // Admin role types that must never appear as the production task assignee
-    const adminRoleTypes = new Set(['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN']);
-    const isPlatformAdmin = (person?: { firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null) => {
-      if (!person) return false;
-      // 1. Check designation / department name patterns
-      const roleLabel = `${person?.designation?.name || ''} ${person?.department?.name || ''}`.toUpperCase();
-      if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN/.test(roleLabel)) return true;
-      if (roleLabel.trim() === 'ADMIN') return true;
-      // 2. Check explicit user role type from the User table (most reliable)
-      const userRoles = person?.user?.userRoles || [];
-      if (userRoles.some((ur: any) => ur?.role?.type && adminRoleTypes.has(ur.role.type))) return true;
-      // 3. Check full name heuristic (fallback for records without designation/user role)
-      const productionRole = /DESIGN|EDIT|PHOTO|SHOOT|SOCIAL|GRAPHIC|VIDEO|CONTENT|REEL/.test(roleLabel);
-      const name = personName(person).toUpperCase().replace(/\s+/g, ' ');
-      return !productionRole && (name === 'SUPER ADMIN' || name === 'COMPANY ADMIN' || name === 'SYSTEM ADMIN');
-    };
-    const isTaskAssignee = (person?: { id?: number; firstName?: string | null; lastName?: string | null; department?: { name?: string | null } | null; designation?: { name?: string | null } | null; user?: { userRoles?: Array<{ role?: { type?: string } | null }> | null } | null } | null, requireTeam = true) => {
+
+    const isTaskAssignee = (person?: any, requireTeam = true) => {
       const id = Number(person?.id);
       if (!Number.isInteger(id) || id <= 0) return false;
-      if (isPlatformAdmin(person) || this.isSalesOrBpoEmployee(person)) return false;
+      if (this.isPlatformAdmin(person) || this.isSalesOrBpoEmployee(person)) return false;
       if (requireTeam && memberIds.size > 0 && !memberIds.has(id)) return false;
       return true;
     };
@@ -2442,7 +2484,7 @@ status: ${item.status}`);
       ...(w.tasks || []).map((task: any) => task.assignedTo),
       w.editor,
     ];
-    let stored = candidates.find((person) => isTaskAssignee(person, true));
+    const stored = candidates.find((person) => isTaskAssignee(person, true));
     if (stored) {
       return { id: Number(stored.id), name: personName(stored) || 'Not assigned', teamName };
     }
@@ -2557,7 +2599,7 @@ status: ${item.status}`);
         data,
       });
 
-      if (data.assignedToId && previousAssigneeId && this.isSalesOrBpoEmployee(previousPerson)) {
+      if (data.assignedToId && previousAssigneeId && (this.isSalesOrBpoEmployee(previousPerson) || this.isPlatformAdmin(previousPerson))) {
         // Correct only pending workflow steps owned by the misplaced BPO owner.
         // Editing steps use the eligible production editor; completed work is preserved.
         const editStep = { OR: ['edit', 'color', 'grade'].map((text) => ({ title: { contains: text, mode: 'insensitive' } })) };
@@ -3499,7 +3541,18 @@ status: ${item.status}`);
 
       const scheduleAssignee = this.productionTaskAssignee(w);
       const assignedEmpName = scheduleAssignee.name || 'Not assigned';
-      const editorName = personName(w.editor);
+
+      // Authoritative editor resolution: must have valid editorId and not be admin/BPO
+      const rawEditor = w.editor;
+      const isRealEditor = Boolean(
+        w.editorId &&
+        rawEditor &&
+        Number(rawEditor.id) > 0 &&
+        !this.isPlatformAdmin(rawEditor) &&
+        !this.isSalesOrBpoEmployee(rawEditor),
+      );
+      const resolvedEditorId = isRealEditor ? Number(w.editorId) : null;
+      const resolvedEditorName = isRealEditor ? (personName(rawEditor) || null) : null;
 
       const isViewerEditor =
         viewerCandidateIds.some((cid) => cid === Number(w.editorId)) ||
@@ -3529,12 +3582,17 @@ status: ${item.status}`);
       if (assignedEmpName && assignedEmpName !== 'Not assigned') {
         assignedEmpList.push(assignedEmpName);
       }
-      if (editorName && !assignedEmpList.includes(editorName)) {
-        assignedEmpList.push(editorName);
+      if (resolvedEditorName && !assignedEmpList.includes(resolvedEditorName)) {
+        assignedEmpList.push(resolvedEditorName);
       }
       if (empRecord && viewerCandidateIds.includes(numEmployeeId) && directlyAssigned(w)) {
         const myName = personName(empRecord);
-        if (myName && !assignedEmpList.includes(myName)) {
+        if (
+          myName &&
+          !this.isPlatformAdmin(empRecord) &&
+          !this.isSalesOrBpoEmployee(empRecord) &&
+          !assignedEmpList.includes(myName)
+        ) {
           assignedEmpList.push(myName);
         }
       }
@@ -3582,9 +3640,9 @@ status: ${item.status}`);
         assignedToId: scheduleAssignee.id,
         assignedEmployee: assignedEmpName,
         assignedToName: assignedEmpName,
-        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
-        editorId: w.editorId ?? null,
-        editorName: (w.editorId && editorName) ? editorName : null,
+        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName && assignedEmpName !== 'Not assigned' ? [assignedEmpName] : []),
+        editorId: resolvedEditorId,
+        editorName: resolvedEditorName,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,

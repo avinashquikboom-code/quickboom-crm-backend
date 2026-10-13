@@ -31,4 +31,39 @@ describe('Customer calendar editor response', () => {
     const row = await response(null, null);
     expect(row).toMatchObject({ editorId: null, editorName: null });
   });
+
+  it('employee calendar never substitutes Super Admin or BPO employee as production assignee', async () => {
+    const findMany = jest.fn().mockResolvedValue([{
+      id: 1, customerId: 111, assignedToId: 1, editorId: null,
+      assignedTo: { id: 1, firstName: 'Super', lastName: 'Admin', designation: null, department: null },
+      editor: null,
+      workType: WorkType.REELS_SHOOT, title: 'Reel #1: Shoot',
+      description: 'Reel #1 Video & Asset Shoot on location',
+      status: WorkStatus.SCHEDULED,
+      scheduledDate: new Date('2026-10-13T10:00:00Z'),
+      team: { id: 5, name: 'PRODUCTION TEAM_A', members: [{ employeeId: 10 }] },
+      tasks: [],
+      customer: { id: 111, name: 'Client 111' },
+    }]);
+    const service = new WorkService({
+      work: { findMany },
+      employee: {
+        findUnique: jest.fn().mockResolvedValue({ id: 10, designation: { name: 'Videographer' } }),
+      },
+      teamMember: { findMany: jest.fn().mockResolvedValue([]) },
+      customer: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any);
+
+    const rows = await service.getEmployeeCalendar(10, { date: '2026-10-13' }, { allTenantCustomers: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      assignedToId: null,
+      assignedEmployee: 'Not assigned',
+      assignedToName: 'Not assigned',
+      editorId: null,
+      editorName: null,
+      team: 'PRODUCTION TEAM_A',
+    });
+    expect(rows[0].assignedEmployees).toEqual([]);
+  });
 });
