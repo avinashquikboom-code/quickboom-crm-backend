@@ -510,6 +510,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    // Ensure all active workforce employees have baseline attendance permissions
+    // (VIEW, CREATE, PUNCH_IN, PUNCH_OUT) so they can mark daily attendance,
+    // while preserving explicit DENY overrides that are applied immediately after.
+    if (user.employee && (!user.employee.status || user.employee.status === 'ACTIVE')) {
+      if (!permissionsMap.has('ATTENDANCE:VIEW')) {
+        permissionsMap.set('ATTENDANCE:VIEW', { module: 'ATTENDANCE', action: 'VIEW' });
+      }
+      if (!permissionsMap.has('ATTENDANCE:CREATE')) {
+        permissionsMap.set('ATTENDANCE:CREATE', { module: 'ATTENDANCE', action: 'CREATE' });
+      }
+      if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
+        permissionsMap.set('ATTENDANCE:PUNCH_IN', { module: 'ATTENDANCE', action: 'PUNCH_IN' });
+      }
+      if (!permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
+        permissionsMap.set('ATTENDANCE:PUNCH_OUT', { module: 'ATTENDANCE', action: 'PUNCH_OUT' });
+      }
+    }
+
     applyAttendancePermissions(permissionsMap);
 
     // 4. Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)

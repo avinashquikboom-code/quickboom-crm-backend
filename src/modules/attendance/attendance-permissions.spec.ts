@@ -206,4 +206,71 @@ describe('Attendance check-in authorization', () => {
       }
     });
   });
+
+  describe('Active workforce employee baseline attendance resolution', () => {
+    function resolveEmployeePermissions(
+      user: { employee?: { status?: string; employeeModuleOverrides?: any[] } | null },
+      initialRolePermissions: { module: string; action: string }[],
+    ) {
+      const permissionsMap = new Map<string, { module: string; action: string }>();
+      for (const p of initialRolePermissions) {
+        permissionsMap.set(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`, {
+          module: p.module.toUpperCase(),
+          action: p.action.toUpperCase(),
+        });
+      }
+
+      if (user.employee && (!user.employee.status || user.employee.status === 'ACTIVE')) {
+        if (!permissionsMap.has('ATTENDANCE:VIEW')) {
+          permissionsMap.set('ATTENDANCE:VIEW', { module: 'ATTENDANCE', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('ATTENDANCE:CREATE')) {
+          permissionsMap.set('ATTENDANCE:CREATE', { module: 'ATTENDANCE', action: 'CREATE' });
+        }
+        if (!permissionsMap.has('ATTENDANCE:PUNCH_IN')) {
+          permissionsMap.set('ATTENDANCE:PUNCH_IN', { module: 'ATTENDANCE', action: 'PUNCH_IN' });
+        }
+        if (!permissionsMap.has('ATTENDANCE:PUNCH_OUT')) {
+          permissionsMap.set('ATTENDANCE:PUNCH_OUT', { module: 'ATTENDANCE', action: 'PUNCH_OUT' });
+        }
+      }
+
+      applyAttendancePermissions(permissionsMap, user.employee?.employeeModuleOverrides || []);
+      return [...permissionsMap.values()];
+    }
+
+    it('grants punch-in authorization to active employee whose designation role only had DATA_CAPTURE and LEADS', () => {
+      const user = { employee: { status: 'ACTIVE' } };
+      const rolePermissions = [
+        { module: 'DATA_CAPTURE', action: 'VIEW' },
+        { module: 'DATA_CAPTURE', action: 'CREATE' },
+        { module: 'LEADS', action: 'VIEW' },
+      ];
+      const permissions = resolveEmployeePermissions(user, rolePermissions);
+
+      expect(guard.canActivate(context(AttendanceController.prototype.checkIn, permissions))).toBe(true);
+      expect(guard.canActivate(context(AttendanceController.prototype.checkOut, permissions))).toBe(true);
+    });
+
+    it('strictly blocks punch-in if an active employee has an explicit DENY override on attendance', () => {
+      const user = {
+        employee: {
+          status: 'ACTIVE',
+          employeeModuleOverrides: [
+            { moduleKey: 'ATTENDANCE', override: 'DENY' },
+          ],
+        },
+      };
+      const rolePermissions = [
+        { module: 'DATA_CAPTURE', action: 'VIEW' },
+        { module: 'LEADS', action: 'VIEW' },
+      ];
+      const permissions = resolveEmployeePermissions(user, rolePermissions);
+
+      expect(() =>
+        guard.canActivate(context(AttendanceController.prototype.checkIn, permissions)),
+      ).toThrow(ForbiddenException);
+    });
+  });
 });
+
