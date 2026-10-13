@@ -19,6 +19,7 @@ import {
   formatTimeInTimezone,
   formatDurationHoursMinutes,
 } from '../../common/utils/timezone.util';
+import { isUserAdmin } from '../../common/utils/role.util';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 
 export interface FindAllEmployeesParams {
@@ -2613,7 +2614,7 @@ export class EmployeeService {
       throw new ForbiddenException('customerId is required for attendance access');
     }
 
-    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    const isEmpUser = user && !isUserAdmin(user) && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
         where: {
