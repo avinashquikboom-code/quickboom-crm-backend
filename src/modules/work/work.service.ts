@@ -3259,6 +3259,13 @@ status: ${item.status}`);
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
+            user: {
+              select: {
+                userRoles: {
+                  select: { role: { select: { type: true, name: true } } },
+                },
+              },
+            },
           },
         },
         editor: {
@@ -3268,6 +3275,13 @@ status: ${item.status}`);
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
+            user: {
+              select: {
+                userRoles: {
+                  select: { role: { select: { type: true, name: true } } },
+                },
+              },
+            },
           },
         },
         entitlement: { select: { serviceName: true } },
@@ -3293,6 +3307,13 @@ status: ${item.status}`);
                 lastName: true,
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
+                user: {
+                  select: {
+                    userRoles: {
+                      select: { role: { select: { type: true, name: true } } },
+                    },
+                  },
+                },
               },
             },
           },
@@ -3562,8 +3583,8 @@ status: ${item.status}`);
         assignedEmployee: assignedEmpName,
         assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName ? [assignedEmpName] : []),
-        editorId: w.editorId,
-        editorName: editorName || null,
+        editorId: w.editorId ?? null,
+        editorName: (w.editorId && editorName) ? editorName : null,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,

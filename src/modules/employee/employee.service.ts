@@ -2605,11 +2605,12 @@ export class EmployeeService {
     const limit = Math.min(Math.max(Number(options?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const andConditions: any[] = [];
+
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      where.customerId = numCustomerId;
+      andConditions.push({ customerId: numCustomerId });
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for attendance access');
     }
@@ -2625,58 +2626,79 @@ export class EmployeeService {
         },
       }));
       if (emp) {
-        where.employeeId = emp.id;
+        andConditions.push({ employeeId: emp.id });
       }
     }
 
     if (options?.date) {
       const { start, end } = getBusinessDayRange(options.date);
-      where.date = { gte: start, lte: end };
+      andConditions.push({ date: { gte: start, lte: end } });
     }
 
     if (options?.branch && options.branch !== 'ALL') {
+      const targetCustomerFilter = customerId !== undefined && customerId !== null ? { customerId: Number(customerId) } : {};
       const activeBranches = await this.prisma.branchGeofence.findMany({
-        where: { ...(where.customerId ? { customerId: where.customerId } : {}), isActive: true },
+        where: { ...targetCustomerFilter, isActive: true },
         select: { id: true, name: true },
       });
       const matchedBranch = activeBranches.find(
         (b) => b.name.toLowerCase() === options.branch!.toLowerCase() || String(b.id) === options.branch,
       );
       if (matchedBranch) {
-        where.employee = {
-          ...(where.employee || {}),
+        andConditions.push({
           OR: [
             { officeId: matchedBranch.id },
-            { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
-            { branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
+            { office: { name: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } } },
+            { locationIn: { contains: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
+            {
+              employee: {
+                OR: [
+                  { officeId: matchedBranch.id },
+                  { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
+                  { branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
+                ],
+              },
+            },
           ],
-        };
+        });
       } else {
-        where.employee = {
-          ...(where.employee || {}),
-          branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode },
-        };
+        andConditions.push({
+          OR: [
+            { office: { name: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } } },
+            { locationIn: { contains: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
+            {
+              employee: {
+                branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode },
+              },
+            },
+          ],
+        });
       }
     }
 
     if (options?.search) {
-      where.employee = {
-        ...(where.employee || {}),
-        OR: [
-          { firstName: { contains: options.search, mode: 'insensitive' } },
-          { lastName: { contains: options.search, mode: 'insensitive' } },
-          { employeeCode: { contains: options.search, mode: 'insensitive' } },
-        ],
-      };
+      andConditions.push({
+        employee: {
+          OR: [
+            { firstName: { contains: options.search, mode: 'insensitive' } },
+            { lastName: { contains: options.search, mode: 'insensitive' } },
+            { employeeCode: { contains: options.search, mode: 'insensitive' } },
+          ],
+        },
+      });
     }
 
+    const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
+
     // Auto-checkout any open attendances before listing
-    await this.autoCheckOutOpenAttendances(where.customerId);
+    const customerFilter = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+    await this.autoCheckOutOpenAttendances(customerFilter);
 
     const [rawRecords, total] = await Promise.all([
       this.prisma.attendance.findMany({
         where,
         include: {
+          office: true,
           employee: { include: { office: true } },
           breaks: { orderBy: { breakStart: 'asc' } },
         },
@@ -2797,8 +2819,8 @@ export class EmployeeService {
         customerId: a.customerId,
         employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
         employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
-        branch: a.employee?.office?.name || a.employee?.branch || 'Head Office',
-        office: a.employee?.office?.name || a.employee?.branch || 'Head Office',
+        branch: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
+        office: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
         attendanceDate: a.date ? getBusinessDate(a.date) : '—',
         date: a.date ? getBusinessDate(a.date) : '—',
         punchInAt: punchInIso,
