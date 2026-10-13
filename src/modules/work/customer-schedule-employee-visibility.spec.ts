@@ -286,7 +286,7 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
 
       expect(calendarItems).toHaveLength(1);
       expect(calendarItems[0].id).toBe('501');
-      expect(calendarItems[0].editorId).toBe(20);
+      expect(calendarItems[0]).not.toHaveProperty('editorId');
       expect(calendarItems[0].editorName).toBe('Eddie Editor');
     });
   });

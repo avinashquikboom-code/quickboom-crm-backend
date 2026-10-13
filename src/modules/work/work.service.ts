@@ -1930,7 +1930,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         reworkActionLabel,
         isLocked,
         lockMessage,
-        editorId: w.editor?.id ?? null,
         editorName: isLocked ? null : (w.editor ? `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim() || null : null),
         team: taskAssignee.teamName,
         notes: isLocked
@@ -3638,7 +3637,6 @@ status: ${item.status}`);
         isLocked: false,
         lockMessage: null,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName && assignedEmpName !== 'Not assigned' ? [assignedEmpName] : []),
-        editorId: resolvedEditorId,
         editorName: resolvedEditorName,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
@@ -3883,7 +3881,6 @@ status: ${item.status}`);
         isLocked: false,
         lockMessage: null,
         assignedEmployees: assignedEmp && assignedEmp !== 'Not assigned' ? [assignedEmp] : [],
-        editorId: null,
         editorName: null,
         teamId: null,
         team: t.department?.name || 'Operations',

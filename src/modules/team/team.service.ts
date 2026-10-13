@@ -890,7 +890,6 @@ export class TeamService {
         assignedTeam: team.name,
         employee: assignedEmployeeObj,
         assignedEmployees: assignedEmpList,
-        editorId: w.editorId,
         location: custLocation,
         socialMediaAccount: smAccount,
         platform: platform,

@@ -21,15 +21,16 @@ describe('Customer calendar editor response', () => {
 
   it('returns the actual editor relation independently of the primary assignee', async () => {
     const row = await response({ id: 20, firstName: 'Actual', lastName: 'Editor' }, 20);
-    expect(row).toMatchObject({ editorId: 20, editorName: 'Actual Editor' });
-    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+    expect(row).toMatchObject({ editorName: 'Actual Editor' });
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
       expect(row).not.toHaveProperty(field);
     }
   });
 
   it('returns null editor fields when there is no editor relation', async () => {
     const row = await response(null, null);
-    expect(row).toMatchObject({ editorId: null, editorName: null });
+    expect(row).toMatchObject({ editorName: null });
+    expect(row).not.toHaveProperty('editorId');
   });
 
   it('employee calendar never substitutes Super Admin or BPO employee as production assignee', async () => {
@@ -57,11 +58,10 @@ describe('Customer calendar editor response', () => {
     const rows = await service.getEmployeeCalendar(10, { date: '2026-10-13' }, { allTenantCustomers: true });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      editorId: null,
       editorName: null,
       team: 'PRODUCTION TEAM_A',
     });
-    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
       expect(rows[0]).not.toHaveProperty(field);
     }
     expect(rows[0].assignedEmployees).toEqual([]);
