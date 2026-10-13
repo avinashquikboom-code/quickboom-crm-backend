@@ -14,10 +14,10 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { WorkPermissionService } from './work-permission.service';
-import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
+import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto, CalendarEventResponseDto } from './dto/work.dto';
 import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -504,6 +504,7 @@ export class WorkController {
   @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get scheduled calendar events' })
+  @ApiResponse({ status: 200, description: 'Scheduled calendar events', type: [CalendarEventResponseDto] })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'date', required: false })
   @ApiQuery({ name: 'dateFrom', required: false })

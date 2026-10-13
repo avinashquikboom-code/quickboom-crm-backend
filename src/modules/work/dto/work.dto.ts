@@ -156,3 +156,57 @@ export class AssignWorkDto {
   @IsOptional()
   teamId?: number | string;
 }
+
+export class CalendarEventResponseDto {
+  @ApiProperty({ example: '3316' })
+  id: string;
+
+  @ApiProperty({ example: '3316' })
+  activityId: string;
+
+  @ApiProperty({ example: '111' })
+  customerId: string;
+
+  @ApiProperty({ example: 'Fitness Track Gym' })
+  customerName: string;
+
+  @ApiPropertyOptional({ example: 'PUR-001' })
+  purchaseId?: string;
+
+  @ApiPropertyOptional({ example: 'Reels' })
+  productName?: string;
+
+  @ApiPropertyOptional({ example: 'Reels' })
+  serviceName?: string;
+
+  @ApiPropertyOptional({ example: 'Starter Plan' })
+  planName?: string;
+
+  @ApiProperty({ example: 'Reel #1: Shoot' })
+  title: string;
+
+  @ApiProperty({ example: '2026-10-15' })
+  scheduledDate: string;
+
+  @ApiPropertyOptional({ example: '10:00 AM' })
+  scheduledTime?: string;
+
+  @ApiProperty({ example: 'ASSIGNED' })
+  status: string;
+
+  @ApiPropertyOptional({ example: 'PRODUCTION TEAM_A' })
+  team?: string;
+
+  @ApiPropertyOptional({ example: 'Video Editor' })
+  editorName?: string;
+
+  @ApiPropertyOptional({ example: 'Shoot on location' })
+  notes?: string;
+
+  @ApiPropertyOptional({ example: 'https://storage.quikboom.com/works/reel-01.mp4' })
+  outputUrl?: string;
+
+  @ApiProperty({ example: false })
+  isLocked: boolean;
+}
+
