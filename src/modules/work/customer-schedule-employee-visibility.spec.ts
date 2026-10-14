@@ -244,7 +244,7 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
       expect(calendarItems[0].id).toBe('501');
       expect(calendarItems[0].assignedEmployees).toContain('Sam Shooter');
       for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
-        expect(calendarItems[0]).not.toHaveProperty(field);
+        expect(calendarItems[0]).toHaveProperty(field);
       }
     });
   });
@@ -286,7 +286,7 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
 
       expect(calendarItems).toHaveLength(1);
       expect(calendarItems[0].id).toBe('501');
-      expect(calendarItems[0]).not.toHaveProperty('editorId');
+      expect(calendarItems[0]).toHaveProperty('editorId', 20);
       expect(calendarItems[0].editorName).toBe('Eddie Editor');
     });
   });

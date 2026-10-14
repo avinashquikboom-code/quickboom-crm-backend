@@ -23,14 +23,14 @@ describe('Customer calendar editor response', () => {
     const row = await response({ id: 20, firstName: 'Actual', lastName: 'Editor' }, 20);
     expect(row).toMatchObject({ editorName: 'Actual Editor' });
     for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
-      expect(row).not.toHaveProperty(field);
+      expect(row).toHaveProperty(field);
     }
   });
 
   it('returns null editor fields when there is no editor relation', async () => {
     const row = await response(null, null);
     expect(row).toMatchObject({ editorName: null });
-    expect(row).not.toHaveProperty('editorId');
+    expect(row.editorId).toBeNull();
   });
 
   it('employee calendar never substitutes Super Admin or BPO employee as production assignee', async () => {
@@ -62,7 +62,7 @@ describe('Customer calendar editor response', () => {
       team: 'PRODUCTION TEAM_A',
     });
     for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
-      expect(rows[0]).not.toHaveProperty(field);
+      expect(rows[0]).toHaveProperty(field);
     }
     expect(rows[0].assignedEmployees).toEqual([]);
   });

@@ -23,6 +23,35 @@ import { WorkPermissionService, normalizeActivityType } from './work-permission.
 import { workMatchesDesignation, workTypesForDesignation } from './calendar-query.util';
 import { NotificationService } from '../notification/notification.service';
 
+type WorkEmployee = {
+  id: number;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+const getEmployeeName = (employee?: WorkEmployee | null): string | null => {
+  if (!employee) return null;
+  return `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() || null;
+};
+
+const getWorkEmployeeFields = (work: {
+  workType: string;
+  assignedTo?: WorkEmployee | null;
+  editor?: WorkEmployee | null;
+}) => {
+  const responsibleEmployee = work.workType === 'VIDEO_EDITING'
+    ? work.editor ?? work.assignedTo
+    : work.assignedTo;
+  const responsibleName = getEmployeeName(responsibleEmployee);
+  return {
+    assignedToId: responsibleEmployee?.id ?? null,
+    assignedEmployee: responsibleName,
+    assignedToName: responsibleName,
+    editorId: work.editor?.id ?? null,
+    editorName: getEmployeeName(work.editor),
+  };
+};
+
 @Injectable()
 export class WorkService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WorkService.name);
@@ -413,9 +442,14 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
       this.prisma.work.count({ where }),
     ]);
 
+    const mappedItems = items.map((work) => ({
+      ...work,
+      ...getWorkEmployeeFields(work),
+    }));
+
     return {
-      items,
-      data: items,
+      items: mappedItems,
+      data: mappedItems,
       pagination: {
         page,
         pageSize: limit,
@@ -1748,6 +1782,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             id: true,
             firstName: true,
             lastName: true,
+            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -1764,6 +1799,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             id: true,
             firstName: true,
             lastName: true,
+            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -1930,7 +1966,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         reworkActionLabel,
         isLocked,
         lockMessage,
-        editorName: isLocked ? null : (w.editor ? `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim() || null : null),
+        ...getWorkEmployeeFields(w),
         team: taskAssignee.teamName,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
@@ -3298,6 +3334,7 @@ status: ${item.status}`);
             id: true,
             firstName: true,
             lastName: true,
+            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -3314,6 +3351,7 @@ status: ${item.status}`);
             id: true,
             firstName: true,
             lastName: true,
+            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -3637,7 +3675,7 @@ status: ${item.status}`);
         isLocked: false,
         lockMessage: null,
         assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName && assignedEmpName !== 'Not assigned' ? [assignedEmpName] : []),
-        editorName: resolvedEditorName,
+        ...getWorkEmployeeFields(w),
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,

@@ -124,7 +124,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
       expect(result.map((w) => w.assignedEmployees)).toEqual([['Employee A'], ['Employee B'], ['Employee A']]);
       for (const w of result) {
         for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
-          expect(w).not.toHaveProperty(field);
+          expect(w).toHaveProperty(field);
         }
       }
     });

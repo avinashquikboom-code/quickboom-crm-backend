@@ -311,7 +311,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(calendar[0].id).toBe('101');
     expect(calendar[0].assignedEmployees).toContain('John Photographer');
     for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
-      expect(calendar[0]).not.toHaveProperty(field);
+      expect(calendar[0]).toHaveProperty(field);
     }
     expect(calendar[0].editorName).toBe('Alice Editor');
   });
