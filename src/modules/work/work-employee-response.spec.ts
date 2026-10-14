@@ -53,15 +53,4 @@ describe('Work responsible employee responses', () => {
     expect(findMany.mock.calls[0][0].include).toMatchObject({ assignedTo: true, editor: true });
   });
 
-  it('maps all customer calendar activities with relations fetched in the main query', async () => {
-    const findMany = jest.fn().mockResolvedValue(records());
-    const service = new WorkService({ work: { findMany } } as any);
-    verify(await service.getCalendar(8, { date: '2026-10-14' }));
-    expect(findMany).toHaveBeenCalledTimes(1);
-    for (const relation of ['assignedTo', 'editor']) {
-      expect(findMany.mock.calls[0][0].include[relation].select).toMatchObject({
-        id: true, firstName: true, lastName: true, employeeCode: true,
-      });
-    }
-  });
 });

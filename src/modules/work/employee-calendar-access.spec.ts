@@ -310,9 +310,10 @@ describe('Employee calendar team and assignment regressions', () => {
     expect(metrics.total).toBe(calendar.length);
     expect(metrics.total).toBe(3);
   });
-  it('keeps every active team assignment regardless of designation or another assignee', async () => {
+  it('filters team assignments by role in assigned-only mode', async () => {
     const calendar = await workService.getEmployeeCalendar(5, { month: 10, year: 2026 }, { assignedOnly: true });
-    expect(calendar.map((item) => item.id)).toEqual(expect.arrayContaining(['801', '804', '806', '807']));
+    expect(calendar.map((item) => item.id)).toEqual(expect.arrayContaining(['804', '806', '807']));
+    expect(calendar.find((item) => item.id === '801')).toBeUndefined();
     expect(calendar.find((item) => item.id === '803')).toBeUndefined();
   });
 
@@ -459,7 +460,7 @@ describe('Employee calendar team and assignment regressions', () => {
       expect(debug).toEqual(expect.stringContaining('authUserId=2 resolvedEmployeeId=1'));
       expect(debug).toEqual(expect.stringContaining('membershipTeams=7'));
       expect(debug).toEqual(expect.stringContaining('directWorkCount=1 teamWorkCount=0 customerWorkCount=4'));
-      expect(debug).toEqual(expect.stringContaining('finalCount=5'));
+      expect(debug).toEqual(expect.stringContaining('finalCount=2'));
       expect(response.body.data.map((item: any) => item.id)).toEqual(expect.arrayContaining(['801', '802']));
       expect(response.body.data.find((item: any) => item.id === '803')).toBeUndefined();
       expect(response.body.data.find((item: any) => item.id === '801')).toMatchObject({
@@ -532,6 +533,8 @@ describe('Employee calendar team and assignment regressions', () => {
     ];
 
     const prisma = testingModule.get(PrismaService) as any;
+    prisma.employee.findUnique.mockResolvedValue({ id: 1, userId: 2, customerId: 1, status: 'ACTIVE', designation: { name: 'Video Editor' } });
+    testingModule.get(WorkPermissionService).getAllowedActivityTypesForEmployee = jest.fn().mockResolvedValue({ allowedTypes: new Set(['REEL_EDIT']), isFullAccess: false, isProductionManager: false });
     prisma.customer.findMany.mockResolvedValue([
       { id: 101, assignedTeamId: 7 },
       { id: 102, assignedTeamId: 7 },
@@ -545,9 +548,9 @@ describe('Employee calendar team and assignment regressions', () => {
     });
 
     const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-20' }, { assignedOnly: true });
-    expect(calendar).toHaveLength(3);
-    expect(calendar.map((c) => c.id)).toEqual(expect.arrayContaining(['701', '702', '703']));
-    expect(calendar.map((c) => c.customerName)).toEqual(expect.arrayContaining(['test pvt Ltd', 'Customer B', 'Customer C']));
+    expect(calendar).toHaveLength(2);
+    expect(calendar.map((c) => c.id)).toEqual(expect.arrayContaining(['701', '702']));
+    expect(calendar.map((c) => c.customerName)).toEqual(expect.arrayContaining(['test pvt Ltd', 'Customer B']));
   });
 
   it('retrieves both mobile-created (isActive: true) and Admin Panel Won Lead (isActive: false) customers in Employee Calendar', async () => {
@@ -580,7 +583,7 @@ describe('Employee calendar team and assignment regressions', () => {
         customerId: 202,
         teamId: 7,
         assignedToId: 1,
-        workType: WorkType.EDITING,
+        workType: WorkType.REELS_SHOOT,
         title: 'Admin Won Lead Video Edit',
         scheduledDate: new Date('2026-10-20T00:00:00.000Z'),
         scheduledTime: '02:00 PM',

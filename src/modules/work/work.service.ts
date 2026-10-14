@@ -1782,7 +1782,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             id: true,
             firstName: true,
             lastName: true,
-            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -1799,7 +1798,6 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             id: true,
             firstName: true,
             lastName: true,
-            employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
@@ -1966,7 +1964,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         reworkActionLabel,
         isLocked,
         lockMessage,
-        ...getWorkEmployeeFields(w),
+        editorName: isLocked ? null : (w.editor ? `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim() || null : null),
         team: taskAssignee.teamName,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
@@ -2711,14 +2709,6 @@ status: ${item.status}`);
       return [];
     }
 
-    // JIT task auto carry-forward check (at most once every 60 seconds)
-    if (!options?.assignedOnly && process.env.NODE_ENV !== 'test' && Date.now() - this.lastCarryForwardRunMs > 60000) {
-      this.lastCarryForwardRunMs = Date.now();
-      await this.autoCarryForwardIncompleteWorks().catch((err) => {
-        this.logger.warn(`JIT carry-forward in getEmployeeCalendar warning: ${err?.message}`);
-      });
-    }
-
     // Resolve employee details for complete relationship mapping
     const empRecord = this.prisma.employee?.findUnique
       ? await this.prisma.employee.findUnique({
@@ -2790,15 +2780,6 @@ status: ${item.status}`);
       isProductionManager = true;
     }
     const viewerCandidateIds = [numEmployeeId];
-    if (
-      !options?.assignedOnly &&
-      (empRecord as any)?.userId &&
-      Number((empRecord as any).userId) > 0 &&
-      Number((empRecord as any).userId) !== numEmployeeId
-    ) {
-      viewerCandidateIds.push(Number((empRecord as any).userId));
-    }
-
     const allTenantCustomers = options?.allTenantCustomers === true;
     // Mobile calendar always passes allTenantCustomers. That flag used to set
     // customer.id = the employee's company id, so only one customer came back.
@@ -2829,29 +2810,6 @@ status: ${item.status}`);
       options?.assignedOnly === true,
     );
     const authorizedTeamIds = [...new Set([...productionTeamIds, ...membershipTeamIds])];
-    if (
-      authorizedTeamIds.length > 0 &&
-      typeof this.prisma.customer?.findMany === 'function' &&
-      typeof this.prisma.team?.findUnique === 'function'
-    ) {
-      try {
-        const assignedCustomers = await this.prisma.customer.findMany({
-          where: {
-            deletedAt: null,
-            assignedTeamId: { in: authorizedTeamIds },
-          },
-          select: { id: true, assignedTeamId: true },
-        });
-        for (const customer of assignedCustomers) {
-          if (!customer.assignedTeamId) continue;
-          await this.syncCustomerTeamWorkAssignments(customer.id, customer.assignedTeamId);
-        }
-      } catch (assignErr: any) {
-        this.logger.warn(
-          `getEmployeeCalendar production assignment warning: ${assignErr?.message}`,
-        );
-      }
-    }
     const teamCustomerIds = !isProductionManager
       ? await this.customerIdsAssignedToTeams(authorizedTeamIds)
       : [];
@@ -2934,54 +2892,6 @@ status: ${item.status}`);
         }
       }
     }
-    const designationSchedule = () => {
-      if (visibleTypes.size === 0 || !tenantCustomerId) return [];
-      const companyId = Number(tenantCustomerId);
-      const companyScope: any[] = [
-        { customerId: companyId },
-        { customer: { assignedTeam: { customerId: companyId, isActive: true } } },
-        { customer: { assignedEmployeeRel: { customerId: companyId } } },
-        { customer: { createdByEmployeeRel: { customerId: companyId } } },
-        { customer: { originLead: { customerId: companyId, deletedAt: null } } },
-        { customer: { leads: { some: { customerId: companyId, deletedAt: null } } } },
-      ];
-      if (authorizedTeamIds.length > 0) {
-        companyScope.push({
-          customer: { deletedAt: null, assignedTeamId: { in: authorizedTeamIds } },
-        });
-      }
-      return [
-        {
-          AND: [
-            { workType: { in: Array.from(visibleTypes) } },
-            { OR: companyScope },
-            {
-              OR: [
-                { assignedToId: numEmployeeId },
-                { editorId: numEmployeeId },
-                {
-                  AND: ['assignedTo', 'editor'].map((relation) => ({
-                    OR: [
-                      { [`${relation}Id`]: null },
-                      {
-                        [relation]: {
-                          department: {
-                            OR: ['BPO', 'SALES', 'CALL'].map((name) => ({
-                              name: { contains: name, mode: 'insensitive' },
-                            })),
-                          },
-                        },
-                      },
-                    ],
-                  })),
-                },
-              ],
-            },
-          ],
-        },
-      ];
-    };
-
     if (assignedOnly) {
       // Own assignments, plus customers allotted to this employee's teams.
       // Customer.assignedTeamId is the allotment. Company id is not.
@@ -3008,7 +2918,6 @@ status: ${item.status}`);
       const orConditions: any[] = [
         ...directAssignment(),
         ...teamCustomerWork(authorizedTeamIds),
-        ...designationSchedule(),
       ];
       if (authorizedTeamIds.length > 0) {
         orConditions.push(
@@ -3108,7 +3017,6 @@ status: ${item.status}`);
       const orConditions: any[] = [
         ...directAssignment(),
         ...teamCustomerWork(membershipTeamIds),
-        ...designationSchedule(),
       ];
 
       if (productionTeamIds.length > 0) {
@@ -3434,115 +3342,48 @@ status: ${item.status}`);
 
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
-    const directlyAssigned = (w: any) => {
-      const directTaskIds = [
-        w.assignedToId,
-        w.editorId,
-        ...(w.tasks || []).map((task: any) => task.assignedToId),
-      ]
-        .map((id: any) => Number(id))
-        .filter((id: number) => Number.isInteger(id) && id > 0);
-      if (directTaskIds.some((id: number) => viewerIds.has(id))) return true;
-
-      // Customer-level ownership (assigned/created staff or lead owner)
-      const customerLevelIds = [
-        w.customer?.assignedEmployeeId,
-        w.customer?.createdByEmployeeId,
-        w.customer?.originLead?.employeeId,
-        w.customer?.originLead?.assignedToId,
-      ]
-        .map((id: any) => Number(id))
-        .filter((id: number) => Number.isInteger(id) && id > 0);
-      if (customerLevelIds.some((id: number) => viewerIds.has(id))) {
-        const normType = normalizeActivityType(w);
-        return (
-          isFullAccess ||
-          visibleTypes.has(String(w.workType || '').toUpperCase()) ||
-          workMatchesDesignation(designationName, w.workType) ||
-          workMatchesDesignation(designationName, normType)
-        );
-      }
-      return false;
+    const matchesRole = (w: any) => {
+      const normalized = normalizeActivityType(w);
+      return visibleTypes.has(String(w.workType || '').toUpperCase()) ||
+        workMatchesDesignation(designationName, w.workType) ||
+        workMatchesDesignation(designationName, normalized) ||
+        (visibleTypes.size === 0 && allowedTypes.has(normalized));
     };
+    const hasRoleRules = visibleTypes.size > 0 || allowedTypes.size > 0;
+    const directlyAssigned = (w: any) =>
+      [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
+        .some((id) => id != null && viewerIds.has(Number(id)));
 
     if (assignedOnly || !isProductionManager) {
       filteredItems = filteredItems.filter((w) => {
-        if (directlyAssigned(w)) return true;
-        // My Calendar uses assignment visibility, independently of designation.
-        // An explicit employee assignee does not revoke an active team's assignment.
-        if (assignedOnly) {
-          const wTeamId = Number(w.teamId || w.team?.id || 0);
-          const cTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
-          const custId = Number(w.customerId || w.customer?.id || 0);
-          const isMemberOfWorkTeam =
-            (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
-            viewerIds.has(Number(w.team?.leaderId)) ||
-            ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
-            viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
-          return (
-            (wTeamId > 0 && authorizedTeamIds.includes(wTeamId)) ||
-            (cTeamId > 0 && authorizedTeamIds.includes(cTeamId)) ||
-            (custId > 0 && teamCustomerIds.includes(custId)) ||
-            isMemberOfWorkTeam
-          );
-        }
-        const normType = normalizeActivityType(w);
-        // Lead/customer Sales owners do not reserve production work. Check each
-        // assignment independently so a genuine production editor remains protected.
-        const productionRelevant = (person: any) => {
-          const department = String(person?.department?.name || '').toUpperCase();
-          const designation = person?.designation?.name || '';
-          return !['BPO', 'SALES', 'CALL'].some((part) => department.includes(part)) &&
-            (designation ? workMatchesDesignation(designation, w.workType) : true);
-        };
-        const otherAssignee = [
-          { id: w.assignedToId, person: w.assignedTo },
-          { id: w.editorId, person: w.editor },
-        ].some(({ id, person }) => Number.isInteger(Number(id)) && Number(id) > 0 &&
-          !viewerIds.has(Number(id)) && productionRelevant(person));
-        if (
-          !otherAssignee &&
-          (visibleTypes.has(String(w.workType || '').toUpperCase()) ||
-            workMatchesDesignation(designationName, w.workType) ||
-            workMatchesDesignation(designationName, normType))
-        ) {
-          return true;
-        }
+        const direct = directlyAssigned(w);
+        // Explicit assignments remain usable when no role metadata is configured.
+        if (hasRoleRules && !matchesRole(w)) return false;
+        if (direct) return true;
+        if (!matchesRole(w)) return false;
         const teamId = Number(w.teamId || w.team?.id || 0);
         const customerTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
-        const isMemberOfWorkTeam =
-          (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
-          viewerIds.has(Number(w.team?.leaderId)) ||
-          ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
-          viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
-        const onAuthorizedTeam =
-          (teamId > 0 && authorizedTeamIds.includes(teamId)) ||
-          (customerTeamId > 0 && authorizedTeamIds.includes(customerTeamId)) ||
-          teamCustomerIds.includes(Number(w.customerId)) ||
-          isMemberOfWorkTeam;
-        if (!onAuthorizedTeam) return false;
-
-        // Work for a customer allotted to the viewer's team stays visible when
-        // the team sync assigned it to another member.
-        if (otherAssignee) {
-          if (!isFullAccess && allowedTypes.size > 0) {
-            return allowedTypes.has(normType);
-          }
-          return true;
-        }
-
-        // For unassigned pool work on the team, check role/designation eligibility
-        if (!isFullAccess && allowedTypes.size > 0) {
-          return allowedTypes.has(normType);
-        }
-
+        const memberOfTeam = [w.team, w.customer?.assignedTeam].some((team) =>
+          (team?.members || []).some((member: any) => viewerIds.has(Number(member.employeeId))) ||
+          viewerIds.has(Number(team?.leaderId)));
+        const customerAssigned = viewerIds.has(Number(w.customer?.assignedEmployeeId));
+        const authorized = authorizedTeamIds.includes(teamId) ||
+          authorizedTeamIds.includes(customerTeamId) ||
+          teamCustomerIds.includes(Number(w.customerId)) || memberOfTeam || customerAssigned;
+        if (!authorized) return false;
+        const editing = ['VIDEO_EDITING', 'EDITING', 'VIDEO'].includes(w.workType);
+        const owner = editing ? w.editor ?? w.assignedTo : w.assignedTo;
+        // A role-matching explicit owner takes precedence over the team pool.
+        if (owner && workMatchesDesignation(owner.designation?.name, w.workType) &&
+          !viewerIds.has(Number(owner.id))) return false;
         return true;
       });
     }
 
     const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
 
-    const mapped = filteredItems.map((w) => {
+    const uniqueItems = [...new Map(filteredItems.map((w) => [String(w.id), w])).values()];
+    const mapped = uniqueItems.map((w) => {
       const purchaseRef = w.subscriptionId
         ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
         : (w.subscription?.id ? `PUR-${String(w.subscription.id).padStart(3, '0')}` : `PUR-${String(w.customerId).padStart(3, '0')}`);

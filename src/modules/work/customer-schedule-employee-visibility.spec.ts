@@ -250,7 +250,7 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
   });
 
   describe('3. Visibility for Assigned Video Editor (20)', () => {
-    it('appears in Video Editor (20) calendar for 2026-10-15', async () => {
+    it('does not show the shoot activity to Video Editor (20)', async () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 20,
         userId: 200,
@@ -284,10 +284,7 @@ describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work',
         date: '2026-10-15',
       });
 
-      expect(calendarItems).toHaveLength(1);
-      expect(calendarItems[0].id).toBe('501');
-      expect(calendarItems[0]).toHaveProperty('editorId', 20);
-      expect(calendarItems[0].editorName).toBe('Eddie Editor');
+      expect(calendarItems).toEqual([]);
     });
   });
 

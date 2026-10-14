@@ -795,22 +795,9 @@ export class TaskService {
       hasProof: t.proofs && t.proofs.length > 0,
     }));
 
-    const works: any[] = await this.findMyProductionWorks(
-      employee.id,
-      employee.userId,
-      employee.customerId,
-      teamIds,
-      query,
-    );
     const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, employee.customerId, teamIds, query);
-    const seenWorkIds = new Set(works.map((work) => work.id));
+    const works = [...new Map(calendarWorks.map((work) => [work.id, work])).values()];
     const assignmentWorks = works.length;
-    for (const calendarWork of calendarWorks) {
-      if (!seenWorkIds.has(calendarWork.id)) {
-        works.push(calendarWork);
-        seenWorkIds.add(calendarWork.id);
-      }
-    }
     const combined = [...hrTasks, ...works];
     const baseTaskCount = await this.prisma.work.count({
       where: { status: { not: WorkStatus.CANCELLED } },
@@ -913,6 +900,7 @@ export class TaskService {
 
     const search = query.search?.trim().toLowerCase();
     return items
+      .filter((item) => item.workType !== 'TASK')
       .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
       .filter((item) => {
         const teamIsBpo = this.isBpoTeamLabel(item?.team || item?.assignedTeam, null);
@@ -942,6 +930,13 @@ export class TaskService {
         const nameParts = assignedName ? assignedName.split(/\s+/) : [];
         return {
           id,
+          activityId: item.activityId || String(id),
+          purchaseId: item.purchaseId ?? null,
+          productName: item.productName ?? null,
+          serviceName: item.serviceName ?? null,
+          planName: item.planName ?? null,
+          scheduledAt: item.scheduledAt ?? null,
+          customerName: item.customerName ?? null,
           source: 'WORK',
           customerId: Number.isInteger(customerId) && customerId > 0 ? customerId : null,
           customer:

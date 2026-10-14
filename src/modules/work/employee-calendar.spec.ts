@@ -355,13 +355,10 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(careGymItem).toBeUndefined();
   });
 
-  it('Employee 1 sees work assigned to their team (SSM Team A)', async () => {
+  it('Employee 1 does not see team design work outside their photographer role', async () => {
     const calendar = await workService.getEmployeeCalendar(1, { date: '2026-08-29' });
     const teamItem = calendar.find((c) => c.id === '104');
-    expect(teamItem).toBeDefined();
-    expect(teamItem?.team).toBe('SSM Team A');
-    expect(teamItem?.customerName).toBe('Delta Mart');
-    expect(teamItem?.title).toBe('Story Design');
+    expect(teamItem).toBeUndefined();
   });
 
   it('Employee 2 (not in SSM Team A) does NOT see team assigned work', async () => {
@@ -374,7 +371,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     const augustCalendar = await workService.getEmployeeCalendar(1, { year: 2026, month: 8 });
     const ids = augustCalendar.map((a) => a.id);
     expect(ids).toContain('103');
-    expect(ids).toContain('104');
+    expect(ids).not.toContain('104');
     expect(ids).not.toContain('101'); // 101 is September
   });
 

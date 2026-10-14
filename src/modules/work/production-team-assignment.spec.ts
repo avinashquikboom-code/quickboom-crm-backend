@@ -177,7 +177,7 @@ describe('Production team assignment', () => {
     expect(updates.every((item) => item.teamId === 1)).toBe(true);
   });
 
-  it('assigns open production schedules when that employee opens the calendar', async () => {
+  it('does not change production assignments when an employee opens the calendar', async () => {
     const prisma: any = {
       employee: {
         findUnique: jest.fn().mockResolvedValue({
@@ -229,7 +229,7 @@ describe('Production team assignment', () => {
 
     await service.getEmployeeCalendar(10, { month: 10, year: 2026 }, { allTenantCustomers: true });
 
-    expect(assign).toHaveBeenCalledWith(8, 2);
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it('gives customer video-editing tasks to the Video Editor, not a Videographer', async () => {
