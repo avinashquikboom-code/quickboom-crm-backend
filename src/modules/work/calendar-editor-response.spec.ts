@@ -33,7 +33,7 @@ describe('Customer calendar editor response', () => {
     expect(row).not.toHaveProperty('editorId');
   });
 
-  it('employee calendar never substitutes Super Admin or BPO employee as production assignee', async () => {
+  it('employee calendar displays the actual assigned relation without substituting the viewer', async () => {
     const findMany = jest.fn().mockResolvedValue([{
       id: 1, customerId: 111, assignedToId: 1, editorId: null,
       assignedTo: { id: 1, firstName: 'Super', lastName: 'Admin', designation: null, department: null },
@@ -64,6 +64,7 @@ describe('Customer calendar editor response', () => {
     for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
       expect(rows[0]).toHaveProperty(field);
     }
-    expect(rows[0].assignedEmployees).toEqual([]);
+    expect(rows[0]).toMatchObject({ assignedToId: 1, assignedEmployee: 'Super Admin', assignedToName: 'Super Admin' });
+    expect(rows[0].assignedEmployees).toEqual(['Super Admin']);
   });
 });

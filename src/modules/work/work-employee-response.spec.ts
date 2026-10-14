@@ -50,7 +50,29 @@ describe('Work responsible employee responses', () => {
     });
     expect(works).toEqual(original);
     expect(findMany).toHaveBeenCalledTimes(1);
-    expect(findMany.mock.calls[0][0].include).toMatchObject({ assignedTo: true, editor: true });
+    for (const relation of ['assignedTo', 'editor']) {
+      expect(findMany.mock.calls[0][0].include[relation].select).toEqual({ id: true, firstName: true, lastName: true, employeeCode: true });
+    }
   });
 
+  it('uses the same responsible employee for every employee calendar display field', async () => {
+    const works = records();
+    const findMany = jest.fn().mockResolvedValue(works);
+    const service = new WorkService({
+      work: { findMany },
+      employee: { findUnique: jest.fn().mockResolvedValue({ id: 99, designation: { name: 'Production Manager' } }) },
+    } as any);
+    const original = JSON.stringify(works);
+    const rows = await service.getEmployeeCalendar(99, { date: '2026-10-14' });
+    verify(rows);
+    rows.forEach((row, index) => {
+      const name = cases[index][4];
+      expect(row.assignedEmployees).toEqual(name ? [name] : []);
+    });
+    expect(JSON.stringify(works)).toBe(original);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    for (const relation of ['assignedTo', 'editor']) {
+      expect(findMany.mock.calls[0][0].include[relation].select).toMatchObject({ id: true, firstName: true, lastName: true, employeeCode: true });
+    }
+  });
 });

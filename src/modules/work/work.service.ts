@@ -428,8 +428,12 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         include: {
           customer: { select: { id: true, name: true, email: true, phone: true } },
           team: true,
-          assignedTo: true,
-          editor: true,
+          assignedTo: {
+            select: { id: true, firstName: true, lastName: true, employeeCode: true },
+          },
+          editor: {
+            select: { id: true, firstName: true, lastName: true, employeeCode: true },
+          },
           entitlement: true,
           tasks: {
             include: {
@@ -3414,23 +3418,8 @@ status: ${item.status}`);
         .filter(Boolean)
         .join(', ') || null;
 
-      const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
-        `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
-
       const scheduleAssignee = this.productionTaskAssignee(w);
-      const assignedEmpName = scheduleAssignee.name || 'Not assigned';
-
-      // Authoritative editor resolution: must have valid editorId and not be admin/BPO
-      const rawEditor = w.editor;
-      const isRealEditor = Boolean(
-        w.editorId &&
-        rawEditor &&
-        Number(rawEditor.id) > 0 &&
-        !this.isPlatformAdmin(rawEditor) &&
-        !this.isSalesOrBpoEmployee(rawEditor),
-      );
-      const resolvedEditorId = isRealEditor ? Number(w.editorId) : null;
-      const resolvedEditorName = isRealEditor ? (personName(rawEditor) || null) : null;
+      const employeeFields = getWorkEmployeeFields(w);
 
       const isViewerEditor =
         viewerCandidateIds.some((cid) => cid === Number(w.editorId)) ||
@@ -3456,24 +3445,9 @@ status: ${item.status}`);
         }
       }
 
-      const assignedEmpList: string[] = [];
-      if (assignedEmpName && assignedEmpName !== 'Not assigned') {
-        assignedEmpList.push(assignedEmpName);
-      }
-      if (resolvedEditorName && !assignedEmpList.includes(resolvedEditorName)) {
-        assignedEmpList.push(resolvedEditorName);
-      }
-      if (empRecord && viewerCandidateIds.includes(numEmployeeId) && directlyAssigned(w)) {
-        const myName = personName(empRecord);
-        if (
-          myName &&
-          !this.isPlatformAdmin(empRecord) &&
-          !this.isSalesOrBpoEmployee(empRecord) &&
-          !assignedEmpList.includes(myName)
-        ) {
-          assignedEmpList.push(myName);
-        }
-      }
+      const assignedEmpList = employeeFields.assignedEmployee
+        ? [employeeFields.assignedEmployee]
+        : [];
 
       const smHandler = w.customer?.socialMediaHandlers?.[0];
       const platform = smHandler?.platform || 'Instagram';
@@ -3515,8 +3489,8 @@ status: ${item.status}`);
         reworkActionLabel: null,
         isLocked: false,
         lockMessage: null,
-        assignedEmployees: assignedEmpList.length > 0 ? assignedEmpList : (assignedEmpName && assignedEmpName !== 'Not assigned' ? [assignedEmpName] : []),
-        ...getWorkEmployeeFields(w),
+        assignedEmployees: assignedEmpList,
+        ...employeeFields,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,
