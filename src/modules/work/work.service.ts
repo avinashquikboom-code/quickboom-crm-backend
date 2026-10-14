@@ -62,16 +62,6 @@ const getWorkEmployeeFields = (work: {
   const finalAssignedToId = responsibleEmployee?.id ?? (rawAssignedId != null ? Number(rawAssignedId) : null);
   const finalEditorId = work.editor?.id ?? (work.editorId != null ? Number(work.editorId) : null);
 
-  if (responsibleName === 'Bhavesh Gandhi') {
-    return {
-      assignedToId: null,
-      assignedEmployee: null,
-      assignedToName: null,
-      editorId: finalEditorId,
-      editorName: editorName === 'Bhavesh Gandhi' ? null : editorName,
-    };
-  }
-
   return {
     assignedToId: finalAssignedToId,
     assignedEmployee: responsibleName,
@@ -1795,6 +1785,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
             assignedTeam: {
               select: {
                 id: true,
+                customerId: true,
                 name: true,
                 leaderId: true,
                 members: { select: { employeeId: true } },
@@ -1805,6 +1796,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         team: {
           select: {
             id: true,
+            customerId: true,
             name: true,
             leaderId: true,
             members: { select: { employeeId: true } },
@@ -1813,6 +1805,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         assignedTo: {
           select: {
             id: true,
+            customerId: true,
             firstName: true,
             lastName: true,
             department: { select: { name: true } },
@@ -1829,6 +1822,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         editor: {
           select: {
             id: true,
+            customerId: true,
             firstName: true,
             lastName: true,
             department: { select: { name: true } },
@@ -1964,7 +1958,20 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
       }
 
       const normalizedType = normalizeActivityType(w);
-      const taskAssignee = this.productionTaskAssignee(w);
+      const isEditing = ['VIDEO_EDITING', 'EDITING'].includes(w.workType);
+      const actualAssignee = isEditing ? w.editor ?? w.assignedTo : w.assignedTo;
+      const workTeam = w.team ?? w.customer?.assignedTeam;
+      const member = actualAssignee && workTeam && (
+        workTeam.members?.some((entry) => entry.employeeId === actualAssignee.id) ||
+        workTeam.leaderId === actualAssignee.id
+      );
+      const sameTenant = actualAssignee?.customerId != null &&
+        workTeam?.customerId != null && actualAssignee.customerId === workTeam.customerId;
+      const assignmentTeamMismatch = Boolean(actualAssignee && workTeam && !(member && sameTenant));
+      const verifiedTeam = !actualAssignee || (member && sameTenant) ? workTeam : null;
+      if (assignmentTeamMismatch) this.logger.warn(
+        `[CALENDAR_ASSIGNMENT_TEAM_MISMATCH] workId=${w.id} customerId=${w.customerId} employeeId=${actualAssignee.id} teamId=${workTeam.id}`,
+      );
 
       return {
         id: String(w.id),
@@ -1998,7 +2005,15 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         isLocked,
         lockMessage,
         editorName: isLocked ? null : (w.editor ? `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim() || null : null),
-        team: taskAssignee.teamName,
+        assignedToId: w.assignedToId ?? null,
+        editorId: w.editorId ?? null,
+        assignedEmployee: isLocked ? null : getEmployeeName(actualAssignee),
+        assignedToName: isLocked ? null : getEmployeeName(actualAssignee),
+        team: verifiedTeam?.name ?? null,
+        teamId: verifiedTeam?.id ?? null,
+        assignedTeam: workTeam?.name ?? null,
+        assignedTeamId: workTeam?.id ?? null,
+        assignmentTeamMismatch,
         notes: isLocked
           ? (lockMessage || 'Complete the remaining 50% payment to unlock your second installation schedule.')
           : (w.description || w.notes || `${w.title} deliverable`),

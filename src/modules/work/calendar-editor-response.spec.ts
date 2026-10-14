@@ -5,11 +5,11 @@ describe('Customer calendar editor response', () => {
   async function response(editor: any, editorId: number | null) {
     const findMany = jest.fn().mockResolvedValue([{
       id: 1, customerId: 8, assignedToId: 13, editorId, editor,
-      assignedTo: { id: 13, firstName: 'Primary', lastName: 'Employee' },
+      assignedTo: { id: 13, customerId: 8, firstName: 'Primary', lastName: 'Employee' },
       workType: WorkType.EDITING, title: 'Video Editing',
       status: WorkStatus.ASSIGNED,
       scheduledDate: new Date('2026-10-14T10:00:00Z'),
-      team: { name: 'Production', members: [{ employeeId: 13 }, { employeeId: 20 }] },
+      team: { id: 5, customerId: 8, name: 'Production', members: [{ employeeId: 13 }, { employeeId: 20 }] },
       tasks: [],
     }]);
     const service = new WorkService({ work: { findMany } } as any);
@@ -20,17 +20,32 @@ describe('Customer calendar editor response', () => {
   }
 
   it('returns the actual editor relation independently of the primary assignee', async () => {
-    const row = await response({ id: 20, firstName: 'Actual', lastName: 'Editor' }, 20);
-    expect(row).toMatchObject({ editorName: 'Actual Editor' });
-    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName', 'editorId']) {
-      expect(row).not.toHaveProperty(field);
-    }
+    const row = await response({ id: 20, customerId: 8, firstName: 'Actual', lastName: 'Editor' }, 20);
+    expect(row).toMatchObject({ editorName: 'Actual Editor', assignedToId: 13, editorId: 20, assignedEmployee: 'Actual Editor', team: 'Production', assignmentTeamMismatch: false });
   });
 
   it('returns null editor fields when there is no editor relation', async () => {
     const row = await response(null, null);
     expect(row).toMatchObject({ editorName: null });
-    expect(row).not.toHaveProperty('editorId');
+    expect(row).toMatchObject({ editorId: null, assignedEmployee: 'Primary Employee', team: 'Production' });
+  });
+
+  it('preserves actual assignment and flags an employee outside the recorded team', async () => {
+    const findMany = jest.fn().mockResolvedValue(['Reel #1: Post', 'Creative Post #1: Publish'].map((title, index) => ({
+      id: index + 1, customerId: 8, title, workType: WorkType.UPLOADING,
+      assignedToId: 13, editorId: null,
+      assignedTo: { id: 13, customerId: 8, firstName: 'Actual', lastName: 'Assignee' },
+      team: { id: 5, customerId: 8, name: 'Recorded team', members: [{ employeeId: 20 }] },
+      status: WorkStatus.ASSIGNED, scheduledDate: new Date('2026-10-14T10:00:00Z'),
+      tasks: [{ assignedTo: { id: 20, firstName: 'Different', lastName: 'Employee' } }],
+    })));
+    const rows = await new WorkService({ work: { findMany } } as any).getCalendar(8, { date: '2026-10-14' });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({
+      assignedToId: 13, assignedEmployee: 'Actual Assignee', team: null, teamId: null,
+      assignedTeam: 'Recorded team', assignedTeamId: 5, assignmentTeamMismatch: true,
+    });
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it('employee calendar displays the actual assigned relation without substituting the viewer', async () => {
