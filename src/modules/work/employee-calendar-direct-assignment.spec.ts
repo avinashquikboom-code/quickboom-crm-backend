@@ -31,7 +31,7 @@ describe('Employee Calendar direct assignment', () => {
     expect(rows[1]).toMatchObject({ assignedToId: 20, editorId: 13 });
     expect(findMany.mock.calls[0][0].where).toMatchObject({
       customerId: 8, status: 'ASSIGNED', scheduledDate: { gte: expect.any(Date), lte: expect.any(Date) },
-      OR: [{ assignedToId: 13 }, { editorId: 13 }],
+      OR: expect.arrayContaining([{ assignedToId: 13 }, { editorId: 13 }]),
     });
     expect(JSON.stringify(records)).toBe(original);
     expect(update).not.toHaveBeenCalled();

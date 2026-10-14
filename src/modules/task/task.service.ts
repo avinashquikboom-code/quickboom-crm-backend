@@ -64,25 +64,22 @@ export class TaskService {
       throw new ForbiddenException('Authenticated user context required');
     }
 
-    const identity: any[] = [];
-    const userId = Number(user.id);
-    const tokenEmployeeId = Number(user.employeeId || user.employee?.id);
-    if (Number.isInteger(userId) && userId > 0) {
-      identity.push({ userId });
-    }
-    if (Number.isInteger(tokenEmployeeId) && tokenEmployeeId > 0) {
-      identity.push({ id: tokenEmployeeId });
-    }
+    const userId = Number(user.id ?? user.userId);
+    const tokenEmployeeId = Number(user.employee?.id ?? user.employeeId);
     const email = typeof user.email === 'string' ? user.email.trim() : '';
-    if (email) {
-      identity.push({ email: { equals: email, mode: 'insensitive' } });
-    }
-    if (identity.length === 0) {
+    let identity: { userId?: number; id?: number; email?: { equals: string; mode: 'insensitive' } };
+    if (Number.isInteger(userId) && userId > 0) {
+      identity = { userId };
+    } else if (Number.isInteger(tokenEmployeeId) && tokenEmployeeId > 0) {
+      identity = { id: tokenEmployeeId };
+    } else if (email) {
+      identity = { email: { equals: email, mode: 'insensitive' } };
+    } else {
       throw new ForbiddenException('No active employee record linked to current user account');
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { OR: identity, status: 'ACTIVE' },
+      where: { ...identity, status: 'ACTIVE' },
       include: {
         office: true,
         department: true,

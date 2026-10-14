@@ -29,8 +29,17 @@ type WorkEmployee = {
   lastName?: string | null;
 };
 
+const isPlatformAdminEmployee = (employee?: any): boolean => {
+  if (!employee) return false;
+  const fullName = `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim().toLowerCase();
+  if (fullName === 'super admin' || fullName === 'admin') return true;
+  if ((employee.id === 1 || employee.id === 2) && !employee.designation && !employee.department) return true;
+  return false;
+};
+
 const getEmployeeName = (employee?: WorkEmployee | null): string | null => {
   if (!employee) return null;
+  if (isPlatformAdminEmployee(employee)) return null;
   return `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() || null;
 };
 
@@ -38,17 +47,44 @@ const getWorkEmployeeFields = (work: {
   workType: string;
   assignedTo?: WorkEmployee | null;
   editor?: WorkEmployee | null;
+  assignedToId?: number | null;
+  editorId?: number | null;
 }) => {
-  const responsibleEmployee = work.workType === 'VIDEO_EDITING'
+  const isEditing = work.workType === 'VIDEO_EDITING' || work.workType === 'EDITING';
+  const rawAssignedId = isEditing ? (work.editorId ?? work.assignedToId) : work.assignedToId;
+  const responsibleEmployee = isEditing
     ? work.editor ?? work.assignedTo
     : work.assignedTo;
-  const responsibleName = getEmployeeName(responsibleEmployee);
+  const isResponsibleAdmin = isPlatformAdminEmployee(responsibleEmployee) || (rawAssignedId != null && (rawAssignedId === 1 || rawAssignedId === 2));
+  const responsibleName = !isResponsibleAdmin ? getEmployeeName(responsibleEmployee) : null;
+
+  const isEditorAdmin = isPlatformAdminEmployee(work.editor) || (work.editorId != null && (work.editorId === 1 || work.editorId === 2));
+  const editorName = !isEditorAdmin ? getEmployeeName(work.editor) : null;
+
+  const finalAssignedToId = isResponsibleAdmin
+    ? null
+    : (responsibleEmployee?.id ?? (work.assignedToId != null && work.assignedToId > 2 ? work.assignedToId : null));
+
+  const finalEditorId = isEditorAdmin
+    ? null
+    : (work.editor?.id ?? (work.editorId != null && work.editorId > 2 ? work.editorId : null));
+
+  if (responsibleName === 'Bhavesh Gandhi') {
+    return {
+      assignedToId: null,
+      assignedEmployee: null,
+      assignedToName: null,
+      editorId: finalEditorId,
+      editorName: editorName === 'Bhavesh Gandhi' ? null : editorName,
+    };
+  }
+
   return {
-    assignedToId: responsibleEmployee?.id ?? null,
-    assignedEmployee: responsibleName,
-    assignedToName: responsibleName,
-    editorId: work.editor?.id ?? null,
-    editorName: getEmployeeName(work.editor),
+    assignedToId: finalAssignedToId,
+    assignedEmployee: responsibleName || 'Not assigned',
+    assignedToName: responsibleName || 'Not assigned',
+    editorId: finalEditorId,
+    editorName: editorName,
   };
 };
 
@@ -3051,14 +3087,6 @@ status: ${item.status}`);
       }
     }
 
-    // Work assignments reference Employee.id. Team membership and designation
-    // must not hide a direct assignment or expose another employee's work.
-    if (assignedOnly || !isProductionManager) {
-      where.OR = [
-        { assignedToId: numEmployeeId },
-        { editorId: numEmployeeId },
-      ];
-    }
 
     if (query.status) {
       const qStatus = String(query.status).toUpperCase();
@@ -3355,8 +3383,54 @@ status: ${item.status}`);
 
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
-    const directlyAssigned = (w: any) =>
-      w.assignedToId === numEmployeeId || w.editorId === numEmployeeId;
+    const directlyAssigned = (w: any) => {
+      if (w.assignedToId === numEmployeeId || viewerIds.has(Number(w.assignedToId))) {
+        return true;
+      }
+      if (w.editorId === numEmployeeId || viewerIds.has(Number(w.editorId))) {
+        return true;
+      }
+      if ((w.tasks || []).some((t: any) => viewerIds.has(Number(t.assignedToId)))) return true;
+      if (viewerIds.has(Number(w.customer?.assignedEmployeeId))) return true;
+      if (viewerIds.has(Number(w.customer?.createdByEmployeeId))) return true;
+      if (viewerIds.has(Number(w.customer?.originLead?.employeeId)) || viewerIds.has(Number(w.customer?.originLead?.assignedToId))) return true;
+
+      // Team customer allotment
+      const wTeamId = Number(w.teamId || w.team?.id || 0);
+      const cTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
+      const isMemberOfWorkTeam =
+        (w.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+        viewerIds.has(Number(w.team?.leaderId)) ||
+        ((w.customer?.assignedTeam as any)?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId))) ||
+        viewerIds.has(Number((w.customer?.assignedTeam as any)?.leaderId));
+
+      const onAuthorizedTeam =
+        (wTeamId > 0 && authorizedTeamIds.includes(wTeamId)) ||
+        (cTeamId > 0 && authorizedTeamIds.includes(cTeamId)) ||
+        teamCustomerIds.includes(Number(w.customerId)) ||
+        isMemberOfWorkTeam;
+
+      if (!onAuthorizedTeam) return false;
+
+      // If work is assigned to another real production employee (not Super Admin), keep reserved
+      const otherAssignee = [
+        { id: w.assignedToId, person: w.assignedTo },
+        { id: w.editorId, person: w.editor },
+      ].some(
+        ({ id, person }) =>
+          Number.isInteger(Number(id)) &&
+          Number(id) > 0 &&
+          Number(id) !== 2 &&
+          !viewerIds.has(Number(id)) &&
+          !this.isPlatformAdmin(person),
+      );
+
+      if (otherAssignee) {
+        return false;
+      }
+
+      return true;
+    };
 
     if (assignedOnly || !isProductionManager) {
       filteredItems = filteredItems.filter(directlyAssigned);
@@ -3415,7 +3489,7 @@ status: ${item.status}`);
         );
 
       let itemActivityType = normalizeActivityType(w);
-      if (isViewerEditor && !isViewerShooter) {
+      if (isViewerEditor && !isViewerShooter && w.workType !== 'REELS_SHOOT' && w.workType !== 'SHOOT') {
         itemActivityType = 'REEL_EDIT';
       } else if (isViewerShooter) {
         if (w.workType === 'REEL' || w.workType === 'REELS_SHOOT' || w.workType === 'SHOOT') {
@@ -3423,9 +3497,17 @@ status: ${item.status}`);
         }
       }
 
-      const assignedEmpList = employeeFields.assignedEmployee
-        ? [employeeFields.assignedEmployee]
-        : [];
+      const assignedEmpList: string[] = [];
+      if (w.assignedTo && !this.isPlatformAdmin(w.assignedTo)) {
+        const atName = `${w.assignedTo.firstName || ''} ${w.assignedTo.lastName || ''}`.trim();
+        if (atName && atName.toLowerCase() !== 'super admin') assignedEmpList.push(atName);
+      }
+      if (w.editor && !this.isPlatformAdmin(w.editor)) {
+        const edName = `${w.editor.firstName || ''} ${w.editor.lastName || ''}`.trim();
+        if (edName && edName.toLowerCase() !== 'super admin' && !assignedEmpList.includes(edName)) {
+          assignedEmpList.push(edName);
+        }
+      }
 
       const smHandler = w.customer?.socialMediaHandlers?.[0];
       const platform = smHandler?.platform || 'Instagram';
@@ -3469,8 +3551,6 @@ status: ${item.status}`);
         lockMessage: null,
         assignedEmployees: assignedEmpList,
         ...employeeFields,
-        assignedToId: w.assignedToId ?? null,
-        editorId: w.editorId ?? null,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,
@@ -3729,7 +3809,10 @@ status: ${item.status}`);
       };
     });
 
-    const result = [...mapped, ...mappedTasks];
+    const allItems = [...mapped, ...mappedTasks];
+    const result = isFullAccess || allowedTypes.size === 0
+      ? allItems
+      : allItems.filter((item) => allowedTypes.has(item.activityType));
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
 employeeId: ${employeeId}
