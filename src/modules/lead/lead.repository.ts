@@ -215,12 +215,14 @@ export class LeadRepository {
       lastName: resolvedLastName,
       assignedToId: dto.assignedToId
         ? Number(dto.assignedToId)
-        : (employeeId && numCreatedById ? numCreatedById : (numCreatedById || undefined)),
+        : (dto.assignedToId === undefined && employeeId ? numCreatedById : null),
       status,
       stageId,
       customerId: numCustomerId,
       createdById: numCreatedById,
-      employeeId: employeeId ? Number(employeeId) : undefined,
+      employeeId: (dto as any).employeeId !== undefined
+        ? (dto as any).employeeId
+        : (dto.assignedToId === undefined && employeeId ? Number(employeeId) : null),
     };
     delete createData.businessName;
     delete createData.displayName;

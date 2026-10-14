@@ -140,9 +140,9 @@ describe('Lead Assignment — Show and Validate ONLY BPO Team Employees', () => 
         findFirst: jest.fn().mockImplementation(async ({ where }: any) => {
           return allEmployees.find((emp) => {
             const matchesCustomer = emp.customerId === where.customerId;
-            const matchesIdOrUser = where.OR?.some(
-              (cond: any) => cond.userId === emp.userId || cond.id === emp.id,
-            );
+            const matchesIdOrUser = where.userId !== undefined
+              ? where.userId === emp.userId
+              : where.id === emp.id;
             return matchesCustomer && matchesIdOrUser;
           }) || null;
         }),

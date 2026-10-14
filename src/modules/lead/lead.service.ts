@@ -604,16 +604,9 @@ export class LeadService {
       throw new BadRequestException('Invalid employee ID provided for lead assignment');
     }
 
-    // Look up by userId (User table PK) OR by employee record id
-    const employee = await this.prisma.employee.findFirst({
-      where: {
-        OR: [
-          { userId: targetId },
-          { id: targetId },
-        ],
-        customerId: Number(customerId),
-      },
-      include: {
+    // assignedToId references User.id; only use the legacy Employee.id lookup
+    // when no User-linked employee exists, avoiding numeric ID collisions.
+    const assignmentInclude = {
         department: true,
         designation: true,
         teamMembers: {
@@ -622,7 +615,13 @@ export class LeadService {
           },
         },
         ledTeams: true,
-      },
+    };
+    const employee = await this.prisma.employee.findFirst({
+      where: { userId: targetId, customerId: Number(customerId) },
+      include: assignmentInclude,
+    }) ?? await this.prisma.employee.findFirst({
+      where: { id: targetId, customerId: Number(customerId) },
+      include: assignmentInclude,
     });
 
     if (!employee) {
