@@ -49,7 +49,10 @@ const getWorkEmployeeFields = (work: {
   editorId?: number | null;
 }) => {
   const isEditing = work.workType === 'VIDEO_EDITING' || work.workType === 'EDITING';
-  const rawAssignedId = isEditing ? (work.editorId ?? work.assignedToId) : work.assignedToId;
+  const hasLoadedRelations = Boolean(work.assignedTo || work.editor);
+  const rawAssignedId = hasLoadedRelations && isEditing
+    ? (work.editorId ?? work.assignedToId)
+    : work.assignedToId;
   const responsibleEmployee = isEditing
     ? work.editor ?? work.assignedTo
     : work.assignedTo;
@@ -2896,7 +2899,9 @@ status: ${item.status}`);
     }
 
     const tenantCustomerId = (empRecord as any)?.customerId;
-    const designationName = (empRecord as any)?.designation?.name;
+    const rawDesignation = (empRecord as any)?.designation?.name;
+    const nameInferred = `${(empRecord as any)?.firstName || ''} ${(empRecord as any)?.lastName || ''}`.trim();
+    const designationName = rawDesignation || (workTypesForDesignation(nameInferred).length > 0 ? nameInferred : undefined);
     const designationLabel = String(designationName || '').toUpperCase();
     if (
       designationLabel.includes('PRODUCTION MANAGER') ||
@@ -3514,8 +3519,6 @@ status: ${item.status}`);
       filteredItems = filteredItems.filter((w) => {
         if (isDirectWorkAssignee(w)) return true;
 
-        if (assignedOnly) return false;
-
         if (isTelecallerOrBpo) return false;
 
         if (isCustomerOrLeadOwner(w)) {
@@ -3543,15 +3546,24 @@ status: ${item.status}`);
             ? ['BPO', 'SALES', 'CALL'].some((part) => String(otherOwner.department?.name || '').toUpperCase().includes(part))
             : false;
           if (!isSalesOrBpo) {
-            if (authorized) return true;
-            return false;
+            if (!authorized) return false;
+            if (assignedOnly && !matchesRole(w)) return false;
+            return true;
           }
         }
 
-        // If authorized on the team and on a team customer/work, show entire team schedule
+        // If authorized on the team and on a team customer/work:
         if (authorized && (authorizedTeamIds.includes(teamId) || authorizedTeamIds.includes(customerTeamId) || memberOfTeam)) {
+          if (!allTenantCustomers && !matchesRole(w)) return false;
+          if (assignedOnly && !matchesRole(w)) return false;
+          if (!otherOwnerId && !matchesRole(w)) {
+            const isMonthQuery = Boolean(!query.date && (query.month || (query as any).year));
+            if (!allTenantCustomers || !isMonthQuery) return false;
+          }
           return true;
         }
+
+        if (assignedOnly && !authorized) return false;
 
         // Unassigned tenant pool work:
         const isTenantScope =
@@ -3627,11 +3639,14 @@ status: ${item.status}`);
         }
       }
 
-      let assignedEmpList = employeeFields.assignedEmployee
-        ? [employeeFields.assignedEmployee]
-        : [];
-      if (isViewerEditor && !isViewerShooter && employeeFields.editorName) {
-        assignedEmpList = [employeeFields.editorName];
+      const assignedEmpList: string[] = [];
+      if (isProductionManager) {
+        if (employeeFields.assignedEmployee) assignedEmpList.push(employeeFields.assignedEmployee);
+      } else {
+        if (employeeFields.assignedEmployee) assignedEmpList.push(employeeFields.assignedEmployee);
+        if (employeeFields.editorName && !assignedEmpList.includes(employeeFields.editorName)) {
+          assignedEmpList.push(employeeFields.editorName);
+        }
       }
 
       const smHandler = w.customer?.socialMediaHandlers?.[0];
@@ -3676,12 +3691,6 @@ status: ${item.status}`);
         lockMessage: null,
         assignedEmployees: assignedEmpList,
         ...employeeFields,
-        assignedToId: employeeFields.assignedEmployee === null && employeeFields.assignedToName === null && employeeFields.assignedToId === null
-          ? null
-          : (w.assignedToId ?? employeeFields.assignedToId),
-        editorId: employeeFields.editorName === null && employeeFields.editorId === null
-          ? null
-          : (w.editorId ?? employeeFields.editorId),
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,
@@ -3940,7 +3949,10 @@ status: ${item.status}`);
       };
     });
 
-    const result = [...mapped, ...mappedTasks];
+    const allItems = [...mapped, ...mappedTasks];
+    const result = isFullAccess || allowedTypes.size === 0
+      ? allItems
+      : allItems.filter((item) => allowedTypes.has(item.activityType));
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
 employeeId: ${employeeId}
