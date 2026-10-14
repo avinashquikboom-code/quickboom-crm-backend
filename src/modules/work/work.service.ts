@@ -3051,6 +3051,15 @@ status: ${item.status}`);
       }
     }
 
+    // Work assignments reference Employee.id. Team membership and designation
+    // must not hide a direct assignment or expose another employee's work.
+    if (assignedOnly || !isProductionManager) {
+      where.OR = [
+        { assignedToId: numEmployeeId },
+        { editorId: numEmployeeId },
+      ];
+    }
+
     if (query.status) {
       const qStatus = String(query.status).toUpperCase();
       if (qStatus === 'PENDING') {
@@ -3346,42 +3355,11 @@ status: ${item.status}`);
 
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
-    const matchesRole = (w: any) => {
-      const normalized = normalizeActivityType(w);
-      return visibleTypes.has(String(w.workType || '').toUpperCase()) ||
-        workMatchesDesignation(designationName, w.workType) ||
-        workMatchesDesignation(designationName, normalized) ||
-        (visibleTypes.size === 0 && allowedTypes.has(normalized));
-    };
-    const hasRoleRules = visibleTypes.size > 0 || allowedTypes.size > 0;
     const directlyAssigned = (w: any) =>
-      [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
-        .some((id) => id != null && viewerIds.has(Number(id)));
+      w.assignedToId === numEmployeeId || w.editorId === numEmployeeId;
 
     if (assignedOnly || !isProductionManager) {
-      filteredItems = filteredItems.filter((w) => {
-        const direct = directlyAssigned(w);
-        // Explicit assignments remain usable when no role metadata is configured.
-        if (hasRoleRules && !matchesRole(w)) return false;
-        if (direct) return true;
-        if (!matchesRole(w)) return false;
-        const teamId = Number(w.teamId || w.team?.id || 0);
-        const customerTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
-        const memberOfTeam = [w.team, w.customer?.assignedTeam].some((team) =>
-          (team?.members || []).some((member: any) => viewerIds.has(Number(member.employeeId))) ||
-          viewerIds.has(Number(team?.leaderId)));
-        const customerAssigned = viewerIds.has(Number(w.customer?.assignedEmployeeId));
-        const authorized = authorizedTeamIds.includes(teamId) ||
-          authorizedTeamIds.includes(customerTeamId) ||
-          teamCustomerIds.includes(Number(w.customerId)) || memberOfTeam || customerAssigned;
-        if (!authorized) return false;
-        const editing = ['VIDEO_EDITING', 'EDITING', 'VIDEO'].includes(w.workType);
-        const owner = editing ? w.editor ?? w.assignedTo : w.assignedTo;
-        // A role-matching explicit owner takes precedence over the team pool.
-        if (owner && workMatchesDesignation(owner.designation?.name, w.workType) &&
-          !viewerIds.has(Number(owner.id))) return false;
-        return true;
-      });
+      filteredItems = filteredItems.filter(directlyAssigned);
     }
 
     const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
@@ -3491,6 +3469,8 @@ status: ${item.status}`);
         lockMessage: null,
         assignedEmployees: assignedEmpList,
         ...employeeFields,
+        assignedToId: w.assignedToId ?? null,
+        editorId: w.editorId ?? null,
         teamId: w.teamId || w.customer?.assignedTeamId || null,
         team: scheduleAssignee.teamName,
         assignedTeam: scheduleAssignee.teamName,
