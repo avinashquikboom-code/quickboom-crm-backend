@@ -7,6 +7,7 @@ import {
   Logger,
   Inject,
   forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
@@ -69,9 +70,12 @@ export class EmployeeService {
 
   constructor(
     private readonly prisma: PrismaService,
+    @Optional()
     private readonly planAccessService?: PlanAccessService,
+    @Optional()
     @Inject(forwardRef(() => PlanScheduleGateway))
     private readonly planScheduleGateway?: PlanScheduleGateway,
+    @Optional()
     private readonly payrollService?: PayrollService,
   ) {}
 

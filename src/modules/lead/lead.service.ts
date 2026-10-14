@@ -75,7 +75,23 @@ export class LeadService {
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly s3Service?: S3Service,
     @Optional() private readonly moduleRef?: ModuleRef,
+    @Optional() private readonly workService?: any,
   ) {}
+
+  private getWorkService(): any | null {
+    if (this.workService) return this.workService;
+    if (!this.moduleRef) return null;
+    try {
+      const { WorkService } = require('../work/work.service');
+      return this.moduleRef.get(WorkService, { strict: false });
+    } catch {
+      try {
+        return this.moduleRef.get('WorkService', { strict: false });
+      } catch {
+        return null;
+      }
+    }
+  }
 
   private getNotificationService(): NotificationService | null {
     if (!this.moduleRef) return null;
@@ -2322,6 +2338,16 @@ export class LeadService {
           where: { id: leadId },
           data: wonUpdateData,
         });
+      }
+
+      // Conversion has committed the new Customer ID. Reuse the same role assignment
+      // routine as CustomerService.assignTeam; do not regenerate schedules here.
+      const workService = this.getWorkService();
+      if (workService && typeof workService.resolveCustomerProductionTeam === 'function') {
+        const productionTeamId = await workService.resolveCustomerProductionTeam(customer.id);
+        if (productionTeamId) {
+          await workService.syncCustomerTeamWorkAssignments(customer.id, productionTeamId, undefined, { onlyMissing: true });
+        }
       }
 
       this.logger.log(
