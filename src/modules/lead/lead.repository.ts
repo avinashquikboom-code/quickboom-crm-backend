@@ -1083,7 +1083,17 @@ export class LeadRepository {
     }
 
     return {
-      data: Array.isArray(data) ? data.map((l) => this.enrichLeadRecord(l)) : [],
+      data: Array.isArray(data)
+        ? data.map((l) => {
+            const enriched = this.enrichLeadRecord(l);
+            if (enriched && typeof enriched === 'object') {
+              delete enriched.assignedToId;
+              delete enriched.assignedEmployee;
+              delete enriched.assignedToName;
+            }
+            return enriched;
+          })
+        : [],
       meta: {
         total: Number(total) || 0,
         page,
