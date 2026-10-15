@@ -17,7 +17,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { WorkPermissionService } from './work-permission.service';
-import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto, CalendarEventResponseDto } from './dto/work.dto';
+import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto, CalendarEventResponseDto, toCustomerCalendarScheduleResponse } from './dto/work.dto';
 import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -548,7 +548,7 @@ export class WorkController {
         const rangeStart = dateFrom || startDate;
         const rangeEnd = dateTo || endDate;
         const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
-        return this.workService.getEmployeeCalendar(resolvedEmpId, {
+        const schedules = await this.workService.getEmployeeCalendar(resolvedEmpId, {
           date: multiDayRange ? undefined : (date || rangeStart),
           dateFrom: multiDayRange ? rangeStart : (dateFrom || startDate),
           dateTo: multiDayRange ? rangeEnd : (dateTo || endDate),
@@ -559,6 +559,7 @@ export class WorkController {
           allTenantCustomers: canViewCalendar,
           assignedOnly: !canViewCalendar,
         });
+        return schedules.map(toCustomerCalendarScheduleResponse);
       }
     }
 
@@ -580,7 +581,7 @@ authorization: ALLOWED`);
     );
 
     try {
-      const result = await this.workService.getCalendar(effectiveCustomerId, {
+      const schedules = await this.workService.getCalendar(effectiveCustomerId, {
         date,
         dateFrom: dateFrom || startDate,
         dateTo: dateTo || endDate,
@@ -589,6 +590,7 @@ authorization: ALLOWED`);
         employeeId,
         status,
       });
+      const result = schedules.map(toCustomerCalendarScheduleResponse);
 
       logger.log(`[CALENDAR_QUERY_DEBUG]
 customerId: ${effectiveCustomerId || 'ALL'}

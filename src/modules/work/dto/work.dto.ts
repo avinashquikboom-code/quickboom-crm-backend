@@ -197,9 +197,6 @@ export class CalendarEventResponseDto {
   @ApiPropertyOptional({ example: 'PRODUCTION TEAM_A' })
   team?: string;
 
-  @ApiPropertyOptional({ example: 'Video Editor' })
-  editorName?: string;
-
   @ApiPropertyOptional({ example: 'Shoot on location' })
   notes?: string;
 
@@ -208,5 +205,17 @@ export class CalendarEventResponseDto {
 
   @ApiProperty({ example: false })
   isLocked: boolean;
+}
+
+/** Customer Calendar output only; shared work/employee mappings retain assignments. */
+export function toCustomerCalendarScheduleResponse<T>(schedule: T): Omit<
+  T, 'assignedToId' | 'assignedEmployee' | 'assignedToName' | 'editorName'
+> {
+  const response = { ...schedule };
+  delete (response as any).assignedToId;
+  delete (response as any).assignedEmployee;
+  delete (response as any).assignedToName;
+  delete (response as any).editorName;
+  return response;
 }
 
