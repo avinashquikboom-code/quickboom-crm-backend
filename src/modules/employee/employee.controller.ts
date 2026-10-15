@@ -14,8 +14,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { EmployeeService } from './employee.service';
-import { WorkService } from '../work/work.service';
-import { WorkStatus } from '@prisma/client';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -23,7 +21,6 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { userHasModulePermission } from '../../common/guards/permissions.guard';
-import { parseCalendarMonthYear } from '../work/calendar-query.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -32,7 +29,6 @@ import { parseCalendarMonthYear } from '../work/calendar-query.util';
 export class EmployeeController {
   constructor(
     private readonly employeeService: EmployeeService,
-    private readonly workService: WorkService,
   ) {}
 
   @Get()
@@ -138,51 +134,6 @@ export class EmployeeController {
       throw new ForbiddenException('User session invalid');
     }
     return this.employeeService.getMyEffectivePermissions(userId);
-  }
-
-  @Get('me/calendar')
-  @ApiOperation({ summary: 'Get calendar scheduled activities for current authenticated employee' })
-  @ApiQuery({ name: 'date', required: false })
-  @ApiQuery({ name: 'startDate', required: false })
-  @ApiQuery({ name: 'endDate', required: false })
-  @ApiQuery({ name: 'dateFrom', required: false })
-  @ApiQuery({ name: 'dateTo', required: false })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'customerId', required: false })
-  async getMyCalendar(
-    @CurrentUser() user: any,
-    @Query('date') date?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-    @Query('status') status?: WorkStatus,
-    @Query('customerId') customerId?: string,
-  ) {
-    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    if (!employeeId) {
-      return [];
-    }
-    if (!userHasModulePermission(user, 'CALENDAR', 'VIEW')) {
-      throw new ForbiddenException(
-        'Access denied: Missing required permission [CALENDAR:VIEW]',
-      );
-    }
-
-    const period = parseCalendarMonthYear(month, year);
-    return this.workService.getEmployeeCalendar(employeeId, {
-      date: date || startDate,
-      dateFrom: startDate || dateFrom,
-      dateTo: endDate || dateTo,
-      month: period.month,
-      year: period.year,
-      status,
-      customerId: customerId ? parseInt(customerId, 10) : undefined,
-    }, { allTenantCustomers: true });
   }
 
   @Get('hrm/offices')

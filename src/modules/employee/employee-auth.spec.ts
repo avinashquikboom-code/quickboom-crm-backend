@@ -79,8 +79,7 @@ describe('API Authentication & Authorization Spec (GET /api/v1/employees/:id)', 
       remove: jest.fn(),
     } as any;
 
-    const mockWorkService = {} as any;
-    employeeController = new EmployeeController(employeeService, mockWorkService);
+    employeeController = new EmployeeController(employeeService);
   });
 
   describe('1. Token Verification & Authorization Header Handling', () => {

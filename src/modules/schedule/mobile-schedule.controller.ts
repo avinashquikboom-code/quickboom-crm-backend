@@ -196,20 +196,4 @@ export class MobileScheduleController {
     };
   }
 
-  @Get('calendar')
-  @ApiOperation({ summary: 'Get calendar view of employee-specific schedules' })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  @ApiQuery({ name: 'from', required: false })
-  @ApiQuery({ name: 'to', required: false })
-  async getMyCalendar(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
-    return this.getMySchedules(user, customerId, month, year, from, to);
-  }
 }
