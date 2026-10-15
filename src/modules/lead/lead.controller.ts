@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
+import { toLeadResponse } from './dto/lead-response.dto';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
@@ -61,7 +62,7 @@ export class LeadController {
     @Body() dto: CreateLeadDto,
     @Req() req?: any,
   ) {
-    return this.leadService.createLead(customerId, user, dto, req);
+    return toLeadResponse(await this.leadService.createLead(customerId, user, dto, req));
   }
 
   @Post('check-duplicate')
@@ -153,7 +154,7 @@ export class LeadController {
     @Query('stageId') stageId?: string,
     @Query('createdFrom') createdFrom?: string,
   ) {
-    return this.leadService.getLeads(
+    const result = await this.leadService.getLeads(
       customerId,
       {
         page: page ? Number(page) : 1,
@@ -165,6 +166,7 @@ export class LeadController {
       },
       user,
     );
+    return { ...result, data: result.data.map(toLeadResponse) };
   }
 
   private parseBulkDeleteIds(
@@ -264,7 +266,8 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: ConvertLeadDto,
   ) {
-    return this.leadService.convertLead(customerId, id, userId, dto);
+    const result = await this.leadService.convertLead(customerId, id, userId, dto);
+    return { ...result, lead: toLeadResponse(result.lead) };
   }
 
   @Get(['whatsapp-templates', 'whatsapp/templates'])
@@ -278,7 +281,7 @@ export class LeadController {
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead status and stage details by ID' })
   async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.leadService.getLeadStatus(customerId, id);
+    return toLeadResponse(await this.leadService.getLeadStatus(customerId, id));
   }
 
   @Get(':id/communications')
@@ -296,7 +299,7 @@ export class LeadController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.leadService.getLeadById(customerId, id, user);
+    return toLeadResponse(await this.leadService.getLeadById(customerId, id, user));
   }
 
   @Patch(':id')
@@ -308,7 +311,7 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto: UpdateLeadDto,
   ) {
-    return this.leadService.updateLead(customerId, id, dto, user?.id, user);
+    return toLeadResponse(await this.leadService.updateLead(customerId, id, dto, user?.id, user));
   }
 
   @Patch(':id/status')
@@ -321,7 +324,7 @@ export class LeadController {
     @CurrentUser() user: any,
     @Body() dto: UpdateLeadStatusDto,
   ) {
-    return this.leadService.updateStatus(customerId, id, userId, dto, user);
+    return toLeadResponse(await this.leadService.updateStatus(customerId, id, userId, dto, user));
   }
 
   @Delete(':id')
@@ -373,7 +376,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: LogFollowUpDto,
   ) {
-    return this.leadService.logFollowUp(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.logFollowUp(customerId, id, userId, dto));
   }
 
   @Post(':id/visits')
@@ -385,7 +388,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: ManageVisitDto,
   ) {
-    return this.leadService.manageVisit(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.manageVisit(customerId, id, userId, dto));
   }
 
   @Post(':id/proposals')
@@ -396,7 +399,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: CreateProposalDto,
   ) {
-    return this.leadService.createProposal(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.createProposal(customerId, id, userId, dto));
   }
 
   @Post(':id/final-call')
@@ -407,7 +410,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: FinalCallDto,
   ) {
-    return this.leadService.recordFinalCall(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.recordFinalCall(customerId, id, userId, dto));
   }
 
   @Post(':id/payments')
@@ -418,7 +421,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: RecordPaymentDto,
   ) {
-    return this.leadService.recordPayment(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.recordPayment(customerId, id, userId, dto));
   }
 
   @Post(':id/start-work')
@@ -429,7 +432,7 @@ export class LeadController {
     @CurrentUser('id') userId: string,
     @Body() dto: StartWorkDto,
   ) {
-    return this.leadService.startWork(customerId, id, userId, dto);
+    return toLeadResponse(await this.leadService.startWork(customerId, id, userId, dto));
   }
 
   @Post(':id/send-details')
