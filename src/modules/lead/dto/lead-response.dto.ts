@@ -1,5 +1,8 @@
 /** Lead API response shape; internal records retain assignment fields. */
-export type LeadResponseDto<T> = Omit<T, 'assignedToId' | 'assignedEmployee' | 'assignedToName'>;
+export type LeadResponseDto<T> = Omit<
+  T,
+  'assignedToId' | 'assignedEmployee' | 'assignedToName' | 'editorId'
+>;
 
 /** Omit only top-level Lead fields, preserving nested customer/visit responses. */
 export function toLeadResponse<T>(lead: T): LeadResponseDto<T> {
@@ -8,5 +11,6 @@ export function toLeadResponse<T>(lead: T): LeadResponseDto<T> {
   delete (response as any).assignedToId;
   delete (response as any).assignedEmployee;
   delete (response as any).assignedToName;
+  delete (response as any).editorId;
   return response;
 }

@@ -1090,6 +1090,7 @@ export class LeadRepository {
               delete enriched.assignedToId;
               delete enriched.assignedEmployee;
               delete enriched.assignedToName;
+              delete enriched.editorId;
             }
             return enriched;
           })
