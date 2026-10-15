@@ -366,6 +366,87 @@ export class WorkController {
     );
   }
 
+  @Get('employee/calendar')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get calendar scheduled activities for authenticated employee' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'teamId', required: false })
+  @ApiQuery({ name: 'workType', required: false })
+  async getEmployeeCalendar(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
+    @Query('customerId') customerId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('teamId') teamId?: string,
+    @Query('workType') workType?: string,
+  ) {
+    const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    const roleLabel = user?.role || (Array.isArray(user?.roles) ? user.roles.join(',') : 'UNKNOWN');
+    if (!authEmpId) {
+      this.logger.warn(
+        `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} resolvedEmployeeId=none`,
+      );
+      throw new NotFoundException('No employee profile is linked to this account');
+    }
+    const canViewCalendar =
+      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
+      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
+    const period = parseCalendarMonthYear(month, year);
+    this.logger.log(
+      `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
+      `resolvedEmployeeId=${authEmpId} employeeUserId=${user?.employee?.userId ?? 'none'} ` +
+      `tenantId=${user?.employee?.customerId ?? user?.customerId ?? 'none'} ` +
+      `parsedMonth=${period.month ?? 'none'} parsedYear=${period.year ?? 'none'} ` +
+      `date=${date || startDate || 'none'} dateFrom=${dateFrom || startDate || 'none'} dateTo=${dateTo || endDate || 'none'}`,
+    );
+    // Employees without the calendar module still receive rows assigned to them.
+    const targetQueryEmpId = employeeId
+      ? await this.workService.resolveCanonicalEmployeeId(employeeId)
+      : undefined;
+    const isTargetSameAsAuth = !targetQueryEmpId || targetQueryEmpId === authEmpId;
+    const lookingAtAnotherEmployee = !isTargetSameAsAuth;
+    if (lookingAtAnotherEmployee && !canViewCalendar) {
+      throw new ForbiddenException(
+        'Access denied: Missing required permission [CALENDAR:VIEW]',
+      );
+    }
+
+    const rangeStart = dateFrom || startDate;
+    const rangeEnd = dateTo || endDate;
+    const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
+    const effectiveTargetEmpId = targetQueryEmpId || authEmpId;
+    return this.workService.getEmployeeCalendar(effectiveTargetEmpId, {
+      date: multiDayRange ? undefined : (date || rangeStart),
+      dateFrom: multiDayRange ? rangeStart : (startDate || dateFrom),
+      dateTo: multiDayRange ? rangeEnd : (endDate || dateTo),
+      month: period.month,
+      year: period.year,
+      status,
+      customerId: customerId ? parseInt(customerId, 10) : undefined,
+      employeeId: targetQueryEmpId,
+      teamId: teamId ? parseInt(teamId, 10) : undefined,
+      workType,
+    }, {
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
+    });
+  }
+
   @Get('production/metrics')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

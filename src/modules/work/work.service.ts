@@ -4630,7 +4630,8 @@ status: ${item.status}`);
         let matchedEmployeeId = eligibleMemberIds.length > 0
           ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
           : null;
-        if (!isLeadConvertedCustomer && !matchedEmployeeId && targetSub.customer?.assignedEmployeeId) {
+        // Customer origin must not disable the normal, permission-checked owner fallback.
+        if (!matchedEmployeeId && targetSub.customer?.assignedEmployeeId) {
           const custEmp = tx.employee?.findUnique
             ? await tx.employee.findUnique({
                 where: { id: Number(targetSub.customer.assignedEmployeeId) },
@@ -4733,6 +4734,31 @@ status: ${item.status}`);
 
       return [...existingWorks, ...createdItems];
     });
+
+    if (process.env.PLAN_ASSIGNMENT_DEBUG === 'true') {
+      // Opt-in diagnostics contain identifiers/counts only, never customer contact data.
+      const rows = await this.prisma.work.findMany({
+        where: { customerId: numCustomerId, subscriptionId: targetSub.id, status: { not: WorkStatus.CANCELLED } },
+        select: {
+          id: true, teamId: true, assignedToId: true, editorId: true,
+          assignedTo: { select: { departmentId: true } },
+          editor: { select: { departmentId: true } },
+          tasks: { select: { assignedToId: true, assignedTo: { select: { departmentId: true } } } },
+        },
+      });
+      const ids = (values: Array<number | null | undefined>) => [...new Set(values.filter((id): id is number => id != null))];
+      this.logger.debug(`${targetSub.customer?.leadId ? '[LEAD_CUSTOMER_PLAN_DEBUG]' : '[NORMAL_CUSTOMER_PLAN_DEBUG]'} ${JSON.stringify({
+        customerId: numCustomerId,
+        ...(targetSub.customer?.leadId ? { leadId: targetSub.customer.leadId, convertedCustomerId: numCustomerId } : {}),
+        planId: targetSub.planId, subscriptionId: targetSub.id,
+        // Individual calendar activities are Work rows in this backend.
+        scheduleCount: rows.length, workCount: rows.length,
+        taskCount: rows.reduce((count, row) => count + row.tasks.length, 0),
+        departmentIds: ids(rows.flatMap(row => [row.assignedTo?.departmentId, row.editor?.departmentId, ...row.tasks.map(task => task.assignedTo?.departmentId)])),
+        teamIds: ids(rows.map(row => row.teamId)),
+        employeeIds: ids(rows.flatMap(row => [row.assignedToId, row.editorId, ...row.tasks.map(task => task.assignedToId)])),
+      })}`);
+    }
 
     return {
       success: true,
