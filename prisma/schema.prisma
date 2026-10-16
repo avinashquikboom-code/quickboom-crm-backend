@@ -480,8 +480,6 @@ model Lead {
   visits               Visit[]
   emailLogs            EmailLog[]
   socialMedia          Json?
-  socialProfiles       LeadSocialProfile[]
-  images               LeadImage[]
   commissions          Commission[]
 
   @@index([customerId])
@@ -526,37 +524,6 @@ model LeadNote {
   user      User     @relation(fields: [userId], references: [id])
 
   @@index([leadId])
-}
-
-model LeadImage {
-  id        Int      @id @default(autoincrement())
-  leadId    Int
-  url       String
-  key       String?
-  caption   String?
-  isPrimary Boolean  @default(false)
-  createdAt DateTime @default(now())
-  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@index([leadId])
-  @@index([leadId, isPrimary])
-  @@map("lead_images")
-}
-
-model LeadSocialProfile {
-  id        Int      @id @default(autoincrement())
-  leadId    Int
-  platform  String
-  url       String
-  username  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@unique([leadId, platform])
-  @@index([leadId])
-  @@index([platform])
-  @@map("lead_social_profiles")
 }
 
 model LeadActivityTimeline {
