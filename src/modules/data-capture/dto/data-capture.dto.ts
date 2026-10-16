@@ -6,7 +6,6 @@ import {
   Min,
   Max,
   IsArray,
-  IsEmail,
   IsBoolean,
   IsIn,
 } from 'class-validator';
@@ -490,8 +489,8 @@ export class BulkActionDto {
   ids: number[];
 
   @IsString()
-  @IsIn(['validate', 'reject', 'mark_duplicate', 'delete', 'import_leads'])
-  action: 'validate' | 'reject' | 'mark_duplicate' | 'delete' | 'import_leads';
+  @IsIn(['validate', 'reject', 'mark_duplicate', 'delete'])
+  action: 'validate' | 'reject' | 'mark_duplicate' | 'delete';
 
   @IsOptional()
   @IsString()

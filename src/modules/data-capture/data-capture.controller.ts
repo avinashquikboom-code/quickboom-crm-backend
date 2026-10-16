@@ -26,16 +26,14 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
 import {
   ExtractPlacesDto,
-  ImportToLeadsDto,
   CreateDataCaptureDto,
   UpdateDataCaptureDto,
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
-  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 
-@ApiTags('Data Capture (Google Places & Leads Extraction)')
+@ApiTags('Data Capture (Google Places Extraction)')
 @ApiBearerAuth()
 @Controller('data-capture')
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
@@ -100,7 +98,7 @@ export class DataCaptureController {
 
   /**
    * POST /api/v1/data-capture/bulk
-   * Executes bulk action (validate, reject, delete, mark duplicate, import)
+   * Executes bulk action (validate, reject, delete, mark duplicate)
    */
   @Post('bulk')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
