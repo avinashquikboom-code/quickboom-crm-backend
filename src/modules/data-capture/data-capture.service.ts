@@ -10,13 +10,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import {
   ExtractPlacesDto,
-  ImportToLeadsDto,
   CreateDataCaptureDto,
   UpdateDataCaptureDto,
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
-  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
