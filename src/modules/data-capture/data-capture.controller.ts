@@ -99,22 +99,6 @@ export class DataCaptureController {
   }
 
   /**
-   * POST /api/v1/data-capture/import-to-leads
-   * Batch imports captured prospects into CRM Leads with duplicate detection
-   */
-  @Post('import-to-leads')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Import captured places into CRM Leads in batch' })
-  async importToLeads(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Body() dto: ImportToLeadsDto,
-    @Req() req: any,
-  ) {
-    return this.dataCaptureService.importToLeads(customerId, user, dto, req);
-  }
-
-  /**
    * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
    * Retrieves past extraction jobs for the customer
    */
@@ -196,23 +180,6 @@ export class DataCaptureController {
   }
 
   /**
-   * POST /api/v1/data-capture/:id/create-lead
-   * Direct 1-click lead conversion from captured record with duplicate checking
-   */
-  @Post(':id/create-lead')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Convert single captured record to CRM Lead' })
-  async createLeadFromPlace(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Param('id') id: string,
-    @Body() dto?: CreateLeadFromPlaceDto,
-    @Req() req?: any,
-  ) {
-    return this.dataCaptureService.createLeadFromPlace(customerId, user, id, dto?.captureRequestId, dto, req);
-  }
-
-  /**
    * POST /api/v1/data-capture/:id/validate
    * Mark record as VALIDATED
    */
@@ -253,25 +220,6 @@ export class DataCaptureController {
     @Param('id') id: string,
   ) {
     return this.dataCaptureService.checkDuplicates(customerId, id);
-  }
-
-  /**
-   * POST /api/v1/data-capture/:id/import
-   * Alias for job places import
-   */
-  @Post(':id/import')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Import job places into CRM Leads' })
-  async importJobToLeads(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser('id') userId: string,
-    @Param('id') jobId: string,
-    @Body() dto: { placeIds?: string[] },
-  ) {
-    return this.dataCaptureService.importToLeads(customerId, userId, {
-      jobId,
-      placeIds: dto?.placeIds,
-    });
   }
 
   /**

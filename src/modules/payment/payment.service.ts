@@ -813,7 +813,6 @@ export class PaymentService {
           paymentId: dto.razorpay_payment_id,
         });
       }
-      await this.workService.generatePlanSchedules(customerId, result.subscription.id);
     } catch (schedErr: any) {
       this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
     }
@@ -1183,7 +1182,6 @@ export class PaymentService {
               });
             }
             if (this.workService) {
-              await this.workService.generatePlanSchedules(customerId, activeSub.id);
             }
           } catch (schedErr: any) {
             this.logger.warn(`[WEBHOOK_SCHEDULE_WARN] Schedule generation notice: ${schedErr?.message}`);

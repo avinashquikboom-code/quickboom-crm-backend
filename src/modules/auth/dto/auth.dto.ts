@@ -18,59 +18,6 @@ export class LoginDto {
   appType?: string;
 }
 
-export class RegisterCustomerDto {
-  @ApiPropertyOptional({ example: 'Acme Corporation' })
-  @IsString()
-  @IsOptional()
-  companyName?: string;
-
-  @ApiPropertyOptional({ example: 'John Doe' })
-  @IsString()
-  @IsOptional()
-  fullName?: string;
-
-  @ApiPropertyOptional({ example: 'John' })
-  @IsString()
-  @IsOptional()
-  firstName?: string;
-
-  @ApiPropertyOptional({ example: 'Doe' })
-  @IsString()
-  @IsOptional()
-  lastName?: string;
-
-  @ApiProperty({ example: 'john@acme.com' })
-  @IsEmail({}, { message: 'Please provide a valid email address' })
-  @IsNotEmpty({ message: 'Email address is required' })
-  email: string;
-
-  @ApiPropertyOptional({ example: '+919876543210' })
-  @IsString()
-  @IsOptional()
-  phone?: string;
-
-  @ApiPropertyOptional({ example: 'Mumbai' })
-  @IsString()
-  @IsOptional()
-  city?: string;
-
-  @ApiPropertyOptional({ example: 'Password123!' })
-  @IsString()
-  @IsOptional()
-  @MinLength(6, { message: 'Password must be at least 6 characters' })
-  password?: string;
-
-  @ApiPropertyOptional({ example: 'fcm_token_xyz', description: 'Optional FCM device token registered at sign-up' })
-  @IsString()
-  @IsOptional()
-  fcmToken?: string;
-
-  @ApiPropertyOptional({ example: 'ANDROID', enum: ['ANDROID', 'IOS', 'WEB'] })
-  @IsString()
-  @IsOptional()
-  platform?: string;
-}
-
 export class RegisterEmployeeDto {
   @ApiProperty({ example: 'Rahul Sharma' })
   @IsString()

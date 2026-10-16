@@ -92,32 +92,6 @@ export class InvoiceController {
     return response;
   }
 
-  @Get('customers/:customerId/invoices')
-  @ApiOperation({ summary: 'Get invoices for specific customer' })
-  async findCustomerInvoices(
-    @Param('customerId') custId: string,
-    @CurrentUser() user: any,
-    @Query('status') status?: InvoiceStatus,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.findAll(custId, user, status, search, page, limit, custId);
-  }
-
-  @Get('admin/customers/:customerId/invoices')
-  @ApiOperation({ summary: 'Get invoices for specific customer (Admin alias)' })
-  async findAdminCustomerInvoices(
-    @Param('customerId') custId: string,
-    @CurrentUser() user: any,
-    @Query('status') status?: InvoiceStatus,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.findAll(custId, user, status, search, page, limit, custId);
-  }
-
 
   @Get(':id/agreement/download')
   @ApiOperation({ summary: 'Download agreement PDF for invoice' })

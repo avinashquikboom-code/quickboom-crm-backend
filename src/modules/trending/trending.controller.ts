@@ -171,29 +171,6 @@ export class TrendingController {
     return this.trendingService.setFeatured(customerId, id, dto.isFeatured, isSuperAdmin);
   }
 
-  // ── Customer Endpoint ───────────────────────────────────────────────────────
-
-  @Get(['customer/trending', 'customer/marketing/trending'])
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_TRENDING', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get active published trending content for customer' })
-  @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
-  @ApiQuery({ name: 'platform', type: String, required: false })
-  @ApiQuery({ name: 'sort', type: String, required: false })
-  @ApiQuery({ name: 'search', type: String, required: false })
-  @ApiQuery({ name: 'isFeatured', type: Boolean, required: false })
-  async findAllCustomer(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Query('category') category?: TrendingCategory,
-    @Query('platform') platform?: string,
-    @Query('sort') sort?: string,
-    @Query('search') search?: string,
-    @Query('isFeatured') isFeatured?: string,
-  ) {
-    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort, search, isFeatured);
-  }
-
   @Get('trending')
   @ApiOperation({ summary: 'Alias: Get active published trending content' })
   @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })

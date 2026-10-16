@@ -777,7 +777,6 @@ export class CustomPlanService {
     // 7. Auto-generate Work deliverable schedules across subscription period avoiding Sundays
     try {
       this.logger.log(`[CUSTOM_PLAN] Generating schedules for customer ID: ${numCustomerId}`);
-      await this.workService.generatePlanSchedules(numCustomerId, result.subscription.id);
       await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
       await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
         customerId: numCustomerId,

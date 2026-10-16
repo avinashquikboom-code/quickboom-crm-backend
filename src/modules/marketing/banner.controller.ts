@@ -214,20 +214,4 @@ export class BannerController {
     const context = this.resolveCustomerContext(customerId, user);
     return this.bannerService.setStatus(id, dto.isActive, context);
   }
-
-  // ── Customer Endpoints ──────────────────────────────────────────────────────
-
-  @Get(['customer/marketing/banners', 'marketing/banners', 'customer/banners'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiOperation({ summary: 'Get active, published home banners for Customer Home Screen' })
-  async getCustomerBanners(
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @CurrentCustomer() customerId?: string,
-    @Headers('x-customer-id') headerCustomerId?: string,
-  ) {
-    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
-    return this.bannerService.findAllCustomer(context);
-  }
 }

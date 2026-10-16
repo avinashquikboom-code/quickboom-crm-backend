@@ -78,19 +78,6 @@ export class MasterController {
     return this.masterService.getTaskStatuses(targetCustomerId);
   }
 
-  @Get('lead-sources')
-  @ApiOperation({ summary: 'Get lead sources and lead distribution' })
-  @ApiQuery({ name: 'customerId', required: false })
-  async getLeadSources(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.masterService.getLeadSources(targetCustomerId);
-  }
-
   @Get('expense-categories')
   @ApiOperation({ summary: 'Get HRM claim expense categories and policy limits' })
   @ApiQuery({ name: 'customerId', required: false })

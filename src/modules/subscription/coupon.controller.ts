@@ -95,7 +95,6 @@ export class CouponController {
   }
 
   @Post('subscriptions/apply-coupon')
-  @Post('customer/subscriptions/apply-coupon')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Validate a coupon and return the server-calculated price' })

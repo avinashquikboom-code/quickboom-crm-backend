@@ -103,26 +103,6 @@ export class SocialPublishingController {
   }
 
   // =========================================================================
-  // OAUTH FLOW — START (JWT-protected)
-  // =========================================================================
-
-  /**
-   * Flutter calls GET /customer/social/oauth/start/INSTAGRAM (with JWT).
-   * Returns { authUrl } — Flutter opens this URL in the system browser.
-   */
-  @Get(['customer/social/oauth/start/:platform', 'social/oauth/start/:platform'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get OAuth authorization URL for a social platform' })
-  async getOAuthStartUrl(@Req() req: any, @Param('platform') platform: string) {
-    const customerId = this.resolveCustomerId(req);
-    const provider = this.getProvider(platform);
-    const state = this.signState(customerId, platform);
-    const authUrl = provider.getAuthUrl(state);
-    return { statusCode: 200, success: true, platform: platform.toUpperCase(), authUrl };
-  }
-
-  // =========================================================================
   // OAUTH CALLBACK — PUBLIC (Instagram/Meta redirects here — no JWT)
   // =========================================================================
 
@@ -179,95 +159,6 @@ export class SocialPublishingController {
     } catch (err: any) {
       return res.status(500).send(htmlError(err?.message || 'An unexpected error occurred.'));
     }
-  }
-
-  // =========================================================================
-  // CUSTOMER SOCIAL ACCOUNTS APIS
-  // =========================================================================
-
-  @Get(['social/accounts', 'customer/social/accounts'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get all connected social accounts for logged-in customer' })
-  async getAccounts(@Req() req: any) {
-    const customerId = this.resolveCustomerId(req);
-    const data = await this.socialAccountService.getAccounts(customerId);
-    return { statusCode: 200, success: true, data };
-  }
-
-  @Post(['social/accounts/connect', 'customer/social/accounts/connect', 'social/connect', 'customer/social/connect'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Connect social media account (Instagram, Facebook, YouTube, LinkedIn, TikTok)' })
-  async connectAccount(@Req() req: any, @Body() dto: ConnectSocialAccountDto) {
-    const customerId = this.resolveCustomerId(req);
-    const data = await this.socialAccountService.connectAccount(customerId, dto);
-    return {
-      statusCode: 201,
-      success: true,
-      message: `${dto.platform} account connected successfully`,
-      data,
-    };
-  }
-
-  @Post(['social/accounts/:id/disconnect', 'customer/social/accounts/:id/disconnect', 'social/disconnect/:id', 'customer/social/disconnect/:id'])
-  @Delete(['social/accounts/:id', 'customer/social/accounts/:id'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Disconnect a social media account' })
-  async disconnectAccount(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
-    const customerId = this.resolveCustomerId(req);
-    const data = await this.socialAccountService.disconnectAccount(customerId, id);
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Account disconnected successfully',
-      data,
-    };
-  }
-
-  // =========================================================================
-  // CUSTOMER PUBLISHING & SCHEDULING APIS
-  // =========================================================================
-
-  @Post(['social/publish', 'customer/social/publish'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Publish or schedule post across connected social media accounts' })
-  async publishContent(@Req() req: any, @Body() dto: PublishContentDto) {
-    const customerId = this.resolveCustomerId(req);
-    const result = await this.socialPublishService.publishOrSchedule(customerId, dto);
-    return {
-      statusCode: 201,
-      success: true,
-      message: result.mode === 'SCHEDULED' ? 'Post scheduled successfully' : 'Content published successfully',
-      ...result,
-    };
-  }
-
-  @Get(['social/publishes', 'customer/social/publishes'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get publishing history and scheduled queue for logged-in customer' })
-  async getMyPublishes(@Req() req: any, @Query('status') status?: string) {
-    const customerId = this.resolveCustomerId(req);
-    const data = await this.socialPublishService.getMyPublishes(customerId, status);
-    return { statusCode: 200, success: true, data };
-  }
-
-  @Delete(['social/publishes/:id', 'customer/social/publishes/:id'])
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Cancel a scheduled post' })
-  async cancelScheduledPost(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
-    const customerId = this.resolveCustomerId(req);
-    const data = await this.socialPublishService.cancelScheduledPost(customerId, id);
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Scheduled post cancelled',
-      data,
-    };
   }
 
   // =========================================================================

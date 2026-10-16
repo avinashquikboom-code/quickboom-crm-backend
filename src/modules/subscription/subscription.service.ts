@@ -1220,7 +1220,6 @@ export class SubscriptionService {
         await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(numCustomerId, result.subscription.id);
       }
     } catch (schedErr: any) {
       this.logger.warn(`[AUTO_SCHEDULE_WARNING] Schedule generation notice: ${schedErr?.message}`);
@@ -2072,7 +2071,6 @@ export class SubscriptionService {
         await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(numCustomerId, newSub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed auto-generating schedule: ${err?.message}`);
@@ -2253,7 +2251,6 @@ export class SubscriptionService {
         await this.scheduleService.generateSchedulesForSubscription(newSub.id, { force: true });
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(oldSub.customerId, newSub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on plan change: ${err?.message}`);
@@ -2381,7 +2378,6 @@ export class SubscriptionService {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on renewal: ${err?.message}`);
@@ -2491,7 +2487,6 @@ export class SubscriptionService {
         await this.scheduleService.generateSchedulesForSubscription(sub.id, { force: true });
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[SCHEDULE_GEN_WARN] Failed generating schedule on activation: ${err?.message}`);
@@ -3192,7 +3187,6 @@ export class SubscriptionService {
         });
       }
       if (this.workService) {
-        await this.workService.generatePlanSchedules(sub.customerId, sub.id);
       }
     } catch (err: any) {
       this.logger.warn(`[OFFLINE_APPROVE_SCHEDULE_WARN] ${err?.message}`);

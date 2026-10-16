@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { AuthService } from './auth.service';
 import {
   LoginDto,
-  RegisterCustomerDto,
+
   RegisterEmployeeDto,
   RefreshTokenDto,
   ForgotPasswordDto,
@@ -93,14 +93,6 @@ export class AuthController {
   }
 
   @Public()
-  @Post('register')
-  @ApiOperation({ summary: 'Register a new Customer and Customer Admin' })
-  @ApiResponse({ status: 210, description: 'Customer created successfully' })
-  async register(@Body() dto: RegisterCustomerDto) {
-    return this.authService.registerCustomer(dto);
-  }
-
-  @Public()
   @Post('register/employee')
   @ApiOperation({ summary: 'Register a new Employee (Company or Freelancer)' })
   @ApiResponse({ status: 201, description: 'Employee created successfully' })
@@ -147,15 +139,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Mobile application login alias' })
   async mobileLogin(@Body() dto: LoginDto) {
     return this.authService.login(dto, 'EMPLOYEE_MOBILE');
-  }
-
-  @Public()
-  @Post(['customer/login', 'customer/auth/login', 'login/customer'])
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Customer mobile/web portal login with email and password' })
-  @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
-  async customerLogin(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'CUSTOMER_MOBILE');
   }
 
   @Public()

@@ -52,74 +52,6 @@ export class SocialMediaHandlerController {
     };
   }
 
-  // ── Customer & Common Endpoints ─────────────────────────────────────────────
-
-  @Get(['social-media-handler', 'social-media-handlers', 'customer/social-media-handler', 'customer/social-media-handlers'])
-  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get social media handlers for authenticated customer' })
-  async getCustomerHandlers(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Query() query: QuerySocialMediaHandlerDto,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.findAll(query, context);
-  }
-
-  @Post(['social-media-handler', 'customer/social-media-handler'])
-  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
-  @ApiOperation({ summary: 'Create a social media handler record' })
-  async createHandler(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Body() dto: CreateSocialMediaHandlerDto,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.create(dto, context);
-  }
-
-  @Get(['social-media-handler/:id', 'customer/social-media-handler/:id'])
-  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get single social media handler by ID' })
-  async getHandlerById(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.findOne(id, context);
-  }
-
-  @Patch(['social-media-handler/:id', 'customer/social-media-handler/:id'])
-  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
-  @ApiOperation({ summary: 'Update a social media handler record' })
-  async updateHandler(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Body() dto: UpdateSocialMediaHandlerDto,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.update(id, dto, context);
-  }
-
-  @Delete(['social-media-handler/:id', 'customer/social-media-handler/:id'])
-  @RequirePermissions({ module: 'CUSTOMER_SSM', action: 'VIEW' })
-  @ApiOperation({ summary: 'Delete a social media handler record' })
-  async deleteHandler(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.remove(id, context);
-  }
-
   // ── Admin Endpoints ─────────────────────────────────────────────────────────
 
   @Get(['admin/social-media-handler', 'admin/social-media-handlers'])
@@ -131,18 +63,6 @@ export class SocialMediaHandlerController {
   ) {
     const context = this.extractContext(user, null, req);
     return this.handlerService.findAll(query, context);
-  }
-
-  @Get('admin/customers/:customerId/social-media-handler')
-  @ApiOperation({ summary: 'Get social media handlers for a specific customer (Admin)' })
-  async getAdminCustomerHandlers(
-    @Param('customerId') customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Query() query: QuerySocialMediaHandlerDto,
-  ) {
-    const context = this.extractContext(user, customerId, req);
-    return this.handlerService.findAll({ ...query, customerId }, context);
   }
 
   @Post(['admin/social-media-handler', 'admin/social-media-handlers'])

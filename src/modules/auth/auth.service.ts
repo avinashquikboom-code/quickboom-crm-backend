@@ -18,7 +18,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import {
   LoginDto,
-  RegisterCustomerDto,
+
   RegisterEmployeeDto,
   RefreshTokenDto,
   ForgotPasswordDto,
@@ -63,256 +63,6 @@ export class AuthService {
     @Inject(forwardRef(() => PlanScheduleGateway))
     private planScheduleGateway?: PlanScheduleGateway,
   ) {}
-
-  async registerCustomer(dto: RegisterCustomerDto) {
-    const normalizedEmail = (dto.email || '').trim().toLowerCase();
-    const normalizedPhone = dto.phone?.trim() ? dto.phone.trim() : null;
-    const normalizedCity = dto.city?.trim() ? dto.city.trim() : null;
-
-    if (!normalizedEmail) {
-      throw new BadRequestException('Email address is required');
-    }
-
-    const companyOrCustomerName = (dto.companyName || dto.fullName || 'Customer').trim();
-    if (!companyOrCustomerName) {
-      throw new BadRequestException('Business name or full name is required');
-    }
-
-    this.logger.log('[AUTH] Customer registration started');
-    this.logger.log(
-      `[REGISTRATION_REQUEST] Registering customer email=${normalizedEmail} company=${companyOrCustomerName} city=${normalizedCity || 'N/A'}`,
-    );
-
-    // Only match non-deleted (active) users. Soft-deleted users (archived customers)
-    // must be allowed to re-register — their user record has deletedAt set by the
-    // Admin archive flow. We keep the auto-heal path below for orphan users.
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [
-          { email: normalizedEmail },
-          ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
-        ],
-      },
-      include: {
-        customer: true,
-      },
-    });
-
-    const existingCustomer = await this.prisma.customer.findFirst({
-      where: {
-        email: normalizedEmail,
-        deletedAt: null,
-      },
-    });
-
-    const hasActiveCustomer = Boolean(existingUser?.customer && !existingUser.customer.deletedAt);
-    if (existingUser || existingCustomer) {
-      if (existingUser?.email === normalizedEmail || existingCustomer?.email === normalizedEmail) {
-        throw new ConflictException('Email is already registered');
-      }
-      if (normalizedPhone && existingUser?.phone === normalizedPhone) {
-        throw new ConflictException('Phone number is already registered');
-      }
-      throw new ConflictException('Email is already registered');
-    }
-
-    // Determine first and last name from fullName or explicit fields
-    let firstName = dto.firstName?.trim() || '';
-    let lastName = dto.lastName?.trim() || '';
-    if (dto.fullName && (!firstName || !lastName)) {
-      const parts = dto.fullName.trim().split(/\s+/);
-      firstName = parts[0] || 'Customer';
-      lastName = parts.slice(1).join(' ');
-    }
-    if (!firstName) firstName = companyOrCustomerName.split(/\s+/)[0] || 'Customer';
-    if (!lastName) lastName = '';
-
-    const rawPassword = dto.password || '123456';
-    const hashedPassword = await bcrypt.hash(rawPassword, 10);
-
-    let createdResult: any;
-    try {
-      createdResult = await this.prisma.$transaction(async (tx) => {
-        // Create Customer
-        const customer = await tx.customer.create({
-          data: {
-            name: companyOrCustomerName,
-            companyName: companyOrCustomerName,
-            email: normalizedEmail,
-            phone: normalizedPhone,
-            city: normalizedCity,
-            isActive: true,
-            source: 'APP_REGISTRATION',
-            customerType: 'ENTERPRISE',
-          },
-        });
-
-        // Create Admin Role for Customer
-        const adminRole = await tx.role.create({
-          data: {
-            customerId: customer.id,
-            name: 'Customer Administrator',
-            type: RoleType.CUSTOMER_ADMIN,
-            description: 'Full administrative access to customer workspace',
-          },
-        });
-
-        // Create or Link Admin User (auto-heal orphan user if exists)
-        let user;
-        if (existingUser && !hasActiveCustomer) {
-          // Reuse an active orphan user (no active customer linked)
-          user = await tx.user.update({
-            where: { id: existingUser.id },
-            data: {
-              customerId: customer.id,
-              email: normalizedEmail,
-              phone: normalizedPhone,
-              firstName: firstName,
-              lastName: lastName,
-              passwordHash: hashedPassword,
-              isVerified: true,
-              isActive: true,
-              deletedAt: null,
-            },
-          });
-        } else {
-          // Check for a soft-deleted user with the same email (archived customer scenario).
-          // The outer lookup only finds non-deleted users, so we must check here inside
-          // the transaction to avoid a unique-constraint violation on User.email.
-          const archivedUser = await tx.user.findFirst({
-            where: {
-              email: normalizedEmail,
-              deletedAt: { not: null },
-            },
-          });
-
-          if (archivedUser) {
-            // Restore and reassign the archived user to the new customer account
-            user = await tx.user.update({
-              where: { id: archivedUser.id },
-              data: {
-                customerId: customer.id,
-                email: normalizedEmail,
-                phone: normalizedPhone,
-                firstName: firstName,
-                lastName: lastName,
-                passwordHash: hashedPassword,
-                isVerified: true,
-                isActive: true,
-                deletedAt: null,
-              },
-            });
-          } else {
-            user = await tx.user.create({
-              data: {
-                customerId: customer.id,
-                email: normalizedEmail,
-                phone: normalizedPhone,
-                firstName: firstName,
-                lastName: lastName,
-                passwordHash: hashedPassword,
-                isVerified: true,
-              },
-            });
-          }
-        }
-
-        // Assign Admin Role
-        await tx.userRole.create({
-          data: {
-            userId: user.id,
-            roleId: adminRole.id,
-          },
-        });
-
-        return {
-          user: {
-            id: user.id,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            customerId: customer.id,
-            customerName: customer.name,
-            role: 'CUSTOMER',
-          },
-          customer: {
-            id: customer.id,
-            name: customer.name,
-            email: customer.email,
-            phone: customer.phone,
-            city: customer.city,
-          },
-        };
-      });
-    } catch (err: any) {
-      this.logger.error(`[REGISTRATION_FAILED] Error registering customer: ${err?.message}`, err?.stack);
-      if (err?.code === 'P2002') {
-        const target = err?.meta?.target;
-        if (Array.isArray(target) && target.includes('email')) {
-          throw new ConflictException('Email is already registered');
-        }
-        if (Array.isArray(target) && target.includes('phone')) {
-          throw new ConflictException('Phone number is already registered');
-        }
-        throw new ConflictException('An account with these details already exists');
-      }
-      throw err;
-    }
-
-    // Generate tokens AFTER transaction has committed so user.id exists in database for RefreshToken table
-    const tokens = await this.generateTokens(
-      createdResult.user.id,
-      createdResult.user.customerId,
-      createdResult.user.email,
-      'CUSTOMER',
-    );
-
-    this.logger.log(`[AUTH] Customer created successfully: ${createdResult.customer.id}`);
-    this.logger.log(
-      `[REGISTRATION_SUCCESS] Customer created → customerId=${createdResult.customer.id} (${createdResult.customer.name}), email=${createdResult.user.email}, userId=${createdResult.user.id}`,
-    );
-
-    // If initial FCM device token was provided during registration, register it now
-    if (dto.fcmToken && dto.fcmToken.trim()) {
-      try {
-        await this.notificationService?.registerDeviceToken(createdResult.user.id, {
-          token: dto.fcmToken.trim(),
-          platform: dto.platform || 'ANDROID',
-        });
-      } catch (tokenErr: any) {
-        this.logger.warn(`Non-fatal: Failed to register initial FCM token: ${tokenErr?.message}`);
-      }
-    }
-
-    // Send welcome in-app notification and FCM push to the newly registered customer.
-    // Wrapped in try/catch — a notification failure must never break registration.
-    try {
-      if (this.notificationService) {
-        await this.notificationService.sendCustomerWelcomeNotification({
-          customerId: createdResult.customer.id,
-          userId: createdResult.user.id,
-          customerName: createdResult.customer.name,
-          isNewAccount: true,
-        });
-      }
-    } catch (notifErr: any) {
-      this.logger.warn(
-        `[NOTIFICATION] Welcome notification failed (non-fatal): ${notifErr?.message}`,
-      );
-    }
-
-    return {
-      success: true,
-      message: 'Account created successfully',
-      user: createdResult.user,
-      tokens,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      customerId: createdResult.user.customerId,
-      userId: createdResult.user.id,
-    };
-  }
 
   async registerEmployee(dto: RegisterEmployeeDto) {
     const normalizedEmail = (dto.email || '').trim().toLowerCase();
@@ -3954,6 +3704,15 @@ export class AuthService {
     roleId?: number | null,
     isBpo?: boolean,
   ) {
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId }, include: { employee: true, userRoles: { include: { role: true } } },
+    });
+    const customerAccount = account?.userRoles.some(ur =>
+      ['CUSTOMER', 'CUSTOMER_ADMIN', 'CUSTOMER_OWNER'].includes(String(ur.role.type).toUpperCase()) ||
+      ['CUSTOMER', 'CUSTOMER_ADMIN', 'CUSTOMER_OWNER'].includes(String(ur.role.name).toUpperCase().replace(/\s+/g, '_')));
+    if (customerAccount || ['CUSTOMER', 'CUSTOMER_ADMIN'].includes(String(role).toUpperCase())) {
+      throw new ForbiddenException('This account type is no longer supported');
+    }
     const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
     const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
 

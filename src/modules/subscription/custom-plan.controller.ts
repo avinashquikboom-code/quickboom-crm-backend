@@ -86,7 +86,6 @@ export class CustomPlanController {
   }
 
   @Get('custom-plan/history')
-  @Get('customer/custom-plans')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get authenticated customer custom plan purchase history' })

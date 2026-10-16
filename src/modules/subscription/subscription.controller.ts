@@ -51,7 +51,6 @@ export class SubscriptionController {
   // ==========================================
 
   @Get('subscriptions/installments')
-  @Get('customer/installments')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer installment schedule and outstanding balance' })
@@ -83,7 +82,6 @@ export class SubscriptionController {
   }
 
   @Post('subscriptions/installments/:id/pay')
-  @Post('customer/installments/:id/pay')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Pay or renew an installment for authenticated customer' })
@@ -103,50 +101,7 @@ export class SubscriptionController {
     });
   }
 
-  @Get('admin/customers/:customerId/installments')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get installment breakdown for specific customer (Admin)' })
-  async getAdminCustomerInstallments(
-    @CurrentUser() user: any,
-    @Param('customerId') custId: string,
-  ) {
-    if (!isUserSuperAdmin(user) && user?.customerId !== Number(custId)) {
-      throw new ForbiddenException('Admin permissions required');
-    }
-    const summary = await this.installmentService.getCustomerInstallmentSummary(custId);
-    return {
-      success: true,
-      data: summary,
-    };
-  }
-
-  @Post('admin/customers/:customerId/installments/:id/pay')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Record manual installment payment for customer (Admin)' })
-  async recordAdminInstallmentPayment(
-    @CurrentUser() user: any,
-    @Param('customerId') custId: string,
-    @Param('id') id: string,
-    @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string; notes?: string },
-  ) {
-    if (!isUserSuperAdmin(user)) {
-      throw new ForbiddenException('Super Admin permissions required');
-    }
-    return this.installmentService.payInstallment(custId, id, {
-      paymentMethod: dto.paymentMethod || 'CASH',
-      transactionId: dto.transactionId,
-      orderId: dto.orderId,
-      paidByAdmin: true,
-      notes: dto.notes || 'Admin manual payment confirmation',
-    });
-  }
-
   @Get('subscriptions/current')
-  @Get('customer/subscriptions/current')
-  @Get('customer/subscription/current')
-  @Get('customer/subscription/status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription and installment status' })
@@ -175,7 +130,6 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/renewal-status')
-  @Get('customer/subscriptions/renewal-status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get installment renewal status' })
@@ -200,7 +154,6 @@ export class SubscriptionController {
   }
 
   @Post('subscriptions/:subscriptionId/renew')
-  @Post('customer/subscriptions/:subscriptionId/renew')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Pay or renew existing installment' })
@@ -217,9 +170,7 @@ export class SubscriptionController {
   }
 
   @Post('subscriptions/new-plan')
-  @Post('customer/subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
-  @Post('customer/start-new-plan')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
@@ -262,32 +213,6 @@ export class SubscriptionController {
     };
   }
 
-  @Post('admin/customers/:customerId/start-new-plan')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Start a completely new plan for customer (Admin)' })
-  async startNewPlanAdmin(
-    @CurrentUser() user: any,
-    @Param('customerId') custId: string,
-    @Body() dto: {
-      planId?: number;
-      billingCycle?: string;
-      customPrice?: number;
-      totalInstallments?: number;
-      paymentMethod?: string;
-      transactionId?: string;
-      orderNumber?: string;
-    },
-  ) {
-    if (!isUserSuperAdmin(user)) {
-      throw new ForbiddenException('Super Admin permissions required');
-    }
-    return this.installmentService.startNewPlan(custId, {
-      ...dto,
-      paymentMethod: dto.paymentMethod || 'CASH',
-    });
-  }
-
   @Post('admin/installments/evaluate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -304,22 +229,18 @@ export class SubscriptionController {
   // ==========================================
 
   @Get('plans')
-  @Get('customer/plans')
   @ApiOperation({ summary: 'Get all active subscription plans (Customer & Public)' })
   async getPlans() {
     return this.subscriptionService.getPlans(false);
   }
 
   @Get('plans/:id')
-  @Get('customer/plans/:id')
   @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
   async getPlanById(@Param('id') id: string) {
     return this.subscriptionService.getPlanById(id);
   }
 
   @Get('subscriptions/effective-plan')
-  @Get('customer/subscription')
-  @Get('customer/usage')
   @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
   @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'VIEW' })
   @ApiBearerAuth()
@@ -796,87 +717,6 @@ export class SubscriptionController {
     return this.subscriptionService.deletePlan(id);
   }
 
-  @Get('admin/customers/:id/subscription')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer subscription and effective limits (Admin)' })
-  async getCustomerSubscriptionAdmin(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-  ) {
-    return this.planAccessService.getEffectivePlan(id);
-  }
-
-  @Patch('admin/customers/:id/subscription')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Customize customer subscription limits, price, features (Admin)' })
-  async updateCustomerSubscriptionAdmin(
-    @Param('id') id: string,
-    @Body() dto: {
-      planId?: number;
-      customUserLimit?: number;
-      customLeadLimit?: number;
-      customStorageLimit?: number | bigint;
-      customFeatures?: any;
-      customPrice?: number;
-      status?: any;
-      startDate?: string;
-      endDate?: string;
-    },
-    @CurrentUser() user: any,
-  ) {
-    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
-    if (!isSuperAdmin) {
-      throw new ForbiddenException('Only Super Admins can customize customer plan limits');
-    }
-
-    const numCustomerId = Number(id);
-
-    let sub = await this.subscriptionService['prisma'].customerSubscription.findFirst({
-      where: { customerId: numCustomerId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!sub) {
-      const defaultPlan = await this.subscriptionService['prisma'].plan.findFirst({
-        where: { deletedAt: null, isActive: true },
-      });
-
-      sub = await this.subscriptionService['prisma'].customerSubscription.create({
-        data: {
-          customerId: numCustomerId,
-          planId: dto.planId || defaultPlan?.id || 1,
-          status: dto.status || 'ACTIVE',
-          startDate: dto.startDate ? new Date(dto.startDate) : new Date(),
-          endDate: dto.endDate ? new Date(dto.endDate) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-          customUserLimit: dto.customUserLimit,
-          customLeadLimit: dto.customLeadLimit,
-          customStorageLimit: dto.customStorageLimit ? BigInt(dto.customStorageLimit) : null,
-          customFeatures: dto.customFeatures,
-          customPrice: dto.customPrice,
-        },
-      });
-    } else {
-      sub = await this.subscriptionService['prisma'].customerSubscription.update({
-        where: { id: sub.id },
-        data: {
-          ...(dto.planId ? { planId: dto.planId } : {}),
-          ...(dto.status ? { status: dto.status } : {}),
-          ...(dto.startDate ? { startDate: new Date(dto.startDate) } : {}),
-          ...(dto.endDate ? { endDate: new Date(dto.endDate) } : {}),
-          customUserLimit: dto.customUserLimit !== undefined ? dto.customUserLimit : sub.customUserLimit,
-          customLeadLimit: dto.customLeadLimit !== undefined ? dto.customLeadLimit : sub.customLeadLimit,
-          customStorageLimit: dto.customStorageLimit !== undefined ? (dto.customStorageLimit ? BigInt(dto.customStorageLimit) : null) : sub.customStorageLimit,
-          customFeatures: dto.customFeatures !== undefined ? dto.customFeatures : sub.customFeatures,
-          customPrice: dto.customPrice !== undefined ? dto.customPrice : sub.customPrice,
-        },
-      });
-    }
-
-    return this.planAccessService.getEffectivePlan(numCustomerId);
-  }
-
   @Get('admin/subscriptions')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -923,52 +763,6 @@ export class SubscriptionController {
   @ApiOperation({ summary: 'Run idempotent daily plan expiry check & notification dispatcher (Admin / Cron)' })
   async runExpiryCheck() {
     return this.subscriptionService.runDailyExpiryCheck();
-  }
-
-  // ==========================================
-  // Customer Subscription Lifecycle (Admin)
-  // ==========================================
-
-  @Get('admin/customers/:customerId/subscriptions')
-  @Get('admin/customers/:customerId/subscriptions/history')
-  @Get('customers/:customerId/subscriptions')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get all customer subscriptions (current & history) for Admin' })
-  async getAdminCustomerSubscriptions(@Param('customerId') customerId: string) {
-    return this.subscriptionService.getAdminCustomerSubscriptions(customerId);
-  }
-
-  @Get('admin/customers/:customerId/subscriptions/current')
-  @Get('customers/:customerId/subscriptions/current')
-  @Get('admin/customers/:customerId/subscription')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current customer subscription for Admin' })
-  async getAdminCustomerCurrentSubscription(@Param('customerId') customerId: string) {
-    const res = await this.subscriptionService.getAdminCustomerSubscriptions(customerId);
-    return {
-      success: true,
-      data: res.currentSubscription,
-    };
-  }
-
-  @Post('admin/customers/:customerId/subscriptions')
-  @Post('admin/customers/:customerId/subscription')
-  @Post('customers/:customerId/subscriptions')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Manually create/activate a plan subscription for a customer (Admin)' })
-  async createAdminCustomerSubscription(
-    @Param('customerId') customerId: string,
-    @Body() dto: any,
-    @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.createOrActivateCustomerSubscription(
-      customerId,
-      dto,
-      user?.id,
-    );
   }
 
   @Post('admin/subscriptions/:subscriptionId/activate')

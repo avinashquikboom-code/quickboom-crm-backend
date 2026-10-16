@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { LeadModule } from './modules/lead/lead.module';
-import { LeadLimitModule } from './modules/lead-limit/lead-limit.module';
 import { ContactModule } from './modules/contact/contact.module';
 import { DealModule } from './modules/deal/deal.module';
 import { TaskModule } from './modules/task/task.module';
@@ -13,7 +11,6 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DataCaptureModule } from './modules/data-capture/data-capture.module';
 import { DataManagementModule } from './modules/data-management/data-management.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
-import { CustomerModule } from './modules/customer/customer.module';
 import { WorkModule } from './modules/work/work.module';
 import { EmployeeModule } from './modules/employee/employee.module';
 import { TeamModule } from './modules/team/team.module';
@@ -68,7 +65,6 @@ import { AppController } from './app.controller';
     AuthModule,
     // Register before CustomerModule so /customer/influencers is not captured by GET /customer/:id
     InfluencerModule,
-    CustomerModule,
     SubscriptionModule,
     PaymentModule,
     ScheduleModule,
@@ -87,8 +83,6 @@ import { AppController } from './app.controller';
     ReportModule,
     NotificationModule,
     AuditLogModule,
-    LeadModule,
-    LeadLimitModule,
     CompanyModule,
     ContactModule,
     DealModule,

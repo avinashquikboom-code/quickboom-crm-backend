@@ -17,7 +17,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { WorkPermissionService } from './work-permission.service';
-import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto, CalendarEventResponseDto, toCustomerCalendarScheduleResponse } from './dto/work.dto';
+import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
 import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -311,20 +311,6 @@ export class WorkController {
     });
   }
 
-  @Post('subscription/purchase')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Purchase a plan and auto-create activity schedules' })
-  async purchaseSubscription(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Body() body: { planId: number },
-  ) {
-    const custId = customerId || req?.customerId || user?.customerId;
-    return this.workService.purchaseSubscription(custId, body.planId);
-  }
-
   @Post('activity/complete')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
@@ -345,25 +331,6 @@ export class WorkController {
   @ApiOperation({ summary: 'Skip an activity' })
   async skipActivity(@Body() body: { activityScheduleId: number }) {
     return this.workService.skipActivity(body.activityScheduleId);
-  }
-
-  @Get('calendar/month')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get month calendar view' })
-  @ApiQuery({ name: 'year', required: true })
-  @ApiQuery({ name: 'month', required: true })
-  async getMonthCalendar(
-    @CurrentCustomer() customerId: string,
-    @Query('year') year: string,
-    @Query('month') month: string,
-  ) {
-    return this.workService.getMonthCalendar(
-      customerId,
-      parseInt(year, 10),
-      parseInt(month, 10),
-    );
   }
 
   @Get('employee/calendar')
@@ -495,105 +462,6 @@ export class WorkController {
       return { customers: [], employees: [], teams: [], statuses: [] };
     }
     return this.workService.getProductionFilterOptions(authEmpId);
-  }
-
-  @Get('calendar')
-  @Get('customer/calendar')
-  @Get('admin/calendar')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_CALENDAR', action: 'VIEW' })
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get scheduled calendar events' })
-  @ApiResponse({ status: 200, description: 'Scheduled calendar events', type: [CalendarEventResponseDto] })
-  @ApiQuery({ name: 'employeeId', required: false })
-  @ApiQuery({ name: 'date', required: false })
-  @ApiQuery({ name: 'dateFrom', required: false })
-  @ApiQuery({ name: 'dateTo', required: false })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  async getCalendar(
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-    @Query('employeeId') employeeId?: string,
-    @Query('date') date?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-    @Query('status') status?: WorkStatus,
-  ) {
-    const logger = new Logger('WorksController:getCalendar');
-    const headerCustId = req?.headers ? req.headers['x-customer-id'] : undefined;
-    const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
-    const authCustId = req?.user?.customerId;
-    const userRole = req?.user?.role || (Array.isArray(req?.user?.roles) ? req?.user?.roles.join(',') : 'UNKNOWN');
-    const requestedCustomerCode = req?.query?.customerId || headerCustId || req?.customerExternalId || 'NONE';
-
-    // Strict customer isolation: Normal customer users are bound to their authenticated customerId
-    const effectiveCustomerId = (authCustId && Number(authCustId) > 0)
-      ? Number(authCustId)
-      : (customerId || headerCustId || req?.customerId);
-
-    logger.log(`[CALENDAR_AUTH_DEBUG]
-authenticatedUser: ${authUserId}
-role: ${userRole}
-authenticatedCustomerId: ${authCustId || 'NONE'}
-requestedCustomerCode: ${requestedCustomerCode}
-resolvedRequestedCustomerId: ${effectiveCustomerId || 'NONE'}
-authorization: ALLOWED`);
-
-    logger.log(
-      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerCode}\nresolvedCustomerId: ${effectiveCustomerId}`,
-    );
-
-    try {
-      const schedules = await this.workService.getCalendar(effectiveCustomerId, {
-        date,
-        dateFrom: dateFrom || startDate,
-        dateTo: dateTo || endDate,
-        month: month ? parseInt(month, 10) : undefined,
-        year: year ? parseInt(year, 10) : undefined,
-        employeeId,
-        status,
-      });
-      const result = schedules.map(toCustomerCalendarScheduleResponse);
-
-      logger.log(`[CALENDAR_QUERY_DEBUG]
-customerId: ${effectiveCustomerId || 'ALL'}
-date: ${date || startDate || 'ALL'}
-resultCount: ${Array.isArray(result) ? result.length : 0}`);
-
-      logger.log(
-        `[CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}\ndata: ${JSON.stringify(result)}`,
-      );
-
-      return result;
-    } catch (err: any) {
-      logger.error(`[CALENDAR_API] ERROR: ${err?.message}`, err?.stack);
-      throw err;
-    }
-  }
-
-  @Get('customer/usage/:customerId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer service quotas & plan usage (Admin)' })
-  async getCustomerUsageAdmin(@Param('customerId') customerId: string) {
-    return this.workService.getCustomerUsage(customerId);
-  }
-
-  @Post('auto-generate')
-  @ApiOperation({ summary: 'Automatically generate plan deliverable schedules' })
-  async generatePlanSchedules(
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    if (!customerIdQuery) {
-      throw new ForbiddenException('CustomerId required for schedule generation');
-    }
-    return this.workService.generatePlanSchedules(customerIdQuery);
   }
 
   @Get(':id')
