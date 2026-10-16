@@ -3646,6 +3646,10 @@ status: ${item.status}`);
       filteredItems = filteredItems.filter((w) => {
         if (isDirectWorkAssignee(w)) return true;
 
+        // A work-level team assignment grants visibility independently of the
+        // individual assignee and designation. Membership is company-scoped.
+        if (authorizedTeamIds.includes(Number(w.teamId))) return true;
+
         if (isCustomerOrLeadOwner(w)) return true;
 
         const teamId = Number(w.teamId || w.team?.id || 0);
@@ -4314,6 +4318,11 @@ status: ${item.status}`);
     }
 
     const allItems = [...mapped, ...mappedTasks, ...filteredVisits, ...filteredLeads];
+    const teamAssignedWorkIds = new Set(filteredItems
+      .filter(work => authorizedTeamIds.includes(Number(work.teamId)))
+      .map(work => String(work.id)));
+    const teamAssignedWorkItems = new Set(mapped.filter(item =>
+      teamAssignedWorkIds.has(String(item.id))));
     const result = isFullAccess || allowedTypes.size === 0
       ? allItems
       : allItems.filter((item) =>
@@ -4329,7 +4338,8 @@ status: ${item.status}`);
           item.itemType === 'LEAD' ||
           allAuthorizedCustomerIds.includes(Number(item.customerId)) ||
           viewerCandidateIds.includes(Number(item.assignedToId)) ||
-          viewerCandidateIds.includes(Number(item.editorId))
+          viewerCandidateIds.includes(Number(item.editorId)) ||
+          teamAssignedWorkItems.has(item)
         );
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
@@ -4410,6 +4420,28 @@ afterFilter: ${result.length}`);
     });
 
     const uniqueCustIds = [...new Set(uniqueResult.map((r) => r.customerId).filter(Boolean))];
+
+    if (process.env.EMPLOYEE_CALENDAR_DEBUG === 'true') {
+      this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG] ${JSON.stringify({
+        loggedInEmployeeId: empRecord?.userId ?? null,
+        employeeInternalId: numEmployeeId,
+        employeeTeamIds: authorizedTeamIds,
+        totalWorksBeforeFilter: items.length,
+        directEmployeeMatches: items.filter(isDirectWorkAssignee).length,
+        teamMatches: items.filter(w => authorizedTeamIds.includes(Number(w.teamId))).length,
+        dateMatches: dateMatchedCount,
+        statusMatches: items.length,
+        finalRecords: uniqueResult.length,
+        uniqueCustomerIdsReturned: uniqueCustIds,
+      })}`);
+      for (const work of items) {
+        this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG] ${JSON.stringify({
+          customerId: work.customerId, customerName: work.customer?.name,
+          workId: work.id, activityId: work.id, scheduleDate: work.scheduledDate,
+          teamId: work.teamId, employeeId: work.assignedToId, status: work.status,
+        })}`);
+      }
+    }
 
     const customerTaskMap = new Map<string, { name: string; count: number }>();
     for (const r of uniqueResult) {
