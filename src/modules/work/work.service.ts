@@ -3964,10 +3964,240 @@ status: ${item.status}`);
       };
     });
 
-    const allItems = [...mapped, ...mappedTasks];
+    // Fetch visits assigned to this employee across multiple customers/leads
+    let mappedVisits: any[] = [];
+    try {
+      const visitWhere: any = {
+        employeeId: numEmployeeId,
+      };
+      if (where.scheduledDate) {
+        visitWhere.date = where.scheduledDate;
+      }
+      if (query.customerId) {
+        visitWhere.customerId = Number(query.customerId);
+      }
+      if (typeof this.prisma.visit?.findMany === 'function') {
+        const visits = await this.prisma.visit.findMany({
+          where: visitWhere,
+          orderBy: { date: 'asc' },
+        });
+
+        mappedVisits = visits.map((v: any) => {
+          const schedDateVal = v.date ? formatScheduleDate(v.date) : null;
+          const custName = v.customerName || 'Customer';
+          const custBiz = custName;
+          const startTime = v.time || '10:00 AM';
+          const loc = v.location || null;
+
+          return {
+            id: `visit_${v.id}`,
+            activityId: `visit_${v.id}`,
+            visitId: v.id,
+            customerId: String(v.customerId || 0),
+            companyName: custBiz,
+            businessName: custBiz,
+            customerName: custName,
+            customerBusiness: custBiz,
+            purchaseId: `VISIT-${String(v.id).padStart(3, '0')}`,
+            productName: v.purpose || 'Client Visit',
+            serviceName: 'Client Visit',
+            planName: 'Field Visit',
+            title: `Visit: ${custName}`,
+            scheduledDate: schedDateVal,
+            scheduledAt: v.date,
+            scheduledTime: startTime,
+            originalScheduledDate: null,
+            isCarriedForward: false,
+            carryForwardNote: null,
+            date: schedDateVal || v.date,
+            scheduleDate: schedDateVal || v.date,
+            time: startTime,
+            startTime: startTime,
+            endTime: null,
+            type: 'CUSTOMER_VISIT',
+            activityType: 'CUSTOMER_VISIT',
+            workType: 'CUSTOMER_VISIT',
+            status: v.status || 'SCHEDULED',
+            location: loc,
+            latitude: v.latitude,
+            longitude: v.longitude,
+            phone: null,
+            canReschedule: true,
+            canRequestRework: false,
+            reworkActionLabel: null,
+            isLocked: false,
+            lockMessage: null,
+            assignedEmployees: [nameInferred].filter(Boolean),
+            assignedEmployee: nameInferred || 'Assigned Staff',
+            assignedToId: String(numEmployeeId),
+            teamId: null,
+            team: 'Field Visits',
+            assignedTeam: 'Field Visits',
+            notes: v.notes || v.purpose || 'Client Visit',
+            outputUrl: null,
+            feedback: null,
+            revisionCount: 0,
+            socialMediaAccount: null,
+            platform: null,
+            tasks: [],
+            durationDays: 1,
+            itemType: 'VISIT',
+            leadId: v.leadId,
+          };
+        });
+      }
+    } catch (vErr: any) {
+      this.logger.warn(`Failed to query visits for calendar: ${vErr?.message}`);
+    }
+
+    // Fetch scheduled lead follow-ups for this employee across multiple customers
+    let mappedLeads: any[] = [];
+    try {
+      const userNumId = Number((empRecord as any)?.userId);
+      const leadOrConditions: any[] = [{ employeeId: numEmployeeId }];
+      if (userNumId && !isNaN(userNumId)) {
+        leadOrConditions.push({ assignedToId: userNumId });
+      }
+
+      const leadWhere: any = {
+        OR: leadOrConditions,
+        deletedAt: null,
+        nextFollowUpDate: where.scheduledDate ? where.scheduledDate : { not: null },
+      };
+      if (query.customerId) {
+        leadWhere.customerId = Number(query.customerId);
+      }
+
+      if (typeof this.prisma.lead?.findMany === 'function') {
+        const leads = await this.prisma.lead.findMany({
+          where: leadWhere,
+          orderBy: { nextFollowUpDate: 'asc' },
+          select: {
+            id: true,
+            title: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+            phone: true,
+            address: true,
+            city: true,
+            state: true,
+            status: true,
+            priority: true,
+            customerId: true,
+            nextFollowUpDate: true,
+            nextFollowUpTime: true,
+            workNotes: true,
+          },
+        });
+
+        mappedLeads = leads.map((l: any) => {
+          const schedDateVal = l.nextFollowUpDate ? formatScheduleDate(l.nextFollowUpDate) : null;
+          const leadName = [l.firstName, l.lastName].filter(Boolean).join(' ') || l.companyName || l.title || `Lead #${l.id}`;
+          const leadBiz = l.companyName || leadName;
+          const startTime = l.nextFollowUpTime || '10:00 AM';
+          const loc = [l.address, l.city, l.state].filter(Boolean).join(', ') || null;
+
+          return {
+            id: `lead_${l.id}`,
+            activityId: `lead_${l.id}`,
+            leadId: l.id,
+            customerId: String(l.customerId || 0),
+            companyName: leadBiz,
+            businessName: leadBiz,
+            customerName: leadName,
+            customerBusiness: leadBiz,
+            purchaseId: `LEAD-${String(l.id).padStart(3, '0')}`,
+            productName: `Follow-up: ${l.status}`,
+            serviceName: 'Lead Follow-up',
+            planName: 'Lead',
+            title: `Follow-up: ${leadName}`,
+            scheduledDate: schedDateVal,
+            scheduledAt: l.nextFollowUpDate,
+            scheduledTime: startTime,
+            originalScheduledDate: null,
+            isCarriedForward: false,
+            carryForwardNote: null,
+            date: schedDateVal || l.nextFollowUpDate,
+            scheduleDate: schedDateVal || l.nextFollowUpDate,
+            time: startTime,
+            startTime: startTime,
+            endTime: null,
+            type: 'FOLLOW_UP',
+            activityType: 'FOLLOW_UP',
+            workType: 'FOLLOW_UP',
+            status: l.status || 'NEW',
+            location: loc,
+            phone: l.phone || null,
+            canReschedule: true,
+            canRequestRework: false,
+            reworkActionLabel: null,
+            isLocked: false,
+            lockMessage: null,
+            assignedEmployees: [nameInferred].filter(Boolean),
+            assignedEmployee: nameInferred || 'Assigned Staff',
+            assignedToId: String(numEmployeeId),
+            teamId: null,
+            team: 'Sales & CRM',
+            assignedTeam: 'Sales & CRM',
+            notes: l.workNotes || `Scheduled follow-up with ${leadName}`,
+            outputUrl: null,
+            feedback: null,
+            revisionCount: 0,
+            socialMediaAccount: null,
+            platform: null,
+            tasks: [],
+            durationDays: 1,
+            itemType: 'LEAD',
+          };
+        });
+      }
+    } catch (lErr: any) {
+      this.logger.warn(`Failed to query leads for calendar: ${lErr?.message}`);
+    }
+
+    let filteredVisits = mappedVisits;
+    if (targetYear && targetMonth && targetDay) {
+      filteredVisits = mappedVisits.filter((v) => matchesTargetDate(v.date, targetYear!, targetMonth!, targetDay!));
+    } else if (targetYear && targetMonth) {
+      filteredVisits = mappedVisits.filter((v) => matchesTargetMonth(v.date, targetYear!, targetMonth!));
+    } else if (rangeFromKey || rangeToKey) {
+      filteredVisits = mappedVisits.filter((v) => {
+        const key = this.scheduleDateKey(v.date);
+        if (!key) return false;
+        if (rangeFromKey && key < rangeFromKey) return false;
+        if (rangeToKey && key > rangeToKey) return false;
+        return true;
+      });
+    }
+
+    let filteredLeads = mappedLeads;
+    if (targetYear && targetMonth && targetDay) {
+      filteredLeads = mappedLeads.filter((l) => matchesTargetDate(l.date, targetYear!, targetMonth!, targetDay!));
+    } else if (targetYear && targetMonth) {
+      filteredLeads = mappedLeads.filter((l) => matchesTargetMonth(l.date, targetYear!, targetMonth!));
+    } else if (rangeFromKey || rangeToKey) {
+      filteredLeads = mappedLeads.filter((l) => {
+        const key = this.scheduleDateKey(l.date);
+        if (!key) return false;
+        if (rangeFromKey && key < rangeFromKey) return false;
+        if (rangeToKey && key > rangeToKey) return false;
+        return true;
+      });
+    }
+
+    const allItems = [...mapped, ...mappedTasks, ...filteredVisits, ...filteredLeads];
     const result = isFullAccess || allowedTypes.size === 0
       ? allItems
-      : allItems.filter((item) => allowedTypes.has(item.activityType));
+      : allItems.filter((item) =>
+          allowedTypes.has(item.activityType) ||
+          item.activityType === 'CUSTOMER_VISIT' ||
+          item.activityType === 'FOLLOW_UP' ||
+          item.type === 'CUSTOMER_VISIT' ||
+          item.type === 'FOLLOW_UP' ||
+          item.itemType === 'VISIT' ||
+          item.itemType === 'LEAD'
+        );
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
 employeeId: ${employeeId}
