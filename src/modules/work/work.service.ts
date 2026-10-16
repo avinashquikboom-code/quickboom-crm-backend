@@ -2977,8 +2977,20 @@ status: ${item.status}`);
                   OR: [
                     { employeeId: numEmployeeId },
                     { assignedToId: numEmployeeId },
-                    ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }] : []),
+                    ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }, { createdById: Number(empRecord.userId) }] : []),
                   ],
+                },
+              },
+              {
+                leads: {
+                  some: {
+                    deletedAt: null,
+                    OR: [
+                      { employeeId: numEmployeeId },
+                      { assignedToId: numEmployeeId },
+                      ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }, { createdById: Number(empRecord.userId) }] : []),
+                    ],
+                  },
                 },
               },
             ],
@@ -2992,6 +3004,14 @@ status: ${item.status}`);
               select: {
                 employeeId: true,
                 assignedToId: true,
+                createdById: true,
+              },
+            },
+            leads: {
+              select: {
+                employeeId: true,
+                assignedToId: true,
+                createdById: true,
               },
             },
           },
@@ -3006,8 +3026,15 @@ status: ${item.status}`);
         if (c.originLead && (
           Number(c.originLead.employeeId) === numEmployeeId ||
           Number(c.originLead.assignedToId) === numEmployeeId ||
-          (empRecord?.userId && Number(c.originLead.assignedToId) === Number(empRecord.userId))
+          (empRecord?.userId && Number(c.originLead.assignedToId) === Number(empRecord.userId)) ||
+          (empRecord?.userId && Number(c.originLead.createdById) === Number(empRecord.userId))
         )) return true;
+        if (Array.isArray(c.leads) && c.leads.some((l: any) => (
+          Number(l.employeeId) === numEmployeeId ||
+          Number(l.assignedToId) === numEmployeeId ||
+          (empRecord?.userId && Number(l.assignedToId) === Number(empRecord.userId)) ||
+          (empRecord?.userId && Number(l.createdById) === Number(empRecord.userId))
+        ))) return true;
         return false;
       })
       .map((c) => c.id);
@@ -3031,8 +3058,22 @@ status: ${item.status}`);
               OR: [
                 { employeeId: numEmployeeId },
                 { assignedToId: numEmployeeId },
-                ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }] : []),
+                ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }, { createdById: Number(empRecord.userId) }] : []),
               ],
+            },
+          },
+        },
+        {
+          customer: {
+            leads: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { employeeId: numEmployeeId },
+                  { assignedToId: numEmployeeId },
+                  ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }, { createdById: Number(empRecord.userId) }] : []),
+                ],
+              },
             },
           },
         },
@@ -3585,6 +3626,10 @@ status: ${item.status}`);
         w.customer?.createdByEmployeeId,
         w.customer?.originLead?.employeeId,
         w.customer?.originLead?.assignedToId,
+        w.customer?.originLead?.createdById,
+        ...(Array.isArray(w.customer?.leads)
+          ? w.customer.leads.flatMap((l: any) => [l.employeeId, l.assignedToId, l.createdById])
+          : []),
       ]
         .filter((id) => id != null)
         .map(Number);
@@ -4120,9 +4165,13 @@ status: ${item.status}`);
     let mappedLeads: any[] = [];
     try {
       const userNumId = Number((empRecord as any)?.userId);
-      const leadOrConditions: any[] = [{ employeeId: numEmployeeId }];
+      const leadOrConditions: any[] = [
+        { employeeId: numEmployeeId },
+        { assignedToId: numEmployeeId },
+      ];
       if (userNumId && !isNaN(userNumId)) {
         leadOrConditions.push({ assignedToId: userNumId });
+        leadOrConditions.push({ createdById: userNumId });
       }
 
       const leadWhere: any = {
@@ -4151,6 +4200,13 @@ status: ${item.status}`);
             status: true,
             priority: true,
             customerId: true,
+            convertedCustomer: {
+              select: {
+                id: true,
+                name: true,
+                companyName: true,
+              },
+            },
             nextFollowUpDate: true,
             nextFollowUpTime: true,
             workNotes: true,
@@ -4159,8 +4215,13 @@ status: ${item.status}`);
 
         mappedLeads = leads.map((l: any) => {
           const schedDateVal = l.nextFollowUpDate ? formatScheduleDate(l.nextFollowUpDate) : null;
-          const leadName = [l.firstName, l.lastName].filter(Boolean).join(' ') || l.companyName || l.title || `Lead #${l.id}`;
-          const leadBiz = l.companyName || leadName;
+          const resolvedCustId = l.convertedCustomer?.id
+            ? String(l.convertedCustomer.id)
+            : String(l.customerId || 0);
+          const custNameFromObj = l.convertedCustomer?.name;
+          const compNameFromObj = l.convertedCustomer?.companyName;
+          const leadName = custNameFromObj || [l.firstName, l.lastName].filter(Boolean).join(' ') || l.companyName || l.title || `Lead #${l.id}`;
+          const leadBiz = compNameFromObj || l.companyName || leadName;
           const startTime = l.nextFollowUpTime || '10:00 AM';
           const loc = [l.address, l.city, l.state].filter(Boolean).join(', ') || null;
 
@@ -4168,7 +4229,7 @@ status: ${item.status}`);
             id: `lead_${l.id}`,
             activityId: `lead_${l.id}`,
             leadId: l.id,
-            customerId: String(l.customerId || 0),
+            customerId: resolvedCustId,
             companyName: leadBiz,
             businessName: leadBiz,
             customerName: leadName,
