@@ -4109,6 +4109,8 @@ status: ${item.status}`);
       }
     } catch (vErr: any) {
       this.logger.warn(`Failed to query visits for calendar: ${vErr?.message}`);
+    }
+
     let filteredVisits = mappedVisits;
     if (targetYear && targetMonth && targetDay) {
       filteredVisits = mappedVisits.filter((v) => matchesTargetDate(v.date, targetYear!, targetMonth!, targetDay!));
