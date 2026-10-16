@@ -538,21 +538,6 @@ export function isPersistedCustomerEligibleForList(
   if (!hasOriginLink) return true;
   if (originLead) return isLeadWonForCustomerEligibility(originLead, wonStageIds);
 
-  // If customer was converted from a lead, but originLead relation was not loaded or is null:
-  // Check if any linked lead in customer.leads is won
-  if (Array.isArray(customer.leads) && customer.leads.length > 0) {
-    if (customer.leads.some((l: any) => isLeadWonForCustomerEligibility(l, wonStageIds))) {
-      return true;
-    }
-  }
-
-  // If customer has a leadId but originLead is not present, check source or notes
-  if (customer.leadId && !originLead) {
-    if (customer.source === 'LEAD_CONVERSION' || (customer.notes && customer.notes.includes('Lead'))) {
-      return true;
-    }
-  }
-
   return false;
 }
 
@@ -1114,19 +1099,15 @@ export class CustomerService {
     const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
 
     let effectiveEmployeeId = employeeId;
-    let empRecord: any = null;
-    if (typeof this.prisma.employee?.findFirst === 'function' && (effectiveEmployeeId || user?.id)) {
-      empRecord = await this.prisma.employee.findFirst({
-        where: effectiveEmployeeId ? { id: effectiveEmployeeId } : { userId: user.id },
-        select: { id: true, userId: true, employeeCode: true, firstName: true, lastName: true },
+    if (!effectiveEmployeeId && user?.id && !isPrivilegedAdmin) {
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
       });
-      if (empRecord && !effectiveEmployeeId) {
-        effectiveEmployeeId = empRecord.id;
+      if (emp) {
+        effectiveEmployeeId = emp.id;
       }
     }
-    const empName = empRecord ? `${empRecord.firstName || ''} ${empRecord.lastName || ''}`.trim() : null;
-    const empCode = empRecord?.employeeCode;
-    const empUserId = empRecord?.userId || user?.id;
 
     const where: any = {
       deletedAt: null,
@@ -1165,6 +1146,7 @@ export class CustomerService {
     // The Customer screen is employee-specific. The authenticated employee should see only customers they are authorized to see:
     // 1. customer.assignedEmployeeId == loggedInEmployeeId
     // 2. Or linked originLead / leads assigned to that employee (assignedToId == userId OR employeeId == loggedInEmployeeId)
+    // Exclude unassigned, other employee's customers, and do NOT use createdById as replacement for assignedToId!
     // Calendar customer picker (forCalendar + Calendar VIEW/CREATE) lists all active tenant customers.
     if (effectiveEmployeeId && !isPrivilegedAdmin && !skipAssignmentScope) {
       const [empTeams, empLedTeams] = await Promise.all([
@@ -1192,8 +1174,6 @@ export class CustomerService {
         OR: [
           // 1. Directly assigned to this employee
           { assignedEmployeeId: effectiveEmployeeId },
-          ...(empCode ? [{ assignedEmployee: empCode }] : []),
-          ...(empName ? [{ assignedEmployee: { contains: empName, mode: 'insensitive' } }] : []),
           // 1b. Directly assigned to any team this employee belongs to or leads
           ...(myTeamIds.length > 0 ? [{ assignedTeamId: { in: myTeamIds } }] : []),
           // 1c. Customer with works assigned to this employee's teams
@@ -1220,29 +1200,26 @@ export class CustomerService {
           },
           // 2. Created by this employee
           { createdByEmployeeId: effectiveEmployeeId },
-          // 4. Linked originLead assigned to or created by this employee
+          // 4. Linked originLead assigned to this employee
           {
             originLead: {
               deletedAt: null,
               OR: [
                 { employeeId: effectiveEmployeeId },
-                { assignedToId: effectiveEmployeeId },
-                ...(empUserId ? [{ assignedToId: Number(empUserId) }] : []),
-                ...(empUserId ? [{ createdById: Number(empUserId) }] : []),
+                ...(user?.id ? [{ assignedToId: user.id }] : []),
               ],
             },
           },
-          // 5. Customer with leads assigned to or created by this employee (excluding the root tenant workspace)
+          // 5. Customer with no originLead, but leads assigned to this employee (excluding the root tenant workspace)
           {
+            leadId: null,
             ...(companyId ? { id: { not: Number(companyId) } } : {}),
             leads: {
               some: {
                 deletedAt: null,
                 OR: [
                   { employeeId: effectiveEmployeeId },
-                  { assignedToId: effectiveEmployeeId },
-                  ...(empUserId ? [{ assignedToId: Number(empUserId) }] : []),
-                  ...(empUserId ? [{ createdById: Number(empUserId) }] : []),
+                  ...(user?.id ? [{ assignedToId: user.id }] : []),
                 ],
               },
             },
