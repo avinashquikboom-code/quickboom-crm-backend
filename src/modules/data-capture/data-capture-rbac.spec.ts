@@ -19,7 +19,6 @@ describe('DataCaptureController RBAC & Permissions Enforcement', () => {
     dataCaptureService = {
       listPlaces: jest.fn().mockResolvedValue({ data: [], total: 0 }),
       getUsageSummary: jest.fn().mockResolvedValue({ totalExtractions: 0 }),
-      getCustomerJobs: jest.fn().mockResolvedValue([]),
       extractPlaces: jest.fn().mockResolvedValue({ jobId: 'job-1', captured: 5 }),
       createPlace: jest.fn().mockResolvedValue({ id: 1, businessName: 'Acme Corp' }),
       updatePlace: jest.fn().mockResolvedValue({ id: 1, businessName: 'Acme Updated' }),
@@ -31,7 +30,6 @@ describe('DataCaptureController RBAC & Permissions Enforcement', () => {
       createLeadFromPlace: jest.fn().mockResolvedValue({ leadId: 99 }),
       checkDuplicates: jest.fn().mockResolvedValue({ hasDuplicates: false }),
       getPlaceById: jest.fn().mockResolvedValue({ id: 1, businessName: 'Acme' }),
-      getJobById: jest.fn().mockResolvedValue({ jobId: 'job-1' }),
     };
 
     controller = new DataCaptureController(dataCaptureService as DataCaptureService);

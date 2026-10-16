@@ -99,38 +99,6 @@ export class DataCaptureController {
   }
 
   /**
-   * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
-   * Retrieves past extraction jobs for the customer
-   */
-  @Get('jobs')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get extraction job history' })
-  async getCustomerJobs(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getCustomerJobs(customerId);
-  }
-
-  @Get('history')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  @ApiOperation({ summary: 'Alias for extraction job history' })
-  async getCustomerHistory(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getCustomerJobs(customerId);
-  }
-
-  /**
-   * GET /api/v1/data-capture/jobs/:id
-   * Retrieves single extraction job details and captured places
-   */
-  @Get('jobs/:id')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get single extraction job details' })
-  async getJobById(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-  ) {
-    return this.dataCaptureService.getJobById(customerId, id);
-  }
-
-  /**
    * POST /api/v1/data-capture/bulk
    * Executes bulk action (validate, reject, delete, mark duplicate, import)
    */
@@ -285,18 +253,15 @@ export class DataCaptureController {
 
   /**
    * GET /api/v1/data-capture/:id
-   * Retrieves single Data Capture place (or extraction job if ID starts with job-)
+   * Retrieves single Data Capture place
    */
   @Get(':id')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get single Data Capture record or job details' })
+  @ApiOperation({ summary: 'Get single Data Capture record' })
   async getPlaceOrJobById(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
   ) {
-    if (id.startsWith('job-')) {
-      return this.dataCaptureService.getJobById(customerId, id);
-    }
     return this.dataCaptureService.getPlaceById(customerId, id);
   }
 }
