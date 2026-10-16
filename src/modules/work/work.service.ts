@@ -2962,6 +2962,57 @@ status: ${item.status}`);
       ? await this.customerIdsAssignedToTeams(authorizedTeamIds)
       : [];
 
+    const assignedCustomers = typeof this.prisma.customer?.findMany === 'function'
+      ? await this.prisma.customer.findMany({
+          where: {
+            deletedAt: null,
+            OR: [
+              { assignedEmployeeId: numEmployeeId },
+              { createdByEmployeeId: numEmployeeId },
+              ...(empRecord?.employeeCode ? [{ assignedEmployee: empRecord.employeeCode }] : []),
+              ...(nameInferred ? [{ assignedEmployee: nameInferred }] : []),
+              {
+                originLead: {
+                  deletedAt: null,
+                  OR: [
+                    { employeeId: numEmployeeId },
+                    { assignedToId: numEmployeeId },
+                    ...(empRecord?.userId ? [{ assignedToId: Number(empRecord.userId) }] : []),
+                  ],
+                },
+              },
+            ],
+          },
+          select: {
+            id: true,
+            assignedEmployeeId: true,
+            createdByEmployeeId: true,
+            assignedEmployee: true,
+            originLead: {
+              select: {
+                employeeId: true,
+                assignedToId: true,
+              },
+            },
+          },
+        })
+      : [];
+    const directCustomerIds = (Array.isArray(assignedCustomers) ? assignedCustomers : [])
+      .filter((c) => {
+        if (Number(c.assignedEmployeeId) === numEmployeeId) return true;
+        if (Number(c.createdByEmployeeId) === numEmployeeId) return true;
+        if (empRecord?.employeeCode && c.assignedEmployee === empRecord.employeeCode) return true;
+        if (nameInferred && c.assignedEmployee === nameInferred) return true;
+        if (c.originLead && (
+          Number(c.originLead.employeeId) === numEmployeeId ||
+          Number(c.originLead.assignedToId) === numEmployeeId ||
+          (empRecord?.userId && Number(c.originLead.assignedToId) === Number(empRecord.userId))
+        )) return true;
+        return false;
+      })
+      .map((c) => c.id);
+    const allAuthorizedCustomerIds = [...new Set([...directCustomerIds, ...teamCustomerIds])];
+
     let where: any;
     const assignedOnly = options?.assignedOnly === true;
 
@@ -2985,6 +3036,9 @@ status: ${item.status}`);
           },
         },
       ];
+      if (directCustomerIds.length > 0) {
+        conds.push({ customerId: { in: directCustomerIds } });
+      }
       for (const cid of viewerCandidateIds) {
         if (cid !== numEmployeeId) {
           conds.push(
@@ -3510,11 +3564,20 @@ status: ${item.status}`);
       );
     };
     const hasRoleRules = visibleTypes.size > 0 || allowedTypes.size > 0;
-    const isDirectWorkAssignee = (w: any) =>
-      [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
-        .some((id) => id != null && viewerIds.has(Number(id)));
+    const isDirectWorkAssignee = (w: any) => {
+      if (viewerIds.has(Number(w.assignedToId))) return true;
+      if (w.workType !== WorkType.REELS_SHOOT && w.workType !== WorkType.SHOOT) {
+        if (viewerIds.has(Number(w.editorId))) return true;
+      }
+      return (w.tasks || []).some((task: any) =>
+        viewerIds.has(Number(task.assignedToId)) &&
+        w.workType !== WorkType.REELS_SHOOT && w.workType !== WorkType.SHOOT,
+      );
+    };
 
     const isCustomerOrLeadOwner = (w: any) => {
+      const custId = Number(w.customerId || w.customer?.id || 0);
+      if (custId > 0 && directCustomerIds.includes(custId)) return true;
       const ownerIds = [
         w.customer?.assignedEmployeeId,
         w.customer?.createdByEmployeeId,
@@ -3523,7 +3586,9 @@ status: ${item.status}`);
       ]
         .filter((id) => id != null)
         .map(Number);
-      return ownerIds.some((id) => viewerIds.has(id));
+      const codeMatches = empRecord?.employeeCode && w.customer?.assignedEmployee === empRecord.employeeCode;
+      const nameMatches = nameInferred && w.customer?.assignedEmployee === nameInferred;
+      return ownerIds.some((id) => viewerIds.has(id)) || Boolean(codeMatches) || Boolean(nameMatches);
     };
 
     const isTelecallerOrBpo = ['TELECALLER', 'CALLER', 'SALES', 'BPO'].some((k) =>
@@ -3534,12 +3599,7 @@ status: ${item.status}`);
       filteredItems = filteredItems.filter((w) => {
         if (isDirectWorkAssignee(w)) return true;
 
-        if (isTelecallerOrBpo) return false;
-
-        if (isCustomerOrLeadOwner(w)) {
-          if (matchesRole(w)) return true;
-          return false;
-        }
+        if (isCustomerOrLeadOwner(w)) return true;
 
         const teamId = Number(w.teamId || w.team?.id || 0);
         const customerTeamId = Number(w.customer?.assignedTeamId || w.customer?.assignedTeam?.id || 0);
@@ -3549,7 +3609,11 @@ status: ${item.status}`);
         const customerAssigned = viewerIds.has(Number(w.customer?.assignedEmployeeId));
         const authorized = authorizedTeamIds.includes(teamId) ||
           authorizedTeamIds.includes(customerTeamId) ||
-          teamCustomerIds.includes(Number(w.customerId)) || memberOfTeam || customerAssigned;
+          allAuthorizedCustomerIds.includes(Number(w.customerId)) || memberOfTeam || customerAssigned;
+
+        if (isTelecallerOrBpo) {
+          return authorized;
+        }
 
         const editing = ['VIDEO_EDITING', 'EDITING', 'VIDEO'].includes(w.workType);
         const otherOwnerId = editing ? (w.editorId ?? w.assignedToId) : w.assignedToId;
@@ -3562,16 +3626,17 @@ status: ${item.status}`);
             : false;
           if (!isSalesOrBpo) {
             if (!authorized) return false;
-            if (assignedOnly && !matchesRole(w)) return false;
+            if (assignedOnly && hasRoleRules && !matchesRole(w)) return false;
             return true;
           }
         }
 
         // If authorized on the team and on a team customer/work:
-        if (authorized && (authorizedTeamIds.includes(teamId) || authorizedTeamIds.includes(customerTeamId) || memberOfTeam)) {
+        if (authorized && (authorizedTeamIds.includes(teamId) || authorizedTeamIds.includes(customerTeamId) || memberOfTeam || allAuthorizedCustomerIds.includes(Number(w.customerId)))) {
           if (!allTenantCustomers && !matchesRole(w)) return false;
-          if (assignedOnly && !matchesRole(w)) return false;
-          if (!otherOwnerId && !matchesRole(w)) {
+          if (assignedOnly && hasRoleRules && !matchesRole(w)) return false;
+          if (!otherOwnerId && allowedTypes.size > 0 && !allowedTypes.has(normalizeActivityType(w))) return false;
+          if (!otherOwnerId && hasRoleRules && !matchesRole(w)) {
             const isMonthQuery = Boolean(!query.date && (query.month || (query as any).year));
             if (!allTenantCustomers || !isMonthQuery) return false;
           }
@@ -3587,7 +3652,7 @@ status: ${item.status}`);
           Number(w.customer?.assignedTeam?.customerId) === tenantCustomerId;
         if (!isTenantScope && !authorized) return false;
 
-        if (!matchesRole(w)) return false;
+        if (hasRoleRules && !matchesRole(w)) return false;
 
         return true;
       });
@@ -3746,8 +3811,8 @@ status: ${item.status}`);
         tenantScope.push({
           customer: { deletedAt: null, assignedTeam: { customerId: tenantId, isActive: true } },
         });
-        if (teamCustomerIds.length > 0) {
-          tenantScope.push({ customerId: { in: teamCustomerIds } });
+        if (allAuthorizedCustomerIds.length > 0) {
+          tenantScope.push({ customerId: { in: allAuthorizedCustomerIds } });
         }
         taskWhere.AND = [...(taskWhere.AND || []), { OR: tenantScope }];
       }
@@ -3776,8 +3841,8 @@ status: ${item.status}`);
             customer: { assignedTeamId: { in: authorizedTeamIds } },
           });
         }
-        if (teamCustomerIds.length > 0) {
-          taskOr.push({ customerId: { in: teamCustomerIds } });
+        if (allAuthorizedCustomerIds.length > 0) {
+          taskOr.push({ customerId: { in: allAuthorizedCustomerIds } });
         }
         taskWhere.OR = taskOr;
       }
@@ -4191,12 +4256,18 @@ status: ${item.status}`);
       ? allItems
       : allItems.filter((item) =>
           allowedTypes.has(item.activityType) ||
+          item.activityType === 'TASK' ||
           item.activityType === 'CUSTOMER_VISIT' ||
           item.activityType === 'FOLLOW_UP' ||
+          item.type === 'TASK' ||
           item.type === 'CUSTOMER_VISIT' ||
           item.type === 'FOLLOW_UP' ||
+          item.itemType === 'TASK' ||
           item.itemType === 'VISIT' ||
-          item.itemType === 'LEAD'
+          item.itemType === 'LEAD' ||
+          allAuthorizedCustomerIds.includes(Number(item.customerId)) ||
+          viewerCandidateIds.includes(Number(item.assignedToId)) ||
+          viewerCandidateIds.includes(Number(item.editorId))
         );
 
     this.logger.log(`[EMPLOYEE_CALENDAR_ROLE_FILTER]
@@ -4277,6 +4348,14 @@ afterFilter: ${result.length}`);
     });
 
     this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG] resolvedEmployeeId=${numEmployeeId} finalReturnedRecordCount=${uniqueResult.length}`);
+
+    const uniqueCustIds = [...new Set(uniqueResult.map((r) => r.customerId).filter(Boolean))];
+    this.logger.log(`[EMPLOYEE_CALENDAR_AUDIT]
+employeeId: ${numEmployeeId}
+teamIds: ${JSON.stringify(authorizedTeamIds)}
+total assigned works: ${filteredItems.length}
+unique customerIds: ${JSON.stringify(uniqueCustIds)}
+records returned by API: ${uniqueResult.length}`);
 
     uniqueResult.sort((a, b) => {
       const dateCompare = String(a.scheduledDate || '').localeCompare(String(b.scheduledDate || ''));
