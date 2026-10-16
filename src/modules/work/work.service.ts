@@ -3564,16 +3564,9 @@ status: ${item.status}`);
       );
     };
     const hasRoleRules = visibleTypes.size > 0 || allowedTypes.size > 0;
-    const isDirectWorkAssignee = (w: any) => {
-      if (viewerIds.has(Number(w.assignedToId))) return true;
-      if (w.workType !== WorkType.REELS_SHOOT && w.workType !== WorkType.SHOOT) {
-        if (viewerIds.has(Number(w.editorId))) return true;
-      }
-      return (w.tasks || []).some((task: any) =>
-        viewerIds.has(Number(task.assignedToId)) &&
-        w.workType !== WorkType.REELS_SHOOT && w.workType !== WorkType.SHOOT,
-      );
-    };
+    const isDirectWorkAssignee = (w: any) =>
+      [w.assignedToId, w.editorId, ...(w.tasks || []).map((task: any) => task.assignedToId)]
+        .some((id) => id != null && viewerIds.has(Number(id)));
 
     const isCustomerOrLeadOwner = (w: any) => {
       const custId = Number(w.customerId || w.customer?.id || 0);
@@ -3597,6 +3590,8 @@ status: ${item.status}`);
 
     if (assignedOnly || !isProductionManager) {
       filteredItems = filteredItems.filter((w) => {
+        if (query.date && hasRoleRules && !matchesRole(w)) return false;
+
         if (isDirectWorkAssignee(w)) return true;
 
         if (isCustomerOrLeadOwner(w)) return true;
