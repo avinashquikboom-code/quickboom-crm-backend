@@ -21,6 +21,21 @@ export class MarketplaceController {
   constructor(private readonly marketplaceService: MarketplaceService) {}
 
   // ==========================================
+  // CUSTOMER / PUBLIC APIS
+  // ==========================================
+
+  @Get(['marketplace/tools', 'customer/marketplace/tools'])
+  @ApiOperation({ summary: 'Get active marketplace tools' })
+  async getMarketplaceTools() {
+    const data = await this.marketplaceService.getActiveMarketplaceTools();
+    return {
+      statusCode: 200,
+      success: true,
+      data,
+    };
+  }
+
+  // ==========================================
   // ADMIN PANEL APIS
   // ==========================================
 

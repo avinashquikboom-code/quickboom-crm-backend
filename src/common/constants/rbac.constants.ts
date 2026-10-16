@@ -287,7 +287,6 @@ export const CUSTOMER_APP_PERMISSIONS: StandardPermissionDef[] = [
   { module: "CUSTOMER_INVOICES", action: "DOWNLOAD", key: "employee.customer_invoices.download", label: "Download Invoice", category: "SYSTEM", description: "Download invoice or receipt documents" },
   { module: "CUSTOMER_PROFILE", action: "VIEW", key: "employee.customer_profile.view", label: "View Profile", category: "SYSTEM", description: "Show the account tab" },
   { module: "CUSTOMER_PROFILE", action: "EDIT", key: "employee.customer_profile.edit", label: "Edit Profile", category: "SYSTEM", description: "Update the customer profile" },
-  { module: "CUSTOMER_CALENDAR", action: "VIEW", key: "employee.customer_calendar.view", label: "View Calendar", category: "SYSTEM", description: "Show the customer calendar" },
   { module: "CUSTOMER_SSM", action: "VIEW", key: "employee.customer_ssm.view", label: "View SSM Access", category: "SYSTEM", description: "Show social media account access" },
   { module: "CUSTOMER_INFLUENCERS", action: "VIEW", key: "employee.customer_influencers.view", label: "View Influencer Hub", category: "SYSTEM", description: "Show the influencer hub" },
   { module: "CUSTOMER_INFLUENCER_BOOKINGS", action: "VIEW", key: "employee.customer_influencer_bookings.view", label: "View Bookings", category: "SYSTEM", description: "Show the customer's influencer bookings" },
