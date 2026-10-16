@@ -3011,6 +3011,7 @@ status: ${item.status}`);
         return false;
       })
       .map((c) => c.id);
+
     const allAuthorizedCustomerIds = [...new Set([...directCustomerIds, ...teamCustomerIds])];
 
     let where: any;
@@ -3101,7 +3102,7 @@ status: ${item.status}`);
         OR: [
           ...directAssignment(),
           ...teamCustomerWork(authorizedTeamIds),
-          ...(teamCustomerIds.length > 0 ? [{ customerId: { in: teamCustomerIds } }] : []),
+          ...(allAuthorizedCustomerIds.length > 0 ? [{ customerId: { in: allAuthorizedCustomerIds } }] : []),
         ],
         status: { not: WorkStatus.CANCELLED },
         ...(query.teamId ? { AND: [{ OR: [
@@ -3135,8 +3136,8 @@ status: ${item.status}`);
         { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
         { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
       );
-      if (teamCustomerIds.length > 0) {
-        orConditions.push({ customerId: { in: teamCustomerIds } });
+      if (allAuthorizedCustomerIds.length > 0) {
+        orConditions.push({ customerId: { in: allAuthorizedCustomerIds } });
       }
       if (tenantCustomerId) {
         orConditions.push(
@@ -3242,8 +3243,8 @@ status: ${item.status}`);
         { customer: { deletedAt: null, assignedTeam: { members: { some: { employeeId: numEmployeeId } } } } },
         { customer: { deletedAt: null, assignedTeam: { leaderId: numEmployeeId } } },
       );
-      if (teamCustomerIds.length > 0) {
-        orConditions.push({ customerId: { in: teamCustomerIds } });
+      if (allAuthorizedCustomerIds.length > 0) {
+        orConditions.push({ customerId: { in: allAuthorizedCustomerIds } });
       }
 
       where = {
@@ -3634,13 +3635,12 @@ status: ${item.status}`);
 
         // If authorized on the team and on a team customer/work:
         if (authorized && (authorizedTeamIds.includes(teamId) || authorizedTeamIds.includes(customerTeamId) || memberOfTeam || allAuthorizedCustomerIds.includes(Number(w.customerId)))) {
-          if (!allTenantCustomers && !matchesRole(w)) return false;
-          if (assignedOnly && hasRoleRules && !matchesRole(w)) return false;
           if (!otherOwnerId && allowedTypes.size > 0 && !allowedTypes.has(normalizeActivityType(w))) return false;
           if (!otherOwnerId && hasRoleRules && !matchesRole(w)) {
             const isMonthQuery = Boolean(!query.date && (query.month || (query as any).year));
             if (!allTenantCustomers || !isMonthQuery) return false;
           }
+          if (assignedOnly && !isDirectWorkAssignee(w) && hasRoleRules && !matchesRole(w)) return false;
           return true;
         }
 
@@ -4348,9 +4348,35 @@ afterFilter: ${result.length}`);
       return true;
     });
 
-    this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG] resolvedEmployeeId=${numEmployeeId} finalReturnedRecordCount=${uniqueResult.length}`);
-
     const uniqueCustIds = [...new Set(uniqueResult.map((r) => r.customerId).filter(Boolean))];
+
+    const customerTaskMap = new Map<string, { name: string; count: number }>();
+    for (const r of uniqueResult) {
+      const cId = String(r.customerId || '0');
+      const cName = r.customerName || r.companyName || 'Unknown';
+      const existing = customerTaskMap.get(cId) || { name: cName, count: 0 };
+      existing.count++;
+      customerTaskMap.set(cId, existing);
+    }
+    const customerLines = Array.from(customerTaskMap.entries())
+      .map(([cId, data]) => `Customer ID ${cId} - ${data.name} - ${data.count} tasks`)
+      .join('\n');
+
+    this.logger.log(`[EMPLOYEE_CALENDAR_DEBUG]
+
+Employee:
+${empRecord?.employeeCode || `QB-EMP-${numEmployeeId}`}
+
+Teams:
+${authorizedTeamIds.length > 0 ? authorizedTeamIds.join(', ') : 'NONE'}
+
+Total assigned works: ${filteredItems.length}
+
+Customers:
+${customerLines || 'No customer tasks'}
+
+Final returned records: ${uniqueResult.length}`);
+
     this.logger.log(`[EMPLOYEE_CALENDAR_AUDIT]
 employeeId: ${numEmployeeId}
 teamIds: ${JSON.stringify(authorizedTeamIds)}
@@ -4363,6 +4389,27 @@ records returned by API: ${uniqueResult.length}`);
       if (dateCompare !== 0) return dateCompare;
       return minutesOfDay(a.scheduledTime || a.time) - minutesOfDay(b.scheduledTime || b.time);
     });
+
+    this.logger.log(`[EMPLOYEE_CALENDAR_API_DEBUG]
+
+employeeId: ${numEmployeeId}
+teamIds: ${JSON.stringify(authorizedTeamIds)}
+totalApiRecords: ${uniqueResult.length}`);
+
+    for (const item of uniqueResult) {
+      this.logger.log(`workId: ${item.id}
+activityId: ${item.activityId || item.id}
+customerId: ${item.customerId}
+customerName: ${item.customerName || item.companyName}
+scheduledDate: ${item.scheduledDate}
+startTime: ${item.scheduledTime || item.startTime || item.time}
+teamId: ${item.teamId}
+employeeId: ${item.assignedToId || numEmployeeId}
+status: ${item.status}`);
+    }
+
+    this.logger.log(`uniqueCustomerIds: ${JSON.stringify(uniqueCustIds)}
+uniqueCustomerCount: ${uniqueCustIds.length}`);
 
     for (const item of uniqueResult) {
       this.logger.log(`[EMPLOYEE_CALENDAR_ITEM]
