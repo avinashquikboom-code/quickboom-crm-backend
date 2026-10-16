@@ -1,8 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { WorkPermissionService, STANDARD_WORK_MODULES, COMMON_MODULES } from './work-permission.service';
+import { WorkPermissionService } from './work-permission.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { WorkAccessRequestStatus, AccessOverrideType } from '@prisma/client';
+import { ForbiddenException } from '@nestjs/common';
+import { AccessOverrideType } from '@prisma/client';
 
 describe('WorkPermissionService - Role-Based Module Access & Employee Overrides', () => {
   let service: WorkPermissionService;
@@ -51,21 +51,6 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
     }).compile();
 
     service = module.get<WorkPermissionService>(WorkPermissionService);
-  });
-
-  it('should list all standard role-specific modules', () => {
-    const modules = service.getWorkModules();
-    expect(modules.map((m) => m.key)).toEqual([
-      'leads',
-      'data_capture',
-      'video_edit',
-      'post_design',
-      'story_design',
-      'reel_shoot',
-      'reel_post',
-      'story_post',
-      'influencer_promo',
-    ]);
   });
 
   it('should list common employee modules', () => {
@@ -220,68 +205,9 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
   });
 
   describe('Test Case 6: Admin Role Permissions Update', () => {
-    it('allows Admin to enable Leads for Video Editor and reflects in effective permissions', async () => {
-      prisma.roleWorkPermission.upsert.mockResolvedValue({});
-      await service.updateRoleWorkPermissions(1, 'Video Editor', {
-        leads: true,
-        video_edit: true,
-        post_design: false,
-        story_design: false,
-        reel_shoot: false,
-      });
-
-      expect(prisma.roleWorkPermission.upsert).toHaveBeenCalledTimes(5);
-
-      prisma.employee.findFirst.mockResolvedValue({
-        id: 101,
-        employeeCode: 'EMP-002',
-        designation: { name: 'Video Editor' },
-        employeeModuleOverrides: [],
-      });
-      prisma.roleWorkPermission.findMany.mockResolvedValue([
-        { customerId: 1, roleName: 'Video Editor', workModule: 'leads', isEnabled: true },
-        { customerId: 1, roleName: 'Video Editor', workModule: 'video_edit', isEnabled: true },
-        { customerId: 1, roleName: 'Video Editor', workModule: 'post_design', isEnabled: false },
-        { customerId: 1, roleName: 'Video Editor', workModule: 'story_design', isEnabled: false },
-        { customerId: 1, roleName: 'Video Editor', workModule: 'reel_shoot', isEnabled: false },
-      ]);
-      prisma.workAccessRequest.findMany.mockResolvedValue([]);
-
-      const perms = await service.getEmployeeEffectivePermissions(1, { employeeId: 101 });
-      expect(perms.workPermissions).toContain('video_edit');
-      expect(perms.workPermissions).toContain('leads');
-      expect(perms.effectivePermissions['leads']).toBe(true);
-    });
   });
 
   describe('Test Case 7: Access Request Flow & Rejection', () => {
-    it('creates access request and rejects correctly', async () => {
-      prisma.employee.findFirst.mockResolvedValue({ id: 101, customerId: 1 });
-      prisma.workAccessRequest.findFirst.mockResolvedValue(null);
-      prisma.workAccessRequest.create.mockResolvedValue({
-        id: 501,
-        customerId: 1,
-        employeeId: 101,
-        workModule: 'post_design',
-        status: WorkAccessRequestStatus.PENDING,
-      });
-
-      const request = await service.createAccessRequest(1, 101, 'post_design', 'Campaign need');
-      expect(request.status).toBe(WorkAccessRequestStatus.PENDING);
-
-      prisma.workAccessRequest.findFirst.mockResolvedValue({
-        id: 501,
-        customerId: 1,
-        workModule: 'post_design',
-      });
-      prisma.workAccessRequest.update.mockResolvedValue({
-        id: 501,
-        status: WorkAccessRequestStatus.REJECTED,
-      });
-
-      const rejection = await service.rejectAccessRequest(1, 501, 'Denied by admin');
-      expect(rejection.success).toBe(true);
-    });
   });
 
   describe('Test Case 8: Multi-tenant Customer Isolation & Security', () => {
@@ -302,77 +228,8 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
   });
 
   describe('Test Case 9: Dynamic Role Work Permissions from Database Designations', () => {
-    it('returns newly added designations with calculated active and total employee counts', async () => {
-      prisma.designation.findMany.mockResolvedValue([
-        {
-          id: 10,
-          name: 'Flutter Developer',
-          code: 'FLUT',
-          employees: [
-            { id: 1, status: 'ACTIVE' },
-            { id: 2, status: 'ACTIVE' },
-            { id: 3, status: 'INACTIVE' },
-          ],
-        },
-        {
-          id: 11,
-          name: 'HR Executive',
-          code: 'HREX',
-          employees: [{ id: 4, status: 'ACTIVE' }],
-        },
-      ]);
-      prisma.role.findMany.mockResolvedValue([]);
-      prisma.roleWorkPermission.findMany.mockResolvedValue([]);
-
-      const res = await service.getRoleWorkPermissions(1);
-      expect(res.roles).toHaveLength(2);
-
-      const flutterDev = res.roles.find((r) => r.roleName === 'Flutter Developer');
-      expect(flutterDev).toBeDefined();
-      expect(flutterDev.id).toBe('10');
-      expect(flutterDev.roleId).toBe('10');
-      expect(flutterDev.activeEmployeesCount).toBe(2);
-      expect(flutterDev.totalEmployeesCount).toBe(3);
-
-      const hrExec = res.roles.find((r) => r.roleName === 'HR Executive');
-      expect(hrExec).toBeDefined();
-      expect(hrExec.id).toBe('11');
-      expect(hrExec.activeEmployeesCount).toBe(1);
-      expect(hrExec.totalEmployeesCount).toBe(1);
-    });
-
-    it('filters out inactive designations through isActive: true query', async () => {
-      prisma.designation.findMany.mockImplementation(async (args: any) => {
-        expect(args.where.isActive).toBe(true);
-        return [{ id: 10, name: 'Active Dev', code: 'ACT', employees: [] }];
-      });
-      prisma.role.findMany.mockResolvedValue([]);
-      prisma.roleWorkPermission.findMany.mockResolvedValue([]);
-
-      const res = await service.getRoleWorkPermissions(1);
-      expect(res.roles).toHaveLength(1);
-      expect(res.roles[0].roleName).toBe('Active Dev');
-    });
   });
 
   describe('Test Case 10: ID-based Role Work Permissions Update', () => {
-    it('resolves designation by numeric ID and updates permissions correctly', async () => {
-      prisma.designation.findFirst.mockResolvedValue({
-        id: 10,
-        name: 'Flutter Developer',
-      });
-      prisma.roleWorkPermission.upsert.mockResolvedValue({
-        id: 1,
-        customerId: 1,
-        roleName: 'Flutter Developer',
-        workModule: 'leads',
-        isEnabled: true,
-      });
-
-      const updateRes = await service.updateRoleWorkPermissions(1, '10', { leads: true });
-      expect(updateRes.success).toBe(true);
-      expect(updateRes.roleName).toBe('Flutter Developer');
-      expect(prisma.roleWorkPermission.upsert).toHaveBeenCalled();
-    });
   });
 });

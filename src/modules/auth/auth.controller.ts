@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -195,101 +195,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user identity' })
   async getMe(@CurrentUser() user: any) {
     return this.authService.getProfile(user.id || user.userId, user);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Get('roles')
-  @ApiOperation({ summary: 'Get all database roles' })
-  async getRoles(@CurrentUser() user: any) {
-    return this.authService.getRoles(user.customerId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Post('roles')
-  @ApiOperation({ summary: 'Create a new security role' })
-  async createRole(
-    @CurrentUser() user: any,
-    @Body() body: { name: string; description?: string; permissions?: (string | { module: string; action: string })[] },
-  ) {
-    return this.authService.createRole(user.customerId, body, user);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Get('roles/:id')
-  @ApiOperation({ summary: 'Get single role details by ID' })
-  async getRoleById(@Param('id') id: string) {
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      throw new BadRequestException(`Invalid role ID: ${id}`);
-    }
-    return this.authService.getRoleById(numId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Put('roles/:id')
-  @ApiOperation({ summary: 'Update role details' })
-  async updateRole(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Body() body: { name?: string; description?: string; isActive?: boolean },
-  ) {
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      throw new BadRequestException(`Invalid role ID: ${id}`);
-    }
-    return this.authService.updateRole(numId, body, user);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Delete('roles/:id')
-  @ApiOperation({ summary: 'Deactivate / delete a custom role' })
-  async deleteRole(@Param('id') id: string, @CurrentUser() user: any) {
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      throw new BadRequestException(`Invalid role ID: ${id}`);
-    }
-    return this.authService.deleteRole(numId, user);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Get('permissions')
-  @ApiOperation({ summary: 'Get all available permissions' })
-  async getAllPermissions() {
-    return this.authService.getAllPermissions();
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Get('roles/:id/permissions')
-  @ApiOperation({ summary: 'Get permissions for a specific role' })
-  async getRolePermissions(@Param('id') id: string) {
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      throw new BadRequestException(`Invalid role ID: ${id}`);
-    }
-    return this.authService.getRolePermissions(numId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @Put('roles/:id/permissions')
-  @ApiOperation({ summary: 'Update permissions for a specific role' })
-  async updateRolePermissions(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[] },
-  ) {
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      throw new BadRequestException(`Invalid role ID: ${id}`);
-    }
-    return this.authService.updateRolePermissions(numId, body.permissions || [], user);
   }
 }
 

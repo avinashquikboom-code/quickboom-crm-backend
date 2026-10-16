@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkAccessRequestStatus, AccessOverrideType } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
@@ -333,7 +333,7 @@ export class WorkPermissionService {
     const effective = await this.getEmployeeEffectivePermissions(customerId, { employeeId });
     if (!effective.workPermissions.includes(workModule)) {
       throw new ForbiddenException(
-        `Forbidden: You do not have permission to access the '${workModule}' module. Submit an Access Request to Admin to get access.`,
+        `Forbidden: You do not have permission to access the '${workModule}' module.`,
       );
     }
     return true;
@@ -352,7 +352,19 @@ export class WorkPermissionService {
     isProductionManager: boolean;
     workPermissions: string[];
   }> {
-    const custId = customerId ? Number(customerId) : 1;
+    const providedTenantId = Number(customerId);
+    const employee = Number.isInteger(providedTenantId) && providedTenantId > 0
+      ? null
+      : await this.prisma.employee.findUnique({
+          where: { id: Number(employeeId) },
+          select: { customerId: true },
+        });
+    const custId = Number.isInteger(providedTenantId) && providedTenantId > 0
+      ? providedTenantId
+      : Number(employee?.customerId);
+    if (!Number.isInteger(custId) || custId <= 0) {
+      throw new ForbiddenException('Employee organization context is required');
+    }
     const effective = await this.getEmployeeEffectivePermissions(custId, { employeeId });
 
     const roleName = (effective.role || '').toUpperCase();
