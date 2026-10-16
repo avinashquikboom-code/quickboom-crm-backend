@@ -204,11 +204,7 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
     });
   });
 
-  describe('Test Case 6: Admin Role Permissions Update', () => {
-  });
 
-  describe('Test Case 7: Access Request Flow & Rejection', () => {
-  });
 
   describe('Test Case 8: Multi-tenant Customer Isolation & Security', () => {
     it('strictly isolates permissions by customerId and throws ForbiddenException on unauthorized access', async () => {
@@ -227,9 +223,23 @@ describe('WorkPermissionService - Role-Based Module Access & Employee Overrides'
     });
   });
 
-  describe('Test Case 9: Dynamic Role Work Permissions from Database Designations', () => {
+
+  describe('Activity permission organization context', () => {
+    it('derives the organization from the employee when no context is supplied', async () => {
+      prisma.employee.findUnique = jest.fn().mockResolvedValue({ customerId: 27 });
+      const resolver = jest.spyOn(service, 'getEmployeeEffectivePermissions').mockResolvedValue({
+        role: 'Video Editor', workPermissions: ['video_edit'],
+      } as any);
+      await service.getAllowedActivityTypesForEmployee(101);
+      expect(resolver).toHaveBeenCalledWith(27, { employeeId: 101 });
+    });
+
+    it('rejects unresolved organization context without evaluating another tenant', async () => {
+      prisma.employee.findUnique = jest.fn().mockResolvedValue(null);
+      const resolver = jest.spyOn(service, 'getEmployeeEffectivePermissions');
+      await expect(service.getAllowedActivityTypesForEmployee(101)).rejects.toThrow(ForbiddenException);
+      expect(resolver).not.toHaveBeenCalled();
+    });
   });
 
-  describe('Test Case 10: ID-based Role Work Permissions Update', () => {
-  });
 });
