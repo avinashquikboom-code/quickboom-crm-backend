@@ -1222,8 +1222,7 @@ try {
   ): Promise<CapturedPlace> {
     let numCustomerId = Number(customerId);
     if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true } });
-      numCustomerId = defaultCustomer?.id || 1;
+      throw new BadRequestException('Select a tenant before creating a Data Capture record.');
     }
 
     const resolvedCreatedFrom = resolveCreatedFrom(req, { id: userId, customerId: numCustomerId }, (dto as any)?.createdFrom);
