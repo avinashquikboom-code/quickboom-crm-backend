@@ -21,4 +21,33 @@ export class LeadController {
   list(@Query() query: LeadQueryDto, @CurrentUser() user: any) { return this.leads.findAll(query, user); }
   @Get(':id')
   detail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) { return this.leads.findOne(id, user); }
+  @Post('import-capture/:id')
+  async importCapture(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() body?: any,
+  ) {
+    const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user), body);
+    const stage = { id: 1, key: 'NEW', name: 'New' };
+    const leadWithStage = { ...result.lead, stageId: 1, stage };
+    return {
+      success: true,
+      message: result.alreadyImported ? 'Lead already exists in CRM' : 'Lead imported successfully',
+      data: {
+        lead: leadWithStage,
+        leadId: result.lead.id,
+        status: 'NEW',
+        stage,
+        stageId: 1,
+        alreadyImported: result.alreadyImported,
+      },
+      lead: leadWithStage,
+      leadId: result.lead.id,
+      status: 'NEW',
+      stage,
+      stageId: 1,
+      alreadyImported: result.alreadyImported,
+    };
+  }
 }

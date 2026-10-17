@@ -148,13 +148,50 @@ export class DataCaptureController {
     return this.dataCaptureService.createPlace(customerId, userId, dto, req);
   }
 
-  @Post(':id/import-lead')
+  @Post([':id/create-lead', ':id/import-lead'])
   @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Atomically convert a validated Data Capture record into a Lead' })
-  async importLead(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any, @Req() req: any) {
-    const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user));
+  async importLead(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() body?: any,
+  ) {
+    const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user), body);
     const record = await this.dataCaptureService.getPlaceById(undefined, id);
-    return { lead: result.lead, record, alreadyImported: result.alreadyImported };
+    const stage = { id: 1, key: 'NEW', name: 'New' };
+    const leadWithStage = { ...result.lead, stageId: 1, stage };
+    return {
+      success: true,
+      message: result.alreadyImported ? 'Lead already exists in CRM' : 'Lead imported successfully',
+      data: {
+        lead: leadWithStage,
+        record,
+        capture: record,
+        leadId: result.lead.id,
+        status: 'NEW',
+        stage,
+        stageId: 1,
+        alreadyImported: result.alreadyImported,
+        isDuplicate: result.alreadyImported,
+      },
+      lead: leadWithStage,
+      record,
+      capture: record,
+      leadId: result.lead.id,
+      status: 'NEW',
+      stage,
+      stageId: 1,
+      alreadyImported: result.alreadyImported,
+      isDuplicate: result.alreadyImported,
+    };
+  }
+
+  @Post('import-to-leads')
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Batch convert validated Data Capture records into Leads' })
+  async importToLeads(@CurrentUser() user: any, @Req() req: any, @Body() body: any) {
+    return this.leads.importMultipleCaptures(body, user, resolveCreatedFrom(req, user));
   }
 
   /**
