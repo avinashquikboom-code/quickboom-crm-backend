@@ -28,6 +28,7 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
 import {
+  ImportCaptureLeadsDto,
   ExtractPlacesDto,
   CreateDataCaptureDto,
   UpdateDataCaptureDto,
@@ -159,8 +160,8 @@ export class DataCaptureController {
   ) {
     const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user), body);
     const record = await this.dataCaptureService.getPlaceById(undefined, id);
-    const stage = { id: 1, key: 'NEW', name: 'New' };
-    const leadWithStage = { ...result.lead, stageId: 1, stage };
+    const stage = result.lead.stage;
+    const leadWithStage = result.lead;
     return {
       success: true,
       message: result.alreadyImported ? 'Lead already exists in CRM' : 'Lead imported successfully',
@@ -169,9 +170,9 @@ export class DataCaptureController {
         record,
         capture: record,
         leadId: result.lead.id,
-        status: 'NEW',
+        status: result.lead.status,
         stage,
-        stageId: 1,
+        stageId: stage.id,
         alreadyImported: result.alreadyImported,
         isDuplicate: result.alreadyImported,
       },
@@ -179,18 +180,24 @@ export class DataCaptureController {
       record,
       capture: record,
       leadId: result.lead.id,
-      status: 'NEW',
+      status: result.lead.status,
       stage,
-      stageId: 1,
+      stageId: stage.id,
       alreadyImported: result.alreadyImported,
       isDuplicate: result.alreadyImported,
     };
   }
 
-  @Post('import-to-leads')
+  @Post(['import-leads', 'import-to-leads'])
   @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Batch convert validated Data Capture records into Leads' })
   async importToLeads(@CurrentUser() user: any, @Req() req: any, @Body() body: any) {
+    if (body?.ids !== undefined) {
+      const dto = await new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true })
+        .transform(body, { type: 'body', metatype: ImportCaptureLeadsDto });
+      const result = await this.leads.importSelectedCaptures(dto.ids, user, resolveCreatedFrom(req, user));
+      return { success: true, data: result };
+    }
     return this.leads.importMultipleCaptures(body, user, resolveCreatedFrom(req, user));
   }
 

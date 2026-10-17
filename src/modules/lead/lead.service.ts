@@ -331,7 +331,7 @@ export class LeadService {
         this.assertCanRead(existing, user);
         const updated = await tx.dataCapturePlace.update({
           where: { id },
-          data: { importedLeadId: existing.id, isImported: true, status: 'LEAD_CREATED' },
+          data: { importedLeadId: existing.id, isImported: true, status: 'LEAD_IMPORTED' },
         });
         return { lead: this.mapLeadWithStage(existing), capture: updated, alreadyImported: true };
       }
@@ -349,6 +349,9 @@ export class LeadService {
       // Determine assignment
       let assignedToId: number | null = null;
       const explicitEmpId = Number(dto?.assignedToId || dto?.employeeId);
+      if (!isUserAdmin(user) && explicitEmpId > 0 && explicitEmpId !== Number(user.employee.id)) {
+        throw new ForbiddenException('Cannot assign a Lead to another employee');
+      }
       if (!isNaN(explicitEmpId) && explicitEmpId > 0) {
         const emp = await tx.employee.findFirst({ where: { id: explicitEmpId, status: 'ACTIVE' }, select: { id: true } });
         if (emp) assignedToId = emp.id;
@@ -390,7 +393,7 @@ export class LeadService {
 
       const updated = await tx.dataCapturePlace.update({
         where: { id },
-        data: { importedLeadId: lead.id, isImported: true, status: 'LEAD_CREATED' },
+        data: { importedLeadId: lead.id, isImported: true, status: 'LEAD_IMPORTED' },
       });
 
       return { lead: this.mapLeadWithStage(lead), capture: updated, alreadyImported: false };
@@ -402,15 +405,20 @@ export class LeadService {
     });
   }
 
+  async importSelectedCaptures(ids: number[], user: any, createdFrom: RecordCreatedFrom) {
+    return this.importMultipleCaptures({ ids }, user, createdFrom);
+  }
+
   async importMultipleCaptures(
-    dto: { jobId?: string; placeIds?: (string | number)[]; assignedToId?: number; employeeId?: number },
+    dto: { jobId?: string; placeIds?: (string | number)[]; ids?: (string | number)[]; assignedToId?: number; employeeId?: number },
     user: any,
     createdFrom: RecordCreatedFrom,
   ) {
     this.scope(user);
     let targetIds: number[] = [];
-    if (Array.isArray(dto?.placeIds) && dto.placeIds.length > 0) {
-      targetIds = dto.placeIds.map((p) => Number(p)).filter((n) => !isNaN(n) && n > 0);
+    const rawIds = dto?.ids || dto?.placeIds;
+    if (Array.isArray(rawIds) && rawIds.length > 0) {
+      targetIds = rawIds.map((p) => Number(p)).filter((n) => !isNaN(n) && n > 0);
     } else if (dto?.jobId) {
       const places = await this.prisma.dataCapturePlace.findMany({
         where: { jobId: dto.jobId, deletedAt: null },
@@ -422,6 +430,12 @@ export class LeadService {
       throw new BadRequestException('No place IDs or job ID provided for import');
     }
 
+    const uniqueIds = Array.from(new Set(targetIds));
+
+    const imported: Array<{ captureId: number; leadId: number; businessName?: string }> = [];
+    const alreadyImported: Array<{ captureId: number; leadId: number; businessName?: string }> = [];
+    const skipped: Array<{ captureId: number; reason: string }> = [];
+    const failed: Array<{ captureId: number; reason: string }> = [];
     const records: Array<{
       sourceRecordId: string;
       googlePlaceId: string | null;
@@ -432,16 +446,16 @@ export class LeadService {
       duplicateMatchReason?: string;
     }> = [];
 
-    let importedCount = 0;
-    let duplicateCount = 0;
-
-    for (const placeId of targetIds) {
+    for (const placeId of uniqueIds) {
       try {
         const res = await this.importCapture(placeId, user, createdFrom, dto);
         const isDup = Boolean(res.alreadyImported);
-        if (isDup) duplicateCount++;
-        else importedCount++;
-
+        const entry = { captureId: placeId, leadId: res.lead.id };
+        if (isDup) {
+          alreadyImported.push(entry);
+        } else {
+          imported.push(entry);
+        }
         records.push({
           sourceRecordId: String(placeId),
           googlePlaceId: res.lead.googlePlaceId ?? null,
@@ -453,31 +467,44 @@ export class LeadService {
         });
       } catch (err: any) {
         this.logger.warn(`Failed to import capture place ${placeId}: ${err?.message}`);
+        const reason = err?.message || 'Import failed';
+        const entry = { captureId: placeId, reason };
+        if (err instanceof BadRequestException || err instanceof NotFoundException) {
+          skipped.push(entry);
+        } else {
+          failed.push(entry);
+        }
         records.push({
           sourceRecordId: String(placeId),
           googlePlaceId: null,
           businessName: '',
           imported: false,
-          duplicate: true,
+          duplicate: false,
           leadId: null,
-          duplicateMatchReason: err?.message || 'Import failed',
+          duplicateMatchReason: reason,
         });
       }
     }
 
+    const payload = {
+      imported,
+      alreadyImported,
+      skipped,
+      failed,
+      records,
+      importedCount: imported.length,
+      alreadyImportedCount: alreadyImported.length,
+      duplicateCount: alreadyImported.length,
+      skippedCount: skipped.length,
+      failedCount: failed.length,
+      totalCount: uniqueIds.length,
+    };
+
     return {
       success: true,
-      message: `Imported ${importedCount} leads (${duplicateCount} existing/duplicate)`,
-      records,
-      importedCount,
-      duplicateCount,
-      totalCount: records.length,
-      data: {
-        records,
-        importedCount,
-        duplicateCount,
-        totalCount: records.length,
-      },
+      message: `Imported ${imported.length} leads (${alreadyImported.length} already imported, ${skipped.length} skipped, ${failed.length} failed)`,
+      ...payload,
+      data: payload,
     };
   }
 }

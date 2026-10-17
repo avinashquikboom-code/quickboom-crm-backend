@@ -3,6 +3,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsNumber,
+  IsInt,
   Min,
   Max,
   IsArray,
@@ -402,3 +403,10 @@ export class BulkActionDto {
   reason?: string;
 }
 
+
+export class ImportCaptureLeadsDto {
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
+}

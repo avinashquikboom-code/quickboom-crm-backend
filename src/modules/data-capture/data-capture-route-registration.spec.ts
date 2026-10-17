@@ -35,9 +35,27 @@ describe('Data Capture Lead import route registration', () => {
       await app.init();
       const server = app.getHttpAdapter().getInstance();
       const routes = server._router.stack.filter((layer: any) => layer.route).map((layer: any) => layer.route);
-      for (const path of ['/api/v1/data-capture/:id/create-lead', '/api/v1/data-capture/:id/import-lead']) {
+      for (const path of ['/api/v1/data-capture/:id/create-lead', '/api/v1/data-capture/:id/import-lead', '/api/v1/data-capture/import-to-leads']) {
         expect(routes.some((route: any) => route.path === path && route.methods.post)).toBe(true);
       }
     } finally { await app.close(); }
+  });
+});
+
+
+describe('existing bulk import endpoint selected-ID contract', () => {
+  it('uses the selected-ID service and preserves the legacy job import contract', async () => {
+    const results = { imported: [{ captureId: 3, leadId: 31 }], alreadyImported: [], skipped: [], failed: [] };
+    const leads = { importSelectedCaptures: jest.fn().mockResolvedValue(results), importMultipleCaptures: jest.fn().mockResolvedValue({ success: true }) };
+    const controller = new DataCaptureController({} as any, leads as any);
+    const user = { id: 2, accountType: 'ADMIN' };
+    expect(await controller.importToLeads(user, {}, { ids: [3] })).toEqual({ success: true, data: results });
+    expect(leads.importSelectedCaptures).toHaveBeenCalledWith([3], user, 'ADMIN_PANEL');
+    await controller.importToLeads(user, {}, { jobId: 'existing-job' });
+    expect(leads.importMultipleCaptures).toHaveBeenCalledWith({ jobId: 'existing-job' }, user, 'ADMIN_PANEL');
+    for (const ids of [[0], [-1], [1.5], ['3'], '3']) {
+      await expect(controller.importToLeads(user, {}, { ids })).rejects.toThrow();
+    }
+    expect(leads.importSelectedCaptures).toHaveBeenCalledTimes(1);
   });
 });

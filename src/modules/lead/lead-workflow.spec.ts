@@ -28,7 +28,7 @@ describe('independent Lead creation and Data Capture conversion', () => {
     const { service, tx } = setup();
     const result = await service.importCapture(11, admin, platform);
     expect(result.lead).toMatchObject({ id: 31, companyName: 'Captured business', source: 'DATA_CAPTURE', createdFrom: 'ADMIN_PANEL', status: 'NEW', city: 'Test City', latitude: 18, createdById: 2, deletedAt: null });
-    expect(result.capture).toMatchObject({ status: 'LEAD_CREATED', importedLeadId: 31, isImported: true });
+    expect(result.capture).toMatchObject({ status: 'LEAD_IMPORTED', importedLeadId: 31, isImported: true });
     expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
@@ -154,3 +154,47 @@ describe('independent Lead creation and Data Capture conversion', () => {
   });
 });
 
+
+
+describe('selected Data Capture bulk import', () => {
+  it('reports partial outcomes, deduplicates IDs and continues after failures', async () => {
+    const service = new LeadService({} as any);
+    const importOne = jest.spyOn(service, 'importCapture');
+    importOne.mockImplementation(async (id) => {
+      if (id === 3) throw new BadRequestException('Only validated records can be imported');
+      if (id === 4) throw new Error('Database unavailable');
+      return { lead: { id: 100 + id }, capture: { id }, alreadyImported: id === 1 } as any;
+    });
+    const result = await service.importSelectedCaptures([1, 2, 2, 3, 4, 5], admin, platform);
+    expect(result.imported).toEqual([{ captureId: 2, leadId: 102 }, { captureId: 5, leadId: 105 }]);
+    expect(result.alreadyImported).toEqual([{ captureId: 1, leadId: 101 }]);
+    expect(result.skipped).toEqual([{ captureId: 3, reason: 'Only validated records can be imported' }]);
+    expect(result.failed).toEqual([{ captureId: 4, reason: 'Database unavailable' }]);
+    expect(importOne).toHaveBeenCalledTimes(5);
+  });
+
+  it('keeps imported Leads visible under the shared Admin and Mobile list scope', async () => {
+    const { service, tx } = setup();
+    const imported = await service.importCapture(11, admin, platform);
+    const prisma = { lead: { findMany: jest.fn().mockResolvedValue([imported.lead]), count: jest.fn().mockResolvedValue(1) },
+      $transaction: jest.fn(async queries => Promise.all(queries)) };
+    const list = new LeadService(prisma as any);
+    for (const user of [admin, employee]) {
+      const result = await list.findAll({ page: 1, limit: 20 }, user);
+      expect(result.data[0]).toMatchObject({ id: 31, status: 'NEW', stage: { key: 'NEW' }, assignedToId: null });
+      const where = prisma.lead.findMany.mock.calls[prisma.lead.findMany.mock.calls.length - 1][0].where;
+      expect(where).not.toHaveProperty('createdFrom');
+      expect(where.AND).toContainEqual({ deletedAt: null });
+      if (user === employee) expect(where.AND).toContainEqual({ OR: [
+        { createdById: 4 }, { assignedToId: 7 }, { assignedToId: null },
+      ] });
+    }
+  });
+});
+
+
+it('prevents an employee import from assigning a Lead to another employee', async () => {
+  const { service, tx } = setup();
+  await expect(service.importCapture(11, employee, platform, { assignedToId: 99 })).rejects.toBeInstanceOf(ForbiddenException);
+  expect(tx.lead.create).not.toHaveBeenCalled();
+});

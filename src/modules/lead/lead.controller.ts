@@ -43,24 +43,24 @@ export class LeadController {
     @Body() body?: any,
   ) {
     const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user), body);
-    const stage = { id: 1, key: 'NEW', name: 'New' };
-    const leadWithStage = { ...result.lead, stageId: 1, stage };
+    const stage = result.lead.stage;
+    const leadWithStage = result.lead;
     return {
       success: true,
       message: result.alreadyImported ? 'Lead already exists in CRM' : 'Lead imported successfully',
       data: {
         lead: leadWithStage,
         leadId: result.lead.id,
-        status: 'NEW',
+        status: result.lead.status,
         stage,
-        stageId: 1,
+        stageId: stage.id,
         alreadyImported: result.alreadyImported,
       },
       lead: leadWithStage,
       leadId: result.lead.id,
-      status: 'NEW',
+      status: result.lead.status,
       stage,
-      stageId: 1,
+      stageId: stage.id,
       alreadyImported: result.alreadyImported,
     };
   }
