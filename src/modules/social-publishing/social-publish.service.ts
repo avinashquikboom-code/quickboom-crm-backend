@@ -69,7 +69,7 @@ export class SocialPublishService {
     const accounts = await this.prisma.socialAccount.findMany({
       where: {
         id: { in: rawIds },
-        customerId,
+        
         deletedAt: null,
         isConnected: true,
       },
@@ -97,7 +97,7 @@ export class SocialPublishService {
         const record = await this.prisma.socialPublish.create({
           data: {
             publishId,
-            customerId,
+            
             socialAccountId: account.id,
             generationId: dto.generationId,
             platform: account.platform,
@@ -141,7 +141,7 @@ export class SocialPublishService {
         const record = await this.prisma.socialPublish.create({
           data: {
             publishId,
-            customerId,
+            
             socialAccountId: account.id,
             generationId: dto.generationId,
             platform: account.platform,
@@ -231,7 +231,7 @@ export class SocialPublishService {
    * Retrieves current customer's publishing history
    */
   async getMyPublishes(customerId: number, status?: string) {
-    const where: any = { customerId };
+    const where: any = {  };
     if (status && status.toUpperCase() !== 'ALL') {
       where.status = status.toUpperCase();
     }
@@ -253,7 +253,7 @@ export class SocialPublishService {
    */
   async cancelScheduledPost(customerId: number, id: number) {
     const post = await this.prisma.socialPublish.findFirst({
-      where: { id, customerId, status: 'SCHEDULED' },
+      where: { id,  status: 'SCHEDULED' },
     });
     if (!post) {
       throw new NotFoundException(`Scheduled post #${id} not found or cannot be cancelled`);
@@ -281,9 +281,7 @@ export class SocialPublishService {
       this.prisma.socialPublish.findMany({
         where,
         include: {
-          customer: {
-            select: { id: true, name: true, email: true, phone: true, companyName: true },
-          },
+          
           socialAccount: {
             select: { id: true, platform: true, accountName: true, username: true },
           },

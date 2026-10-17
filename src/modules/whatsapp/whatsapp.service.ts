@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import * as crypto from 'crypto';
@@ -234,14 +235,9 @@ export class WhatsappService {
             deletedAt: null,
             OR: nameOrClause,
           };
-          if (customerId) {
-            whereClause.AND = [
-              { OR: [{ customerId: null }, { customerId: Number(customerId) }] },
-            ];
-          }
           dbTemplate = await (this.prisma as any).metaTemplate.findFirst({
             where: whereClause,
-            orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
+            orderBy: [ { updatedAt: 'desc' }],
           });
         }
 
@@ -899,36 +895,7 @@ export class WhatsappService {
    * Checks customer.phone -> customer.alternatePhone -> linked user.phone.
    */
   async resolveCustomerPhone(customerId: number): Promise<{ phone: string | null; customerName: string }> {
-    try {
-      const customer = await this.prisma.customer.findUnique({
-        where: { id: customerId },
-        select: {
-          id: true,
-          name: true,
-          companyName: true,
-          phone: true,
-          alternatePhone: true,
-          users: {
-            where: { deletedAt: null },
-            select: { phone: true },
-            take: 1,
-          },
-        },
-      });
-
-      if (!customer) {
-        return { phone: null, customerName: 'Customer' };
-      }
-
-      const customerName = customer.name || customer.companyName || 'Customer';
-      const rawPhone = customer.phone || customer.alternatePhone || customer.users[0]?.phone || null;
-      const normalized = this.normalizePhoneNumber(rawPhone);
-
-      return { phone: normalized, customerName };
-    } catch (err: any) {
-      this.logger.error(`[WHATSAPP] Error resolving customer phone from database: ${err?.message}`);
-      return { phone: null, customerName: 'Customer' };
-    }
+throw new GoneException('Customer phone lookup has been removed; provide an explicit recipient');
   }
 
   /**
@@ -937,7 +904,7 @@ export class WhatsappService {
    * Includes idempotency check: max 1 welcome WhatsApp per customer.
    */
   async sendCustomerWelcomeMessage(params: {
-    customerId: number;
+    customerId?: number;
     customerName?: string;
     phone?: string;
     notificationId?: number;
@@ -949,7 +916,7 @@ export class WhatsappService {
       // 1. Idempotency check: verify whether welcome WhatsApp was already dispatched
       const existingNotif = await this.prisma.notification.findFirst({
         where: {
-          customerId,
+          
           type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] },
         },
       });
@@ -1036,7 +1003,7 @@ export class WhatsappService {
    * Includes idempotency check: max 1 plan activation WhatsApp per subscription/payment.
    */
   async sendPlanActivationMessage(params: {
-    customerId: number;
+    customerId?: number;
     customerName?: string;
     planName: string;
     billingCycle?: string;
@@ -1055,7 +1022,7 @@ export class WhatsappService {
       if (subscriptionId || paymentId) {
         const recentNotifs = await this.prisma.notification.findMany({
           where: {
-            customerId,
+            
             type: 'PLAN_PURCHASE_SUCCESS',
           },
           orderBy: { createdAt: 'desc' },
@@ -1066,7 +1033,7 @@ export class WhatsappService {
           const data = (n.data as any) || {};
           if (data.whatsappSent !== true) return false;
           if (paymentId && String(data.paymentId) === String(paymentId)) return true;
-          if (subscriptionId && String(data.subscriptionId) === String(subscriptionId)) return true;
+          if (subscriptionId && String(undefined) === String(subscriptionId)) return true;
           return false;
         });
 
@@ -1273,7 +1240,7 @@ export class WhatsappService {
    */
   async sendPaymentSuccessMessage(params: {
     to?: string;
-    customerId: number;
+    customerId?: number;
     customerName?: string;
     amount: number | string;
     planName?: string;
@@ -1379,7 +1346,7 @@ export class WhatsappService {
    */
   async sendPlanExpiryReminderMessage(params: {
     to?: string;
-    customerId: number;
+    customerId?: number;
     customerName?: string;
     planName: string;
     expiryDate: string | Date;
@@ -1515,14 +1482,9 @@ export class WhatsappService {
             { templateName: { in: [resolvedKey.toLowerCase(), normalized.toLowerCase(), `lead_stage_${resolvedKey.toLowerCase()}`] } },
           ],
         };
-        if (customerId) {
-          stageWhereClause.AND = [
-            { OR: [{ customerId: null }, { customerId: Number(customerId) }] },
-          ];
-        }
         const dbTpl = await (this.prisma as any).metaTemplate.findFirst({
           where: stageWhereClause,
-          orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
+          orderBy: [ { updatedAt: 'desc' }],
         });
 
         if (dbTpl) {
@@ -1693,11 +1655,7 @@ export class WhatsappService {
         language: 'en_US',
         parametersCount: template ? (template.body.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || []).length : 0,
       },
-      lead: {
-        phonePresent: Boolean(phone),
-        phoneFormatValid: Boolean(normalizedPhone),
-        maskedPhone: this.maskPhone(phone),
-      },
+      
       api: {
         requestGenerated: Boolean(hasToken && hasPhoneId && normalizedPhone && template),
       },
@@ -2075,183 +2033,7 @@ export class WhatsappService {
    * Updates existing CRM communication/activity records for an outbound message status event.
    */
   private async updateMessageStatus(messageId: string, status: string, rawStatus: any) {
-    const isFailed = status === 'failed';
-    const errObj = isFailed && Array.isArray(rawStatus.errors) && rawStatus.errors[0] ? rawStatus.errors[0] : null;
-    const errorCode = errObj?.code ? String(errObj.code) : undefined;
-    const errorMessage = errObj?.message || errObj?.title || undefined;
-
-    // 1. Update LeadActivityTimeline records that track this WhatsApp message
-    try {
-      const timelines = await this.prisma.leadActivityTimeline.findMany({
-        where: {
-          metadata: {
-            path: ['messageId'],
-            equals: messageId,
-          },
-        },
-      });
-
-      for (const tl of timelines) {
-        const currentMeta = (tl.metadata as Record<string, any>) || {};
-        let newDescription = tl.description;
-
-        if (status === 'delivered') {
-          if (!newDescription.includes('(Delivered)')) {
-            newDescription = `${newDescription.replace(/\s*\(Sent\)/g, '').replace(/\s*\(Pending\)/g, '')} (Delivered)`;
-          }
-        } else if (status === 'read') {
-          if (!newDescription.includes('(Read)')) {
-            newDescription = `${newDescription.replace(/\s*\(Sent\)/g, '').replace(/\s*\(Delivered\)/g, '')} (Read)`;
-          }
-        } else if (isFailed) {
-          if (!newDescription.includes('(Failed')) {
-            newDescription = `${newDescription} (Failed: ${errorMessage || errorCode || 'Not delivered'})`;
-          }
-        }
-
-        await this.prisma.leadActivityTimeline.update({
-          where: { id: tl.id },
-          data: {
-            description: newDescription,
-            metadata: {
-              ...currentMeta,
-              status: status.toUpperCase(),
-              statusUpdatedAt: new Date(Number(rawStatus.timestamp) * 1000 || Date.now()),
-              ...(errorCode ? { errorCode } : {}),
-              ...(errorMessage ? { errorMessage } : {}),
-            },
-          },
-        });
-
-        // 1b. Send FCM Push Notification to assigned BPO / lead creator
-        try {
-          const lead = await this.prisma.lead?.findUnique?.({
-            where: { id: tl.leadId },
-            select: {
-              id: true,
-              title: true,
-              firstName: true,
-              phone: true,
-              customerId: true,
-              assignedToId: true,
-              createdById: true,
-            },
-          });
-
-          const recipientUserId = lead?.assignedToId || lead?.createdById;
-          const notificationService = this.getNotificationService();
-
-          if (notificationService && recipientUserId && lead?.customerId) {
-            const leadName = lead.firstName || lead.title || 'Lead';
-            let pushTitle = `WhatsApp: ${status.toUpperCase()}`;
-            let pushBody = `WhatsApp status for ${leadName}: ${status.toUpperCase()}`;
-
-            if (status === 'delivered') {
-              pushTitle = `WhatsApp Delivered: ${leadName}`;
-              pushBody = `Your message to ${lead.phone || leadName} was delivered successfully.`;
-            } else if (status === 'read') {
-              pushTitle = `WhatsApp Read: ${leadName}`;
-              pushBody = `${leadName} has read your WhatsApp message.`;
-            } else if (isFailed) {
-              pushTitle = `WhatsApp Failed: ${leadName}`;
-              pushBody = `Message to ${lead.phone || leadName} could not be delivered: ${errorMessage || errorCode || 'Failed'}`;
-            }
-
-            notificationService
-              .sendPushNotification({
-                userId: recipientUserId,
-                customerId: lead.customerId,
-                title: pushTitle,
-                body: pushBody,
-                type: 'WHATSAPP_STATUS',
-                data: {
-                  type: 'WHATSAPP_STATUS',
-                  communicationId: String(tl.id),
-                  leadId: String(lead.id),
-                  customerId: String(lead.customerId),
-                  status: status.toUpperCase(),
-                  channel: 'WHATSAPP',
-                },
-              })
-              .catch((pushErr: any) => {
-                this.logger.debug(`[WHATSAPP_STATUS_PUSH_DEBUG] ${pushErr?.message}`);
-              });
-          }
-        } catch (leadPushErr: any) {
-          this.logger.debug(`[WHATSAPP_STATUS_LEAD_ERR] ${leadPushErr?.message}`);
-        }
-      }
-    } catch (err: any) {
-      this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating timeline for ${messageId}: ${err?.message}`);
-    }
-
-    // 2. Update Notification records that track this WhatsApp message
-    try {
-      const notifs = await this.prisma.notification.findMany({
-        where: {
-          data: {
-            path: ['whatsappMessageId'],
-            equals: messageId,
-          },
-        },
-      });
-
-      for (const notif of notifs) {
-        const notifData = (notif.data as Record<string, any>) || {};
-        await this.prisma.notification.update({
-          where: { id: notif.id },
-          data: {
-            data: {
-              ...notifData,
-              whatsappStatus: status.toUpperCase(),
-              whatsappStatusUpdatedAt: new Date(Number(rawStatus.timestamp) * 1000 || Date.now()),
-              ...(errorCode ? { whatsappErrorCode: errorCode } : {}),
-              ...(errorMessage ? { whatsappErrorMessage: errorMessage } : {}),
-            },
-          },
-        });
-      }
-    } catch (err: any) {
-      this.logger.warn(`[WHATSAPP_STATUS_UPDATE_WARN] Failed updating notification for ${messageId}: ${err?.message}`);
-    }
-
-    // 3. Update CommunicationHistory records that track this WhatsApp message
-    try {
-      if (this.prisma.communicationHistory?.findMany) {
-        const commHistories = await this.prisma.communicationHistory.findMany({
-          where: {
-            details: { contains: messageId },
-          },
-        });
-        for (const ch of commHistories) {
-          let updatedDetails = ch.details || '';
-          const statusTag = `Status: ${status.toUpperCase()}`;
-          if (!updatedDetails.includes(statusTag)) {
-            updatedDetails += `\n${statusTag}`;
-          }
-          await this.prisma.communicationHistory.update({
-            where: { id: ch.id },
-            data: { details: updatedDetails },
-          });
-        }
-      }
-    } catch (commErr: any) {
-      this.logger.debug(`[WHATSAPP_STATUS_COMM_HISTORY_ERR] ${commErr?.message}`);
-    }
-
-    if (status === 'delivered' || status === 'read' || isFailed) {
-      try {
-        await this.prisma.emailLog.updateMany({
-          where: { providerMessageId: messageId, channel: 'WHATSAPP' },
-          data: {
-            status: isFailed ? 'FAILED' : 'DELIVERED',
-            errorMessage: isFailed ? (errorMessage || 'WhatsApp delivery failed') : null,
-          },
-        });
-      } catch (logErr: any) {
-        this.logger.debug(`[WHATSAPP_STATUS_EMAIL_LOG] ${logErr?.message}`);
-      }
-    }
+this.logger.debug('Ignoring webhook for removed Lead CRM integration');
   }
 
   /**
@@ -2269,221 +2051,7 @@ export class WhatsappService {
     displayPhoneNumber?: string;
     rawMessage?: any;
   }) {
-    const { messageId, from, type, textContent, timestamp, contactName, phoneNumberId, displayPhoneNumber } = params;
-
-    const normalized = this.normalizePhoneNumber(from) || from;
-    const digitsOnly = from.replace(/\D/g, '');
-    const last10 = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
-    const msgDate = new Date(Number(timestamp) * 1000 || Date.now());
-
-    // 1. Check existing Lead
-    let matchingLead: any = null;
-    try {
-      if (this.prisma.lead?.findFirst) {
-        matchingLead = await this.prisma.lead.findFirst({
-          where: {
-            OR: [
-              { phone: normalized },
-              { phone: `+${normalized}` },
-              { phone: digitsOnly },
-              { phone: last10 },
-              { phone: { endsWith: last10 } },
-            ],
-            deletedAt: null,
-          },
-          include: {
-            customer: true,
-            assignedTo: true,
-          },
-          orderBy: { updatedAt: 'desc' },
-        });
-      }
-    } catch (err: any) {
-      this.logger.warn(`[WHATSAPP_LEAD_LOOKUP_WARN] ${err?.message}`);
-    }
-
-    // 2. Check existing Contact
-    let matchingContact: any = null;
-    try {
-      if (this.prisma.contact?.findFirst) {
-        matchingContact = await this.prisma.contact.findFirst({
-          where: {
-            OR: [
-              { phone: normalized },
-              { phone: digitsOnly },
-              { phone: last10 },
-              { phone: { endsWith: last10 } },
-              { mobile: normalized },
-              { mobile: digitsOnly },
-              { mobile: last10 },
-              { mobile: { endsWith: last10 } },
-              { alternateMobile: { endsWith: last10 } },
-            ],
-            deletedAt: null,
-          },
-          include: {
-            customer: true,
-          },
-          orderBy: { updatedAt: 'desc' },
-        });
-      }
-    } catch (err: any) {
-      this.logger.warn(`[WHATSAPP_CONTACT_LOOKUP_WARN] ${err?.message}`);
-    }
-
-    // 3. If neither Lead nor Contact exists, create a new Lead
-    if (!matchingLead && !matchingContact) {
-      try {
-        const defaultCustomer = await this.prisma.customer?.findFirst?.({
-          where: { deletedAt: null },
-          include: {
-            users: {
-              where: { deletedAt: null },
-              take: 1,
-            },
-          },
-          orderBy: { id: 'asc' },
-        });
-
-        if (defaultCustomer) {
-          const newStage = await this.prisma.leadStage?.findFirst?.({
-            where: {
-              customerId: defaultCustomer.id,
-              key: 'NEW',
-              deletedAt: null,
-            },
-          });
-
-          const nameParts = (contactName || '').trim().split(/\s+/);
-          const fName = nameParts[0] || 'WhatsApp';
-          const lName = nameParts.slice(1).join(' ') || `Lead (${last10})`;
-
-          matchingLead = await this.prisma.lead?.create?.({
-            data: {
-              customerId: defaultCustomer.id,
-              createdById: defaultCustomer.users?.[0]?.id || 1,
-              title: `WhatsApp Inquiry: ${contactName || this.maskPhone(from)}`,
-              firstName: fName,
-              lastName: lName,
-              phone: from,
-              source: 'WHATSAPP',
-              status: 'NEW',
-              stageId: newStage?.id || null,
-            },
-            include: {
-              customer: true,
-              assignedTo: true,
-            },
-          });
-
-          this.logger.log(`[WHATSAPP_WEBHOOK] Created new Lead #${matchingLead?.id} for inbound sender ${this.maskPhone(from)}`);
-        }
-      } catch (err: any) {
-        this.logger.warn(`[WHATSAPP_WEBHOOK] Could not auto-create lead: ${err?.message}`);
-      }
-    }
-
-    // 4. Record Lead Activity if lead exists
-    if (matchingLead) {
-      try {
-        // Check if timeline entry already exists for this messageId
-        const existingEntry = await this.prisma.leadActivityTimeline?.findFirst?.({
-          where: {
-            metadata: {
-              path: ['messageId'],
-              equals: messageId,
-            },
-          },
-        });
-
-        if (!existingEntry && this.prisma.leadActivityTimeline?.create) {
-          const senderLabel = contactName || matchingLead.firstName || this.maskPhone(from);
-          await this.prisma.leadActivityTimeline.create({
-            data: {
-              leadId: matchingLead.id,
-              action: 'WHATSAPP_INBOUND',
-              description: `Incoming WhatsApp message from ${senderLabel}: "${textContent.slice(0, 150)}"`,
-              metadata: {
-                messageId,
-                from: this.maskPhone(from),
-                normalizedPhone: this.maskPhone(normalized),
-                contactName: contactName || null,
-                type,
-                text: textContent,
-                timestamp: msgDate,
-                status: 'RECEIVED',
-                phoneNumberId: phoneNumberId || null,
-                displayPhoneNumber: displayPhoneNumber || null,
-              },
-            },
-          });
-
-          // Send CRM notification and FCM push notification to assigned user or lead creator
-          const recipientUserId = matchingLead.assignedToId || matchingLead.createdById;
-          if (recipientUserId && matchingLead.customerId) {
-            const notificationService = this.getNotificationService();
-            if (notificationService) {
-              await notificationService
-                .sendPushNotification({
-                  customerId: matchingLead.customerId,
-                  userId: recipientUserId,
-                  title: `New WhatsApp from ${senderLabel}`,
-                  body: textContent.slice(0, 200),
-                  type: 'WHATSAPP_INCOMING',
-                  data: {
-                    type: 'WHATSAPP_INCOMING',
-                    leadId: String(matchingLead.id),
-                    customerId: String(matchingLead.customerId),
-                    whatsappMessageId: messageId,
-                    from: this.maskPhone(from),
-                    channel: 'WHATSAPP',
-                  },
-                })
-                .catch((err: any) => {
-                  this.logger.warn(`[WHATSAPP_INCOMING_PUSH_ERR] ${err?.message}`);
-                });
-            } else if (this.prisma.notification?.create) {
-              await this.prisma.notification.create({
-                data: {
-                  customerId: matchingLead.customerId,
-                  userId: recipientUserId,
-                  title: `New WhatsApp Message from ${senderLabel}`,
-                  message: textContent.slice(0, 200),
-                  type: 'WHATSAPP_INBOUND',
-                  data: {
-                    leadId: matchingLead.id,
-                    whatsappMessageId: messageId,
-                    from: this.maskPhone(from),
-                    type,
-                  },
-                },
-              });
-            }
-          }
-        }
-      } catch (err: any) {
-        this.logger.warn(`[WHATSAPP_TIMELINE_RECORD_ERR] ${err?.message}`);
-      }
-    }
-
-    // 5. Record CommunicationHistory if Contact exists
-    if (matchingContact) {
-      try {
-        if (this.prisma.communicationHistory?.create) {
-          await this.prisma.communicationHistory.create({
-            data: {
-              contactId: matchingContact.id,
-              type: 'WHATSAPP',
-              summary: `Inbound WhatsApp (${type}): ${textContent.slice(0, 100)}`,
-              details: `From: ${contactName || this.maskPhone(from)}\nMessage ID: ${messageId}\nContent:\n${textContent}`,
-              timestamp: msgDate,
-            },
-          });
-        }
-      } catch (err: any) {
-        this.logger.warn(`[WHATSAPP_COMM_HISTORY_ERR] ${err?.message}`);
-      }
-    }
+this.logger.debug('Ignoring webhook for removed Lead CRM integration');
   }
 }
 

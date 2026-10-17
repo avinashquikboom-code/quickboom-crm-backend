@@ -36,15 +36,7 @@ export class PayrollService {
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-    const parsed = Number(customerId);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-    const defaultCust = await this.prisma.customer.findFirst({
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return defaultCust ? defaultCust.id : 1;
+return undefined;
   }
 
   private async autoCheckOutOpenAttendances(customerId: number, periodEnd: Date) {
@@ -54,7 +46,7 @@ export class PayrollService {
 
     const openRecords = await this.prisma.attendance.findMany({
       where: {
-        customerId,
+        
         punchIn: { not: null },
         punchOut: null,
         OR: [
@@ -76,7 +68,7 @@ export class PayrollService {
         const day = punchInDate.getDate();
 
         const policy = await this.prisma.attendancePolicy.findFirst({
-          where: { customerId: att.customerId, isActive: true },
+          where: {  isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
@@ -161,7 +153,7 @@ export class PayrollService {
   }
 
   private async writePayrollAudit(input: {
-    customerId: number;
+    customerId?: number;
     user?: any;
     action: string;
     description: string;
@@ -171,7 +163,7 @@ export class PayrollService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          customerId: input.customerId,
+          
           userId: input.user?.id ? Number(input.user.id) : undefined,
           userName: input.user?.name || input.user?.email || undefined,
           userRole: input.user?.role || undefined,
@@ -190,7 +182,7 @@ export class PayrollService {
   }
 
   private async buildEmployeePayroll(tx: any, input: {
-    customerId: number;
+    customerId?: number;
     employee: any;
     year: number;
     month: number;
@@ -223,14 +215,14 @@ export class PayrollService {
     const joining = input.employee.joiningDate ? businessDayKey(input.employee.joiningDate) : null;
     const attendances = await tx.attendance.findMany({
       where: {
-        customerId: input.customerId,
+        
         employeeId: input.employee.id,
         date: { gte: queryStart, lte: queryEnd },
       },
     });
     const leaves = await tx.leaveRequest.findMany({
       where: {
-        customerId: input.customerId,
+        
         employeeId: input.employee.id,
         status: 'APPROVED',
         fromDate: { lte: queryEnd },
@@ -241,7 +233,7 @@ export class PayrollService {
     const remoteRequests = tx.remoteRequest?.findMany
       ? await tx.remoteRequest.findMany({
           where: {
-            customerId: input.customerId,
+            
             employeeId: input.employee.id,
             fromDate: { lte: queryEnd },
             toDate: { gte: queryStart },
@@ -257,7 +249,7 @@ export class PayrollService {
 
     const officePolicy = input.employee.officeId
       ? await tx.attendancePolicy.findFirst({
-          where: { customerId: input.customerId, officeId: input.employee.officeId, isActive: true },
+          where: {  officeId: input.employee.officeId, isActive: true },
           orderBy: { id: 'desc' },
         })
       : null;
@@ -322,7 +314,7 @@ export class PayrollService {
 
     const claims = await tx.employeeClaim.findMany({
       where: {
-        customerId: input.customerId,
+        
         employeeId: input.employee.id,
         status: 'APPROVED',
         paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -333,7 +325,7 @@ export class PayrollService {
 
     const loans = await tx.employeeLoan.findMany({
       where: {
-        customerId: input.customerId,
+        
         employeeId: input.employee.id,
         status: { in: ['ACTIVE', 'APPROVED'] },
         remainingBalance: { gt: 0 },
@@ -700,9 +692,9 @@ export class PayrollService {
 
     // 1. Fetch Policy for Customer
     const [payrollPolicy, salaryPolicy, attendancePolicy] = await Promise.all([
-      this.prisma.payrollPolicy.findUnique({ where: { customerId: numCustomerId } }),
-      this.prisma.salaryPolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
-      this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, officeId: null, isActive: true } }),
+      this.prisma.payrollPolicy.findUnique({ where: { singletonKey: "GLOBAL" } }),
+      this.prisma.salaryPolicy.findFirst({ where: {  isActive: true } }),
+      this.prisma.attendancePolicy.findFirst({ where: {  officeId: null, isActive: true } }),
     ]);
 
     const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
@@ -713,7 +705,7 @@ export class PayrollService {
     const overtimeEligible = attendancePolicy?.overtimeEligible ?? true;
 
     // 2. Fetch active employees
-    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
+    const whereClause: any = {  status: 'ACTIVE' };
     if (numDeptId) {
       whereClause.departmentId = numDeptId;
     }
@@ -739,13 +731,13 @@ export class PayrollService {
     return this.prisma.$transaction(async (tx) => {
       // 3. Fetch or create Payroll record (Idempotent)
       let payroll = await tx.payroll.findFirst({
-        where: { customerId: numCustomerId, month, year, departmentId: numDeptId || null },
+        where: {  month, year, departmentId: numDeptId || null },
       });
 
       if (!payroll) {
         payroll = await tx.payroll.create({
           data: {
-            customerId: numCustomerId,
+            
             month,
             year,
             departmentId: numDeptId || null,
@@ -759,7 +751,7 @@ export class PayrollService {
 
       const holidays = await tx.publicHoliday.findMany({
         where: {
-          customerId: numCustomerId,
+          
           isActive: true,
           date: {
             gte: new Date(periodStart.getTime() - 24 * 60 * 60 * 1000),
@@ -787,7 +779,7 @@ export class PayrollService {
       for (const emp of employees) {
         if (lockedEmployeeIds.has(emp.id)) continue;
         const computed = await this.buildEmployeePayroll(tx, {
-          customerId: numCustomerId,
+          
           employee: emp,
           year,
           month,
@@ -820,7 +812,7 @@ export class PayrollService {
         totalNet += computed.netSalary;
         itemsData.push({
           payrollId: payroll.id,
-          customerId: numCustomerId,
+          
           employeeId: emp.id,
           ...computed,
           paidLeaveDays: Math.round(computed.paidLeaveDays),
@@ -875,7 +867,7 @@ export class PayrollService {
   async previewPayroll(customerId: number | string | undefined, month: number, year: number, departmentId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numDeptId = departmentId && !isNaN(Number(departmentId)) ? Number(departmentId) : undefined;
-    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
+    const whereClause: any = {  status: 'ACTIVE' };
     if (numDeptId) {
       whereClause.departmentId = numDeptId;
     }
@@ -935,11 +927,11 @@ export class PayrollService {
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId, customerId: numCustomerId },
+        where: { id: numPayrollId },
       });
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: { customerId: numCustomerId },
+        where: {  },
         orderBy: { createdAt: 'desc' },
       });
     }
@@ -987,12 +979,12 @@ export class PayrollService {
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId, customerId: numCustomerId },
+        where: { id: numPayrollId },
         include: { items: true },
       });
     } else if (options?.month && options?.year) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { customerId: numCustomerId, month: options.month, year: options.year },
+        where: {  month: options.month, year: options.year },
         include: { items: true },
       });
       if (!payroll) {
@@ -1004,7 +996,7 @@ export class PayrollService {
       }
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: { customerId: numCustomerId },
+        where: {  },
         orderBy: { createdAt: 'desc' },
         include: { items: true },
       });
@@ -1046,13 +1038,13 @@ export class PayrollService {
         const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
 
         const existing = await tx.salarySlip.findFirst({
-          where: { payrollItemId: item.id, customerId: numCustomerId },
+          where: { payrollItemId: item.id },
         });
 
         if (!existing) {
           await tx.salarySlip.create({
             data: {
-              customerId: numCustomerId,
+              
               payrollItemId: item.id,
               employeeId: item.employeeId,
               slipNumber: slipNum,
@@ -1108,7 +1100,7 @@ export class PayrollService {
           const slip = item.salarySlips?.[0];
           this.notificationService
             .sendSalaryGeneratedNotification({
-              customerId: numCustomerId,
+              
               employeeId: item.employeeId,
               payPeriod,
               month: payroll.month,
@@ -1132,12 +1124,12 @@ export class PayrollService {
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId, customerId: numCustomerId },
+        where: { id: numPayrollId },
         include: { items: true },
       });
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: { customerId: numCustomerId },
+        where: {  },
         orderBy: { createdAt: 'desc' },
         include: { items: true },
       });
@@ -1172,7 +1164,7 @@ export class PayrollService {
         if (item.reimbursement && item.reimbursement > 0) {
           await tx.employeeClaim.updateMany({
             where: {
-              customerId: numCustomerId,
+              
               employeeId: item.employeeId,
               status: 'APPROVED',
               paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -1190,7 +1182,7 @@ export class PayrollService {
         if (item.loanDeduction && item.loanDeduction > 0) {
           const activeLoans = await tx.employeeLoan.findMany({
             where: {
-              customerId: numCustomerId,
+              
               employeeId: item.employeeId,
               status: { in: ['ACTIVE', 'APPROVED'] },
               remainingBalance: { gt: 0 },
@@ -1256,7 +1248,7 @@ export class PayrollService {
   async payPayrollItem(customerId: number | string | undefined, itemId: number | string, user?: any) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const item = await this.prisma.payrollItem.findFirst({
-      where: { id: Number(itemId), customerId: numCustomerId },
+      where: { id: Number(itemId) },
       include: { payroll: true, employee: true, salarySlips: true },
     });
     if (!item) throw new NotFoundException(`Payroll item #${itemId} not found`);
@@ -1283,7 +1275,7 @@ export class PayrollService {
       // Compare-and-set claim: a concurrent request blocks on this row and then matches 0 rows,
       // so claims, loans and commission shares are settled at most once.
       const claimed = await tx.payrollItem.updateMany({
-        where: { id: item.id, customerId: numCustomerId, status: item.status },
+        where: { id: item.id,  status: item.status },
         data: { status: 'PAID', paidAt: new Date() },
       });
       if (claimed.count !== 1) {
@@ -1292,7 +1284,7 @@ export class PayrollService {
       if (item.reimbursement > 0) {
         await tx.employeeClaim.updateMany({
           where: {
-            customerId: numCustomerId,
+            
             employeeId: item.employeeId,
             status: 'APPROVED',
             paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -1304,7 +1296,7 @@ export class PayrollService {
       if (item.loanDeduction > 0 || item.advanceDeduction > 0) {
         let pending = Number(item.loanDeduction || 0) + Number(item.advanceDeduction || 0);
         const loans = await tx.employeeLoan.findMany({
-          where: { customerId: numCustomerId, employeeId: item.employeeId, status: { in: ['ACTIVE', 'APPROVED'] }, remainingBalance: { gt: 0 } },
+          where: {  employeeId: item.employeeId, status: { in: ['ACTIVE', 'APPROVED'] }, remainingBalance: { gt: 0 } },
         });
         for (const loan of loans) {
           if (pending <= 0) break;
@@ -1318,11 +1310,11 @@ export class PayrollService {
         }
       }
       const slipNum = `SLIP-${payroll.year}${String(payroll.month).padStart(2, '0')}-${String(item.employeeId).padStart(4, '0')}`;
-      const existing = await tx.salarySlip.findFirst({ where: { payrollItemId: item.id, customerId: numCustomerId } });
+      const existing = await tx.salarySlip.findFirst({ where: { payrollItemId: item.id } });
       if (!existing) {
         await tx.salarySlip.create({
           data: {
-            customerId: numCustomerId,
+            
             payrollItemId: item.id,
             employeeId: item.employeeId,
             slipNumber: slipNum,
@@ -1346,7 +1338,7 @@ export class PayrollService {
 
     await this.deliverSalarySlips(numCustomerId, [item.id], user);
     await this.writePayrollAudit({
-      customerId: numCustomerId,
+      
       user,
       action: 'PAY',
       description: `Payroll marked paid for employee ${item.employeeId} ${payPeriod}`,
@@ -1354,7 +1346,7 @@ export class PayrollService {
       details: { month: payroll.month, year: payroll.year, netSalary: item.netSalary },
     });
     const fresh = await this.prisma.payrollItem.findFirst({
-      where: { id: item.id, customerId: numCustomerId },
+      where: { id: item.id },
       include: { employee: { include: { department: true, designation: true } }, salarySlips: true, payroll: true },
     });
     return { success: true, message: 'Payroll marked as paid', data: fresh };
@@ -1363,13 +1355,13 @@ export class PayrollService {
   private async deliverSalarySlips(customerId: number, itemIds: number[], user?: any) {
     if (!itemIds.length || !this.employeeCommunication) return;
     const slips = await this.prisma.salarySlip.findMany({
-      where: { customerId, payrollItemId: { in: itemIds } },
+      where: {  payrollItemId: { in: itemIds } },
     });
     for (const slip of slips) {
       let emailStatus = 'EMAIL_PENDING';
       let whatsappStatus = 'WHATSAPP_PENDING';
       try {
-        const result: any = await this.employeeCommunication.notifySalarySlip({ slipId: slip.id, customerId });
+        const result: any = await this.employeeCommunication.notifySalarySlip({ slipId: slip.id });
         emailStatus = result?.email?.status === 'FAILED' ? 'EMAIL_FAILED' : result?.email?.skipped && result?.email?.status !== 'SENT' && !result?.email?.success ? 'EMAIL_FAILED' : 'EMAIL_SENT';
         if (result?.email?.status === 'FAILED') emailStatus = 'EMAIL_FAILED';
         else if (result?.email?.success || result?.email?.status === 'SENT' || result?.email?.skipped) emailStatus = 'EMAIL_SENT';
@@ -1385,7 +1377,7 @@ export class PayrollService {
         data: { emailStatus, whatsappStatus },
       });
       await this.writePayrollAudit({
-        customerId,
+        
         user,
         action: 'DELIVER',
         description: `Salary slip delivery ${emailStatus} ${whatsappStatus}`,
@@ -1403,7 +1395,7 @@ export class PayrollService {
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
     if (query?.month) where.month = Number(query.month);
     if (query?.year) where.year = Number(query.year);
     if (query?.status && query.status !== 'ALL') where.status = query.status;
@@ -1455,7 +1447,7 @@ export class PayrollService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     return this.prisma.payroll.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where: { id: numId },
       include: {
         items: {
           include: {
@@ -1481,14 +1473,14 @@ export class PayrollService {
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
     let currentEmployee: any = null;
 
     if (query?.user) {
       {
         currentEmployee = await this.prisma.employee.findFirst({
           where: {
-            customerId: numCustomerId,
+            
             OR: [
               { userId: query.user.id },
               { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -1723,7 +1715,7 @@ export class PayrollService {
 
     if (!isNaN(numId) && numId > 0) {
       slip = await this.prisma.salarySlip.findFirst({
-        where: { id: numId, customerId: numCustomerId },
+        where: { id: numId },
         include: {
           employee: {
             include: {
@@ -1742,7 +1734,7 @@ export class PayrollService {
 
     if (!slip && !isNaN(numId) && numId > 0) {
       slip = await this.prisma.salarySlip.findFirst({
-        where: { payrollItemId: numId, customerId: numCustomerId },
+        where: { payrollItemId: numId },
         include: {
           employee: {
             include: {
@@ -1780,7 +1772,7 @@ export class PayrollService {
 
     if (!slip && typeof id === 'string' && id.trim()) {
       slip = await this.prisma.salarySlip.findFirst({
-        where: { slipNumber: id.trim(), customerId: numCustomerId },
+        where: { slipNumber: id.trim() },
         include: {
           employee: {
             include: {
@@ -1820,7 +1812,7 @@ export class PayrollService {
       const pi = await this.prisma.payrollItem.findFirst({
         where: {
           id: numId,
-          customerId: numCustomerId,
+          
         },
         include: {
           payroll: true,
@@ -1836,7 +1828,7 @@ export class PayrollService {
         const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         slip = {
           id: pi.id,
-          customerId: pi.customerId,
+          
           payrollItemId: pi.id,
           employeeId: pi.employeeId,
           slipNumber: `SLIP-${pi.payroll?.year || 2026}${String(pi.payroll?.month || 1).padStart(2, '0')}-${String(pi.employeeId).padStart(4, '0')}`,
@@ -1855,7 +1847,7 @@ export class PayrollService {
       const empId = Number(String(id).replace('active-', ''));
       if (!isNaN(empId) && empId > 0) {
         const emp = await this.prisma.employee.findFirst({
-          where: { id: empId, customerId: numCustomerId },
+          where: { id: empId },
           include: {
             department: true,
             designation: true,
@@ -2132,7 +2124,7 @@ export class PayrollService {
       }
       if (!isUserAdmin(user)) {
         const employee = user.id ? await this.prisma.employee.findFirst({
-          where: { userId: Number(user.id), customerId: slip.customerId },
+          where: { userId: Number(user.id) },
           select: { id: true },
         }) : null;
         if (!employee || Number(slip.employeeId || slip.employee?.id) !== employee.id) {
@@ -2164,7 +2156,7 @@ export class PayrollService {
   async getPayrollHistory(customerId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const payrolls = await this.prisma.payroll.findMany({
-      where: { customerId: numCustomerId },
+      where: {  },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
       take: 12,
       include: {
@@ -2212,7 +2204,7 @@ export class PayrollService {
 
   async getSalaryStructures(customerId?: number | string, employeeId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
     if (employeeId !== undefined && employeeId !== null && employeeId !== '') {
       where.employeeId = Number(employeeId);
     }
@@ -2239,14 +2231,14 @@ export class PayrollService {
     const save = async (tx: any) => {
       // Serialize compensation edits for the same tenant employee without a schema change.
       const target = data.id
-        ? await tx.salaryStructure.findFirst({ where: { id: Number(data.id), customerId: numCustomerId } })
+        ? await tx.salaryStructure.findFirst({ where: { id: Number(data.id) } })
         : null;
       const lockEmployeeId = target?.employeeId ?? Number(data.employeeId);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM "Employee" WHERE id = ${lockEmployeeId} AND "customerId" = ${numCustomerId} FOR UPDATE`);
       const existing = await tx.salaryStructure.findFirst({
         where: data.id
-          ? { id: Number(data.id), customerId: numCustomerId }
-          : { employeeId: Number(data.employeeId), customerId: numCustomerId, status: 'ACTIVE' },
+          ? { id: Number(data.id) }
+          : { employeeId: Number(data.employeeId),  status: 'ACTIVE' },
         orderBy: { createdAt: 'desc' },
       });
       if (data.id && !existing) throw new NotFoundException('Salary structure not found');
@@ -2254,7 +2246,7 @@ export class PayrollService {
       if (data.employeeId && Number(data.employeeId) !== employeeId) {
         throw new BadRequestException('Salary structure belongs to another employee');
       }
-      const employee = await tx.employee.findFirst({ where: { id: employeeId, customerId: numCustomerId } });
+      const employee = await tx.employee.findFirst({ where: { id: employeeId } });
       if (!employee) throw new NotFoundException('Employee not found');
       const earnings = ['basicSalary', 'hra', 'allowances', 'specialAllowance', 'bonus', 'commission', 'overtime', 'otherEarnings'];
       const deductions = ['pf', 'esi', 'professionalTax', 'tds', 'otherDeductions'];
@@ -2270,11 +2262,11 @@ export class PayrollService {
       const status = data.status ?? existing?.status ?? 'ACTIVE';
       const saved = existing
         ? await tx.salaryStructure.update({ where: { id: existing.id }, data: { ...values, status } })
-        : await tx.salaryStructure.create({ data: { ...values, customerId: numCustomerId, employeeId, status } });
+        : await tx.salaryStructure.create({ data: { ...values,  employeeId, status } });
       if (status === 'ACTIVE') {
         // Exactly one current source; historical payroll snapshots are independent.
         await tx.salaryStructure.updateMany({
-          where: { customerId: numCustomerId, employeeId, status: 'ACTIVE', id: { not: saved.id } },
+          where: {  employeeId, status: 'ACTIVE', id: { not: saved.id } },
           data: { status: 'INACTIVE' },
         });
         let bank: any = employee.bankDetails;
@@ -2289,7 +2281,7 @@ export class PayrollService {
       if (status === 'ACTIVE') {
         // Invalidate eligible batches; their items are replaced only by normal recalculation.
         await tx.payroll.updateMany({
-          where: { customerId: numCustomerId, status: 'CALCULATED', items: { some: { employeeId, status: { not: 'PAID' } } } },
+          where: {  status: 'CALCULATED', items: { some: { employeeId, status: { not: 'PAID' } } } },
           data: { status: 'DRAFT' },
         });
       }
@@ -2302,24 +2294,24 @@ export class PayrollService {
   async deleteSalaryStructure(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     return this.prisma.salaryStructure.deleteMany({
-      where: { id: Number(id), customerId: numCustomerId },
+      where: { id: Number(id) },
     });
   }
 
   async getPayrollPolicy(customerId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     let policy = await this.prisma.payrollPolicy.findUnique({
-      where: { customerId: numCustomerId },
+      where: { singletonKey: "GLOBAL" },
     });
 
     if (!policy) {
       const salaryPol = await this.prisma.salaryPolicy.findFirst({
-        where: { customerId: numCustomerId, isActive: true },
+        where: {  isActive: true },
       });
 
       policy = await this.prisma.payrollPolicy.create({
         data: {
-          customerId: numCustomerId,
+          
           workingDaysPerMonth: salaryPol?.workingDaysPerMonth || 30,
           overtimeMultiplier: salaryPol?.overtimeMultiplier || 1.5,
           pfPercent: salaryPol?.pfPercent || 12.0,
@@ -2341,9 +2333,9 @@ export class PayrollService {
     const taxExemptionLimit = Number(data.taxExemptionLimit) || 300000;
 
     const policy = await this.prisma.payrollPolicy.upsert({
-      where: { customerId: numCustomerId },
+      where: { singletonKey: "GLOBAL" },
       create: {
-        customerId: numCustomerId,
+        
         workingDaysPerMonth,
         overtimeMultiplier,
         pfPercent,
@@ -2361,7 +2353,7 @@ export class PayrollService {
 
     // Also sync to SalaryPolicy if it exists
     await this.prisma.salaryPolicy.updateMany({
-      where: { customerId: numCustomerId, isActive: true },
+      where: {  isActive: true },
       data: {
         workingDaysPerMonth,
         overtimeMultiplier,

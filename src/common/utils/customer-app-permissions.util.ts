@@ -19,7 +19,7 @@ export function mapCustomerRolePermissionRows(rows: any[]): PermissionItem[] {
 export function pickConfiguredCustomerDesignation(rows: any[]): any | null {
   const withRole = (rows || []).filter((row) => row?.role);
   const tenantRoles = withRole.filter(
-    (row) => Number(row?.customer?._count?.employees || row?.employeeCount || 0) > 0,
+    (row) => Number(row?.employeeCount || 0) > 0,
   );
   const pool = tenantRoles.length ? tenantRoles : withRole;
   pool.sort((a, b) => {
@@ -38,7 +38,7 @@ export async function resolveMasterCustomerRoleItems(prisma: any): Promise<Permi
         where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
         include: {
           role: { include: { rolePermissions: { include: { permission: true } } } },
-          customer: { select: { _count: { select: { employees: true } } } },
+          
         },
       });
       const picked = pickConfiguredCustomerDesignation(rows);
@@ -86,10 +86,7 @@ export async function resolveCustomerAppPermissionItems(
 ): Promise<PermissionItem[]> {
   const id = Number(customerId);
   const defaults = ROLE_PERMISSION_DEFAULTS.CUSTOMER || [];
-  if (!id || Number.isNaN(id) || !prisma?.customer?.findFirst) {
-    const masterItems = await resolveMasterCustomerRoleItems(prisma);
-    return masterItems ?? defaults;
-  }
+  
 
   const customer = await prisma.customer.findFirst({
     where: { id, deletedAt: null },
@@ -121,7 +118,7 @@ export async function resolveCustomerAppPermissionItems(
         where: { code: 'CUSTOMER', audience: 'CUSTOMER' },
         include: {
           role: { include: { rolePermissions: { include: { permission: true } } } },
-          customer: { select: { _count: { select: { employees: true } } } },
+          
         },
       });
       const picked = pickConfiguredCustomerDesignation(rows);
@@ -137,7 +134,7 @@ export async function resolveCustomerAppPermissionItems(
   if (!roleResolved && !customer.mobileRoleId && prisma?.designation?.findFirst) {
     // 1. Try finding customer-scoped Customer designation
     let ownRole = await prisma.designation.findFirst({
-      where: { customerId: id, code: 'CUSTOMER', audience: 'CUSTOMER' },
+      where: {  code: 'CUSTOMER', audience: 'CUSTOMER' },
       include: {
         role: { include: { rolePermissions: { include: { permission: true } } } },
       },

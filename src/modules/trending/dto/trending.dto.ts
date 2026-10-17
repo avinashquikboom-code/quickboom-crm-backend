@@ -166,9 +166,7 @@ export class CreateTrendingContentDto {
   @IsOptional()
   endAt?: string;
 
-  @ApiPropertyOptional({ description: 'Target customer ID if Super Admin overrides context' })
-  @IsOptional()
-  customerId?: number | string;
+  
 
   @ApiPropertyOptional({ description: 'Additional structured JSON metadata' })
   @Transform(transformJson)
@@ -364,9 +362,7 @@ export class QueryTrendingDto {
   @IsOptional()
   limit?: number | string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  customerId?: number | string;
+  
 }
 
 export class UpdatePublishStatusDto {

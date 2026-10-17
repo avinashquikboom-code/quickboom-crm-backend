@@ -30,9 +30,7 @@ export class UpsertAttendancePolicyDto {
   @IsOptional()
   id?: any;
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsOptional()
-  customerId?: any;
+  
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -303,9 +301,7 @@ export class UpsertLeavePolicyDto {
   @IsOptional()
   id?: any;
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsOptional()
-  customerId?: any;
+  
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -434,9 +430,7 @@ export class UpsertSalaryPolicyDto {
   @IsOptional()
   id?: any;
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsOptional()
-  customerId?: any;
+  
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -582,9 +576,7 @@ export class UpsertClaimPolicyDto {
   @IsOptional()
   id?: any;
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsOptional()
-  customerId?: any;
+  
 
   @ApiPropertyOptional()
   @IsOptional()

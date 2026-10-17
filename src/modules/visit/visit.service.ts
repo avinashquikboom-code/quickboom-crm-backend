@@ -22,26 +22,7 @@ export class VisitService {
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-    if (typeof customerId === 'number' && !isNaN(customerId)) {
-      return customerId;
-    }
-    if (typeof customerId === 'string' && customerId.trim()) {
-      const parsed = parseInt(customerId, 10);
-      if (!isNaN(parsed)) return parsed;
-
-      const foundCustomer = await this.prisma.customer.findFirst({
-        where: {
-          OR: [
-            { domain: { equals: customerId.trim(), mode: 'insensitive' } },
-            { name: { equals: customerId.trim(), mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-        },
-      });
-      if (foundCustomer) return foundCustomer.id;
-    }
-
-    return undefined;
+return undefined;
   }
 
   async getMetrics(customerId: number | string | undefined, user?: any) {
@@ -57,15 +38,13 @@ export class VisitService {
     const baseWhere: any = {};
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        baseWhere.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
-      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      baseWhere.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
+      
+      
     }
 
     const [todayVisits, upcoming, completed, cancelled] = await Promise.all([
@@ -122,15 +101,13 @@ export class VisitService {
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        where.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
-      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      where.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
+      
+      
     }
 
     if (status && (status as any) !== 'ALL') where.status = status;
@@ -157,7 +134,7 @@ export class VisitService {
           company: { select: { id: true, name: true, city: true } },
           contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
           deal: { select: { id: true, title: true, amount: true } },
-          lead: { select: { id: true, title: true } },
+          
         },
       }),
       this.prisma.visit.count({ where }),
@@ -241,7 +218,7 @@ export class VisitService {
     const numId = Number(id);
     const where: any = { id: numId };
     if (numCustomerId !== undefined && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const visit = await this.prisma.visit.findFirst({
@@ -251,7 +228,7 @@ export class VisitService {
         company: true,
         contact: true,
         deal: true,
-        lead: true,
+        
       },
     });
 
@@ -303,24 +280,16 @@ export class VisitService {
 
     // Fallback employee if not specified
     let employeeId = dto.employeeId ? Number(dto.employeeId) : undefined;
-    if (!employeeId && dto.leadId) {
-      const lead = await this.prisma.lead.findUnique({
-        where: { id: Number(dto.leadId) },
-        select: { employeeId: true },
-      });
-      if (lead?.employeeId) {
-        employeeId = Number(lead.employeeId);
-      }
-    }
+
     if (!employeeId) {
-      const emp = await this.prisma.employee.findFirst({ where: { customerId: numCustomerId } });
+      const emp = await this.prisma.employee.findFirst({ where: {  } });
       employeeId = emp?.id;
     }
 
     if (!employeeId) {
       const emp = await this.prisma.employee.create({
         data: {
-          customerId: numCustomerId,
+          
           employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
           firstName: 'CRM',
           lastName: 'Executive',
@@ -332,12 +301,12 @@ export class VisitService {
 
     const visit = await this.prisma.visit.create({
       data: {
-        customerId: numCustomerId,
+        
         employeeId: employeeId,
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
         contactId: dto.contactId ? Number(dto.contactId) : undefined,
         dealId: dto.dealId ? Number(dto.dealId) : undefined,
-        leadId: dto.leadId ? Number(dto.leadId) : undefined,
+        
         customerName: dto.customerName,
         purpose: dto.purpose,
         visitType: dto.visitType || 'CLIENT_MEETING',
@@ -369,7 +338,7 @@ export class VisitService {
       const customerLabel = visit.customerName || (visit.contact ? `${visit.contact.firstName || ''} ${visit.contact.lastName || ''}`.trim() : null);
       this.notificationService
         .sendVisitScheduledNotification({
-          customerId: numCustomerId,
+          
           visitId: visit.id,
           employeeId: visit.employeeId,
           customerName: customerLabel,
@@ -378,7 +347,7 @@ export class VisitService {
           time: visit.time,
           location: visit.location,
           notes: visit.notes,
-          leadId: visit.leadId,
+          
         })
         .catch((err: any) => {
           this.logger.warn(`Failed to dispatch VISIT_SCHEDULED notification: ${err?.message}`);
@@ -386,58 +355,7 @@ export class VisitService {
     }
 
     // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
-    if (dto.leadId) {
-      try {
-        const numLeadId = Number(dto.leadId);
-        const visitScheduledStage = await this.prisma.leadStage.findFirst({
-          where: {
-            AND: [
-              {
-                OR: [
-                  { key: 'VISIT_SCHEDULED' },
-                  { key: 'VISIT' },
-                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                ],
-              },
-              {
-                OR: [
-                  ...(numCustomerId && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-                  { customerId: null },
-                ],
-              },
-            ],
-            deletedAt: null,
-          },
-          orderBy: { customerId: 'desc' },
-        });
-
-        const currentLead = await this.prisma.lead.findUnique({
-          where: { id: numLeadId },
-          select: { employeeId: true },
-        });
-        const leadEmpId = currentLead?.employeeId || dto.scheduledById || employeeId;
-
-        await this.prisma.lead.update({
-          where: { id: numLeadId },
-          data: {
-            status: 'VISIT_SCHEDULED',
-            ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-            ...(leadEmpId ? { employeeId: Number(leadEmpId) } : {}),
-          },
-        });
-
-        await this.prisma.leadActivityTimeline.create({
-          data: {
-            leadId: numLeadId,
-            action: 'VISIT_SCHEDULED',
-            description: `Field Visit Scheduled for ${dto.date ? String(dto.date).split('T')[0] : 'today'} at ${dto.time || '10:00 AM'} - ${dto.purpose || 'Client Visit'}`,
-            metadata: { visitId: visit.id, employeeId, location: dto.location },
-          },
-        }).catch(() => {});
-      } catch (leadSyncErr: any) {
-        this.logger.warn(`Could not sync lead stage on visit create: ${leadSyncErr?.message}`);
-      }
-    }
+    
 
     // Dispatch Calendar Appointment Email & WhatsApp with PDF (non-blocking)
     try {
@@ -456,16 +374,9 @@ export class VisitService {
     if (!visit) return;
 
     try {
-      const customerId = visit.customerId;
+      const customerId = undefined;
       let customer: any = null;
-      if (customerId) {
-        customer = await this.prisma.customer.findUnique({
-          where: { id: customerId },
-          include: {
-            users: { where: { deletedAt: null }, select: { email: true, phone: true }, take: 1 },
-          },
-        });
-      }
+
 
       const clientName =
         visit.customerName ||
@@ -556,7 +467,7 @@ export class VisitService {
         try {
           await this.whatsappService.sendCalendarScheduledMessage({
             to: clientPhone,
-            customerId,
+            
             customerName: clientName,
             eventTitle,
             date: visitDate,
@@ -646,23 +557,14 @@ export class VisitService {
       numCustomerId &&
       numCustomerId > 0
     ) {
-      const leadId = (updated as any).leadId ?? existingVisit?.leadId;
+      const leadId = undefined;
       let leadName: string | null = null;
-      if (leadId) {
-        const lead = await this.prisma.lead.findFirst({
-          where: { id: Number(leadId), deletedAt: null },
-          select: { firstName: true, lastName: true, companyName: true, title: true },
-        });
-        if (lead) {
-          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-          leadName = fullName || lead.companyName || lead.title || null;
-        }
-      }
+
       try {
         await this.notificationService.sendVisitCompletedNotification({
-          customerId: numCustomerId,
+          
           visitId: numId,
-          leadId: leadId ? Number(leadId) : null,
+          
           visitorName: finalVisitedByName || updated.employee
             ? `${updated.employee?.firstName || ''} ${updated.employee?.lastName || ''}`.trim()
             : null,

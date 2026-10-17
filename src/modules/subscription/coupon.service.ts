@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import {
   BadRequestException,
   ConflictException,
@@ -35,7 +36,7 @@ export class CouponService {
   constructor(private readonly prisma: PrismaService) {}
 
   async quote(params: {
-    customerId: number;
+    customerId?: number;
     planId: number;
     couponCode: string;
     billingCycle: string;
@@ -56,7 +57,7 @@ export class CouponService {
         ? Number(plan.yearlyPrice)
         : Number(plan.monthlyPrice);
     const coupon = await this.findApplicableCoupon(params.couponCode);
-    await this.assertRedeemable(coupon, params.customerId, plan.id, originalAmount);
+    await this.assertRedeemable(coupon, undefined, plan.id, originalAmount);
     return this.priceCoupon(coupon, originalAmount, params.paymentOption);
   }
 
@@ -64,7 +65,7 @@ export class CouponService {
     tx: Prisma.TransactionClient,
     args: {
       couponId: number;
-      customerId: number;
+      customerId?: number;
       planId: number;
       subscriptionId?: number | null;
       paymentId: number;
@@ -73,58 +74,8 @@ export class CouponService {
       discountAmount: number;
       finalAmount: number;
     },
-  ) {
-    const existing = await tx.couponRedemption.findFirst({
-      where: { paymentId: args.paymentId },
-    });
-    if (existing) return existing;
-
-    await tx.$queryRaw`SELECT id FROM "Coupon" WHERE id = ${args.couponId} FOR UPDATE`;
-    const coupon = await tx.coupon.findFirst({
-      where: { id: args.couponId, deletedAt: null },
-      include: { plans: true },
-    });
-    if (!coupon || !coupon.isActive) {
-      throw new BadRequestException('Coupon is not active');
-    }
-    const now = new Date();
-    if (coupon.startsAt && now < new Date(coupon.startsAt)) {
-      throw new BadRequestException('Coupon is not active');
-    }
-    if (coupon.expiresAt && now > new Date(coupon.expiresAt)) {
-      throw new BadRequestException('Coupon has expired');
-    }
-    if (!coupon.appliesToAllPlans && !coupon.plans.some((row) => row.planId === args.planId)) {
-      throw new BadRequestException('Coupon is not applicable to this package');
-    }
-    if (coupon.timesRedeemed >= coupon.maxRedemptions) {
-      throw new ConflictException('Coupon usage limit reached');
-    }
-    const usedByCustomer = await tx.couponRedemption.count({
-      where: { couponId: coupon.id, customerId: args.customerId },
-    });
-    if (usedByCustomer >= coupon.perCustomerLimit) {
-      throw new ConflictException('You have already used this coupon');
-    }
-
-    await tx.coupon.update({
-      where: { id: coupon.id },
-      data: { timesRedeemed: { increment: 1 } },
-    });
-
-    return tx.couponRedemption.create({
-      data: {
-        couponId: coupon.id,
-        customerId: args.customerId,
-        planId: args.planId,
-        subscriptionId: args.subscriptionId ?? null,
-        paymentId: args.paymentId,
-        couponCode: args.couponCode,
-        originalAmount: args.originalAmount,
-        discountAmount: args.discountAmount,
-        finalAmount: args.finalAmount,
-      },
-    });
+  ) : Promise<never> {
+throw new GoneException('This Customer/Lead operation has been removed');
   }
 
   async list(query: {
@@ -175,30 +126,13 @@ export class CouponService {
       where: { id, deletedAt: null },
       include: {
         plans: { include: { plan: true } },
-        redemptions: {
-          orderBy: { redeemedAt: 'desc' },
-          take: 100,
-          include: {
-            customer: { select: { id: true, name: true, companyName: true } },
-            plan: { select: { id: true, name: true } },
-          },
-        },
+        
       },
     });
     if (!row) throw new NotFoundException('Coupon not found');
     return {
       ...this.toAdmin(row),
-      redemptions: row.redemptions.map((item) => ({
-        id: item.id,
-        customerId: item.customerId,
-        customerName: item.customer.companyName || item.customer.name,
-        planId: item.planId,
-        planName: item.plan.name,
-        originalAmount: item.originalAmount,
-        discountAmount: item.discountAmount,
-        finalAmount: item.finalAmount,
-        redeemedAt: item.redeemedAt,
-      })),
+      
     };
   }
 
@@ -266,7 +200,7 @@ export class CouponService {
   async remove(id: number) {
     const existing = await this.prisma.coupon.findFirst({
       where: { id, deletedAt: null },
-      include: { _count: { select: { redemptions: true } } },
+      include: { _count: {  } },
     });
     if (!existing) throw new NotFoundException('Coupon not found');
     await this.prisma.coupon.update({
@@ -317,12 +251,6 @@ export class CouponService {
     }
     if (coupon.timesRedeemed >= coupon.maxRedemptions) {
       throw new ConflictException('Coupon usage limit reached');
-    }
-    const usedByCustomer = await this.prisma.couponRedemption.count({
-      where: { couponId: coupon.id, customerId },
-    });
-    if (usedByCustomer >= coupon.perCustomerLimit) {
-      throw new ConflictException('You have already used this coupon');
     }
     if (!coupon.appliesToAllPlans && !coupon.plans.some((row) => row.planId === planId)) {
       throw new BadRequestException('Coupon is not applicable to this package');
@@ -417,9 +345,7 @@ export class CouponService {
     if (!Number.isFinite(usageLimit) || usageLimit < 1) {
       throw new BadRequestException('Usage limit must be at least 1');
     }
-    if (!Number.isFinite(perCustomerLimit) || perCustomerLimit < 1) {
-      throw new BadRequestException('Per customer limit must be at least 1');
-    }
+    
     const appliesToAllPlans = dto.appliesToAllPlans !== false && dto.appliesToAll !== false;
     const startsAt = dto.startsAt || dto.startDate ? new Date(dto.startsAt || dto.startDate) : null;
     const expiresAt = dto.expiresAt || dto.endDate || dto.expiryDate

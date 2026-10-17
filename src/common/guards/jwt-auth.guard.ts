@@ -137,7 +137,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
       if (isBulkLeadEndpoint) {
         this.logger.log(
-          `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.customerId || user.companyId || 'NONE'}`,
+          `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.companyId || 'NONE'}`,
         );
       } else {
         this.logger.debug?.(

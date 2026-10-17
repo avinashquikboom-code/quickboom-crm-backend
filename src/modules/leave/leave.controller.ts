@@ -53,7 +53,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getLeaveTypes(targetCustomerId);
   }
 
@@ -76,7 +76,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createLeaveType(targetCustomerId, dto);
   }
 
@@ -90,7 +90,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.updateLeaveType(Number(id), targetCustomerId, dto);
   }
 
@@ -103,7 +103,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.deleteLeaveType(Number(id), targetCustomerId);
   }
 
@@ -129,11 +129,9 @@ export class LeaveController {
     @Query('date') date?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getAvailability(targetCustomerId, {
       search,
@@ -165,11 +163,9 @@ export class LeaveController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getLeaveRequests(user, targetCustomerId, {
       status,
@@ -204,7 +200,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getLeaveRequestById(targetCustomerId, id);
   }
 
@@ -218,7 +214,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createLeave(user, targetCustomerId, dto);
   }
 
@@ -244,7 +240,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.approveLeave(user, targetCustomerId, id);
   }
 
@@ -271,7 +267,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.rejectLeave(user, targetCustomerId, id, dto);
   }
 
@@ -297,7 +293,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.cancelLeave(user, targetCustomerId, id);
   }
 
@@ -332,11 +328,9 @@ export class LeaveController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getLeaveBalances(user, targetCustomerId, {
       search,
@@ -355,7 +349,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getEmployeeBalanceDetails(targetCustomerId, employeeId);
   }
 
@@ -369,7 +363,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.adjustLeaveBalance(user, targetCustomerId, employeeId, dto);
   }
 
@@ -393,7 +387,7 @@ export class LeaveController {
     @Query('isActive') isActiveQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
     const isActive =
       isActiveQuery !== undefined
@@ -417,7 +411,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getPublicHolidayById(targetCustomerId, id);
   }
 
@@ -430,7 +424,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createPublicHoliday(user, targetCustomerId, dto);
   }
 
@@ -444,7 +438,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.updatePublicHoliday(targetCustomerId, id, dto);
   }
 
@@ -457,7 +451,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.deletePublicHoliday(targetCustomerId, id);
   }
 
@@ -473,7 +467,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getPoliciesOverview(targetCustomerId);
   }
 
@@ -488,7 +482,7 @@ export class LeaveController {
     @Query('officeId') officeIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getAttendancePolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
   }
 
@@ -502,7 +496,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertAttendancePolicy(user, targetCustomerId, dto);
   }
 
@@ -517,7 +511,7 @@ export class LeaveController {
     @Query('officeId') officeIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getLeavePolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
   }
 
@@ -531,7 +525,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertLeavePolicy(user, targetCustomerId, dto);
   }
 
@@ -546,7 +540,7 @@ export class LeaveController {
     @Query('officeId') officeIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getSalaryPolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
   }
 
@@ -560,7 +554,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertSalaryPolicy(user, targetCustomerId, dto);
   }
 
@@ -575,7 +569,7 @@ export class LeaveController {
     @Query('officeId') officeIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getClaimPolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
   }
 
@@ -589,7 +583,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertClaimPolicy(user, targetCustomerId, dto);
   }
 }

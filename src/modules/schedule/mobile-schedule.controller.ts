@@ -105,7 +105,7 @@ export class MobileScheduleController {
       return { items: [], data: [], total: 0, message: 'Employee profile not found.' };
     }
 
-    const tenantCustomerId = numCustomerId || employee.customerId;
+    const tenantCustomerId = numCustomerId || undefined;
 
     // Step 2: Resolve effective permissions and normalized role using the unified WorkPermissionService
     const permResult = await this.workPermissionService.getEmployeeEffectivePermissions(
@@ -125,7 +125,7 @@ export class MobileScheduleController {
     const where: any = {
       deletedAt: null,
       assignedEmployeeId: employee.id,
-      customerId: tenantCustomerId,
+      
     };
 
     if (status && (status as string) !== 'ALL') {
@@ -145,7 +145,7 @@ export class MobileScheduleController {
       where,
       orderBy: { startDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true } },
+        
         plan: { select: { id: true, name: true, code: true } },
         assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
       },
@@ -170,9 +170,9 @@ export class MobileScheduleController {
 
     const mapped = filtered.map((item) => ({
       id: item.id,
-      title: item.title || `${item.customer?.name || 'Customer'} - ${item.plan?.name || 'Plan'}`,
-      customerId: item.customerId,
-      customerName: item.customer?.name || 'Customer',
+      title: item.title || `${'Customer'} - ${item.plan?.name || 'Plan'}`,
+      
+      customerName: 'Customer',
       planName: item.plan?.name || null,
       planCode: item.plan?.code || null,
       status: item.status,

@@ -106,7 +106,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             ledTeams: true,
           },
         },
-        customer: true,
+        
         userRoles: {
           include: {
             role: {
@@ -133,7 +133,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       payloadRole === 'CUSTOMER' ||
       payloadRole === 'CUSTOMER_ADMIN' ||
       payloadRole === 'COMPANY_ADMIN' ||
-      user.customer != null;
+      false;
 
     const tokenIsEmployee =
       !isCustomerAccount &&
@@ -223,11 +223,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const desigName = user.employee?.designation?.name?.trim() || user.designation?.trim();
 
     // If designationId is null on Employee, but designation name is known, resolve designationId from DB
-    if (!desigId && desigName && user.employee?.customerId) {
+    if (!desigId && desigName && undefined) {
       try {
         const matchedDesig = await this.prisma.designation.findFirst({
           where: {
-            customerId: user.employee.customerId,
+            
             name: { equals: desigName, mode: 'insensitive' },
             isActive: true,
           },
@@ -244,8 +244,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         where: {
           designationId: desigId,
           OR: [
-            { customerId: user.employee?.customerId },
-            { customerId: null },
+            
+            
           ],
           deletedAt: null,
         },
@@ -254,7 +254,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             include: { permission: true },
           },
         },
-        orderBy: { customerId: 'desc' },
+        orderBy: {  },
       });
 
       if (!desigRole || !desigRole.rolePermissions || desigRole.rolePermissions.length === 0) {
@@ -263,7 +263,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           if (!desigRole) {
             const existingUnlinked = await this.prisma.role.findFirst({
               where: {
-                customerId: user.employee?.customerId,
+                
                 OR: [
                   { name: { equals: user.employee?.designation?.name || desigName, mode: 'insensitive' } },
                   { name: { equals: upperName, mode: 'insensitive' } },
@@ -284,7 +284,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
                   name: user.employee?.designation?.name || desigName,
                   description: `${user.employee?.designation?.name || desigName} role`,
                   type: RoleType.CUSTOM,
-                  customerId: user.employee?.customerId,
+                  
                   designationId: desigId,
                 },
                 include: { rolePermissions: { include: { permission: true } } },
@@ -358,8 +358,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             },
             {
               OR: [
-                { customerId: user.employee?.customerId },
-                { customerId: null },
+                
+                
               ],
             },
           ],
@@ -370,7 +370,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             include: { permission: true },
           },
         },
-        orderBy: { customerId: 'desc' },
+        orderBy: {  },
       });
 
       if (namedRole?.rolePermissions && namedRole.rolePermissions.length > 0) {
@@ -594,7 +594,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // 5. Add Safe [RBAC BACKEND DEBUG] log
     if (user.employee) {
       this.logger.log(
-        `[RBAC BACKEND DEBUG] employeeId=${user.employee.id} employeeCode=${user.employee.employeeCode} userId=${user.id} companyId=${user.employee.customerId} tenantId=${user.employee.customerId} designationId=${user.employee.designationId} designationName="${user.employee.designation?.name || ''}" designationPermissionCount=${designationPermissionCount} employeeOverrideCount=${overrideCount} effectivePermissionCount=${permissionsMap.size} effectivePermissionKeys=${Array.from(permissionsMap.keys()).join(',')}`,
+        `[RBAC BACKEND DEBUG] employeeId=${user.employee.id} employeeCode=${user.employee.employeeCode} userId=${user.id} companyId=${undefined} tenantId=${undefined} designationId=${user.employee.designationId} designationName="${user.employee.designation?.name || ''}" designationPermissionCount=${designationPermissionCount} employeeOverrideCount=${overrideCount} effectivePermissionCount=${permissionsMap.size} effectivePermissionKeys=${Array.from(permissionsMap.keys()).join(',')}`,
       );
     }
 
@@ -647,31 +647,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const primaryRoleRecord = user.userRoles?.[0]?.role;
     const roleId = payload.roleId || primaryRoleRecord?.id || (user.userRoles?.[0]?.roleId ?? null);
 
-    let customerId =
-      user.customerId ??
-      user.employee?.customerId ??
-      user.customer?.id ??
-      (payload.customerId ? Number(payload.customerId) : null);
-
-    if (!customerId && !isSuperAdmin && this.prisma) {
-      const cust = await this.prisma.customer.findFirst({
-        where: {
-          OR: [
-            { users: { some: { id: user.id } } },
-            { employees: { some: { userId: user.id } } },
-            ...(user.email ? [{ email: user.email }] : []),
-            ...(user.phone ? [{ phone: user.phone }] : []),
-          ],
-          deletedAt: null,
-          isActive: true,
-        },
-        select: { id: true },
-      });
-      if (cust) {
-        customerId = cust.id;
-      }
-    }
-
+    const customerId = undefined;
     const customerCode = customerId ? `QB-CUST-${String(customerId).padStart(3, '0')}` : 'NONE';
     this.logger.log(
       `[AUTH_DEBUG]\nuserId: ${user.id}\ncustomerId: ${customerId ?? 'NONE'}\ncustomerCode: ${customerCode}\nrole: ${primaryRole}\nemail: ${user.email}`,
@@ -685,7 +661,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (isCustomerUser) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,
-        customerId || user.customerId,
+        customerId || undefined,
       );
       applyCustomerEffectivePermissions(
         permissionsMap,
@@ -699,7 +675,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       id: user.id,
       email: user.email,
-      customerId: customerId,
+      
       customerCode: customerCode,
       firstName: user.firstName,
       lastName: user.lastName,
@@ -709,7 +685,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       roles: Array.from(new Set([primaryRole, primaryRoleType, ...roles])),
       permissions: Array.from(permissionsMap.values()),
       employee: user.employee || null,
-      customer: user.customer || null,
+      
       isBpo,
     };
   }

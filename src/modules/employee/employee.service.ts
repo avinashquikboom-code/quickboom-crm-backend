@@ -47,7 +47,7 @@ export interface EmployeeFindOneParams {
 }
 
 export interface CreateEmployeeParams {
-  customerId: number | string;
+  customerId?: number | string;
   dto: CreateEmployeeDto;
   isSuperAdmin?: boolean;
   bypassUserLimit?: boolean;
@@ -99,10 +99,8 @@ export class EmployeeService {
 
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) {
-        throw new BadRequestException('Invalid customerId provided');
-      }
-      where.customerId = numCustomerId;
+      
+      
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for employee access');
     }
@@ -305,7 +303,7 @@ export class EmployeeService {
 
       return {
         id: e.id,
-        customerId: e.customerId,
+        
         userId: e.userId,
         employeeId: e.employeeCode,
         employeeCode: e.employeeCode,
@@ -438,9 +436,7 @@ export class EmployeeService {
     let numCustomerId: number | undefined;
     if (customerId !== undefined && customerId !== null) {
       numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) {
-        throw new BadRequestException('Invalid customerId provided');
-      }
+      
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for employee access');
     }
@@ -451,7 +447,7 @@ export class EmployeeService {
     todayEnd.setHours(23, 59, 59, 999);
 
     const where: Prisma.EmployeeWhereInput = {
-      ...(numCustomerId ? { customerId: numCustomerId } : {}),
+      ...(numCustomerId ? {  } : {}),
       OR: [
         ...(isNumeric ? [{ id: numId }] : []),
         { employeeCode: { equals: idStr, mode: 'insensitive' as Prisma.QueryMode } },
@@ -551,7 +547,7 @@ export class EmployeeService {
 
     return {
       id: employee.id,
-      customerId: employee.customerId,
+      
       userId: employee.userId,
       employeeId: employee.employeeCode,
       employeeCode: employee.employeeCode,
@@ -651,7 +647,7 @@ export class EmployeeService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        whereCust.customerId = numCustomerId;
+        
       }
     }
 
@@ -699,7 +695,7 @@ export class EmployeeService {
 
     const openRecords = await this.prisma.attendance.findMany({
       where: {
-        ...(customerId ? { customerId } : {}),
+        ...(customerId ? {  } : {}),
         punchIn: { not: null },
         punchOut: null,
         OR: [
@@ -720,7 +716,7 @@ export class EmployeeService {
         const [year, month, day] = dateStr.split('-').map(Number);
 
         const policy = await this.prisma.attendancePolicy.findFirst({
-          where: { customerId: att.customerId, isActive: true },
+          where: {  isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
@@ -814,15 +810,15 @@ export class EmployeeService {
     const whereCust: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      whereEmp.customerId = numCustomerId;
-      whereCust.customerId = numCustomerId;
+      
+      
+      
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for live attendance access');
     }
 
     // Run auto check-out for any open attendances
-    await this.autoCheckOutOpenAttendances(whereCust.customerId);
+    await this.autoCheckOutOpenAttendances(undefined);
 
     // Fetch active canonical branches for the customer to normalize offices
     const activeBranches = await this.prisma.branchGeofence.findMany({
@@ -1018,7 +1014,7 @@ export class EmployeeService {
 
       return {
         id: emp.id,
-        customerId: emp.customerId,
+        
         employeeCode: emp.employeeCode,
         name: `${emp.firstName} ${emp.lastName}`,
         role: emp.designation?.name || 'Staff',
@@ -1095,7 +1091,7 @@ export class EmployeeService {
     // Query existing employee codes for this customer that match the prefix
     const existingEmployees = await client.employee.findMany({
       where: {
-        customerId: numCustomerId,
+        
         employeeCode: {
           startsWith: cleanPrefix,
         },
@@ -1109,7 +1105,7 @@ export class EmployeeService {
       try {
         auditLogs = await this.prisma.auditLog.findMany({
           where: {
-            customerId: numCustomerId,
+            
             module: 'EMPLOYEE',
           },
           select: { details: true },
@@ -1166,49 +1162,15 @@ export class EmployeeService {
    * Auto-heals root customer (ID: 1) if inactive or deleted, or falls back to first active customer.
    */
   async resolveDefaultCustomerId(): Promise<number> {
-    const rootCustomer = await this.prisma.customer.findUnique({
-      where: { id: 1 },
-    });
-    if (rootCustomer) {
-      if (!rootCustomer.isActive || rootCustomer.deletedAt) {
-        await this.prisma.customer.update({
-          where: { id: 1 },
-          data: { isActive: true, deletedAt: null },
-        });
-      }
-      return rootCustomer.id;
-    }
-
-    const firstActive = await this.prisma.customer.findFirst({
-      where: { deletedAt: null, isActive: true },
-      orderBy: { id: 'asc' },
-    });
-    if (firstActive) {
-      return firstActive.id;
-    }
-
-    const defaultOrg = await this.prisma.customer.create({
-      data: {
-        name: 'QuikBoom Enterprise',
-        companyName: 'QuikBoom Enterprise Workspace',
-        email: 'admin@quickboom.com',
-        isActive: true,
-        customerType: 'ENTERPRISE',
-      },
-    });
-    return defaultOrg.id;
+return undefined;
   }
 
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid customerId is required');
-    }
+    
 
-    if (this.planAccessService && !params.bypassUserLimit) {
-      await this.planAccessService.checkUserLimit(numCustomerId);
-    }
+
 
     // Execute complete creation inside a single atomic database transaction
     return this.prisma.$transaction(async (tx) => {
@@ -1228,23 +1190,23 @@ export class EmployeeService {
       if (dto.departmentId) {
         const numDeptId = Number(dto.departmentId);
         department = await tx.department.findFirst({
-          where: { id: numDeptId, customerId: numCustomerId },
+          where: { id: numDeptId },
         });
         if (!department && dto.departmentName) {
           department = await tx.department.findFirst({
-            where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!department) {
           const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
           if (crossDept) {
             let localDept = await tx.department.findFirst({
-              where: { customerId: numCustomerId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: {  name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-                  customerId: numCustomerId,
+                  
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -1263,12 +1225,12 @@ export class EmployeeService {
         }
       } else if (dto.departmentName) {
         department = await tx.department.findFirst({
-          where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!department) {
           department = await tx.department.create({
             data: {
-              customerId: numCustomerId,
+              
               name: dto.departmentName,
               code: (dto.departmentName || 'DEPT').substring(0, 5).toUpperCase(),
               isActive: true,
@@ -1277,13 +1239,13 @@ export class EmployeeService {
         }
       } else {
         department = await tx.department.findFirst({
-          where: { customerId: numCustomerId, isActive: true },
+          where: {  isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!department) {
           department = await tx.department.create({
             data: {
-              customerId: numCustomerId,
+              
               name: 'General',
               code: 'GEN',
               isActive: true,
@@ -1305,23 +1267,23 @@ export class EmployeeService {
       if (dto.designationId) {
         const numDesigId = Number(dto.designationId);
         designation = await tx.designation.findFirst({
-          where: { id: numDesigId, customerId: numCustomerId },
+          where: { id: numDesigId },
         });
         if (!designation && dto.designationName) {
           designation = await tx.designation.findFirst({
-            where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!designation) {
           const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
           if (crossDesig) {
             let localDesig = await tx.designation.findFirst({
-              where: { customerId: numCustomerId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: {  name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-                  customerId: numCustomerId,
+                  
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: department?.id || null,
@@ -1337,12 +1299,12 @@ export class EmployeeService {
         }
       } else if (dto.designationName) {
         designation = await tx.designation.findFirst({
-          where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-              customerId: numCustomerId,
+              
               name: dto.designationName,
               code: `${(dto.designationName || 'STF').substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1352,13 +1314,13 @@ export class EmployeeService {
         }
       } else {
         designation = await tx.designation.findFirst({
-          where: { customerId: numCustomerId, isActive: true },
+          where: {  isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-              customerId: numCustomerId,
+              
               name: 'Staff',
               code: `STF-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1404,7 +1366,7 @@ export class EmployeeService {
 
         user = await tx.user.create({
           data: {
-            customerId: numCustomerId,
+            
             email: normalizedEmail,
             phone: cleanPhone,
             firstName: dto.firstName,
@@ -1437,16 +1399,8 @@ export class EmployeeService {
           deletedAt: null,
           ...(hasExplicitPassword || !user.passwordHash ? { passwordHash } : {}),
         };
-        if (user.customerId !== null && user.customerId !== numCustomerId) {
-          throw new ConflictException({
-            success: false,
-            message: 'A user account with this email already belongs to another organization.',
-            error: 'USER_BELONGS_TO_ANOTHER_TENANT',
-          });
-        }
-        if (user.customerId === null) {
-          updateUserData.customerId = numCustomerId;
-        }
+        
+        
 
         user = await tx.user.update({
           where: { id: user.id },
@@ -1463,16 +1417,16 @@ export class EmployeeService {
         where: {
           OR: [
             { userId: user.id },
-            { email: normalizedEmail, customerId: numCustomerId },
+            { email: normalizedEmail },
           ],
         },
-        select: { id: true, employeeCode: true, customerId: true },
+        select: { id: true, employeeCode: true },
       });
 
       if (!existingEmployeeForUser && tx.employee.findUnique) {
         existingEmployeeForUser = await tx.employee.findUnique({
           where: { userId: user.id } as any,
-          select: { id: true, employeeCode: true, customerId: true },
+          select: { id: true, employeeCode: true },
         });
       }
 
@@ -1501,8 +1455,8 @@ export class EmployeeService {
         assignedRole = await tx.role.findFirst({
           where: {
             OR: [
-              { customerId: numCustomerId, name: { equals: targetRoleName, mode: 'insensitive' } },
-              { customerId: null, name: { equals: targetRoleName, mode: 'insensitive' } },
+              {  name: { equals: targetRoleName, mode: 'insensitive' } },
+              {  name: { equals: targetRoleName, mode: 'insensitive' } },
             ],
             deletedAt: null,
             name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
@@ -1520,8 +1474,8 @@ export class EmployeeService {
         assignedRole = await tx.role.findFirst({
           where: {
             OR: [
-              { customerId: numCustomerId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
-              { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+              {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
+              {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
             ],
             deletedAt: null,
           },
@@ -1546,18 +1500,18 @@ export class EmployeeService {
       if (dto.officeId) {
         const numOfficeId = Number(dto.officeId);
         let office = await tx.branchGeofence.findFirst({
-          where: { id: numOfficeId, customerId: numCustomerId },
+          where: { id: numOfficeId },
         });
         if (!office) {
           const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
           if (crossOffice) {
             let localOffice = await tx.branchGeofence.findFirst({
-              where: { customerId: numCustomerId, name: { equals: crossOffice.name, mode: 'insensitive' } },
+              where: {  name: { equals: crossOffice.name, mode: 'insensitive' } },
             });
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-                  customerId: numCustomerId,
+                  
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -1582,7 +1536,7 @@ export class EmployeeService {
         const targetName = (dto.branch || dto.officeName || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-            customerId: numCustomerId,
+            
             name: { equals: targetName, mode: 'insensitive' },
           },
         });
@@ -1594,7 +1548,7 @@ export class EmployeeService {
 
       if (!officeId) {
         const defaultOffice = await tx.branchGeofence.findFirst({
-          where: { customerId: numCustomerId, isActive: true },
+          where: {  isActive: true },
           orderBy: { id: 'asc' },
         });
         if (defaultOffice) {
@@ -1603,7 +1557,7 @@ export class EmployeeService {
         } else {
           const createdDefault = await tx.branchGeofence.create({
             data: {
-              customerId: numCustomerId,
+              
               name: 'Head Office',
               city: 'Mumbai',
               latitude: 19.0760,
@@ -1622,18 +1576,18 @@ export class EmployeeService {
       if (dto.shiftId) {
         const numShiftId = Number(dto.shiftId);
         let shift = await tx.shift.findFirst({
-          where: { id: numShiftId, customerId: numCustomerId },
+          where: { id: numShiftId },
         });
         if (!shift) {
           const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
           if (crossShift) {
             let localShift = await tx.shift.findFirst({
-              where: { customerId: numCustomerId, name: { equals: crossShift.name, mode: 'insensitive' } },
+              where: {  name: { equals: crossShift.name, mode: 'insensitive' } },
             });
             if (!localShift) {
               localShift = await tx.shift.create({
                 data: {
-                  customerId: numCustomerId,
+                  
                   name: crossShift.name,
                   code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                   startTime: crossShift.startTime,
@@ -1656,7 +1610,7 @@ export class EmployeeService {
       }
 
       const empData: any = {
-        customerId: numCustomerId,
+        
         userId: user.id,
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -1707,7 +1661,7 @@ export class EmployeeService {
         if (this.prisma?.auditLog) {
           this.prisma.auditLog.create({
             data: {
-              customerId: numCustomerId,
+              
               userId: user.id,
               action: 'EMPLOYEE_CREATED',
               module: 'EMPLOYEE',
@@ -1755,13 +1709,13 @@ export class EmployeeService {
 
   async update(params: UpdateEmployeeParams) {
     const { id, customerId, isSuperAdmin, dto } = params;
-    await this.findOne({ id, customerId, isSuperAdmin });
+    await this.findOne({ id,  isSuperAdmin });
 
     const numId = Number(id);
 
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.employee.findUnique({ where: { id: numId } });
-      const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
+      const targetCustId = (customerId ? Number(customerId) : 1);
 
       const updateData: any = {};
       // ── NOTE: userId is intentionally EXCLUDED from updateData. ──
@@ -1856,8 +1810,8 @@ export class EmployeeService {
             }
           }
 
-          if (userRecord.customerId !== null) {
-            userUpdate.customerId = targetCustId;
+          {
+            
           }
 
           if (Object.keys(userUpdate).length > 0) {
@@ -1892,7 +1846,7 @@ export class EmployeeService {
 
             user = await tx.user.create({
               data: {
-                customerId: targetCustId,
+                
                 email: normalizedEmail,
                 phone: cleanPhone,
                 firstName: dto.firstName || existing?.firstName || 'Employee',
@@ -1919,7 +1873,7 @@ export class EmployeeService {
             await tx.user.update({
               where: { id: user.id },
               data: {
-                customerId: user.customerId !== null ? targetCustId : null,
+                
                 isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
                 deletedAt: null,
                 phone: cleanPhone || user.phone,
@@ -1934,8 +1888,8 @@ export class EmployeeService {
           const targetRole = await tx.role.findFirst({
             where: {
               OR: [
-                { customerId: targetCustId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
-                { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+                {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
+                {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
               ],
               deletedAt: null,
               name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
@@ -1957,23 +1911,23 @@ export class EmployeeService {
       if (dto.departmentId !== undefined && dto.departmentId !== null && String(dto.departmentId).trim() !== '') {
         const numDeptId = Number(dto.departmentId);
         let dept = await tx.department.findFirst({
-          where: { id: numDeptId, customerId: targetCustId },
+          where: { id: numDeptId },
         });
         if (!dept && dto.departmentName) {
           dept = await tx.department.findFirst({
-            where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!dept) {
           const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
           if (crossDept) {
             let localDept = await tx.department.findFirst({
-              where: { customerId: targetCustId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: {  name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-                  customerId: targetCustId,
+                  
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -2000,12 +1954,12 @@ export class EmployeeService {
         updateData.departmentId = dept.id;
       } else if (dto.departmentName) {
         let dept = await tx.department.findFirst({
-          where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!dept) {
           dept = await tx.department.create({
             data: {
-              customerId: targetCustId,
+              
               name: dto.departmentName,
               code: dto.departmentName.substring(0, 5).toUpperCase(),
               isActive: true,
@@ -2025,23 +1979,23 @@ export class EmployeeService {
       if (dto.designationId !== undefined && dto.designationId !== null && String(dto.designationId).trim() !== '') {
         const numDesigId = Number(dto.designationId);
         let desig = await tx.designation.findFirst({
-          where: { id: numDesigId, customerId: targetCustId },
+          where: { id: numDesigId },
         });
         if (!desig && dto.designationName) {
           desig = await tx.designation.findFirst({
-            where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!desig) {
           const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
           if (crossDesig) {
             let localDesig = await tx.designation.findFirst({
-              where: { customerId: targetCustId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: {  name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-                  customerId: targetCustId,
+                  
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -2065,12 +2019,12 @@ export class EmployeeService {
         updateData.designationId = desig.id;
       } else if (dto.designationName) {
         let desig = await tx.designation.findFirst({
-          where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!desig) {
           desig = await tx.designation.create({
             data: {
-              customerId: targetCustId,
+              
               name: dto.designationName,
               code: `${dto.designationName.substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -2091,18 +2045,18 @@ export class EmployeeService {
       if (dto.officeId !== undefined && dto.officeId !== null && String(dto.officeId).trim() !== '') {
         const numOfficeId = Number(dto.officeId);
         let office = await tx.branchGeofence.findFirst({
-          where: { id: numOfficeId, customerId: targetCustId },
+          where: { id: numOfficeId },
         });
         if (!office) {
           const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
           if (crossOffice) {
             let localOffice = await tx.branchGeofence.findFirst({
-              where: { customerId: targetCustId, name: { equals: crossOffice.name, mode: 'insensitive' } },
+              where: {  name: { equals: crossOffice.name, mode: 'insensitive' } },
             });
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-                  customerId: targetCustId,
+                  
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -2127,7 +2081,7 @@ export class EmployeeService {
         const officeNameTarget = (dto.officeName || dto.branch || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-            customerId: targetCustId,
+            
             name: { equals: officeNameTarget, mode: 'insensitive' },
           },
         });
@@ -2143,18 +2097,18 @@ export class EmployeeService {
         } else {
           const numShiftId = Number(dto.shiftId);
           let shift = await tx.shift.findFirst({
-            where: { id: numShiftId, customerId: targetCustId },
+            where: { id: numShiftId },
           });
           if (!shift) {
             const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
             if (crossShift) {
               let localShift = await tx.shift.findFirst({
-                where: { customerId: targetCustId, name: { equals: crossShift.name, mode: 'insensitive' } },
+                where: {  name: { equals: crossShift.name, mode: 'insensitive' } },
               });
               if (!localShift) {
                 localShift = await tx.shift.create({
                   data: {
-                    customerId: targetCustId,
+                    
                     name: crossShift.name,
                     code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                     startTime: crossShift.startTime,
@@ -2204,8 +2158,8 @@ export class EmployeeService {
           targetRole = await tx.role.findFirst({
             where: {
               OR: [
-                { customerId: targetCustId, name: { equals: desigName, mode: 'insensitive' } },
-                { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
+                {  name: { equals: desigName, mode: 'insensitive' } },
+                {  name: { equals: desigName, mode: 'insensitive' } },
               ],
               deletedAt: null,
               name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
@@ -2224,7 +2178,7 @@ export class EmployeeService {
               name: desigName,
               description: `${desigName} role`,
               type: RoleType.CUSTOM,
-              customerId: targetCustId,
+              
               designationId: updatedEmployee.designationId,
             },
           });
@@ -2272,11 +2226,11 @@ export class EmployeeService {
 
   async remove(params: EmployeeFindOneParams & { hardDelete?: boolean }) {
     const { id, customerId, isSuperAdmin } = params;
-    const existing = await this.findOne({ id, customerId, isSuperAdmin });
+    const existing = await this.findOne({ id,  isSuperAdmin });
 
     const numId = Number(existing.id);
     const userId = existing?.userId ? Number(existing.userId) : null;
-    const empCustomerId = Number(existing.customerId);
+    const empCustomerId = Number(undefined);
 
     // ── PERMANENT HARD-DELETE ──────────────────────────────────────────
     return this.prisma.$transaction(async (tx) => {
@@ -2331,9 +2285,7 @@ export class EmployeeService {
       if (tx.employeeModuleOverride?.deleteMany) {
         await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
       }
-      if (tx.employeeLeadLimit?.deleteMany) {
-        await tx.employeeLeadLimit.deleteMany({ where: { employeeId: numId } });
-      }
+      
       if (tx.locationTrackingSetting?.deleteMany) {
         await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } });
       }
@@ -2355,18 +2307,8 @@ export class EmployeeService {
           data: { headId: null },
         });
       }
-      if (tx.customer?.updateMany) {
-        await tx.customer.updateMany({
-          where: { assignedEmployeeId: numId },
-          data: { assignedEmployeeId: null },
-        });
-      }
-      if (tx.lead?.updateMany) {
-        await tx.lead.updateMany({
-          where: { employeeId: numId },
-          data: { employeeId: null },
-        });
-      }
+      
+      
 
       if (tx.visit?.deleteMany) {
         await tx.visit.deleteMany({ where: { employeeId: numId } });
@@ -2433,7 +2375,7 @@ export class EmployeeService {
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            customerId: empCustomerId,
+            
             userId: userId,
             action: 'EMPLOYEE_DELETED',
             module: 'EMPLOYEE',
@@ -2459,8 +2401,8 @@ export class EmployeeService {
             id: userId,
             OR: [
               { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
-              { assignedLeads: { some: {} } },
-              { createdLeads: { some: {} } },
+              
+              
               { assignedDeals: { some: {} } },
               { assignedContacts: { some: {} } },
               { assignedTickets: { some: {} } },
@@ -2507,8 +2449,8 @@ export class EmployeeService {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      where.customerId = numCustomerId;
+      
+      
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for leaves access');
     }
@@ -2536,7 +2478,7 @@ export class EmployeeService {
 
     return leaves.map((l) => ({
       id: String(l.id),
-      customerId: l.customerId,
+      
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Employee',
       employeeId: l.employee?.employeeCode || 'EMP-001',
       leaveType: l.leaveType?.name || 'Casual Leave',
@@ -2553,8 +2495,8 @@ export class EmployeeService {
     const where: any = {};
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      where.customerId = numCustomerId;
+      
+      
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for remote requests access');
     }
@@ -2582,7 +2524,7 @@ export class EmployeeService {
 
     return requests.map((r) => ({
       id: String(r.id),
-      customerId: r.customerId,
+      
       employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName || ''}`.trim() : 'Employee',
       employeeId: r.employee?.employeeCode || 'EMP-001',
       requestType: 'WORK_FROM_HOME',
@@ -2613,8 +2555,8 @@ export class EmployeeService {
 
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
-      andConditions.push({ customerId: numCustomerId });
+      
+      andConditions.push({  });
     } else if (!isSuperAdmin) {
       throw new ForbiddenException('customerId is required for attendance access');
     }
@@ -2640,7 +2582,7 @@ export class EmployeeService {
     }
 
     if (options?.branch && options.branch !== 'ALL') {
-      const targetCustomerFilter = customerId !== undefined && customerId !== null ? { customerId: Number(customerId) } : {};
+      const targetCustomerFilter = customerId !== undefined && customerId !== null ? {  } : {};
       const activeBranches = await this.prisma.branchGeofence.findMany({
         where: { ...targetCustomerFilter, isActive: true },
         select: { id: true, name: true },
@@ -2820,7 +2762,7 @@ export class EmployeeService {
 
       return {
         id: String(a.id),
-        customerId: a.customerId,
+        
         employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
         employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
         branch: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
@@ -2896,17 +2838,7 @@ export class EmployeeService {
         office: true,
         shift: true,
         user: { select: { avatar: true } },
-        customer: {
-          select: {
-            id: true,
-            companyName: true,
-            name: true,
-            email: true,
-            phone: true,
-            city: true,
-            state: true,
-          },
-        },
+        
       },
     });
 
@@ -2914,7 +2846,7 @@ export class EmployeeService {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId)) {
         employee = await this.prisma.employee.findFirst({
-          where: { customerId: numCustomerId, status: 'ACTIVE' },
+          where: {  status: 'ACTIVE' },
           include: {
         salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
             department: true,
@@ -2922,7 +2854,7 @@ export class EmployeeService {
             office: true,
             shift: true,
             user: { select: { avatar: true } },
-            customer: true,
+            
           },
         });
       }
@@ -2945,7 +2877,7 @@ export class EmployeeService {
 
     return {
       id: employee.id,
-      customerId: employee.customerId,
+      
       employeeCode: employee.employeeCode,
       firstName: employee.firstName,
       lastName: employee.lastName,
@@ -2973,7 +2905,7 @@ export class EmployeeService {
       salaryStructure: employee.salaryStructures?.[0] || null,
       documents: employee.documents || [],
       status: employee.status || 'ACTIVE',
-      organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',
+      organization: 'QuikBoom Enterprise',
     };
   }
 
@@ -3012,7 +2944,7 @@ export class EmployeeService {
       throw new NotFoundException(`Employee with ID ${empId} not found`);
     }
 
-    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+    if (!params.isSuperAdmin && undefined && undefined !== Number(undefined)) {
       throw new ForbiddenException('Access denied to employee in another organization');
     }
 
@@ -3033,7 +2965,7 @@ export class EmployeeService {
       try {
         const matchedDesig = await this.prisma.designation.findFirst({
           where: {
-            customerId: employee.customerId,
+            
             name: { equals: desigName, mode: 'insensitive' },
             isActive: true,
           },
@@ -3059,7 +2991,7 @@ export class EmployeeService {
           if (!linkedRole) {
             const existingUnlinked = await this.prisma.role.findFirst({
               where: {
-                customerId: employee.customerId,
+                
                 OR: [
                   { name: { equals: employee.designation?.name || desigName, mode: 'insensitive' } },
                   { name: { equals: upperName, mode: 'insensitive' } },
@@ -3080,7 +3012,7 @@ export class EmployeeService {
                   name: employee.designation?.name || desigName,
                   description: `${employee.designation?.name || desigName} role`,
                   type: RoleType.CUSTOM,
-                  customerId: employee.customerId,
+                  
                   designationId: effectiveDesigId,
                 },
                 include: { rolePermissions: { include: { permission: true } } },
@@ -3151,8 +3083,8 @@ export class EmployeeService {
       const matchingRoles = await this.prisma.role.findMany({
         where: {
           OR: [
-            { customerId: employee.customerId, name: { equals: roleName, mode: 'insensitive' } },
-            { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
+            {  name: { equals: roleName, mode: 'insensitive' } },
+            {  name: { equals: roleName, mode: 'insensitive' } },
           ],
           deletedAt: null,
           name: { notIn: ['CUSTOMER'] },
@@ -3162,7 +3094,7 @@ export class EmployeeService {
             include: { permission: true },
           },
         },
-        orderBy: { customerId: 'desc' }, // prioritize tenant-specific role
+        orderBy: {  }, // prioritize tenant-specific role
       });
 
       if (matchingRoles.length > 0) {
@@ -3379,7 +3311,7 @@ export class EmployeeService {
     const effectiveKeys = granularPermissions.filter((p) => p.effective).map((p) => p.key);
 
     this.logger.log(
-      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${employee.customerId} tenantId=${employee.customerId} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
+      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${undefined} tenantId=${undefined} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
     );
 
     const customPermissionsEnabled = (employee.employeeModuleOverrides || []).some(
@@ -3442,7 +3374,7 @@ export class EmployeeService {
 
     const empPerms = await this.getEmployeePermissions({
       employeeId: user.employee.id,
-      customerId: user.employee.customerId,
+      
       isSuperAdmin: false,
     });
 

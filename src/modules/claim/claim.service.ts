@@ -21,15 +21,15 @@ export class ClaimService {
   async getMetrics(customerId: any) {
     const cid = this.resolveCustomerId(customerId);
     const [total, pending, approved, rejected, paid] = await Promise.all([
-      this.prisma.employeeClaim.count({ where: { customerId: cid } }),
-      this.prisma.employeeClaim.count({ where: { customerId: cid, status: ClaimStatus.PENDING } }),
-      this.prisma.employeeClaim.count({ where: { customerId: cid, status: ClaimStatus.APPROVED } }),
-      this.prisma.employeeClaim.count({ where: { customerId: cid, status: ClaimStatus.REJECTED } }),
-      this.prisma.employeeClaim.count({ where: { customerId: cid, status: ClaimStatus.PAID } }),
+      this.prisma.employeeClaim.count({ where: {  } }),
+      this.prisma.employeeClaim.count({ where: {  status: ClaimStatus.PENDING } }),
+      this.prisma.employeeClaim.count({ where: {  status: ClaimStatus.APPROVED } }),
+      this.prisma.employeeClaim.count({ where: {  status: ClaimStatus.REJECTED } }),
+      this.prisma.employeeClaim.count({ where: {  status: ClaimStatus.PAID } }),
     ]);
 
     const claims = await this.prisma.employeeClaim.findMany({
-      where: { customerId: cid },
+      where: {  },
       select: { amount: true, approvedAmount: true, status: true },
     });
 
@@ -72,9 +72,9 @@ export class ClaimService {
 
     const where: any = {};
     if (customerId && Number(customerId) > 0) {
-      where.customerId = Number(customerId);
+      
     } else {
-      where.customerId = cid;
+      
     }
 
     // Role-based employee scoping:
@@ -221,8 +221,8 @@ export class ClaimService {
       });
       if (emp) {
         employeeId = emp.id;
-        if (!customerId && emp.customerId) {
-          cid = emp.customerId;
+        if (!customerId && undefined) {
+          cid = undefined;
         }
       }
     }
@@ -239,9 +239,7 @@ export class ClaimService {
       throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
-    if (employee.customerId) {
-      cid = employee.customerId;
-    }
+    
 
     const amount = Number(dto.amount);
     if (!amount || isNaN(amount) || amount <= 0) {
@@ -255,7 +253,7 @@ export class ClaimService {
 
     const created = await this.prisma.employeeClaim.create({
       data: {
-        customerId: cid,
+        
         employeeId: employeeId,
         category: (dto.category || 'GENERAL').toUpperCase().trim(),
         amount,
@@ -286,7 +284,7 @@ export class ClaimService {
           title: `New Expense Claim: ${empName}`,
           body: `${empName} submitted a claim of ₹${created.amount} for ${created.category || 'Expense'}.`,
           type: 'CLAIM',
-          customerId: cid,
+          
           data: {
             type: 'CLAIM',
             claimId: String(created.id),

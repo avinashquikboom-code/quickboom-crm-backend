@@ -35,8 +35,8 @@ export class TeamController {
   private resolveTargetCustomerId(user: any, customerId: any, queryCustomerId?: any): number | undefined {
     const isSuperAdmin = isUserSuperAdmin(user);
     const target = isSuperAdmin
-      ? queryCustomerId || customerId || user?.customerId
-      : user?.customerId || customerId;
+      ? queryCustomerId || customerId || undefined
+      : customerId;
 
     if (target === undefined || target === null || target === '') {
       if (isSuperAdmin) return undefined;
@@ -63,7 +63,7 @@ export class TeamController {
     @CurrentCustomer() customerId: any,
     @Query() query: TeamQueryDto,
   ) {
-    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, query.customerId);
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, undefined);
     return this.teamService.findAll(targetCustomerId, query);
   }
 
@@ -91,7 +91,7 @@ export class TeamController {
     @CurrentCustomer() customerId: any,
     @Query() query: any,
   ) {
-    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, query?.customerId);
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, undefined);
     const myTeams = await this.teamService.getMyTeams(user, targetCustomerId);
     if (!myTeams || myTeams.length === 0) {
       return [];
@@ -112,7 +112,7 @@ export class TeamController {
     @CurrentCustomer() customerId: any,
     @Query() query: any,
   ) {
-    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, query?.customerId);
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, undefined);
     return this.teamService.getTeamCalendar(id, query, user, targetCustomerId);
   }
 

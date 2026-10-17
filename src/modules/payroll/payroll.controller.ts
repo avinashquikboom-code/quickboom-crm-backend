@@ -25,7 +25,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.calculatePayroll(customerId, body.month, body.year, body.departmentId);
   }
 
@@ -37,7 +37,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.previewPayroll(customerId, body.month, body.year, body.departmentId);
   }
 
@@ -49,7 +49,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.approvePayroll(customerId, body?.payrollId);
   }
 
@@ -61,7 +61,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number; month?: number; year?: number; employeeId?: number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.generatePayroll(customerId, body?.payrollId, {
       month: body?.month ? Number(body.month) : undefined,
       year: body?.year ? Number(body.year) : undefined,
@@ -79,7 +79,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number },
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.payPayrollItem(customerId, itemId, user);
   }
 
@@ -91,7 +91,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.disbursePayroll(customerId, body?.payrollId);
   }
 
@@ -107,7 +107,7 @@ export class PayrollController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getPayrolls(customerId, {
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
@@ -130,7 +130,7 @@ export class PayrollController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getSalarySlips(customerId, {
       user,
       page: page ? parseInt(page, 10) : 1,
@@ -151,7 +151,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getSalarySlipById(customerId, id);
   }
 
@@ -166,7 +166,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
   }
 
@@ -181,7 +181,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
   }
 
@@ -193,7 +193,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getPayrollHistory(customerId);
   }
 
@@ -206,7 +206,7 @@ export class PayrollController {
     @Query('employeeId') employeeIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getSalaryStructures(customerId, employeeIdQuery);
   }
 
@@ -219,7 +219,7 @@ export class PayrollController {
     @Body() body: any
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.saveSalaryStructure(customerId, body);
   }
 
@@ -232,7 +232,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.deleteSalaryStructure(customerId, id);
   }
 
@@ -244,7 +244,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getPayrollPolicy(customerId);
   }
 
@@ -256,7 +256,7 @@ export class PayrollController {
     @Body() body: any
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
     return this.payrollService.savePayrollPolicy(customerId, body);
   }
 
@@ -269,7 +269,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
     return this.payrollService.getPayrollById(customerId, id);
   }
 }

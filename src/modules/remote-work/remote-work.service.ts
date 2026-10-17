@@ -31,26 +31,7 @@ export class RemoteWorkService {
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-    if (typeof customerId === 'number' && !isNaN(customerId)) {
-      return customerId;
-    }
-    if (typeof customerId === 'string' && customerId.trim()) {
-      const parsed = parseInt(customerId, 10);
-      if (!isNaN(parsed)) return parsed;
-
-      const foundCustomer = await this.prisma.customer.findFirst({
-        where: {
-          OR: [
-            { domain: { equals: customerId.trim(), mode: 'insensitive' } },
-            { name: { equals: customerId.trim(), mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-        },
-      });
-      if (foundCustomer) return foundCustomer.id;
-    }
-
-    return undefined;
+return undefined;
   }
 
   async getSummary(customerId: number | string | undefined, employeeId?: number) {
@@ -64,7 +45,7 @@ export class RemoteWorkService {
 
     const baseWhere: any = {};
     if (numCustomerId) {
-      baseWhere.customerId = numCustomerId;
+      
     }
     if (employeeId) {
       baseWhere.employeeId = employeeId;
@@ -109,7 +90,7 @@ export class RemoteWorkService {
 
     const where: any = {};
     if (numCustomerId) {
-      where.customerId = numCustomerId;
+      
     }
 
     // Role & permission evaluation:
@@ -274,7 +255,7 @@ export class RemoteWorkService {
 
       return {
         id: r.id,
-        customerId: r.customerId,
+        
         employeeId: r.employeeId,
         employeeCode: r.employee?.employeeCode || `EMP-${r.employeeId}`,
         employeeName: r.employee
@@ -342,7 +323,7 @@ export class RemoteWorkService {
     const numId = Number(id);
 
     const r = await this.prisma.remoteRequest.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where: { id: numId },
       include: {
         employee: {
           include: {
@@ -364,7 +345,7 @@ export class RemoteWorkService {
 
     return {
       id: r.id,
-      customerId: r.customerId,
+      
       employeeId: r.employeeId,
       employeeCode: r.employee?.employeeCode || `EMP-${r.employeeId}`,
       employeeName: r.employee
@@ -411,7 +392,7 @@ export class RemoteWorkService {
 
     const employee = await this.prisma.employee.findFirst({
       where: {
-        ...(numCustomerId ? { customerId: numCustomerId } : {}),
+        ...(numCustomerId ? {  } : {}),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -434,7 +415,7 @@ export class RemoteWorkService {
     const approvedRemote = await this.prisma.remoteRequest.findFirst({
       where: {
         employeeId: employee.id,
-        customerId: employee.customerId,
+        
         status: RequestStatus.APPROVED,
         fromDate: { lte: todayEnd },
         toDate: { gte: todayStart },
@@ -472,7 +453,7 @@ export class RemoteWorkService {
     const numId = Number(id);
 
     const r = await this.prisma.remoteRequest.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where: { id: numId },
       include: { employee: true },
     });
 
@@ -531,7 +512,7 @@ export class RemoteWorkService {
     const numId = Number(id);
 
     const r = await this.prisma.remoteRequest.findFirst({
-      where: { id: numId, customerId: numCustomerId },
+      where: { id: numId },
       include: { employee: true },
     });
 
@@ -592,12 +573,12 @@ export class RemoteWorkService {
     let employee = null;
     if (dto.employeeId) {
       employee = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.employeeId), customerId: numCustomerId, status: 'ACTIVE' },
+        where: { id: Number(dto.employeeId),  status: 'ACTIVE' },
       });
     } else if (user) {
       employee = await this.prisma.employee.findFirst({
         where: {
-          ...(numCustomerId ? { customerId: numCustomerId } : {}),
+          ...(numCustomerId ? {  } : {}),
           OR: [
             { userId: user.id },
             { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -625,7 +606,7 @@ export class RemoteWorkService {
     // Overlapping active remote requests prevention
     const overlapping = await this.prisma.remoteRequest.findFirst({
       where: {
-        customerId: numCustomerId,
+        
         employeeId: employee.id,
         status: { in: [RequestStatus.PENDING, RequestStatus.APPROVED] },
         fromDate: { lte: toDate },
@@ -646,7 +627,7 @@ export class RemoteWorkService {
 
     const created = await this.prisma.remoteRequest.create({
       data: {
-        customerId: numCustomerId,
+        
         employeeId: employee.id,
         fromDate,
         toDate,
@@ -682,7 +663,7 @@ export class RemoteWorkService {
 
     const activeRemoteRequests = await this.prisma.remoteRequest.findMany({
       where: {
-        customerId: numCustomerId,
+        
         status: RequestStatus.APPROVED,
         fromDate: { lte: todayEnd },
         toDate: { gte: todayStart },

@@ -12,15 +12,7 @@ export class OfficeService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-    if (customerId !== undefined && customerId !== null) {
-      const num = Number(customerId);
-      if (!isNaN(num) && num > 0) return num;
-    }
-    const firstCust = await this.prisma.customer.findFirst({
-      where: { isActive: true },
-      orderBy: { id: 'asc' },
-    });
-    return firstCust ? firstCust.id : 1;
+return undefined;
   }
 
   async findAll(
@@ -33,7 +25,7 @@ export class OfficeService {
     const skip = (page - 1) * limit;
 
     const where: any = {
-      customerId: numCustomerId,
+      
     };
 
     if (query?.isActive !== undefined) {
@@ -76,7 +68,7 @@ export class OfficeService {
       success: true,
       data: items.map((o) => ({
         id: o.id,
-        customerId: o.customerId,
+        
         name: o.name,
         code: o.code || '',
         address: o.address || '',
@@ -106,7 +98,7 @@ export class OfficeService {
   async findOne(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: {
@@ -138,7 +130,7 @@ export class OfficeService {
       success: true,
       data: {
         id: office.id,
-        customerId: office.customerId,
+        
         name: office.name,
         code: office.code || '',
         address: office.address || '',
@@ -178,7 +170,7 @@ export class OfficeService {
 
     const existing = await this.prisma.branchGeofence.findFirst({
       where: {
-        customerId: numCustomerId,
+        
         name: { equals: trimmedName, mode: 'insensitive' },
       },
     });
@@ -190,7 +182,7 @@ export class OfficeService {
     if (dto.code && dto.code.trim()) {
       const codeDup = await this.prisma.branchGeofence.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           code: { equals: dto.code.trim(), mode: 'insensitive' },
         },
       });
@@ -201,7 +193,7 @@ export class OfficeService {
 
     const created = await this.prisma.branchGeofence.create({
       data: {
-        customerId: numCustomerId,
+        
         name: trimmedName,
         code: dto.code?.trim().toUpperCase() || null,
         address: dto.address?.trim() || null,
@@ -226,7 +218,7 @@ export class OfficeService {
   async update(customerId: number | string | undefined, id: number, dto: UpdateOfficeDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
     });
 
     if (!office) {
@@ -241,7 +233,7 @@ export class OfficeService {
 
       const dup = await this.prisma.branchGeofence.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           name: { equals: trimmed, mode: 'insensitive' },
           NOT: { id },
         },
@@ -258,7 +250,7 @@ export class OfficeService {
       if (codeTrimmed) {
         const codeDup = await this.prisma.branchGeofence.findFirst({
           where: {
-            customerId: numCustomerId,
+            
             code: { equals: codeTrimmed, mode: 'insensitive' },
             NOT: { id },
           },
@@ -295,7 +287,7 @@ export class OfficeService {
   async toggleStatus(customerId: number | string | undefined, id: number, isActive: boolean) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
     });
 
     if (!office) {
@@ -317,7 +309,7 @@ export class OfficeService {
   async remove(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: { employees: true, attendances: true },

@@ -53,27 +53,18 @@ export class CreateWorkDto {
   @IsOptional()
   notes?: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'Purchase / Subscription ID' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'PUR-001', description: 'Purchase reference code' })
   @IsString()
   @IsOptional()
   purchaseId?: string;
 
-  @ApiPropertyOptional({
-    example: 1,
-    description: 'Target customer for employee-created calendar schedules',
-  })
-  @IsOptional()
-  customerId?: number | string;
+  
 }
 
 export class UpdateWorkDto {
-  @ApiPropertyOptional({ example: 1, description: 'Purchase / Subscription ID' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'PUR-001', description: 'Purchase reference code' })
   @IsString()

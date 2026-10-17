@@ -156,7 +156,7 @@ export class TaskService {
 
   async getMetrics(customerId?: number | string) {
     const numCustomerId = Number(customerId);
-    const customerFilter = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const customerFilter = !isNaN(numCustomerId) && numCustomerId > 0 ? {  } : {};
     const now = new Date();
 
     const [
@@ -228,7 +228,7 @@ export class TaskService {
     const { dueDate, dueAt } = this.parseDueDateTime(dto.dueDate, dto.dueTime);
 
     // Auto-generate human-readable task number
-    const count = await this.prisma.task.count({ where: { customerId: numCustomerId } });
+    const count = await this.prisma.task.count({ where: {  } });
     const taskNumber = `TSK-${(count + 1001).toString()}`;
 
     // Resolve employee if provided
@@ -248,7 +248,7 @@ export class TaskService {
     const task = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.create({
         data: {
-          customerId: numCustomerId,
+          
           createdById: numCreatedById,
           taskNumber,
           title: dto.title,
@@ -311,7 +311,7 @@ export class TaskService {
       if (employee && employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: employee.userId,
             title: `[${dto.priority}] New Task Allocated`,
             message: `You have been allocated ${dto.priority} priority task: "${task.title}". Due: ${dto.dueDate} ${dto.dueTime}.`,
@@ -364,7 +364,7 @@ export class TaskService {
 
     const where: any = { deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     if (query.status && query.status !== 'ALL') {
@@ -486,7 +486,7 @@ export class TaskService {
     const numId = Number(id);
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const task = await this.prisma.task.findFirst({
@@ -606,7 +606,7 @@ export class TaskService {
       if (newEmployee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: newEmployee.userId,
             title: `[${task.priority}] Task Reallocated to You`,
             message: `Task "${task.title}" has been reallocated to you. Due: ${task.dueTime || ''} ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : ''}.`,
@@ -738,8 +738,8 @@ export class TaskService {
         { title: { contains: query.search, mode: 'insensitive' } },
         { taskNumber: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
-        { customer: { name: { contains: query.search, mode: 'insensitive' } } },
-        { customer: { companyName: { contains: query.search, mode: 'insensitive' } } },
+        
+        
       ];
       where.AND = [{ OR: searchCond }];
     }
@@ -748,19 +748,7 @@ export class TaskService {
       where,
       orderBy: { dueAt: 'asc' },
       include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            companyName: true,
-            phone: true,
-            email: true,
-            city: true,
-            address: true,
-            isActive: true,
-            customerType: true,
-          },
-        },
+        
         employee: {
           select: {
             id: true,
@@ -792,7 +780,7 @@ export class TaskService {
       hasProof: t.proofs && t.proofs.length > 0,
     }));
 
-    const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, employee.customerId, teamIds, query);
+    const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, undefined, teamIds, query);
     const works = [...new Map(calendarWorks.map((work) => [work.id, work])).values()];
     const assignmentWorks = works.length;
     const combined = [...hrTasks, ...works];
@@ -800,7 +788,7 @@ export class TaskService {
       where: { status: { not: WorkStatus.CANCELLED } },
     });
     this.logger.log(
-      `[MOBILE_TASKS_DEBUG] currentEmployeeId=${employee.id} currentTeamId=${teamIds.join(',') || 'none'} tenantCustomerId=${employee.customerId ?? 'none'} baseTaskCount=${baseTaskCount} calendarTaskCount=${calendarWorks.length} mobileTaskQueryCount=${assignmentWorks} finalTaskCount=${combined.length} status=${query.status || 'ALL'}`,
+      `[MOBILE_TASKS_DEBUG] currentEmployeeId=${employee.id} currentTeamId=${teamIds.join(',') || 'none'} tenantCustomerId=${'none'} baseTaskCount=${baseTaskCount} calendarTaskCount=${calendarWorks.length} mobileTaskQueryCount=${assignmentWorks} finalTaskCount=${combined.length} status=${query.status || 'ALL'}`,
     );
     return combined;
   }
@@ -859,8 +847,8 @@ export class TaskService {
     }
     const workTeamBpo = this.isBpoTeamLabel(work.team?.name, work.team?.description);
     const customerTeamBpo = this.isBpoTeamLabel(
-      work.customer?.assignedTeam?.name,
-      work.customer?.assignedTeam?.description,
+      undefined,
+      undefined,
     );
     const assigneeTeams = (work.assignedTo?.teamMembers || []).map((member: any) => member.team).filter(Boolean);
     const assigneeIsBpoOnly =
@@ -922,7 +910,7 @@ export class TaskService {
       })
       .map((item) => {
         const id = Number(item.id);
-        const customerId = Number(item.customerId);
+        const customerId = Number(undefined);
         const assignedName = String(item.assignedEmployee || item.assignedToName || '').trim();
         const nameParts = assignedName ? assignedName.split(/\s+/) : [];
         return {
@@ -935,15 +923,8 @@ export class TaskService {
           scheduledAt: item.scheduledAt ?? null,
           customerName: item.customerName ?? null,
           source: 'WORK',
-          customerId: Number.isInteger(customerId) && customerId > 0 ? customerId : null,
-          customer:
-            Number.isInteger(customerId) && customerId > 0
-              ? {
-                  id: customerId,
-                  name: item.customerName || item.companyName || `Customer #${customerId}`,
-                  companyName: item.companyName || item.businessName || null,
-                }
-              : null,
+          
+          
           title: item.title,
           description: item.notes || item.description || null,
           status: item.status,
@@ -1005,54 +986,29 @@ export class TaskService {
       { tasks: { some: { assignedToId: { in: assigneeIds } } } },
       // Customer calendar shows every work for a customer. An employee authorized
       // for that customer (direct assignment or their team) sees those same works.
-      { customer: { assignedEmployeeId: employeeId } },
+      
     ];
     if (teamIds.length > 0) {
       workOr.push({ teamId: { in: teamIds } });
       workOr.push({
-        customer: {
-          deletedAt: null,
-          OR: [
-            { assignedTeamId: { in: teamIds } },
-            { assignedTeam: { id: { in: teamIds } } },
-          ],
-        },
+        
       });
     }
     if (productionTeamIds.length > 0) {
       workOr.push({
-        customer: {
-          deletedAt: null,
-          OR: [
-            { assignedTeamId: { in: productionTeamIds } },
-            { assignedTeam: { id: { in: productionTeamIds } } },
-          ],
-        },
+        
       });
     }
 
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
-        customer: { deletedAt: null },
+        
         OR: workOr,
       },
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            companyName: true,
-            phone: true,
-            email: true,
-            city: true,
-            address: true,
-            isActive: true,
-            customerType: true,
-            assignedTeam: { select: { id: true, name: true, description: true } },
-          },
-        },
+        
         assignedTo: {
           select: {
             id: true,
@@ -1081,8 +1037,8 @@ export class TaskService {
         if (!search) return true;
         const title = (work.title || '').toLowerCase();
         const description = (work.description || '').toLowerCase();
-        const customerName = (work.customer?.name || '').toLowerCase();
-        const companyName = (work.customer?.companyName || '').toLowerCase();
+        const customerName = ('').toLowerCase();
+        const companyName = ('').toLowerCase();
         return (
           title.includes(search) ||
           description.includes(search) ||
@@ -1093,20 +1049,8 @@ export class TaskService {
       .map((work) => ({
         id: work.id,
         source: 'WORK',
-        customerId: work.customerId,
-        customer: work.customer
-          ? {
-              id: work.customer.id,
-              name: work.customer.name,
-              companyName: work.customer.companyName,
-              phone: work.customer.phone,
-              email: work.customer.email,
-              city: work.customer.city,
-              address: work.customer.address,
-              isActive: work.customer.isActive,
-              customerType: work.customer.customerType,
-            }
-          : null,
+        
+        
         title: work.title,
         description: work.description,
         status: work.status,
@@ -1129,9 +1073,7 @@ export class TaskService {
         assignedTo: null,
         team: work.team
           ? { id: work.team.id, name: work.team.name }
-          : work.customer?.assignedTeam
-            ? { id: work.customer.assignedTeam.id, name: work.customer.assignedTeam.name }
-            : null,
+          : null,
         proofs: [],
         hasProof: false,
         isOverdue: false,
@@ -1151,7 +1093,7 @@ export class TaskService {
         deletedAt: null,
       },
       include: {
-        customer: true,
+        
         employee: {
           select: {
             id: true,
@@ -1357,7 +1299,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: task.employee.userId,
             title: `Task Approved! 🎉`,
             message: `Your task "${task.title}" has been approved and marked COMPLETED by HR.`,
@@ -1422,7 +1364,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: task.employee.userId,
             title: 'Task Proof Rejected',
             message: `Your task "${task.title}" proof was rejected by HR: "${reason}". Please upload clear proof and resubmit.`,

@@ -76,10 +76,8 @@ export class TeamService {
 
     if (customerId !== undefined && customerId !== null && String(customerId).trim() !== '') {
       const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId) || numCustomerId <= 0) {
-        throw new BadRequestException('Invalid customer ID provided');
-      }
-      where.customerId = numCustomerId;
+      
+      
     }
 
     if (query?.status === 'ACTIVE') {
@@ -178,7 +176,7 @@ export class TeamService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        
       }
     }
 
@@ -218,14 +216,12 @@ export class TeamService {
 
   async create(customerId: number | string | undefined, dto: CreateTeamDto) {
     const numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid Customer ID is required to create a team');
-    }
+    
 
     // 1. Validate Leader if supplied
     if (dto.leaderId) {
       const leader = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.leaderId), customerId: numCustomerId },
+        where: { id: Number(dto.leaderId) },
       });
       if (!leader) {
         throw new BadRequestException('Designated team leader does not exist or belong to your organization');
@@ -241,7 +237,7 @@ export class TeamService {
       const validEmployees = await this.prisma.employee.findMany({
         where: {
           id: { in: uniqueMemberIds },
-          customerId: numCustomerId,
+          
         },
         select: { id: true },
       });
@@ -254,7 +250,7 @@ export class TeamService {
     const created = await this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
-          customerId: numCustomerId,
+          
           name: dto.name.trim(),
           description: dto.description?.trim() || null,
           leaderId: dto.leaderId ? Number(dto.leaderId) : null,
@@ -293,7 +289,7 @@ export class TeamService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        
       }
     }
 
@@ -303,12 +299,12 @@ export class TeamService {
       throw new NotFoundException(`Team with ID ${id} not found in your organization`);
     }
 
-    const targetCustomerId = existing.customerId;
+    const targetCustomerId = undefined;
 
     // 2. Validate Leader if changing
     if (dto.leaderId !== undefined && dto.leaderId !== null) {
       const leader = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.leaderId), customerId: targetCustomerId },
+        where: { id: Number(dto.leaderId) },
       });
       if (!leader) {
         throw new BadRequestException('Designated team leader does not exist or belong to your organization');
@@ -323,7 +319,7 @@ export class TeamService {
         const validEmployees = await this.prisma.employee.findMany({
           where: {
             id: { in: uniqueMemberIds },
-            customerId: targetCustomerId,
+            
           },
           select: { id: true },
         });
@@ -391,7 +387,7 @@ export class TeamService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        
       }
     }
 
@@ -402,7 +398,7 @@ export class TeamService {
           select: {
             members: true,
             works: true,
-            assignedCustomers: true,
+            
           },
         },
       },
@@ -449,7 +445,7 @@ export class TeamService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        
       }
     }
 
@@ -459,7 +455,7 @@ export class TeamService {
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: numEmployeeId, customerId: team.customerId },
+      where: { id: numEmployeeId },
     });
     if (!employee) {
       throw new BadRequestException('Employee does not exist or belong to your organization');
@@ -499,7 +495,7 @@ export class TeamService {
     if (customerId !== undefined && customerId !== null) {
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
+        
       }
     }
 
@@ -555,7 +551,7 @@ export class TeamService {
     if (customerId) {
       const numCust = Number(customerId);
       if (!isNaN(numCust) && numCust > 0) {
-        where.customerId = numCust;
+        
       }
     }
 
@@ -644,7 +640,7 @@ export class TeamService {
     const where: any = {
       OR: [
         { teamId: numTeamId },
-        { customer: { assignedTeamId: numTeamId } },
+        
       ],
     };
 
@@ -697,22 +693,7 @@ export class TeamService {
       where,
       orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
       include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            companyName: true,
-            address: true,
-            city: true,
-            state: true,
-            assignedTeamId: true,
-            assignedTeam: { select: { id: true, name: true } },
-            socialMediaHandlers: {
-              take: 5,
-              select: { platform: true, accountName: true, accountUrl: true, status: true },
-            },
-          },
-        },
+        
         team: {
           select: { id: true, name: true },
         },
@@ -732,12 +713,7 @@ export class TeamService {
             designation: { select: { id: true, name: true } },
           },
         },
-        subscription: {
-          select: {
-            id: true,
-            plan: { select: { name: true } },
-          },
-        },
+        
         tasks: {
           select: { id: true, title: true, status: true, stepOrder: true, assignedToId: true, notes: true, createdAt: true },
           orderBy: { stepOrder: 'asc' },
@@ -850,15 +826,15 @@ export class TeamService {
 
       const startTime = w.scheduledTime || '10:00 AM';
       const schedDateVal = formatScheduleDate(w.scheduledDate, targetDateStr);
-      const custLocation = [w.customer?.address, w.customer?.city, w.customer?.state]
+      const custLocation = [undefined, undefined, undefined]
         .filter(Boolean)
         .join(', ') || null;
 
-      const smHandler = w.customer?.socialMediaHandlers?.[0];
+      const smHandler = undefined;
       const platform = smHandler?.platform || 'Instagram';
       const smAccount = smHandler?.accountName
         ? `${platform} — @${smHandler.accountName}`
-        : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\s+/g, '')}` : 'Instagram');
+        : ('Instagram');
 
       return {
         id: w.id,
@@ -875,14 +851,10 @@ export class TeamService {
         time: startTime,
         startTime: startTime,
         status: w.status,
-        customer: {
-          id: w.customer?.id || w.customerId,
-          name: w.customer?.name || 'Customer',
-          companyName: w.customer?.companyName || w.customer?.name || 'Customer',
-        },
-        customerId: String(w.customerId),
-        customerName: w.customer?.name || 'Customer',
-        customerBusiness: w.customer?.companyName || w.customer?.name || 'Customer',
+        
+        
+        customerName: 'Customer',
+        customerBusiness: 'Customer',
         team: {
           id: team.id,
           name: team.name,

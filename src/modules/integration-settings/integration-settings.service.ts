@@ -2645,7 +2645,7 @@ export class IntegrationSettingsService {
             isActive: true,
             deletedAt: null,
             OR: [
-              { customerId: null },
+              
               {
                 userRoles: {
                   some: {
@@ -2675,7 +2675,7 @@ export class IntegrationSettingsService {
       targetCustomerId = Number(dto.recipientId);
       const customerUsers = await this.prisma.user.findMany({
         where: {
-          customerId: targetCustomerId,
+          
           isActive: true,
           deletedAt: null,
         },
@@ -2736,13 +2736,10 @@ export class IntegrationSettingsService {
 
     // 3. Create in-app notification record
     try {
-      if (!targetCustomerId) {
-        const firstCust = await this.prisma.customer.findFirst({ select: { id: true } });
-        targetCustomerId = firstCust?.id || 1;
-      }
+
       await this.prisma.notification.create({
         data: {
-          customerId: targetCustomerId,
+          
           userId: targetUserId,
           title,
           message: body,

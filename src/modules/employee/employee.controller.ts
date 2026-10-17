@@ -47,14 +47,12 @@ export class EmployeeController {
     @Query('bpoOnly') bpoOnly?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.employeeService.findAll({
-      customerId: targetCustomerId,
+      
       isSuperAdmin,
       search,
       status,
@@ -80,7 +78,7 @@ export class EmployeeController {
     @Query('prefix') prefix?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
   }
@@ -132,7 +130,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.employeeService.getOffices(targetCustomerId, isSuperAdmin);
   }
 
@@ -145,7 +143,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.employeeService.getLeaves(user, targetCustomerId, isSuperAdmin);
   }
 
@@ -158,7 +156,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.employeeService.getRemoteRequests(user, targetCustomerId, isSuperAdmin);
   }
 
@@ -181,7 +179,7 @@ export class EmployeeController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.employeeService.getAttendance(user, targetCustomerId, isSuperAdmin, {
       date,
       branch,
@@ -204,7 +202,7 @@ export class EmployeeController {
     @Query('date') date?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin, branch, date);
   }
 
@@ -218,15 +216,13 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.employeeService.findOne({
       id,
-      customerId: targetCustomerId,
+      
       isSuperAdmin,
     });
   }
@@ -241,18 +237,16 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || user?.customerId) : user?.customerId;
+    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || undefined) : undefined;
 
     if (!targetCustomerId && isSuperAdmin) {
       targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
     }
 
-    if (!targetCustomerId) {
-      throw new BadRequestException('customerId is required to create an employee');
-    }
+    
 
     return this.employeeService.create({
-      customerId: targetCustomerId,
+      
       dto,
       bypassUserLimit: isUserAdmin(user),
     });
@@ -277,15 +271,13 @@ export class EmployeeController {
       throw new ForbiddenException('Access denied: salary changes require payroll management permission');
     }
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.employeeService.update({
       id,
-      customerId: targetCustomerId,
+      
       isSuperAdmin,
       dto,
     });
@@ -301,15 +293,13 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.employeeService.remove({
       id,
-      customerId: targetCustomerId,
+      
       isSuperAdmin,
     });
   }

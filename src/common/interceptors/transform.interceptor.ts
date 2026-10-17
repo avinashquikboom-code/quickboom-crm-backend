@@ -52,7 +52,7 @@ export class TransformInterceptor<T>
             // drop upcomingPlan / currentPlan or Flutter cannot see a purchased plan
             // whose startDate is still in the future.
             upcomingPlan: data.upcomingPlan,
-            subscription: data.subscription,
+            
             currentPlan: data.currentPlan,
             effectivePlan: data.effectivePlan,
           };

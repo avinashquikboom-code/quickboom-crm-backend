@@ -21,16 +21,16 @@ export class LoanService {
   async getMetrics(customerId: any) {
     const cid = this.resolveCustomerId(customerId);
     const [total, pending, active, approved, rejected, paid] = await Promise.all([
-      this.prisma.employeeLoan.count({ where: { customerId: cid } }),
-      this.prisma.employeeLoan.count({ where: { customerId: cid, status: LoanStatus.PENDING } }),
-      this.prisma.employeeLoan.count({ where: { customerId: cid, status: LoanStatus.ACTIVE } }),
-      this.prisma.employeeLoan.count({ where: { customerId: cid, status: LoanStatus.APPROVED } }),
-      this.prisma.employeeLoan.count({ where: { customerId: cid, status: LoanStatus.REJECTED } }),
-      this.prisma.employeeLoan.count({ where: { customerId: cid, status: LoanStatus.PAID } }),
+      this.prisma.employeeLoan.count({ where: {  } }),
+      this.prisma.employeeLoan.count({ where: {  status: LoanStatus.PENDING } }),
+      this.prisma.employeeLoan.count({ where: {  status: LoanStatus.ACTIVE } }),
+      this.prisma.employeeLoan.count({ where: {  status: LoanStatus.APPROVED } }),
+      this.prisma.employeeLoan.count({ where: {  status: LoanStatus.REJECTED } }),
+      this.prisma.employeeLoan.count({ where: {  status: LoanStatus.PAID } }),
     ]);
 
     const activeLoans = await this.prisma.employeeLoan.findMany({
-      where: { customerId: cid, status: { in: [LoanStatus.ACTIVE, LoanStatus.APPROVED] } },
+      where: {  status: { in: [LoanStatus.ACTIVE, LoanStatus.APPROVED] } },
       select: { remainingBalance: true, approvedAmount: true, loanAmount: true },
     });
 
@@ -60,9 +60,9 @@ export class LoanService {
 
     const where: any = {};
     if (customerId && Number(customerId) > 0) {
-      where.customerId = Number(customerId);
+      
     } else {
-      where.customerId = cid;
+      
     }
 
     // Role-based employee scoping:
@@ -209,8 +209,8 @@ export class LoanService {
       });
       if (emp) {
         employeeId = emp.id;
-        if (!customerId && emp.customerId) {
-          cid = emp.customerId;
+        if (!customerId && undefined) {
+          cid = undefined;
         }
       }
     }
@@ -227,9 +227,7 @@ export class LoanService {
       throw new NotFoundException(`Employee with ID #${employeeId} not found`);
     }
 
-    if (employee.customerId) {
-      cid = employee.customerId;
-    }
+    
 
     const loanAmount = Number(dto.loanAmount);
     if (!loanAmount || isNaN(loanAmount) || loanAmount <= 0) {
@@ -243,7 +241,7 @@ export class LoanService {
 
     return this.prisma.employeeLoan.create({
       data: {
-        customerId: cid,
+        
         employeeId,
         loanAmount,
         reason: dto.reason?.trim() || 'Employee loan request',

@@ -46,7 +46,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: CreateRazorpayOrderDto,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.createRazorpayOrder(user, dto, customerId);
   }
 
@@ -60,7 +60,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: VerifyRazorpayPaymentDto,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.verifyRazorpayPayment(user, dto, customerId);
   }
 
@@ -74,7 +74,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: any,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.createOfflinePayment(user, dto, customerId);
   }
 
@@ -100,7 +100,7 @@ export class PaymentController {
     @Req() req: any,
     @Res() res: any,
   ) {
-    const customerId = Number(customerIdStr ?? req?.customerId ?? user?.customerId);
+    const customerId = Number(customerIdStr ?? undefined);
     const { buffer, filename } = await this.paymentService.downloadAgreementPdf(
       paymentId,
       Number.isFinite(customerId) && customerId > 0 ? customerId : undefined,
@@ -120,7 +120,7 @@ export class PaymentController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get authenticated customer purchase and payment transaction history' })
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.getPaymentHistory(user, customerId);
   }
 

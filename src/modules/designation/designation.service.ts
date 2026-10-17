@@ -24,15 +24,7 @@ export class DesignationService {
   ) {}
 
   private async resolveCustomerId(customerId: number | string): Promise<number> {
-    if (typeof customerId === 'number' && customerId > 0) return customerId;
-    if (typeof customerId === 'string' && !isNaN(Number(customerId)) && Number(customerId) > 0) {
-      return Number(customerId);
-    }
-    const firstCustomer = await this.prisma.customer.findFirst({
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return firstCustomer?.id || 1;
+return undefined;
   }
 
   private generateCode(name: string): string {
@@ -54,7 +46,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const { departmentId, search, isActive, status, page = 1, limit = 100 } = options;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
 
     if (departmentId !== undefined && departmentId !== null && !isNaN(Number(departmentId))) {
       const numDeptId = Number(departmentId);
@@ -142,7 +134,7 @@ export class DesignationService {
   async findOne(customerId: number | string, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const designation = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         department: {
           select: {
@@ -190,7 +182,7 @@ export class DesignationService {
     // Validate departmentId if provided
     if (dto.departmentId) {
       const dept = await this.prisma.department.findFirst({
-        where: { id: dto.departmentId, customerId: numCustomerId },
+        where: { id: dto.departmentId },
       });
       if (!dept) {
         throw new BadRequestException(`Department #${dto.departmentId} does not exist`);
@@ -200,7 +192,7 @@ export class DesignationService {
     // Check duplicate code or name
     const existing = await this.prisma.designation.findFirst({
       where: {
-        customerId: numCustomerId,
+        
         OR: [{ name: { equals: name, mode: 'insensitive' } }, { code: { equals: code } }],
       },
     });
@@ -222,7 +214,7 @@ export class DesignationService {
 
     const created = await this.prisma.designation.create({
       data: {
-        customerId: numCustomerId,
+        
         name,
         code,
         departmentId: dto.departmentId || null,
@@ -247,7 +239,7 @@ export class DesignationService {
       await this.ensureRoleForDesignation({
         id: created.id,
         name: created.name,
-        customerId: numCustomerId,
+        
         description: created.description,
         audience: dto.audience === 'CUSTOMER' ? 'CUSTOMER' : 'EMPLOYEE',
       });
@@ -276,7 +268,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const existing = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
     });
 
     if (!existing) {
@@ -285,7 +277,7 @@ export class DesignationService {
 
     if (dto.departmentId !== undefined && dto.departmentId !== null) {
       const dept = await this.prisma.department.findFirst({
-        where: { id: dto.departmentId, customerId: numCustomerId },
+        where: { id: dto.departmentId },
       });
       if (!dept) {
         throw new BadRequestException(`Department #${dto.departmentId} does not exist`);
@@ -295,7 +287,7 @@ export class DesignationService {
     if (dto.name) {
       const duplicateName = await this.prisma.designation.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           name: { equals: dto.name.trim(), mode: 'insensitive' },
           NOT: { id },
         },
@@ -308,7 +300,7 @@ export class DesignationService {
     if (dto.code) {
       const duplicateCode = await this.prisma.designation.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           code: { equals: dto.code.trim().toUpperCase() },
           NOT: { id },
         },
@@ -367,7 +359,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const designation = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: {
@@ -381,9 +373,7 @@ export class DesignationService {
       throw new NotFoundException(`Designation #${id} not found`);
     }
 
-    if (designation.code === 'CUSTOMER') {
-      throw new BadRequestException('System default Customer role cannot be deleted.');
-    }
+    
 
     // Safety rule: If employees have this designation, soft-deactivate to avoid losing employee reference
     if (designation._count.employees > 0) {
@@ -397,18 +387,9 @@ export class DesignationService {
       };
     }
 
-    const affectedCustomers = designation.audience === 'CUSTOMER'
-      ? await this.prisma.customer.findMany({
-          where: { mobileRoleId: id, deletedAt: null },
-          select: { id: true },
-        })
-      : [];
-
     await this.prisma.designation.delete({ where: { id } });
 
-    for (const cust of affectedCustomers) {
-      this.planScheduleGateway.notifyCustomerPermissionsUpdated(cust.id);
-    }
+
 
     return {
       message: `Designation #${id} deleted successfully.`,
@@ -422,7 +403,7 @@ export class DesignationService {
    */
   async seedInitialDesignationsIfEmpty(customerId: number): Promise<void> {
     try {
-      const count = await this.prisma.designation.count({ where: { customerId } });
+      const count = await this.prisma.designation.count({ where: {  } });
       if (count > 0) return;
 
       this.logger.log(`[DESIGNATIONS] Seeding initial designations for customer #${customerId}`);
@@ -441,7 +422,7 @@ export class DesignationService {
       for (const item of standardDesignations) {
         let desig = await this.prisma.designation.findFirst({
           where: {
-            customerId,
+            
             name: { equals: item.name, mode: 'insensitive' },
           },
         });
@@ -449,7 +430,7 @@ export class DesignationService {
         if (!desig) {
           desig = await this.prisma.designation.create({
             data: {
-              customerId,
+              
               name: item.name,
               code: item.code,
               level: item.level,
@@ -487,11 +468,11 @@ export class DesignationService {
 
       // Link any existing unassigned employee in this customer to Telecaller
       const telecallerDesig = await this.prisma.designation.findFirst({
-        where: { customerId, name: { equals: 'Telecaller', mode: 'insensitive' } },
+        where: {  name: { equals: 'Telecaller', mode: 'insensitive' } },
       });
       if (telecallerDesig) {
         await this.prisma.employee.updateMany({
-          where: { customerId, designationId: null },
+          where: {  designationId: null },
           data: { designationId: telecallerDesig.id },
         });
       }
@@ -503,7 +484,7 @@ export class DesignationService {
   /**
    * Ensure a Role entity exists and is linked 1:1 with this Designation.
    */
-  async ensureRoleForDesignation(designation: { id: number; name: string; customerId: number; description?: string | null; audience?: string | null }) {
+  async ensureRoleForDesignation(designation: { id: number; name: string; customerId?: number; description?: string | null; audience?: string | null }) {
     let role = await this.prisma.role.findUnique({
       where: { designationId: designation.id },
       include: {
@@ -545,7 +526,7 @@ export class DesignationService {
             name: designation.name,
             description: designation.description || `${designation.name} role`,
             type: RoleType.CUSTOM,
-            customerId: designation.customerId,
+            
             designationId: designation.id,
           },
           include: {
@@ -617,13 +598,13 @@ export class DesignationService {
    */
   async ensureCustomerAppDesignation(customerId: number) {
     let designation = await this.prisma.designation.findFirst({
-      where: { customerId, code: 'CUSTOMER' },
+      where: {  code: 'CUSTOMER' },
     });
 
     if (!designation) {
       designation = await this.prisma.designation.create({
         data: {
-          customerId,
+          
           name: 'Customer',
           code: 'CUSTOMER',
           level: 0,
@@ -651,7 +632,7 @@ export class DesignationService {
         name: 'Customer',
         description: designation.description || 'Customer mobile app access',
         type: RoleType.CUSTOM,
-        customerId,
+        
         designationId: designation.id,
       },
     });

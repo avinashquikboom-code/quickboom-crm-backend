@@ -182,7 +182,7 @@ export class WorkPermissionService {
     let employee = null;
     if (identifier.employeeId) {
       employee = await this.prisma.employee.findFirst({
-        where: { id: Number(identifier.employeeId), customerId: custId },
+        where: { id: Number(identifier.employeeId) },
         include: {
           designation: true,
           user: {
@@ -197,7 +197,7 @@ export class WorkPermissionService {
       });
     } else if (identifier.userId) {
       employee = await this.prisma.employee.findFirst({
-        where: { userId: Number(identifier.userId), customerId: custId },
+        where: { userId: Number(identifier.userId) },
         include: {
           designation: true,
           user: {
@@ -212,7 +212,7 @@ export class WorkPermissionService {
       });
     } else if (identifier.email) {
       employee = await this.prisma.employee.findFirst({
-        where: { email: identifier.email, customerId: custId },
+        where: { email: identifier.email },
         include: {
           designation: true,
           user: {
@@ -260,7 +260,7 @@ export class WorkPermissionService {
     // 2. Fetch role work permissions from DB
     const dbRolePermissions = await this.prisma.roleWorkPermission.findMany({
       where: {
-        customerId: custId,
+        
         roleName: normalizedRole,
       },
     });
@@ -282,7 +282,7 @@ export class WorkPermissionService {
     // 3. Fetch approved employee specific access requests
     const approvedRequests = await this.prisma.workAccessRequest.findMany({
       where: {
-        customerId: custId,
+        
         employeeId: employee.id,
         status: WorkAccessRequestStatus.APPROVED,
       },
@@ -357,11 +357,11 @@ export class WorkPermissionService {
       ? null
       : await this.prisma.employee.findUnique({
           where: { id: Number(employeeId) },
-          select: { customerId: true },
+          
         });
     const custId = Number.isInteger(providedTenantId) && providedTenantId > 0
       ? providedTenantId
-      : Number(employee?.customerId);
+      : Number(undefined);
     if (!Number.isInteger(custId) || custId <= 0) {
       throw new ForbiddenException('Employee organization context is required');
     }

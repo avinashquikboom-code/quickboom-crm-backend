@@ -36,11 +36,9 @@ export class DesignationController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     const departmentId =
       departmentIdQuery && !isNaN(Number(departmentIdQuery))
@@ -71,7 +69,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.findOne(targetCustomerId, id);
   }
 
@@ -84,7 +82,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.create(targetCustomerId, dto);
   }
 
@@ -98,7 +96,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.update(targetCustomerId, id, dto);
   }
 
@@ -111,7 +109,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.remove(targetCustomerId, id);
   }
 }

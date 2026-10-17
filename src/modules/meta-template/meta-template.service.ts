@@ -68,7 +68,7 @@ export class MetaTemplateService {
         const vars = this.extractVariables(tpl.body);
         await this.prisma.metaTemplate.create({
           data: {
-            customerId: customerId ? Number(customerId) : null,
+            
             name: `${tpl.name} WhatsApp`,
             templateName: tpl.templateName,
             key: stageKey,
@@ -101,8 +101,8 @@ export class MetaTemplateService {
     const where: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+        
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -161,8 +161,8 @@ export class MetaTemplateService {
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+        
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -211,8 +211,8 @@ export class MetaTemplateService {
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+        
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -251,8 +251,8 @@ export class MetaTemplateService {
         id,
         deletedAt: null,
         OR: [
-          { customerId: null },
-          ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+          
+          ...(parsedCustId ? [] : []),
         ],
       },
     });
@@ -307,8 +307,8 @@ export class MetaTemplateService {
         language: dto.language || 'en_US',
         deletedAt: null,
         OR: [
-          { customerId: null },
-          ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+          
+          ...(parsedCustId ? [] : []),
         ],
       },
     });
@@ -324,7 +324,7 @@ export class MetaTemplateService {
 
     return this.prisma.metaTemplate.create({
       data: {
-        customerId: parsedCustId,
+        
         name: effectiveName,
         templateName: rawTemplateName,
         key: dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null,
@@ -415,21 +415,7 @@ export class MetaTemplateService {
     const item = await this.findOne(id, customerId);
 
     // Delete protection: Check if template key or templateName is currently configured/in-use by CRM lead stages
-    if (item.key) {
-      const activeStage = await this.prisma.leadStage.findFirst({
-        where: {
-          deletedAt: null,
-          isActive: true,
-          key: { equals: item.key, mode: 'insensitive' },
-        },
-      });
 
-      if (activeStage && item.isLocalActive) {
-        throw new BadRequestException(
-          `This template is currently in use for pipeline stage "${activeStage.name}" and cannot be deleted. You can deactivate it instead.`,
-        );
-      }
-    }
 
     await this.prisma.metaTemplate.update({
       where: { id: item.id },
@@ -539,8 +525,8 @@ export class MetaTemplateService {
           templateName,
           deletedAt: null,
           OR: [
-            { customerId: null },
-            ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+            
+            ...(parsedCustId ? [] : []),
           ],
         },
       });
@@ -564,7 +550,7 @@ export class MetaTemplateService {
       } else {
         await this.prisma.metaTemplate.create({
           data: {
-            customerId: parsedCustId,
+            
             name: (mt.name || templateName).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
             templateName,
             language,
@@ -677,7 +663,7 @@ export class MetaTemplateService {
       );
     }
 
-    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+    const customerId = null;
 
     // 1. Locate the exact selected template with tenant isolation
     let template: any = null;
@@ -693,13 +679,6 @@ export class MetaTemplateService {
       ];
     } else {
       throw new BadRequestException('Template ID or Template Name is required');
-    }
-
-    if (customerId) {
-      // Enforce tenant boundary: can access system global (null) or own tenant's templates
-      templateWhere.AND = [
-        { OR: [{ customerId: null }, { customerId }] },
-      ];
     }
 
     template = await this.prisma.metaTemplate.findFirst({

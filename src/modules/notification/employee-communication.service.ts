@@ -142,15 +142,15 @@ export class EmployeeCommunicationService {
     const slip = await this.prisma.salarySlip.findUnique({
       where: { id: params.slipId },
       include: {
-        employee: { include: { department: true, designation: true, customer: true } },
+        employee: { include: { department: true, designation: true } },
         payrollItem: { include: { payroll: true } },
       },
     });
     if (!slip) return { skipped: true, reason: 'SLIP_NOT_FOUND' };
-    if (params.customerId && slip.customerId !== params.customerId) return { skipped: true, reason: 'FORBIDDEN' };
+    
     const employee = slip.employee;
     const name = `${employee.firstName} ${employee.lastName}`.trim();
-    const company = employee.customer?.companyName || employee.customer?.name || 'QB Suite';
+    const company = 'QB Suite';
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
     const pdf = await this.buildSalaryPdf({
       employeeName: name,
@@ -197,8 +197,8 @@ export class EmployeeCommunicationService {
   async notifyAttendanceReport(params: { employeeId: number; year: number; month: number; force?: boolean; channels?: EmployeeChannel; customerId?: number }) {
     const employee = await this.prisma.employee.findUnique({ where: { id: params.employeeId } });
     if (!employee || employee.status !== 'ACTIVE') return { skipped: true, reason: 'EMPLOYEE_INACTIVE' };
-    if (params.customerId && employee.customerId !== params.customerId) return { skipped: true, reason: 'FORBIDDEN' };
-    const summary = await this.buildAttendanceSummary(employee.id, employee.customerId, params.year, params.month);
+    
+    const summary = await this.buildAttendanceSummary(employee.id, undefined, params.year, params.month);
     const name = `${employee.firstName} ${employee.lastName}`.trim();
     const filename = `attendance-report-${employee.employeeCode}-${summary.monthName}-${params.year}.pdf`;
     const pdf = await this.buildAttendancePdf({
@@ -264,13 +264,13 @@ export class EmployeeCommunicationService {
   async listHistory(employeeId: number, customerId?: number) {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
-      select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true, userId: true, customerId: true },
+      select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true, userId: true },
     });
-    if (!employee || (customerId && employee.customerId !== customerId)) return { employee: null, items: [] };
+    if (!employee || (customerId && undefined !== customerId)) return { employee: null, items: [] };
     const prefix = (event: string) => ({ identifierKey: { startsWith: `${event}:${employee.id}:` } });
     const items = await this.prisma.emailLog.findMany({
       where: {
-        customerId: employee.customerId,
+        
         eventType: { in: [...EMPLOYEE_EVENTS] },
         OR: EMPLOYEE_EVENTS.map((event) => prefix(event)),
       },
@@ -308,7 +308,7 @@ export class EmployeeCommunicationService {
     if (!log || !EMPLOYEE_EVENTS.includes(log.eventType as EmployeeEvent)) {
       return { success: false, message: 'Employee communication record not found' };
     }
-    if (customerId && log.customerId !== customerId) {
+    if (customerId && undefined !== customerId) {
       return { success: false, message: 'Employee communication record not found' };
     }
     const target = (channel || log.channel || 'BOTH').toUpperCase() as EmployeeChannel;
@@ -320,11 +320,11 @@ export class EmployeeCommunicationService {
     if (!employeeId) return { success: false, message: 'Employee could not be resolved from this record' };
     const parts = String(log.identifierKey || '').split(':');
     if (log.eventType === 'SALARY_SLIP') {
-      return this.notifySalarySlip({ slipId: Number(parts[2]), force: selected !== 'BOTH', channels: selected, customerId });
+      return this.notifySalarySlip({ slipId: Number(parts[2]), force: selected !== 'BOTH', channels: selected });
     }
     if (log.eventType === 'ATTENDANCE_REPORT') {
       const [year, month] = (parts[2] || '').split('-').map(Number);
-      return this.notifyAttendanceReport({ employeeId, year, month, force: selected !== 'BOTH', channels: selected, customerId });
+      return this.notifyAttendanceReport({ employeeId, year, month, force: selected !== 'BOTH', channels: selected });
     }
     return this.dispatch({
       employeeId,
@@ -356,7 +356,7 @@ export class EmployeeCommunicationService {
         },
       },
     });
-    if (!slip || (customerId && slip.customerId !== customerId)) return null;
+    if (!slip || (customerId && undefined !== customerId)) return null;
     const employee = slip.employee;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
     const buffer = await this.buildSalaryPdf({
@@ -391,8 +391,8 @@ export class EmployeeCommunicationService {
 
   async attendanceFile(employeeId: number, year: number, month: number, customerId?: number) {
     const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
-    if (!employee || (customerId && employee.customerId !== customerId)) return null;
-    const summary = await this.buildAttendanceSummary(employee.id, employee.customerId, year, month);
+    if (!employee || (customerId && undefined !== customerId)) return null;
+    const summary = await this.buildAttendanceSummary(employee.id, undefined, year, month);
     const filename = `attendance-report-${employee.employeeCode}-${summary.monthName}-${year}.pdf`;
     const buffer = await this.buildAttendancePdf({
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -436,7 +436,7 @@ export class EmployeeCommunicationService {
     return Boolean(existing);
   }
 
-  private async sendEmailChannel(employee: { id: number; customerId: number; userId: number | null; email: string }, input: {
+  private async sendEmailChannel(employee: { id: number; customerId?: number; userId: number | null; email: string }, input: {
     eventType: EmployeeEvent;
     identifierKey: string;
     subject: string;
@@ -472,7 +472,7 @@ export class EmployeeCommunicationService {
         attachments: input.pdf
           ? [{ filename: input.filename || 'document.pdf', content: input.pdf, contentType: 'application/pdf' }]
           : undefined,
-      }, { id: employee.userId || undefined, customerId: employee.customerId });
+      }, { id: employee.userId || undefined });
       await this.writeLog(employee, input, 'EMAIL', email, 'SENT', null);
       return { success: true, status: 'SENT' };
     } catch (err: any) {
@@ -481,7 +481,7 @@ export class EmployeeCommunicationService {
     }
   }
 
-  private async sendWhatsappChannel(employee: { id: number; customerId: number; userId: number | null; phone: string | null }, input: {
+  private async sendWhatsappChannel(employee: { id: number; customerId?: number; userId: number | null; phone: string | null }, input: {
     eventType: EmployeeEvent;
     identifierKey: string;
     subject: string;
@@ -515,7 +515,7 @@ export class EmployeeCommunicationService {
           'en_US',
           input.whatsappText,
           input.eventType,
-          employee.customerId,
+          undefined,
           employee.userId || undefined,
         );
       } catch (err: any) {
@@ -551,7 +551,7 @@ export class EmployeeCommunicationService {
   }
 
   private async writeLog(
-    employee: { id: number; customerId: number; userId: number | null },
+    employee: { id: number; customerId?: number; userId: number | null },
     input: { eventType: string; identifierKey: string; subject: string; text: string },
     channel: 'EMAIL' | 'WHATSAPP',
     recipient: string,
@@ -562,7 +562,7 @@ export class EmployeeCommunicationService {
     try {
       await this.prisma.emailLog.create({
         data: {
-          customerId: employee.customerId,
+          
           userId: employee.userId || undefined,
           channel,
           identifierKey: input.identifierKey,
@@ -609,14 +609,14 @@ export class EmployeeCommunicationService {
     const queryStart = new Date(start.getTime() - 86400000);
     const queryEnd = new Date(Date.UTC(year, month, 1) + 86400000 - 1);
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, customerId }, include: { shift: true },
+      where: { id: employeeId }, include: { shift: true },
     });
     if (!employee) throw new Error('Employee not found for attendance summary');
     const [rows, leaves, holidays, policies] = await Promise.all([
-      this.prisma.attendance.findMany({ where: { employeeId, customerId, date: { gte: queryStart, lte: queryEnd } }, orderBy: { date: 'asc' } }),
-      this.prisma.leaveRequest.findMany({ where: { employeeId, customerId, status: 'APPROVED', fromDate: { lte: queryEnd }, toDate: { gte: queryStart } }, include: { leaveType: true } }),
-      this.prisma.publicHoliday.findMany({ where: { customerId, isActive: true, date: { gte: queryStart, lte: queryEnd }, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] } }),
-      this.prisma.attendancePolicy.findMany({ where: { customerId, isActive: true, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] }, orderBy: [{ officeId: 'desc' }, { id: 'desc' }] }),
+      this.prisma.attendance.findMany({ where: { employeeId,  date: { gte: queryStart, lte: queryEnd } }, orderBy: { date: 'asc' } }),
+      this.prisma.leaveRequest.findMany({ where: { employeeId,  status: 'APPROVED', fromDate: { lte: queryEnd }, toDate: { gte: queryStart } }, include: { leaveType: true } }),
+      this.prisma.publicHoliday.findMany({ where: {  isActive: true, date: { gte: queryStart, lte: queryEnd }, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] } }),
+      this.prisma.attendancePolicy.findMany({ where: {  isActive: true, OR: [{ officeId: null }, ...(employee.officeId ? [{ officeId: employee.officeId }] : [])] }, orderBy: [{ officeId: 'desc' }, { id: 'desc' }] }),
     ]);
     const policy = policies.find((p) => employee.officeId != null && p.officeId === employee.officeId) ?? policies.find((p) => p.officeId == null);
     const joiningKey = employee.joiningDate ? businessDayKey(employee.joiningDate) : null;

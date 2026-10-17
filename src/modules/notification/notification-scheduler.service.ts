@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
 import { EmployeeCommunicationService } from './employee-communication.service';
-import { SubscriptionStatus, WorkStatus, LeadStatus } from '@prisma/client';
+import {  WorkStatus,  } from '@prisma/client';
 
 /**
  * Returns UTC Date range matching start and end of day in Indian Standard Time (IST: UTC+5:30)
@@ -164,27 +164,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
         let targetIstM = curM;
         let targetIstD = curD;
 
-        if (work.customerId) {
-          const customerPolicy = await this.prisma.attendancePolicy.findFirst({
-            where: { customerId: work.customerId, isActive: true },
-          });
-          const workingDaysPerWeek = customerPolicy?.workingDaysPerWeek ?? 6;
-          const targetDateObj = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 12, 0, 0, 0));
-          const dayOfWeek = targetDateObj.getUTCDay();
-
-          if (workingDaysPerWeek <= 5 && (dayOfWeek === 0 || dayOfWeek === 6)) {
-            const daysToAdd = dayOfWeek === 6 ? 2 : 1;
-            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + daysToAdd);
-            targetIstY = targetDateObj.getUTCFullYear();
-            targetIstM = targetDateObj.getUTCMonth();
-            targetIstD = targetDateObj.getUTCDate();
-          } else if (workingDaysPerWeek === 6 && dayOfWeek === 0) {
-            targetDateObj.setUTCDate(targetDateObj.getUTCDate() + 1);
-            targetIstY = targetDateObj.getUTCFullYear();
-            targetIstM = targetDateObj.getUTCMonth();
-            targetIstD = targetDateObj.getUTCDate();
-          }
-        }
+        
 
         const targetDateUtc = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 4, 30, 0, 0));
 
@@ -225,65 +205,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
    * Check for active subscriptions expiring (dayOffset = 3 for 3-day reminder, dayOffset = 0 for same-day reminder)
    */
   async checkSubscriptionExpiries(dayOffset = 3): Promise<number> {
-    const { start, end } = getIstDayWindow(dayOffset);
-    let notifiedCount = 0;
-    const isToday = dayOffset === 0;
-    const notifType = isToday ? 'SUBSCRIPTION_EXPIRING_TODAY' : 'SUBSCRIPTION_EXPIRING_SOON';
-    // 24 hours lookback for same-day, 7 days for 3-day reminder
-    const lookbackThreshold = new Date(Date.now() - (isToday ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000));
-
-    try {
-      const expiringSubs = await this.prisma.customerSubscription.findMany({
-        where: {
-          status: SubscriptionStatus.ACTIVE,
-          deletedAt: null,
-          endDate: { gte: start, lte: end },
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              companyName: true,
-              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
-            },
-          },
-          plan: { select: { id: true, name: true } },
-        },
-      });
-
-      for (const sub of expiringSubs) {
-        // Prevent duplicate notification
-        const alreadyNotified = await this.prisma.notification.findFirst({
-          where: {
-            customerId: sub.customerId,
-            type: notifType,
-            createdAt: { gte: lookbackThreshold },
-          },
-        });
-
-        if (alreadyNotified) {
-          continue;
-        }
-
-        const res = await this.notificationService.sendSubscriptionExpiringNotification(
-          sub.customerId,
-          sub,
-          dayOffset,
-        );
-
-        if (res) {
-          notifiedCount++;
-          this.logger.log(
-            `Sent ${isToday ? 'same-day' : '3-day'} subscription expiry notification to customer #${sub.customerId} for plan "${sub.plan?.name}"`,
-          );
-        }
-      }
-    } catch (err: any) {
-      this.logger.error(`Error in checkSubscriptionExpiries(offset=${dayOffset}): ${err?.message}`, err?.stack);
-    }
-
-    return notifiedCount;
+return 0;
   }
 
   /**
@@ -301,14 +223,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
           status: { notIn: [WorkStatus.CANCELLED, WorkStatus.COMPLETED] },
         },
         include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              companyName: true,
-              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
-            },
-          },
+          
           assignedTo: {
             select: { id: true, userId: true, firstName: true, lastName: true },
           },
@@ -319,11 +234,11 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
 
       for (const work of upcomingWorks) {
         // 1. Notify Customer
-        const customerUser = work.customer?.users?.[0];
+        const customerUser = undefined;
         if (customerUser) {
           const alreadyNotifiedCustomer = await this.prisma.notification.findFirst({
             where: {
-              customerId: work.customerId,
+              
               userId: customerUser.id,
               type: 'CALENDAR_SCHEDULE_REMINDER',
               createdAt: { gte: todayStart },
@@ -334,7 +249,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
             const res = await this.notificationService.sendCalendarReminderNotification({
               recipientType: 'CUSTOMER',
               userId: customerUser.id,
-              customerId: work.customerId,
+              
               work,
             });
             if (res) customerCount++;
@@ -357,7 +272,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
             const res = await this.notificationService.sendCalendarReminderNotification({
               recipientType: 'EMPLOYEE',
               userId: employeeUserId,
-              customerId: work.customerId,
+              
               work,
             });
             if (res) employeeCount++;
@@ -377,181 +292,6 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
    * occurred >= 3 days ago, and sends a reminder to the responsible BPO.
    */
   async checkLeadFollowUpReminders(): Promise<number> {
-    let notifiedCount = 0;
-    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-
-    try {
-      const followUpLeads = await this.prisma.lead.findMany({
-        where: {
-          status: LeadStatus.FOLLOW_UP,
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          customerId: true,
-          title: true,
-          firstName: true,
-          lastName: true,
-          companyName: true,
-          status: true,
-          stageId: true,
-          assignedToId: true,
-          employeeId: true,
-          createdAt: true,
-          employee: {
-            select: {
-              id: true,
-              userId: true,
-            },
-          },
-        },
-      });
-
-      for (const lead of followUpLeads) {
-        // 1. Resolve latest transition into FOLLOW_UP
-        const latestHistory = await this.prisma.leadStatusHistory.findFirst({
-          where: { leadId: lead.id },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        // If the lead transitioned away from FOLLOW_UP according to history, skip
-        if (latestHistory && latestHistory.toStatus !== LeadStatus.FOLLOW_UP) {
-          continue;
-        }
-
-        const transitionTimestamp: Date =
-          latestHistory?.toStatus === LeadStatus.FOLLOW_UP
-            ? latestHistory.createdAt
-            : lead.createdAt;
-
-        // 2. Exact 3-day calculation: must be >= 3 days from the latest transition to FOLLOW_UP
-        const eligibleAtMs = transitionTimestamp.getTime() + THREE_DAYS_MS;
-        if (now < eligibleAtMs) {
-          continue;
-        }
-
-        // 3. Resolve responsible BPO recipient using existing Lead ownership/assignment relationship
-        let bpoUserId: number | null = lead.assignedToId ? Number(lead.assignedToId) : null;
-        if (!bpoUserId && lead.employee?.userId) {
-          bpoUserId = Number(lead.employee.userId);
-        }
-        if (!bpoUserId && lead.employeeId) {
-          const emp = await this.prisma.employee.findUnique({
-            where: { id: lead.employeeId },
-            select: { userId: true },
-          });
-          if (emp?.userId) {
-            bpoUserId = Number(emp.userId);
-          }
-        }
-
-        if (!bpoUserId) {
-          this.logger.warn(
-            `[FOLLOW_UP_REMINDER] Lead #${lead.id} is in Follow-Up for 3+ days but has no assigned BPO recipient. Skipping.`,
-          );
-          continue;
-        }
-
-        // 4. Duplicate notification protection (Idempotency)
-        // Check if an in-app notification of type LEAD_FOLLOW_UP_REMINDER was already sent for this lead during this cycle
-        const existingNotifications = await this.prisma.notification.findMany({
-          where: {
-            customerId: lead.customerId,
-            userId: bpoUserId,
-            type: 'LEAD_FOLLOW_UP_REMINDER',
-            createdAt: { gte: transitionTimestamp },
-          },
-          select: { id: true, data: true },
-        });
-
-        const alreadySent = existingNotifications.some((n: any) => {
-          const d = (n.data as any) || {};
-          return String(d.leadId) === String(lead.id);
-        });
-
-        if (alreadySent) {
-          continue;
-        }
-
-        // Also check if existing LeadReminder record is already marked completed for this cycle
-        const existingReminder = await this.prisma.leadReminder.findFirst({
-          where: {
-            leadId: lead.id,
-            title: '3_DAY_FOLLOW_UP_REMINDER',
-            createdAt: { gte: transitionTimestamp },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        if (existingReminder?.isCompleted) {
-          continue;
-        }
-
-        // 5. Send notification to the responsible BPO
-        const leadFullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-        const leadDisplayName = lead.title || leadFullName || lead.companyName || `Lead #${lead.id}`;
-
-        const res = await this.notificationService.sendLeadFollowUpReminderNotification({
-          customerId: lead.customerId,
-          leadId: lead.id,
-          leadName: leadDisplayName,
-          companyName: lead.companyName,
-          transitionDate: transitionTimestamp,
-          bpoUserId,
-        });
-
-        if (res) {
-          notifiedCount++;
-          this.logger.log(
-            `[FOLLOW_UP_REMINDER] Sent 3-day reminder to BPO user #${bpoUserId} for lead #${lead.id} (${leadDisplayName})`,
-          );
-
-          // 6. Record the event as processed (mark LeadReminder as completed)
-          try {
-            if (existingReminder) {
-              await this.prisma.leadReminder.update({
-                where: { id: existingReminder.id },
-                data: { isCompleted: true },
-              });
-            } else {
-              await this.prisma.leadReminder.create({
-                data: {
-                  leadId: lead.id,
-                  remindAt: new Date(eligibleAtMs),
-                  title: '3_DAY_FOLLOW_UP_REMINDER',
-                  isCompleted: true,
-                },
-              });
-            }
-          } catch (remErr: any) {
-            this.logger.warn(`[FOLLOW_UP_REMINDER] Failed to update leadReminder record: ${remErr?.message}`);
-          }
-
-          // 7. Record timeline activity
-          try {
-            await this.prisma.leadActivityTimeline.create({
-              data: {
-                leadId: lead.id,
-                action: 'FOLLOW_UP_REMINDER_SENT',
-                description: '3-Day Follow-Up reminder sent to responsible BPO',
-                metadata: {
-                  bpoUserId,
-                  leadId: lead.id,
-                  transitionDate: transitionTimestamp.toISOString(),
-                  notifiedAt: new Date().toISOString(),
-                },
-              },
-            });
-          } catch (tlErr: any) {
-            this.logger.warn(`[FOLLOW_UP_REMINDER] Failed to log timeline activity: ${tlErr?.message}`);
-          }
-        }
-      }
-    } catch (err: any) {
-      this.logger.error(`Error in checkLeadFollowUpReminders: ${err?.message}`, err?.stack);
-    }
-
-    return notifiedCount;
+return 0;
   }
 }

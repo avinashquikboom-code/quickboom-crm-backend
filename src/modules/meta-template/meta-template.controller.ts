@@ -50,10 +50,10 @@ export class MetaTemplateController {
   ) {
     const effectiveStatus = query.status || query.metaStatus || 'ALL';
     this.logger.log(
-      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${user?.customerId ?? 'NONE'}\ntenantId=${user?.customerId ?? 'NONE'}\npage=${query.page || 1}\nlimit=${query.limit || 50}\nstatus=${effectiveStatus}`,
+      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${'NONE'}\ntenantId=${'NONE'}\npage=${query.page || 1}\nlimit=${query.limit || 50}\nstatus=${effectiveStatus}`,
     );
 
-    const result = await this.metaTemplateService.findAll(user?.customerId, query);
+    const result = await this.metaTemplateService.findAll(undefined, query);
 
     this.logger.log(
       `[META_TEMPLATES_RESULT]\nstatus=200\ncount=${result?.items?.length ?? 0}`,
@@ -66,10 +66,10 @@ export class MetaTemplateController {
   @ApiOperation({ summary: 'Get aggregated statistics of Meta message templates' })
   async getStats(@CurrentUser() user: any, @Req() req: any) {
     this.logger.log(
-      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta/stats'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${user?.customerId ?? 'NONE'}\ntenantId=${user?.customerId ?? 'NONE'}\npage=1\nlimit=1\nstatus=ALL`,
+      `[META_TEMPLATES_REQUEST]\nmethod=${req?.method || 'GET'}\npath=${req?.originalUrl || req?.url || '/api/v1/templates/meta/stats'}\nadminUserId=${user?.id || 'none'}\ncompanyId=${'NONE'}\ntenantId=${'NONE'}\npage=1\nlimit=1\nstatus=ALL`,
     );
 
-    const result = await this.metaTemplateService.getStats(user?.customerId);
+    const result = await this.metaTemplateService.getStats(undefined);
 
     this.logger.log(
       `[META_TEMPLATES_RESULT]\nstatus=200\ncount=${result?.total ?? 0}`,
@@ -87,13 +87,13 @@ export class MetaTemplateController {
   @Get(':id')
   @ApiOperation({ summary: 'Get single Meta template by ID' })
   async findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
-    return this.metaTemplateService.findOne(id, user?.customerId);
+    return this.metaTemplateService.findOne(id, undefined);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create a new Meta message template' })
   async create(@Body() dto: CreateMetaTemplateDto, @CurrentUser() user: any) {
-    return this.metaTemplateService.create(dto, user?.customerId);
+    return this.metaTemplateService.create(dto, undefined);
   }
 
   @Put(':id')
@@ -103,31 +103,31 @@ export class MetaTemplateController {
     @Body() dto: UpdateMetaTemplateDto,
     @CurrentUser() user: any,
   ) {
-    return this.metaTemplateService.update(id, dto, user?.customerId);
+    return this.metaTemplateService.update(id, dto, undefined);
   }
 
   @Patch(':id/toggle')
   @ApiOperation({ summary: 'Toggle local active status of a Meta template' })
   async toggleActive(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
-    return this.metaTemplateService.toggleActive(id, user?.customerId);
+    return this.metaTemplateService.toggleActive(id, undefined);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Soft delete a Meta template with stage-in-use protection' })
   async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
-    return this.metaTemplateService.remove(id, user?.customerId);
+    return this.metaTemplateService.remove(id, undefined);
   }
 
   @Post(['sync', 'sync-meta'])
   @ApiOperation({ summary: 'Synchronize templates from Meta Business Cloud API' })
   async syncFromMeta(@CurrentUser() user: any) {
-    return this.metaTemplateService.syncFromMeta(user?.customerId);
+    return this.metaTemplateService.syncFromMeta(undefined);
   }
 
   @Post('preview')
   @ApiOperation({ summary: 'Preview Meta message template with interpolated variables' })
   async preview(@Body() dto: PreviewMetaTemplateDto, @CurrentUser() user: any) {
-    return this.metaTemplateService.preview(dto, user?.customerId);
+    return this.metaTemplateService.preview(dto, undefined);
   }
 
   @Post('test-send')

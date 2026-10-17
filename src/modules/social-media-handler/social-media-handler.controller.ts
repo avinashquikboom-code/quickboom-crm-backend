@@ -35,8 +35,6 @@ export class SocialMediaHandlerController {
   private extractContext(user: any, customerId: any, req: any) {
     const rawCustId =
       customerId ??
-      req?.customerId ??
-      user?.customerId ??
       req?.headers?.['x-customer-id'];
 
     const parsedCustomerId = rawCustId
@@ -45,7 +43,7 @@ export class SocialMediaHandlerController {
 
     return {
       id: user?.id ?? 0,
-      customerId: parsedCustomerId,
+      
       role: user?.role || (Array.isArray(user?.roles) ? user?.roles.join(',') : 'CUSTOMER'),
       isSuperAdmin: req?.isSuperAdmin || Boolean(user?.roles?.includes('SUPER_ADMIN') || user?.role === 'SUPER_ADMIN'),
       isAdminOrStaff: req?.isAdminOrStaff || Boolean(user?.roles?.includes('COMPANY_ADMIN') || user?.role === 'COMPANY_ADMIN'),
@@ -72,7 +70,7 @@ export class SocialMediaHandlerController {
     @Req() req: any,
     @Body() dto: CreateSocialMediaHandlerDto,
   ) {
-    const context = this.extractContext(user, dto.customerId, req);
+    const context = this.extractContext(user, undefined, req);
     return this.handlerService.create(dto, context);
   }
 

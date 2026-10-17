@@ -8,15 +8,9 @@ export class ContactService {
   constructor(private prisma: PrismaService) {}
 
   async create(customerId: number | string | undefined, dto: CreateContactDto) {
-    let numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true, deletedAt: null } });
-      numCustomerId = defaultCustomer?.id || 1;
-    }
-
     return this.prisma.contact.create({
       data: {
-        customerId: numCustomerId,
+        
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
         type: dto.type,
         firstName: dto.firstName,
@@ -43,7 +37,7 @@ export class ContactService {
   async getMetrics(customerId: number | string | undefined, user?: any) {
     const isSuperAdmin = isUserSuperAdmin(user);
     // Explicit customerId override: SUPER_ADMIN may pass a target customer via query/header
-    const numCustomerId = Number(customerId || user?.customerId);
+    const numCustomerId = Number(customerId || undefined);
     const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
     // Build the base where clause:
@@ -54,15 +48,13 @@ export class ContactService {
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        baseWhere.customerId = numCustomerId;
+        
       }
       // else: no filter — SUPER_ADMIN sees all
     } else {
       // Non-SUPER_ADMIN: customerId is mandatory
-      if (!hasExplicitCustomer) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      baseWhere.customerId = numCustomerId;
+      
+      
     }
 
     const [total, active, newContacts, withVisits] = await Promise.all([
@@ -97,7 +89,7 @@ export class ContactService {
 
     const where: any = { deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const candidates = await this.prisma.contact.findMany({
@@ -147,16 +139,14 @@ export class ContactService {
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        where.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
       // Non-SUPER_ADMIN: derive customerId from user claim if not in request
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      where.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
+      
+      
     }
 
     if (query.type && query.type.toUpperCase() !== 'ALL') where.type = query.type as any;
@@ -212,7 +202,7 @@ export class ContactService {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const contact = await this.prisma.contact.findFirst({

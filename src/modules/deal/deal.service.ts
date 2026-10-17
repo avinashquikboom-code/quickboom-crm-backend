@@ -16,14 +16,14 @@ export class DealService {
 
     if (!pipelineId || !stageId) {
       let pipeline = await this.prisma.pipeline.findFirst({
-        where: { customerId: numCustomerId, deletedAt: null },
+        where: {  deletedAt: null },
         include: { stages: { orderBy: { order: 'asc' } } },
       });
 
       if (!pipeline) {
         pipeline = await this.prisma.pipeline.create({
           data: {
-            customerId: numCustomerId,
+            
             name: 'Sales Pipeline',
             stages: {
               create: [
@@ -44,7 +44,7 @@ export class DealService {
 
     return this.prisma.deal.create({
       data: {
-        customerId: numCustomerId,
+        
         pipelineId: pipelineId!,
         stageId: stageId!,
         title: dto.title,
@@ -53,7 +53,7 @@ export class DealService {
         probability: dto.probability !== undefined ? Number(dto.probability) : 50,
         contactId: dto.contactId ? Number(dto.contactId) : undefined,
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
-        leadId: dto.leadId ? Number(dto.leadId) : undefined,
+        
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         source: dto.source || 'CRM',
         currency: dto.currency || 'INR',
@@ -78,15 +78,13 @@ export class DealService {
     const baseWhere: any = { deletedAt: null };
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        baseWhere.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      baseWhere.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
+      
+      
     }
 
     const [total, open, won, lost, allDeals] = await Promise.all([
@@ -135,15 +133,13 @@ export class DealService {
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        where.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      where.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
+      
+      
     }
 
     if (query.pipelineId && query.pipelineId !== 'ALL') where.pipelineId = Number(query.pipelineId);
@@ -213,7 +209,7 @@ export class DealService {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const deal = await this.prisma.deal.findFirst({
@@ -252,7 +248,7 @@ export class DealService {
         stageId: dto.stageId ? Number(dto.stageId) : undefined,
         contactId: dto.contactId ? Number(dto.contactId) : undefined,
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
-        leadId: dto.leadId ? Number(dto.leadId) : undefined,
+        
         assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
         expectedClosing: dto.expectedClosing ? new Date(dto.expectedClosing) : undefined,
         probability: dto.probability !== undefined ? Number(dto.probability) : undefined,

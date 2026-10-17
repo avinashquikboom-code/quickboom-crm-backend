@@ -24,7 +24,7 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
   private readonly logger = new Logger(LocationGateway.name);
 
   handleConnection(client: Socket) {
-    const customerId = client.handshake.query?.customerId || client.handshake.headers?.['x-customer-id'];
+    const customerId = client.handshake.headers?.['x-customer-id'];
     if (customerId) {
       const room = `customer-${customerId}`;
       client.join(room);
@@ -69,9 +69,9 @@ export class LocationGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('joinCustomerRoom')
   handleJoinCustomerRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { customerId: string | number },
+    @MessageBody() data: { customerId?: string | number },
   ) {
-    const customerId = data?.customerId ? String(data.customerId) : null;
+    const customerId = null;
     if (customerId) {
       const room = `customer-${customerId}`;
       client.join(room);

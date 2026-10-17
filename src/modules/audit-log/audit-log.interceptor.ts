@@ -116,7 +116,7 @@ export class AuditLogInterceptor implements NestInterceptor {
         userName = `${userRole} User`;
       }
 
-      const customerId = user?.customerId ? Number(user.customerId) : (headers?.['x-customer-id'] ? Number(headers['x-customer-id']) : null);
+      const customerId = (headers?.['x-customer-id'] ? Number(headers['x-customer-id']) : null);
 
       // Resolve module
       const moduleName = this.resolveModule(cleanUrl);
@@ -142,7 +142,7 @@ export class AuditLogInterceptor implements NestInterceptor {
       setImmediate(() => {
         this.auditLogService.create({
           userId,
-          customerId,
+          
           userName,
           userRole,
           source,

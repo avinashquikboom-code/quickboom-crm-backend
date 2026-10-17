@@ -42,7 +42,7 @@ export class WorkController {
     @CurrentCustomer() customerId: string,
     @Req() req: any,
   ) {
-    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
+    const custId = customerId || undefined || undefined || undefined;
     const employeeId = user?.employeeId || user?.employee?.id;
     const userId = user?.id || user?.sub;
 
@@ -99,7 +99,7 @@ export class WorkController {
     @Req() req: any,
     @Body() body: { activityScheduleId: number },
   ) {
-    const custId = customerId || req?.customerId || user?.customerId;
+    const custId = customerId || undefined || undefined;
     return this.workService.completeActivity(body.activityScheduleId, custId);
   }
 
@@ -155,7 +155,7 @@ export class WorkController {
     this.logger.log(
       `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
       `resolvedEmployeeId=${authEmpId} employeeUserId=${user?.employee?.userId ?? 'none'} ` +
-      `tenantId=${user?.employee?.customerId ?? user?.customerId ?? 'none'} ` +
+      `tenantId=${'none'} ` +
       `parsedMonth=${period.month ?? 'none'} parsedYear=${period.year ?? 'none'} ` +
       `date=${date || startDate || 'none'} dateFrom=${dateFrom || startDate || 'none'} dateTo=${dateTo || endDate || 'none'}`,
     );
@@ -182,7 +182,7 @@ export class WorkController {
       month: period.month,
       year: period.year,
       status,
-      customerId: customerId ? parseInt(customerId, 10) : undefined,
+      
       employeeId: targetQueryEmpId,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
@@ -216,7 +216,7 @@ export class WorkController {
       userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
     const period = parseCalendarMonthYear(month, year);
     return this.workService.getProductionMetrics(authEmpId, {
-      customerId: customerId ? parseInt(customerId, 10) : undefined,
+      
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       date,
@@ -272,7 +272,7 @@ export class WorkController {
         );
       }
 
-      const targetCustomerId = dto.customerId ?? customerId;
+      const targetCustomerId = customerId;
       const parsedTarget = Number(targetCustomerId);
       if (!Number.isInteger(parsedTarget) || parsedTarget <= 0) {
         throw new BadRequestException(
@@ -304,7 +304,7 @@ export class WorkController {
     @Req() req: any,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(custId, id, dto, employeeId ?? undefined);
   }
 
@@ -319,7 +319,7 @@ export class WorkController {
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    const custId = customerIdQuery || undefined || undefined;
     const work = await this.workService.findOne(custId, id);
     if (work) {
       const moduleKey = mapWorkTypeToModule(work.workType);
@@ -353,7 +353,7 @@ export class WorkController {
     @Body() dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
     @Req() req: any,
   ) {
-    const authCustId = req.user?.customerId || customerId;
+    const authCustId = customerId;
     return this.workService.rescheduleWork(authCustId, id, dto);
   }
 
@@ -367,7 +367,7 @@ export class WorkController {
     @Body() dto: { reason?: string },
     @Req() req: any,
   ) {
-    const authCustId = req.user?.customerId || customerId;
+    const authCustId = customerId;
     return this.workService.requestRework(authCustId, id, dto);
   }
 
@@ -381,7 +381,7 @@ export class WorkController {
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    const custId = customerIdQuery || undefined || undefined;
     return this.workService.approveWork(custId, id);
   }
 
@@ -420,7 +420,7 @@ export class WorkController {
     @Req() req: any,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(custId, id, { status } as any, employeeId ?? undefined);
   }
 
@@ -435,7 +435,7 @@ export class WorkController {
     @Req() req: any,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(
       custId,
       id,

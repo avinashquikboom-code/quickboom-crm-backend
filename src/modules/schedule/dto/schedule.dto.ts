@@ -3,15 +3,9 @@ import { IsDateString, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min
 import { ScheduleStatus } from '@prisma/client';
 
 export class CreateScheduleDto {
-  @ApiProperty({ example: 1 })
-  @IsInt()
-  @IsNotEmpty()
-  customerId: number;
+  
 
-  @ApiPropertyOptional({ example: 1 })
-  @IsInt()
-  @IsOptional()
-  subscriptionId?: number;
+  
 
   @ApiPropertyOptional({ example: 1 })
   @IsInt()

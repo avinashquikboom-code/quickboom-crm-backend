@@ -67,11 +67,9 @@ export class ExtractPlacesDto {
   @IsString()
   source?: string;
 
-  @IsOptional()
-  customerId?: number | string;
+  
 
-  @IsOptional()
-  tenantId?: number | string;
+  
 
   @IsOptional()
   companyId?: number | string;

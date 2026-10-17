@@ -19,16 +19,7 @@ export class ShiftService {
   constructor(private prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId?: number | string | null): Promise<number> {
-    if (typeof customerId === 'number' && !isNaN(customerId) && customerId > 0) return customerId;
-    if (typeof customerId === 'string' && !isNaN(Number(customerId)) && Number(customerId) > 0) {
-      return Number(customerId);
-    }
-    const firstCustomer = await this.prisma.customer.findFirst({
-      where: { deletedAt: null, isActive: true },
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return firstCustomer?.id || 1;
+return undefined;
   }
 
   async getMetrics(customerId?: number | string | null, isSuperAdmin = false) {
@@ -36,12 +27,12 @@ export class ShiftService {
     this.logger.log(`[SHIFT_METRICS_DEBUG] queryStarted: true, customerId: ${numCustomerId}`);
 
     const [total, active, nightShifts, rotationalShifts, assignedEmployees] = await Promise.all([
-      this.prisma.shift.count({ where: { customerId: numCustomerId, deletedAt: null } }),
-      this.prisma.shift.count({ where: { customerId: numCustomerId, status: 'ACTIVE', deletedAt: null } }),
-      this.prisma.shift.count({ where: { customerId: numCustomerId, isNightShift: true, deletedAt: null } }),
-      this.prisma.shift.count({ where: { customerId: numCustomerId, isRotational: true, deletedAt: null } }),
+      this.prisma.shift.count({ where: {  deletedAt: null } }),
+      this.prisma.shift.count({ where: {  status: 'ACTIVE', deletedAt: null } }),
+      this.prisma.shift.count({ where: {  isNightShift: true, deletedAt: null } }),
+      this.prisma.shift.count({ where: {  isRotational: true, deletedAt: null } }),
       this.prisma.employee.count({
-        where: { customerId: numCustomerId, shiftId: { not: null }, status: 'ACTIVE' },
+        where: {  shiftId: { not: null }, status: 'ACTIVE' },
       }),
     ]);
 
@@ -64,7 +55,7 @@ export class ShiftService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     this.logger.log(`[SHIFT_DEBUG] request: GET /shifts, customerId: ${numCustomerId}`);
 
-    const where: any = { customerId: numCustomerId, deletedAt: null };
+    const where: any = {  deletedAt: null };
 
     if (query.status && query.status !== 'ALL') {
       where.status = query.status;
@@ -114,7 +105,7 @@ export class ShiftService {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isSuperAdmin) {
-      where.customerId = numCustomerId;
+      
     }
 
     const shift = await this.prisma.shift.findFirst({
@@ -149,7 +140,7 @@ export class ShiftService {
     // Verify code uniqueness for customer
     const cleanCode = dto.code ? dto.code.trim().toUpperCase() : 'SHIFT';
     const existing = await this.prisma.shift.findFirst({
-      where: { customerId: numCustomerId, code: cleanCode, deletedAt: null },
+      where: {  code: cleanCode, deletedAt: null },
     });
 
     if (existing) {
@@ -159,7 +150,7 @@ export class ShiftService {
     return this.prisma.$transaction(async (tx) => {
       const shift = await tx.shift.create({
         data: {
-          customerId: numCustomerId,
+          
           name: dto.name.trim(),
           code: cleanCode,
           startTime: dto.startTime || '09:30 AM',
@@ -181,7 +172,7 @@ export class ShiftService {
       await tx.shiftGuidance.create({
         data: {
           shiftId: shift.id,
-          customerId: numCustomerId,
+          
           overtimeRule: dto.guidance?.overtimeRule || 'Overtime commences after 9 hours of active shift work; calculated at 1.5x regular wage.',
           punchInRule: dto.guidance?.punchInRule || 'Punch-in permitted 30 mins before shift start. 15-minute grace period applies.',
           punchOutRule: dto.guidance?.punchOutRule || 'Early departure before shift completion requires supervisor half-day clearance.',
@@ -233,7 +224,7 @@ export class ShiftService {
           where: { shiftId: numId },
           create: {
             shiftId: numId,
-            customerId: numCustomerId,
+            
             ...dto.guidance,
           },
           update: {
@@ -258,7 +249,7 @@ export class ShiftService {
       where: { shiftId: numId },
       create: {
         shiftId: numId,
-        customerId: numCustomerId,
+        
         ...dto,
       },
       update: {
@@ -275,7 +266,7 @@ export class ShiftService {
     if (dto.employeeIds && dto.employeeIds.length > 0) {
       await this.prisma.employee.updateMany({
         where: {
-          customerId: numCustomerId,
+          
           id: { in: dto.employeeIds.map(Number) },
         },
         data: { shiftId: numId },
@@ -285,7 +276,7 @@ export class ShiftService {
     if (dto.departmentId) {
       await this.prisma.employee.updateMany({
         where: {
-          customerId: numCustomerId,
+          
           departmentId: Number(dto.departmentId),
         },
         data: { shiftId: numId },

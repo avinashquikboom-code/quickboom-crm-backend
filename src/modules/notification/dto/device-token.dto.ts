@@ -32,10 +32,7 @@ export class SendNotificationDto {
   @IsNumber()
   userId?: number;
 
-  @ApiPropertyOptional({ description: 'Target Customer ID (optional)', example: 1 })
-  @IsOptional()
-  @IsNumber()
-  customerId?: number;
+  
 
   @ApiProperty({ description: 'Notification Title', example: 'Order Confirmed' })
   @IsString()
@@ -111,10 +108,7 @@ export class AdminOfferNotificationDto {
   @IsArray()
   targetIds?: number[];
 
-  @ApiPropertyOptional({ description: 'Target customer ID (optional: if omitted, broadcast to all active customers)', example: 1 })
-  @IsOptional()
-  @IsNumber()
-  customerId?: number;
+  
 
   @ApiPropertyOptional({ description: 'Optional promo / offer code', example: 'FESTIVE20' })
   @IsOptional()
@@ -172,9 +166,7 @@ export class ResendOfferCampaignDto {
 }
 
 export class TestCustomerNotificationDto {
-  @ApiProperty({ description: 'Customer ID whose active devices should receive the test push', example: 1 })
-  @IsNotEmpty()
-  customerId: number | string;
+  
 }
 
 export class UpdateOfferCampaignDto {

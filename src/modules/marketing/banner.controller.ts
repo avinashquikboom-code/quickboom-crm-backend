@@ -77,9 +77,7 @@ export class BannerController {
       customerId ??
       headerCustomerId ??
       req?.headers?.['x-customer-id'] ??
-      req?.customerId ??
-      user?.customerId ??
-      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
+      (user?.role === 'CUSTOMER' ? (user?.id) : undefined);
 
     if (typeof rawCustId === 'number' && !isNaN(rawCustId)) {
       parsedCustomerId = rawCustId;
@@ -92,7 +90,7 @@ export class BannerController {
 
     return {
       id: user?.id ?? 0,
-      customerId: isSuperAdmin ? (headerCustomerId || req?.query?.customerId ? parsedCustomerId : null) : parsedCustomerId,
+      
       role: user?.role,
       isSuperAdmin,
     };

@@ -104,13 +104,11 @@ export class CouponController {
     @Req() req: any,
     @Body() body: any,
   ) {
-    const customerId = Number(customerIdStr || req?.customerId || user?.customerId);
-    if (!customerId || isNaN(customerId)) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
+    const customerId = Number(customerIdStr || undefined || undefined);
+    
     const planId = Number(body?.planId ?? body?.packageId);
     const quote = await this.couponService.quote({
-      customerId,
+      
       planId,
       couponCode: body?.couponCode,
       billingCycle: body?.billingCycle,

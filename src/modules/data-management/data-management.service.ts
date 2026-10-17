@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import {
   Injectable,
   BadRequestException,
@@ -26,15 +27,7 @@ export class DataManagementService {
    * Resolves customer ID from explicit parameter or defaults to the first customer
    */
   private async resolveCustomerId(customerId: number | string | undefined | null): Promise<number> {
-    const numCustomerId = Number(customerId);
-    if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      return numCustomerId;
-    }
-    const defaultCust = await this.prisma.customer.findFirst({
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return defaultCust?.id || 1;
+return undefined;
   }
 
   /**
@@ -78,7 +71,7 @@ export class DataManagementService {
     }
 
     const numCustomerId = Number(customerId);
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && employee.customerId !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
       throw new ForbiddenException('You do not have permission to access records for this employee.');
     }
 
@@ -93,7 +86,7 @@ export class DataManagementService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     try {
       const [
-        leadsCount,
+
         contactsCount,
         companiesCount,
         dealsCount,
@@ -117,35 +110,34 @@ export class DataManagementService {
         designationsCount,
         usersCount,
       ] = await Promise.all([
-        this.prisma.lead.count({ where: { customerId: numCustomerId } }),
-        this.prisma.contact.count({ where: { customerId: numCustomerId } }),
-        this.prisma.company.count({ where: { customerId: numCustomerId } }),
-        this.prisma.deal.count({ where: { customerId: numCustomerId } }),
-        this.prisma.task.count({ where: { customerId: numCustomerId } }),
-        this.prisma.attendance.count({ where: { customerId: numCustomerId } }),
+        this.prisma.contact.count({ where: {  } }),
+        this.prisma.company.count({ where: {  } }),
+        this.prisma.deal.count({ where: {  } }),
+        this.prisma.task.count({ where: {  } }),
+        this.prisma.attendance.count({ where: {  } }),
         this.prisma.attendanceBreak.count({
-          where: { attendance: { customerId: numCustomerId } },
+          where: { attendance: {  } },
         }),
-        this.prisma.leaveRequest.count({ where: { customerId: numCustomerId } }),
-        this.prisma.remoteRequest.count({ where: { customerId: numCustomerId } }),
-        this.prisma.visit.count({ where: { customerId: numCustomerId } }),
-        this.prisma.payroll.count({ where: { customerId: numCustomerId } }),
-        this.prisma.salarySlip.count({ where: { customerId: numCustomerId } }),
-        this.prisma.notification.count({ where: { customerId: numCustomerId } }),
-        this.prisma.employeeLocation.count({ where: { customerId: numCustomerId } }),
-        this.prisma.work.count({ where: { customerId: numCustomerId } }),
-        this.prisma.monthlySchedule.count({ where: { customerId: numCustomerId } }),
-        this.prisma.supportTicket.count({ where: { customerId: numCustomerId } }),
-        this.prisma.employeeClaim.count({ where: { customerId: numCustomerId } }),
-        this.prisma.employeeLoan.count({ where: { customerId: numCustomerId } }),
-        this.prisma.employee.count({ where: { customerId: numCustomerId } }),
-        this.prisma.department.count({ where: { customerId: numCustomerId } }),
-        this.prisma.designation.count({ where: { customerId: numCustomerId } }),
-        this.prisma.user.count({ where: { customerId: numCustomerId } }),
+        this.prisma.leaveRequest.count({ where: {  } }),
+        this.prisma.remoteRequest.count({ where: {  } }),
+        this.prisma.visit.count({ where: {  } }),
+        this.prisma.payroll.count({ where: {  } }),
+        this.prisma.salarySlip.count({ where: {  } }),
+        this.prisma.notification.count({ where: {  } }),
+        this.prisma.employeeLocation.count({ where: {  } }),
+        this.prisma.work.count({ where: {  } }),
+        this.prisma.monthlySchedule.count({ where: {  } }),
+        this.prisma.supportTicket.count({ where: {  } }),
+        this.prisma.employeeClaim.count({ where: {  } }),
+        this.prisma.employeeLoan.count({ where: {  } }),
+        this.prisma.employee.count({ where: {  } }),
+        this.prisma.department.count({ where: {  } }),
+        this.prisma.designation.count({ where: {  } }),
+        this.prisma.user.count({ where: {  } }),
       ]);
 
       const lastResetLogs = await this.prisma.auditLog.findMany({
-        where: { customerId: numCustomerId, action: 'DATA_RESET' },
+        where: {  action: 'DATA_RESET' },
         orderBy: { createdAt: 'desc' },
         take: 10,
       });
@@ -153,8 +145,8 @@ export class DataManagementService {
       return {
         transactional: {
           crm: {
-            total: leadsCount + contactsCount + companiesCount + dealsCount + tasksCount,
-            leads: leadsCount,
+            total: contactsCount + companiesCount + dealsCount + tasksCount,
+            
             contacts: contactsCount,
             companies: companiesCount,
             deals: dealsCount,
@@ -235,7 +227,7 @@ export class DataManagementService {
   async getResetHistory(customerId: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const logs = await this.prisma.auditLog.findMany({
-      where: { customerId: numCustomerId, action: 'DATA_RESET' },
+      where: {  action: 'DATA_RESET' },
       include: {
         user: {
           select: {
@@ -296,24 +288,24 @@ export class DataManagementService {
       switch (normModule) {
         case 'crm': {
           // Leaf children
-          if (tx.leadActivityTimeline?.deleteMany) await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-          if (tx.leadNote?.deleteMany) await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-          if (tx.leadReminder?.deleteMany) await tx.leadReminder.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-          if (tx.leadStatusHistory?.deleteMany) await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-          if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: { customerId: numCustomerId } } });
-          if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: { customerId: numCustomerId } } });
-          if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: { customerId: numCustomerId } } });
-          if (tx.quotationItem?.deleteMany) await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numCustomerId } } });
-          if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numCustomerId } } });
+          
+          
+          
+          
+          if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: {  } } });
+          if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: {  } } });
+          if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: {  } } });
+          if (tx.quotationItem?.deleteMany) await tx.quotationItem.deleteMany({ where: { quotation: {  } } });
+          if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: {  } } });
 
           // Parents in FK-safe order
-          const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-          const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+          const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: {  } }) : { count: 0 };
+          const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: {  } }) : { count: 0 };
+          const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: {  } }) : { count: 0 };
+          const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: {  } }) : { count: 0 };
+          const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: {  } }) : { count: 0 };
+          const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: {  } }) : { count: 0 };
+          const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: {  } }) : { count: 0 };
 
           deletedCount =
             cnt(quotations) +
@@ -327,84 +319,84 @@ export class DataManagementService {
         }
         case 'attendance': {
           const breaks = tx.attendanceBreak?.deleteMany
-            ? await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numCustomerId } } })
+            ? await tx.attendanceBreak.deleteMany({ where: { attendance: {  } } })
             : { count: 0 };
           const attendances = tx.attendance?.deleteMany
-            ? await tx.attendance.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.attendance.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(breaks) + cnt(attendances);
           break;
         }
         case 'leave': {
-          if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: { customerId: numCustomerId } });
-          if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: { customerId: numCustomerId } });
+          if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: {  } });
+          if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: {  } });
           const leaves = tx.leaveRequest?.deleteMany
-            ? await tx.leaveRequest.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.leaveRequest.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(leaves);
           break;
         }
         case 'remote': {
           const remotes = tx.remoteRequest?.deleteMany
-            ? await tx.remoteRequest.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.remoteRequest.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(remotes);
           break;
         }
         case 'visits': {
           const visits = tx.visit?.deleteMany
-            ? await tx.visit.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.visit.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(visits);
           break;
         }
         case 'payroll': {
           const slips = tx.salarySlip?.deleteMany
-            ? await tx.salarySlip.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.salarySlip.deleteMany({ where: {  } })
             : { count: 0 };
           const items = tx.payrollItem?.deleteMany
-            ? await tx.payrollItem.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.payrollItem.deleteMany({ where: {  } })
             : { count: 0 };
           const payrolls = tx.payroll?.deleteMany
-            ? await tx.payroll.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.payroll.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(slips) + cnt(items) + cnt(payrolls);
           break;
         }
         case 'notifications': {
           const notifications = tx.notification?.deleteMany
-            ? await tx.notification.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.notification.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(notifications);
           break;
         }
         case 'location': {
-          if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: { customerId: numCustomerId } });
+          if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: {  } });
           const locations = tx.employeeLocation?.deleteMany
-            ? await tx.employeeLocation.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.employeeLocation.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(locations);
           break;
         }
         case 'claims': {
           const claims = tx.employeeClaim?.deleteMany
-            ? await tx.employeeClaim.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.employeeClaim.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(claims);
           break;
         }
         case 'loans': {
           const loans = tx.employeeLoan?.deleteMany
-            ? await tx.employeeLoan.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.employeeLoan.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(loans);
           break;
         }
         case 'works': {
-          if (tx.workTask?.deleteMany) await tx.workTask.deleteMany({ where: { work: { customerId: numCustomerId } } });
-          if (tx.workAccessRequest?.deleteMany) await tx.workAccessRequest.deleteMany({ where: { customerId: numCustomerId } });
+          if (tx.workTask?.deleteMany) await tx.workTask.deleteMany({ where: { work: {  } } });
+          if (tx.workAccessRequest?.deleteMany) await tx.workAccessRequest.deleteMany({ where: {  } });
           const works = tx.work?.deleteMany
-            ? await tx.work.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.work.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(works);
           break;
@@ -412,7 +404,7 @@ export class DataManagementService {
         case 'schedules': {
           // Monthly customer plan schedules only. Plans and subscriptions use onDelete: SetNull.
           const schedules = tx.monthlySchedule?.deleteMany
-            ? await tx.monthlySchedule.deleteMany({ where: { customerId: numCustomerId } })
+            ? await tx.monthlySchedule.deleteMany({ where: {  } })
             : { count: 0 };
           deletedCount = cnt(schedules);
           break;
@@ -424,7 +416,7 @@ export class DataManagementService {
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: normModule.toUpperCase(),
@@ -488,82 +480,82 @@ export class DataManagementService {
 
     await this.prisma.$transaction(async (tx) => {
       // ── Step 1: Deep leaf children across all transactional areas ─────────────
-      if (tx.leadActivityTimeline?.deleteMany) await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      if (tx.leadNote?.deleteMany) await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      if (tx.leadReminder?.deleteMany) await tx.leadReminder.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      if (tx.leadStatusHistory?.deleteMany) await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numCustomerId } } });
-      if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      if (tx.quotationItem?.deleteMany) await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numCustomerId } } });
-      if (tx.workTask?.deleteMany) await tx.workTask.deleteMany({ where: { work: { customerId: numCustomerId } } });
-      if (tx.ticketComment?.deleteMany) await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numCustomerId } } });
-      if (tx.attendanceBreak?.deleteMany) await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numCustomerId } } });
-      if (tx.aiGenerationAsset?.deleteMany) await tx.aiGenerationAsset.deleteMany({ where: { generation: { customerId: numCustomerId } } });
+      
+      
+      
+      
+      if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: {  } } });
+      if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: {  } } });
+      if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: {  } } });
+      if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: {  } } });
+      if (tx.quotationItem?.deleteMany) await tx.quotationItem.deleteMany({ where: { quotation: {  } } });
+      if (tx.workTask?.deleteMany) await tx.workTask.deleteMany({ where: { work: {  } } });
+      if (tx.ticketComment?.deleteMany) await tx.ticketComment.deleteMany({ where: { ticket: {  } } });
+      if (tx.attendanceBreak?.deleteMany) await tx.attendanceBreak.deleteMany({ where: { attendance: {  } } });
+      if (tx.aiGenerationAsset?.deleteMany) await tx.aiGenerationAsset.deleteMany({ where: { generation: {  } } });
 
       // ── Step 2: Marketing & Social Media ──────────────────────────────────────
-      const videoViews = tx.customerMarketingVideoView?.deleteMany ? await tx.customerMarketingVideoView.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const videos = tx.marketingVideo?.deleteMany ? await tx.marketingVideo.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const banners = tx.marketingBanner?.deleteMany ? await tx.marketingBanner.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const trending = tx.trendingContent?.deleteMany ? await tx.trendingContent.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialPublishes = tx.socialPublish?.deleteMany ? await tx.socialPublish.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialAccounts = tx.socialAccount?.deleteMany ? await tx.socialAccount.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialHandlers = tx.socialMediaHandler?.deleteMany ? await tx.socialMediaHandler.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const videoViews = tx.customerMarketingVideoView?.deleteMany ? await tx.customerMarketingVideoView.deleteMany({ where: {  } }) : { count: 0 };
+      const videos = tx.marketingVideo?.deleteMany ? await tx.marketingVideo.deleteMany({ where: {  } }) : { count: 0 };
+      const banners = tx.marketingBanner?.deleteMany ? await tx.marketingBanner.deleteMany({ where: {  } }) : { count: 0 };
+      const trending = tx.trendingContent?.deleteMany ? await tx.trendingContent.deleteMany({ where: {  } }) : { count: 0 };
+      const socialPublishes = tx.socialPublish?.deleteMany ? await tx.socialPublish.deleteMany({ where: {  } }) : { count: 0 };
+      const socialAccounts = tx.socialAccount?.deleteMany ? await tx.socialAccount.deleteMany({ where: {  } }) : { count: 0 };
+      const socialHandlers = tx.socialMediaHandler?.deleteMany ? await tx.socialMediaHandler.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 3: AI Studio ─────────────────────────────────────────────────────
-      const aiGens = tx.aiGeneration?.deleteMany ? await tx.aiGeneration.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const aiTxns = tx.aiCreditTransaction?.deleteMany ? await tx.aiCreditTransaction.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const aiGens = tx.aiGeneration?.deleteMany ? await tx.aiGeneration.deleteMany({ where: {  } }) : { count: 0 };
+      const aiTxns = tx.aiCreditTransaction?.deleteMany ? await tx.aiCreditTransaction.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 4: Bookings & Reviews ────────────────────────────────────────────
-      const bookingPayments = tx.influencerBookingPayment?.deleteMany ? await tx.influencerBookingPayment.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const reviews = tx.influencerReview?.deleteMany ? await tx.influencerReview.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const bookings = tx.influencerBooking?.deleteMany ? await tx.influencerBooking.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const bookingPayments = tx.influencerBookingPayment?.deleteMany ? await tx.influencerBookingPayment.deleteMany({ where: {  } }) : { count: 0 };
+      const reviews = tx.influencerReview?.deleteMany ? await tx.influencerReview.deleteMany({ where: {  } }) : { count: 0 };
+      const bookings = tx.influencerBooking?.deleteMany ? await tx.influencerBooking.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 5: Calendar / Schedules & Works ───────────────────────────────────
-      const schedules = tx.monthlySchedule?.deleteMany ? await tx.monthlySchedule.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeLeadLimit?.deleteMany) await tx.employeeLeadLimit.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.roleLeadLimit?.deleteMany) await tx.roleLeadLimit.deleteMany({ where: { customerId: numCustomerId } });
-      const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const schedules = tx.monthlySchedule?.deleteMany ? await tx.monthlySchedule.deleteMany({ where: {  } }) : { count: 0 };
+      const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: {  } }) : { count: 0 };
+      if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: {  } });
+      if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: {  } });
+      
+      
+      const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 6: Billing & Invoices (Purge transactional invoices/payments) ────
-      if (tx.invoiceItem?.deleteMany) await tx.invoiceItem.deleteMany({ where: { invoice: { customerId: numCustomerId } } });
-      const invRes = tx.invoice?.deleteMany ? await tx.invoice.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const payRes = tx.paymentHistory?.deleteMany ? await tx.paymentHistory.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const instRes = tx.subscriptionInstallment?.deleteMany ? await tx.subscriptionInstallment.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.customPlanOrder?.deleteMany) await tx.customPlanOrder.deleteMany({ where: { customerId: numCustomerId } });
+      if (tx.invoiceItem?.deleteMany) await tx.invoiceItem.deleteMany({ where: { invoice: {  } } });
+      const invRes = tx.invoice?.deleteMany ? await tx.invoice.deleteMany({ where: {  } }) : { count: 0 };
+      const payRes = tx.paymentHistory?.deleteMany ? await tx.paymentHistory.deleteMany({ where: {  } }) : { count: 0 };
+      const instRes = tx.subscriptionInstallment?.deleteMany ? await tx.subscriptionInstallment.deleteMany({ where: {  } }) : { count: 0 };
+      
 
       // ── Step 7: CRM Parent Records ────────────────────────────────────────────
-      const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: {  } }) : { count: 0 };
+      const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: {  } }) : { count: 0 };
+      const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: {  } }) : { count: 0 };
+      const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: {  } }) : { count: 0 };
+      const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: {  } }) : { count: 0 };
+      const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: {  } }) : { count: 0 };
+      const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 8: Data Capture ──────────────────────────────────────────────────
-      const dcPlaces = tx.dataCapturePlace?.deleteMany ? await tx.dataCapturePlace.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const dcJobs = tx.dataCaptureJob?.deleteMany ? await tx.dataCaptureJob.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const dcPlaces = tx.dataCapturePlace?.deleteMany ? await tx.dataCapturePlace.deleteMany({ where: {  } }) : { count: 0 };
+      const dcJobs = tx.dataCaptureJob?.deleteMany ? await tx.dataCaptureJob.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 9: Operations & HR Transactional ─────────────────────────────────
-      const tickets = tx.supportTicket?.deleteMany ? await tx.supportTicket.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const notifications = tx.notification?.deleteMany ? await tx.notification.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const locations = tx.employeeLocation?.deleteMany ? await tx.employeeLocation.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: { customerId: numCustomerId } });
-      const attendances = tx.attendance?.deleteMany ? await tx.attendance.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const leaves = tx.leaveRequest?.deleteMany ? await tx.leaveRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: { customerId: numCustomerId } });
-      const remotes = tx.remoteRequest?.deleteMany ? await tx.remoteRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const slips = tx.salarySlip?.deleteMany ? await tx.salarySlip.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const items = tx.payrollItem?.deleteMany ? await tx.payrollItem.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const payrolls = tx.payroll?.deleteMany ? await tx.payroll.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
+      const tickets = tx.supportTicket?.deleteMany ? await tx.supportTicket.deleteMany({ where: {  } }) : { count: 0 };
+      const notifications = tx.notification?.deleteMany ? await tx.notification.deleteMany({ where: {  } }) : { count: 0 };
+      const locations = tx.employeeLocation?.deleteMany ? await tx.employeeLocation.deleteMany({ where: {  } }) : { count: 0 };
+      if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: {  } });
+      const attendances = tx.attendance?.deleteMany ? await tx.attendance.deleteMany({ where: {  } }) : { count: 0 };
+      const leaves = tx.leaveRequest?.deleteMany ? await tx.leaveRequest.deleteMany({ where: {  } }) : { count: 0 };
+      if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: {  } });
+      if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: {  } });
+      const remotes = tx.remoteRequest?.deleteMany ? await tx.remoteRequest.deleteMany({ where: {  } }) : { count: 0 };
+      const slips = tx.salarySlip?.deleteMany ? await tx.salarySlip.deleteMany({ where: {  } }) : { count: 0 };
+      const items = tx.payrollItem?.deleteMany ? await tx.payrollItem.deleteMany({ where: {  } }) : { count: 0 };
+      const payrolls = tx.payroll?.deleteMany ? await tx.payroll.deleteMany({ where: {  } }) : { count: 0 };
+      const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: {  } }) : { count: 0 };
+      const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: {  } }) : { count: 0 };
 
       totalDeleted =
         cnt(quotations) +
@@ -606,18 +598,13 @@ export class DataManagementService {
         cnt(instRes);
 
       // Reset storage usage
-      if (tx.customer?.update) {
-        await tx.customer.update({
-          where: { id: numCustomerId },
-          data: { storageUsed: 0, updatedAt: new Date() },
-        });
-      }
+      
 
       // Audit Log
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: 'ALL_TRANSACTIONAL',
@@ -633,26 +620,7 @@ export class DataManagementService {
       }
 
       // ── Step 10: Pre-commit Verification ──────────────────────────────────────
-      if (typeof (tx.lead as any)?.count === 'function') {
-        const remaining = await Promise.all([
-          tx.lead.count({ where: { customerId: numCustomerId } }),
-          tx.contact?.count ? tx.contact.count({ where: { customerId: numCustomerId } }) : 0,
-          tx.deal?.count ? tx.deal.count({ where: { customerId: numCustomerId } }) : 0,
-          tx.task?.count ? tx.task.count({ where: { customerId: numCustomerId } }) : 0,
-          tx.attendance?.count ? tx.attendance.count({ where: { customerId: numCustomerId } }) : 0,
-          tx.leaveRequest?.count ? tx.leaveRequest.count({ where: { customerId: numCustomerId } }) : 0,
-          tx.work?.count ? tx.work.count({ where: { customerId: numCustomerId } }) : 0,
-        ]);
-
-        const [rLeads, rContacts, rDeals, rTasks, rAtt, rLeaves, rWorks] = remaining;
-        const totalRemaining = rLeads + rContacts + rDeals + rTasks + rAtt + rLeaves + rWorks;
-
-        if (totalRemaining > 0) {
-          throw new InternalServerErrorException(
-            `Data reset verification failed: ${totalRemaining} transactional records remain after deletion. Transaction rolled back.`,
-          );
-        }
-      }
+      
     });
 
     this.logger.log(
@@ -676,7 +644,7 @@ export class DataManagementService {
     employeeId: number | string,
   ) {
     const employee = await this.resolveEmployee(employeeId, customerId);
-    const numCustomerId = employee.customerId;
+    const numCustomerId = undefined;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
 
@@ -695,22 +663,22 @@ export class DataManagementService {
       workTasksCount,
       notificationsCount,
     ] = await Promise.all([
-      this.prisma.attendance.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
+      this.prisma.attendance.count({ where: {  employeeId: numEmployeeId } }),
       this.prisma.attendanceBreak.count({
-        where: { attendance: { customerId: numCustomerId, employeeId: numEmployeeId } },
+        where: { attendance: {  employeeId: numEmployeeId } },
       }),
-      this.prisma.leaveRequest.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.remoteRequest.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.visit.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.salarySlip.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.payrollItem.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.employeeLocation.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.employeeClaim.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.employeeLoan.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.task.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-      this.prisma.workTask.count({ where: { work: { customerId: numCustomerId }, assignedToId: numEmployeeId } }),
+      this.prisma.leaveRequest.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.remoteRequest.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.visit.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.salarySlip.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.payrollItem.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.employeeLocation.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.employeeClaim.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.employeeLoan.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.task.count({ where: {  employeeId: numEmployeeId } }),
+      this.prisma.workTask.count({ where: { work: {  }, assignedToId: numEmployeeId } }),
       employeeUserId
-        ? this.prisma.notification.count({ where: { customerId: numCustomerId, userId: employeeUserId } })
+        ? this.prisma.notification.count({ where: {  userId: employeeUserId } })
         : Promise.resolve(0),
     ]);
 
@@ -774,7 +742,7 @@ export class DataManagementService {
     dto: EmployeeModuleResetDto,
   ) {
     const employee = await this.resolveEmployee(employeeId, customerId);
-    const numCustomerId = employee.customerId;
+    const numCustomerId = undefined;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
     const numUserId = Number(userId) || 1;
@@ -799,12 +767,12 @@ export class DataManagementService {
         case 'attendance': {
           const breaks = tx.attendanceBreak?.deleteMany
             ? await tx.attendanceBreak.deleteMany({
-                where: { attendance: { customerId: numCustomerId, employeeId: numEmployeeId } },
+                where: { attendance: {  employeeId: numEmployeeId } },
               })
             : { count: 0 };
           const attendances = tx.attendance?.deleteMany
             ? await tx.attendance.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(breaks) + cnt(attendances);
@@ -813,7 +781,7 @@ export class DataManagementService {
         case 'leave': {
           if (tx.leaveAdjustmentHistory?.deleteMany) {
             await tx.leaveAdjustmentHistory.deleteMany({
-              where: { customerId: numCustomerId, employeeId: numEmployeeId },
+              where: {  employeeId: numEmployeeId },
             });
           }
           if (tx.employeeLeaveBalance?.deleteMany) {
@@ -823,7 +791,7 @@ export class DataManagementService {
           }
           const leaves = tx.leaveRequest?.deleteMany
             ? await tx.leaveRequest.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(leaves);
@@ -832,7 +800,7 @@ export class DataManagementService {
         case 'remote': {
           const remotes = tx.remoteRequest?.deleteMany
             ? await tx.remoteRequest.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(remotes);
@@ -841,7 +809,7 @@ export class DataManagementService {
         case 'visits': {
           const visits = tx.visit?.deleteMany
             ? await tx.visit.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(visits);
@@ -850,12 +818,12 @@ export class DataManagementService {
         case 'payroll': {
           const slips = tx.salarySlip?.deleteMany
             ? await tx.salarySlip.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           const items = tx.payrollItem?.deleteMany
             ? await tx.payrollItem.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(slips) + cnt(items);
@@ -864,7 +832,7 @@ export class DataManagementService {
         case 'claims': {
           const claims = tx.employeeClaim?.deleteMany
             ? await tx.employeeClaim.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(claims);
@@ -873,7 +841,7 @@ export class DataManagementService {
         case 'loans': {
           const loans = tx.employeeLoan?.deleteMany
             ? await tx.employeeLoan.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(loans);
@@ -887,7 +855,7 @@ export class DataManagementService {
           }
           const locations = tx.employeeLocation?.deleteMany
             ? await tx.employeeLocation.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(locations);
@@ -896,14 +864,14 @@ export class DataManagementService {
         case 'tasks': {
           if (tx.taskHistory?.deleteMany) {
             await tx.taskHistory.deleteMany({
-              where: { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+              where: { task: {  employeeId: numEmployeeId } },
             });
           }
           if (tx.taskProof?.deleteMany) {
             await tx.taskProof.deleteMany({
               where: {
                 OR: [
-                  { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+                  { task: {  employeeId: numEmployeeId } },
                   { employeeId: numEmployeeId },
                 ],
               },
@@ -911,12 +879,12 @@ export class DataManagementService {
           }
           if (tx.taskReview?.deleteMany) {
             await tx.taskReview.deleteMany({
-              where: { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+              where: { task: {  employeeId: numEmployeeId } },
             });
           }
           const tasks = tx.task?.deleteMany
             ? await tx.task.deleteMany({
-                where: { customerId: numCustomerId, employeeId: numEmployeeId },
+                where: {  employeeId: numEmployeeId },
               })
             : { count: 0 };
           deletedCount = cnt(tasks);
@@ -925,21 +893,21 @@ export class DataManagementService {
         case 'works': {
           if (tx.workTask?.deleteMany) {
             await tx.workTask.deleteMany({
-              where: { work: { customerId: numCustomerId }, assignedToId: numEmployeeId },
+              where: { work: {  }, assignedToId: numEmployeeId },
             });
           }
           if (tx.workAccessRequest?.deleteMany) {
             await tx.workAccessRequest.deleteMany({
-              where: { customerId: numCustomerId, employeeId: numEmployeeId },
+              where: {  employeeId: numEmployeeId },
             });
           }
           if (tx.work?.updateMany) {
             await tx.work.updateMany({
-              where: { customerId: numCustomerId, assignedToId: numEmployeeId },
+              where: {  assignedToId: numEmployeeId },
               data: { assignedToId: null },
             });
             await tx.work.updateMany({
-              where: { customerId: numCustomerId, editorId: numEmployeeId },
+              where: {  editorId: numEmployeeId },
               data: { editorId: null },
             });
           }
@@ -949,7 +917,7 @@ export class DataManagementService {
         case 'notifications': {
           if (employeeUserId && tx.notification?.deleteMany) {
             const notifs = await tx.notification.deleteMany({
-              where: { customerId: numCustomerId, userId: employeeUserId },
+              where: {  userId: employeeUserId },
             });
             deletedCount = cnt(notifs);
           }
@@ -962,7 +930,7 @@ export class DataManagementService {
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: `EMPLOYEE_${normModule.toUpperCase()}`,
@@ -1003,7 +971,7 @@ export class DataManagementService {
     dto: EmployeeResetAllDto,
   ) {
     const employee = await this.resolveEmployee(employeeId, customerId);
-    const numCustomerId = employee.customerId;
+    const numCustomerId = undefined;
     const numEmployeeId = employee.id;
     const employeeUserId = employee.userId;
     const numUserId = Number(userId) || 1;
@@ -1028,14 +996,14 @@ export class DataManagementService {
       // 1. Task children then tasks
       if (tx.taskHistory?.deleteMany) {
         await tx.taskHistory.deleteMany({
-          where: { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+          where: { task: {  employeeId: numEmployeeId } },
         });
       }
       if (tx.taskProof?.deleteMany) {
         await tx.taskProof.deleteMany({
           where: {
             OR: [
-              { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+              { task: {  employeeId: numEmployeeId } },
               { employeeId: numEmployeeId },
             ],
           },
@@ -1043,29 +1011,29 @@ export class DataManagementService {
       }
       if (tx.taskReview?.deleteMany) {
         await tx.taskReview.deleteMany({
-          where: { task: { customerId: numCustomerId, employeeId: numEmployeeId } },
+          where: { task: {  employeeId: numEmployeeId } },
         });
       }
       const tasks = tx.task?.deleteMany
-        ? await tx.task.deleteMany({ where: { customerId: numCustomerId, employeeId: numEmployeeId } })
+        ? await tx.task.deleteMany({ where: {  employeeId: numEmployeeId } })
         : { count: 0 };
 
       // 2. Work tasks & access requests
       const workTasks = tx.workTask?.deleteMany
-        ? await tx.workTask.deleteMany({ where: { work: { customerId: numCustomerId }, assignedToId: numEmployeeId } })
+        ? await tx.workTask.deleteMany({ where: { work: {  }, assignedToId: numEmployeeId } })
         : { count: 0 };
       if (tx.workAccessRequest?.deleteMany) {
-        await tx.workAccessRequest.deleteMany({ where: { customerId: numCustomerId, employeeId: numEmployeeId } });
+        await tx.workAccessRequest.deleteMany({ where: {  employeeId: numEmployeeId } });
       }
 
       // 3. Unassign Works
       if (tx.work?.updateMany) {
         await tx.work.updateMany({
-          where: { customerId: numCustomerId, assignedToId: numEmployeeId },
+          where: {  assignedToId: numEmployeeId },
           data: { assignedToId: null },
         });
         await tx.work.updateMany({
-          where: { customerId: numCustomerId, editorId: numEmployeeId },
+          where: {  editorId: numEmployeeId },
           data: { editorId: null },
         });
       }
@@ -1073,19 +1041,19 @@ export class DataManagementService {
       // 4. Attendance breaks then attendances
       const breaks = tx.attendanceBreak?.deleteMany
         ? await tx.attendanceBreak.deleteMany({
-            where: { attendance: { customerId: numCustomerId, employeeId: numEmployeeId } },
+            where: { attendance: {  employeeId: numEmployeeId } },
           })
         : { count: 0 };
       const attendances = tx.attendance?.deleteMany
         ? await tx.attendance.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
 
       // 5. Leaves & balances
       if (tx.leaveAdjustmentHistory?.deleteMany) {
         await tx.leaveAdjustmentHistory.deleteMany({
-          where: { customerId: numCustomerId, employeeId: numEmployeeId },
+          where: {  employeeId: numEmployeeId },
         });
       }
       if (tx.employeeLeaveBalance?.deleteMany) {
@@ -1095,48 +1063,48 @@ export class DataManagementService {
       }
       const leaves = tx.leaveRequest?.deleteMany
         ? await tx.leaveRequest.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
 
       // 6. Remote requests & visits
       const remotes = tx.remoteRequest?.deleteMany
         ? await tx.remoteRequest.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
       const visits = tx.visit?.deleteMany
         ? await tx.visit.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
 
       // 7. Payroll slips, items & structure
       const slips = tx.salarySlip?.deleteMany
         ? await tx.salarySlip.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
       const items = tx.payrollItem?.deleteMany
         ? await tx.payrollItem.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
       if (tx.salaryStructure?.deleteMany) {
         await tx.salaryStructure.deleteMany({
-          where: { customerId: numCustomerId, employeeId: numEmployeeId },
+          where: {  employeeId: numEmployeeId },
         });
       }
 
       // 8. Claims & Loans
       const claims = tx.employeeClaim?.deleteMany
         ? await tx.employeeClaim.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
       const loans = tx.employeeLoan?.deleteMany
         ? await tx.employeeLoan.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
 
@@ -1148,53 +1116,39 @@ export class DataManagementService {
       }
       const locations = tx.employeeLocation?.deleteMany
         ? await tx.employeeLocation.deleteMany({
-            where: { customerId: numCustomerId, employeeId: numEmployeeId },
+            where: {  employeeId: numEmployeeId },
           })
         : { count: 0 };
 
       // 10. Overrides & Limits
       if (tx.employeeModuleOverride?.deleteMany) {
         await tx.employeeModuleOverride.deleteMany({
-          where: { customerId: numCustomerId, employeeId: numEmployeeId },
+          where: {  employeeId: numEmployeeId },
         });
       }
-      if (tx.employeeLeadLimit?.deleteMany) {
-        await tx.employeeLeadLimit.deleteMany({
-          where: { employeeId: numEmployeeId },
-        });
-      }
+      
 
       // 11. Unlink shared assignments
-      if (tx.lead?.updateMany) {
-        await tx.lead.updateMany({
-          where: { customerId: numCustomerId, employeeId: numEmployeeId },
-          data: { employeeId: null },
-        });
-      }
+      
       if (tx.monthlySchedule?.updateMany) {
         await tx.monthlySchedule.updateMany({
-          where: { customerId: numCustomerId, assignedEmployeeId: numEmployeeId },
+          where: {  assignedEmployeeId: numEmployeeId },
           data: { assignedEmployeeId: null },
         });
       }
       if (tx.team?.updateMany) {
         await tx.team.updateMany({
-          where: { customerId: numCustomerId, leaderId: numEmployeeId },
+          where: {  leaderId: numEmployeeId },
           data: { leaderId: null },
         });
       }
       if (tx.department?.updateMany) {
         await tx.department.updateMany({
-          where: { customerId: numCustomerId, headId: numEmployeeId },
+          where: {  headId: numEmployeeId },
           data: { headId: null },
         });
       }
-      if (tx.customer?.updateMany) {
-        await tx.customer.updateMany({
-          where: { assignedEmployeeId: numEmployeeId },
-          data: { assignedEmployeeId: null },
-        });
-      }
+      
 
       // 12. User notifications & tokens if linked user
       let notifsCount = 0;
@@ -1204,7 +1158,7 @@ export class DataManagementService {
         }
         if (tx.notification?.deleteMany) {
           const n = await tx.notification.deleteMany({
-            where: { customerId: numCustomerId, userId: employeeUserId },
+            where: {  userId: employeeUserId },
           });
           notifsCount = cnt(n);
         }
@@ -1229,7 +1183,7 @@ export class DataManagementService {
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            customerId: numCustomerId,
+            
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: 'EMPLOYEE_ALL_TRANSACTIONAL',
@@ -1250,16 +1204,16 @@ export class DataManagementService {
       // 14. Pre-commit Verification
       if (typeof (tx.attendance as any)?.count === 'function') {
         const remaining = await Promise.all([
-          tx.attendance.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }),
-          tx.leaveRequest?.count ? tx.leaveRequest.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.remoteRequest?.count ? tx.remoteRequest.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.visit?.count ? tx.visit.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.salarySlip?.count ? tx.salarySlip.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.employeeLocation?.count ? tx.employeeLocation.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.task?.count ? tx.task.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.workTask?.count ? tx.workTask.count({ where: { work: { customerId: numCustomerId }, assignedToId: numEmployeeId } }) : 0,
-          tx.employeeClaim?.count ? tx.employeeClaim.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
-          tx.employeeLoan?.count ? tx.employeeLoan.count({ where: { customerId: numCustomerId, employeeId: numEmployeeId } }) : 0,
+          tx.attendance.count({ where: {  employeeId: numEmployeeId } }),
+          tx.leaveRequest?.count ? tx.leaveRequest.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.remoteRequest?.count ? tx.remoteRequest.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.visit?.count ? tx.visit.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.salarySlip?.count ? tx.salarySlip.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.employeeLocation?.count ? tx.employeeLocation.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.task?.count ? tx.task.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.workTask?.count ? tx.workTask.count({ where: { work: {  }, assignedToId: numEmployeeId } }) : 0,
+          tx.employeeClaim?.count ? tx.employeeClaim.count({ where: {  employeeId: numEmployeeId } }) : 0,
+          tx.employeeLoan?.count ? tx.employeeLoan.count({ where: {  employeeId: numEmployeeId } }) : 0,
         ]);
 
         const [rAtt, rLeaves, rRemotes, rVisits, rSlips, rLocs, rTasks, rWorkTasks, rClaims, rLoans] = remaining;
@@ -1294,49 +1248,8 @@ export class DataManagementService {
    * - Accounts with Super Admin / Admin roles or names
    * - Non-customer system/internal accounts
    */
-  public getBaseCustomerFilter(): Prisma.CustomerWhereInput {
-    return {
-      deletedAt: null,
-      id: { not: 1 },
-      employees: { none: {} },
-      NOT: [
-        {
-          users: {
-            some: {
-              userRoles: {
-                some: {
-                  role: {
-                    OR: [
-                      { type: RoleType.SUPER_ADMIN },
-                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-        {
-          customerType: {
-            in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'],
-          },
-        },
-        {
-          OR: [
-            { name: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
-            { name: { equals: 'SUPER_ADMIN', mode: 'insensitive' as Prisma.QueryMode } },
-            { name: { equals: 'Super Administrator', mode: 'insensitive' as Prisma.QueryMode } },
-            { name: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
-            { name: { equals: 'System Admin', mode: 'insensitive' as Prisma.QueryMode } },
-            { companyName: { equals: 'Super Admin', mode: 'insensitive' as Prisma.QueryMode } },
-            { companyName: { equals: 'SUPER_ADMIN', mode: 'insensitive' as Prisma.QueryMode } },
-            { companyName: { equals: 'Super Administrator', mode: 'insensitive' as Prisma.QueryMode } },
-            { companyName: { equals: 'Admin', mode: 'insensitive' as Prisma.QueryMode } },
-            { companyName: { equals: 'System Admin', mode: 'insensitive' as Prisma.QueryMode } },
-          ],
-        },
-      ],
-    };
+  public getBaseCustomerFilter(): never {
+throw new GoneException('Customer and Lead functionality has been removed');
   }
 
   /**
@@ -1348,201 +1261,16 @@ export class DataManagementService {
    * - System / internal non-customer accounts
    * - Primary root enterprise tenant (#1)
    */
-  async getCustomers(query: { search?: string; limit?: number; page?: number }) {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
-    const skip = (page - 1) * limit;
-
-    const where: Prisma.CustomerWhereInput = {
-      ...this.getBaseCustomerFilter(),
-    };
-
-    if (query.search && query.search.trim().length > 0) {
-      const s = query.search.trim();
-      const searchConditions: Prisma.CustomerWhereInput[] = [
-        { name: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-        { companyName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-        { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-        { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-        {
-          users: {
-            some: {
-              AND: [
-                { deletedAt: null },
-                {
-                  OR: [
-                    { email: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                    { firstName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                    { lastName: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                    { phone: { contains: s, mode: 'insensitive' as Prisma.QueryMode } },
-                  ],
-                },
-                {
-                  NOT: {
-                    userRoles: {
-                      some: {
-                        role: {
-                          OR: [
-                            { type: RoleType.SUPER_ADMIN },
-                            { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
-                          ],
-                        },
-                      },
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        },
-      ];
-
-      // Support searching by numeric ID
-      const numId = Number(s);
-      if (!isNaN(numId) && Number.isInteger(numId) && numId > 0) {
-        searchConditions.push({ id: numId });
-      }
-
-      const searchCondition: Prisma.CustomerWhereInput = {
-        OR: searchConditions,
-      };
-
-      if (where.AND) {
-        (where.AND as any[]).push(searchCondition);
-      } else {
-        where.AND = [searchCondition];
-      }
-    }
-
-    const [items, total] = await Promise.all([
-      this.prisma.customer.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          name: true,
-          companyName: true,
-          email: true,
-          phone: true,
-          city: true,
-          customerType: true,
-          isActive: true,
-          createdAt: true,
-          _count: {
-            select: {
-              leads: true,
-              contacts: true,
-              deals: true,
-              tasks: true,
-              works: true,
-              invoices: true,
-              monthlySchedules: true,
-              subscriptions: true,
-              employees: true,
-            },
-          },
-        },
-      }),
-      this.prisma.customer.count({ where }),
-    ]);
-
-    const itemsWithRelated = items.map((cust) => {
-      const c = cust as any;
-      const relatedRecordsCount =
-        (c._count?.contacts || 0) +
-        (c._count?.deals || 0) +
-        (c._count?.tasks || 0) +
-        (c._count?.works || 0) +
-        (c._count?.invoices || 0) +
-        (c._count?.monthlySchedules || 0) +
-        (c._count?.subscriptions || 0);
-
-      return {
-        ...cust,
-        relatedRecordsCount,
-      };
-    });
-
-    return {
-      customers: itemsWithRelated,
-      data: itemsWithRelated,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+  async getCustomers(query: { search?: string; limit?: number; page?: number }) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
    * GET /api/v1/admin/data-management/customers/summary/all
    * Returns aggregated record counts across all eligible client customers for Reset All preview
    */
-  async getCustomersSummaryAll() {
-    const where = this.getBaseCustomerFilter();
-    const customers = await this.prisma.customer.findMany({
-      where,
-      select: {
-        id: true,
-        _count: {
-          select: {
-            leads: true,
-            contacts: true,
-            deals: true,
-            tasks: true,
-            works: true,
-            invoices: true,
-            monthlySchedules: true,
-            subscriptions: true,
-          },
-        },
-      },
-    });
-
-    const customerIds = customers.map((c) => c.id);
-    const visitsCount = customerIds.length > 0
-      ? await this.prisma.visit.count({ where: { customerId: { in: customerIds } } })
-      : 0;
-
-    const breakdown = {
-      leads: 0,
-      contacts: 0,
-      deals: 0,
-      tasks: 0,
-      works: 0,
-      visits: visitsCount,
-      invoices: 0,
-      monthlySchedules: 0,
-      subscriptions: 0,
-    };
-
-    for (const c of customers as any[]) {
-      breakdown.leads += c._count?.leads || 0;
-      breakdown.contacts += c._count?.contacts || 0;
-      breakdown.deals += c._count?.deals || 0;
-      breakdown.tasks += c._count?.tasks || 0;
-      breakdown.works += c._count?.works || 0;
-      breakdown.invoices += c._count?.invoices || 0;
-      breakdown.monthlySchedules += c._count?.monthlySchedules || 0;
-      breakdown.subscriptions += c._count?.subscriptions || 0;
-    }
-
-    const totalRelatedRecords =
-      breakdown.contacts +
-      breakdown.deals +
-      breakdown.tasks +
-      breakdown.works +
-      breakdown.visits +
-      breakdown.invoices +
-      breakdown.monthlySchedules +
-      breakdown.subscriptions;
-
-    return {
-      totalCustomers: customers.length,
-      totalRelatedRecords,
-      breakdown,
-    };
+  async getCustomersSummaryAll() : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -1596,12 +1324,7 @@ export class DataManagementService {
       ],
     };
 
-    if (query.customerId !== undefined && query.customerId !== null) {
-      const numCustomerId = Number(query.customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
+    
 
     if (query.search && query.search.trim().length > 0) {
       const s = query.search.trim();
@@ -1659,62 +1382,8 @@ export class DataManagementService {
   /**
    * GET live summary of customer data and record counts
    */
-  async getCustomerSummary(customerId: number | string) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: numCustomerId },
-      select: {
-        id: true,
-        name: true,
-        companyName: true,
-        email: true,
-        phone: true,
-        isActive: true,
-        users: {
-          where: {
-            userRoles: {
-              some: {
-                role: {
-                  OR: [
-                    { type: RoleType.SUPER_ADMIN },
-                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
-                  ],
-                },
-              },
-            },
-          },
-          select: { id: true },
-        },
-      },
-    });
-
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found.`);
-    }
-
-    // Protection: Disallow data reset summary on Super Admin accounts
-    if (
-      customer.users?.length > 0 ||
-      customer.name?.toLowerCase().includes('super admin') ||
-      customer.companyName?.toLowerCase().includes('super admin')
-    ) {
-      throw new ForbiddenException('Cannot access or reset Super Admin system accounts.');
-    }
-
-    const summary = await this.getSummary(numCustomerId);
-
-    return {
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        companyName: customer.companyName,
-        displayName: customer.companyName || customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        isActive: customer.isActive,
-      },
-      ...summary,
-    };
+  async getCustomerSummary(customerId: number | string) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -1727,226 +1396,8 @@ export class DataManagementService {
     userId?: string,
     userRole?: string,
     dto?: any,
-  ) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: numCustomerId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found.`);
-    }
-
-    const numUserId = Number(userId);
-
-    // Atomic Prisma Transaction with cascading deletions in foreign-key order
-    const resetResult = await this.prisma.$transaction(async (tx) => {
-      const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
-
-      // 1. Dependent leaf tables without direct customerId
-      if (tx.leadActivityTimeline?.deleteMany) {
-        await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      }
-      if (tx.leadNote?.deleteMany) {
-        await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      }
-      if (tx.leadReminder?.deleteMany) {
-        await tx.leadReminder.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      }
-      if (tx.leadStatusHistory?.deleteMany) {
-        await tx.leadStatusHistory.deleteMany({ where: { lead: { customerId: numCustomerId } } });
-      }
-      if (tx.communicationHistory?.deleteMany) {
-        await tx.communicationHistory.deleteMany({ where: { contact: { customerId: numCustomerId } } });
-      }
-      if (tx.taskReview?.deleteMany) {
-        await tx.taskReview.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      }
-      if (tx.taskProof?.deleteMany) {
-        await tx.taskProof.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      }
-      if (tx.taskHistory?.deleteMany) {
-        await tx.taskHistory.deleteMany({ where: { task: { customerId: numCustomerId } } });
-      }
-      if (tx.quotationItem?.deleteMany) {
-        await tx.quotationItem.deleteMany({ where: { quotation: { customerId: numCustomerId } } });
-      }
-      if (tx.workTask?.deleteMany) {
-        await tx.workTask.deleteMany({ where: { work: { customerId: numCustomerId } } });
-      }
-      if (tx.ticketComment?.deleteMany) {
-        await tx.ticketComment.deleteMany({ where: { ticket: { customerId: numCustomerId } } });
-      }
-      if (tx.attendanceBreak?.deleteMany) {
-        await tx.attendanceBreak.deleteMany({ where: { attendance: { customerId: numCustomerId } } });
-      }
-      if (tx.aiGenerationAsset?.deleteMany) {
-        await tx.aiGenerationAsset.deleteMany({ where: { generation: { customerId: numCustomerId } } });
-      }
-
-      // 2. Marketing, Campaigns & Social Media
-      const videoViews = tx.customerMarketingVideoView?.deleteMany ? await tx.customerMarketingVideoView.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const videos = tx.marketingVideo?.deleteMany ? await tx.marketingVideo.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const banners = tx.marketingBanner?.deleteMany ? await tx.marketingBanner.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const trending = tx.trendingContent?.deleteMany ? await tx.trendingContent.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialPublishes = tx.socialPublish?.deleteMany ? await tx.socialPublish.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialAccounts = tx.socialAccount?.deleteMany ? await tx.socialAccount.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const socialHandlers = tx.socialMediaHandler?.deleteMany ? await tx.socialMediaHandler.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 3. AI Studio
-      const aiGens = tx.aiGeneration?.deleteMany ? await tx.aiGeneration.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const aiTxns = tx.aiCreditTransaction?.deleteMany ? await tx.aiCreditTransaction.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 4. Influencer Bookings & Reviews
-      const bookingPayments = tx.influencerBookingPayment?.deleteMany ? await tx.influencerBookingPayment.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const reviews = tx.influencerReview?.deleteMany ? await tx.influencerReview.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const bookings = tx.influencerBooking?.deleteMany ? await tx.influencerBooking.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 5. Calendar / Schedules, Works, Work Access & Limits
-      const schedules = tx.monthlySchedule?.deleteMany ? await tx.monthlySchedule.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeLeadLimit?.deleteMany) await tx.employeeLeadLimit.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.roleLeadLimit?.deleteMany) await tx.roleLeadLimit.deleteMany({ where: { customerId: numCustomerId } });
-      const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 6. Billing items & invoices
-      if (tx.invoiceItem?.deleteMany) await tx.invoiceItem.deleteMany({ where: { invoice: { customerId: numCustomerId } } });
-      const invRes = tx.invoice?.deleteMany ? await tx.invoice.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const payRes = tx.paymentHistory?.deleteMany ? await tx.paymentHistory.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const instRes = tx.subscriptionInstallment?.deleteMany ? await tx.subscriptionInstallment.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.customPlanOrder?.deleteMany) await tx.customPlanOrder.deleteMany({ where: { customerId: numCustomerId } });
-
-      // 7. CRM parent tables
-      const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const visits = tx.visit?.deleteMany ? await tx.visit.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 8. Data Capture
-      const dcPlaces = tx.dataCapturePlace?.deleteMany ? await tx.dataCapturePlace.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const dcJobs = tx.dataCaptureJob?.deleteMany ? await tx.dataCaptureJob.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 9. Operations & HR Transactional
-      const tickets = tx.supportTicket?.deleteMany ? await tx.supportTicket.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const notifications = tx.notification?.deleteMany ? await tx.notification.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const locations = tx.employeeLocation?.deleteMany ? await tx.employeeLocation.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.locationTrackingSetting?.deleteMany) await tx.locationTrackingSetting.deleteMany({ where: { customerId: numCustomerId } });
-      const attendances = tx.attendance?.deleteMany ? await tx.attendance.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const leaves = tx.leaveRequest?.deleteMany ? await tx.leaveRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.leaveAdjustmentHistory?.deleteMany) await tx.leaveAdjustmentHistory.deleteMany({ where: { customerId: numCustomerId } });
-      if (tx.employeeLeaveBalance?.deleteMany) await tx.employeeLeaveBalance.deleteMany({ where: { customerId: numCustomerId } });
-      const remotes = tx.remoteRequest?.deleteMany ? await tx.remoteRequest.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const slips = tx.salarySlip?.deleteMany ? await tx.salarySlip.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const payrollItems = tx.payrollItem?.deleteMany ? await tx.payrollItem.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const payrolls = tx.payroll?.deleteMany ? await tx.payroll.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      if (tx.salaryStructure?.deleteMany) await tx.salaryStructure.deleteMany({ where: { employee: { customerId: numCustomerId } } });
-      const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-      const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
-
-      // 10. Auth sessions & refresh tokens for linked users
-      if (tx.refreshToken?.deleteMany) {
-        await tx.refreshToken.deleteMany({ where: { user: { customerId: numCustomerId } } });
-      }
-      if (tx.session?.deleteMany) {
-        await tx.session.deleteMany({ where: { user: { customerId: numCustomerId } } });
-      }
-
-      // 11. Storage reset
-      if (tx.customer?.update) {
-        await tx.customer.update({
-          where: { id: numCustomerId },
-          data: { storageUsed: 0, updatedAt: new Date() },
-        });
-      }
-
-      const totalDeleted =
-        cnt(invRes) +
-        cnt(payRes) +
-        cnt(instRes) +
-        cnt(quotations) +
-        cnt(tasks) +
-        cnt(deals) +
-        cnt(visits) +
-        cnt(leads) +
-        cnt(contacts) +
-        cnt(companies) +
-        cnt(dcPlaces) +
-        cnt(dcJobs) +
-        cnt(works) +
-        cnt(schedules) +
-        cnt(tickets) +
-        cnt(notifications) +
-        cnt(locations) +
-        cnt(attendances) +
-        cnt(leaves) +
-        cnt(remotes) +
-        cnt(slips) +
-        cnt(payrollItems) +
-        cnt(payrolls) +
-        cnt(claims) +
-        cnt(loans) +
-        cnt(videoViews) +
-        cnt(videos) +
-        cnt(banners) +
-        cnt(trending) +
-        cnt(socialPublishes) +
-        cnt(socialAccounts) +
-        cnt(socialHandlers) +
-        cnt(aiGens) +
-        cnt(aiTxns) +
-        cnt(bookingPayments) +
-        cnt(reviews) +
-        cnt(bookings) +
-        cnt(workAccess);
-
-      // 12. Audit Log
-      if (tx.auditLog?.create) {
-        await tx.auditLog.create({
-          data: {
-            customerId: numCustomerId,
-            userId: !isNaN(numUserId) && numUserId > 0 ? numUserId : null,
-            action: 'DATA_RESET',
-            module: 'CUSTOMER_DATA_RESET',
-            details: {
-              scope: 'CUSTOMER_DATA_RESET',
-              recordsDeleted: totalDeleted,
-              performedByRole: userRole || 'SUPER_ADMIN',
-              reason: dto?.reason || 'Admin reset customer application data',
-              resetAt: new Date().toISOString(),
-            },
-          },
-        });
-      }
-
-      // 13. Pre-commit verification: verify application records are deleted
-      const remainingLeads = tx.lead?.count ? await tx.lead.count({ where: { customerId: numCustomerId } }) : 0;
-      const remainingAttendances = tx.attendance?.count ? await tx.attendance.count({ where: { customerId: numCustomerId } }) : 0;
-
-      if (remainingLeads > 0 || remainingAttendances > 0) {
-        throw new InternalServerErrorException(
-          `Customer data reset verification failed: records still remain for Customer #${numCustomerId}. Rolling back transaction.`,
-        );
-      }
-
-      return { totalDeleted };
-    });
-
-    this.logger.log(
-      `[CUSTOMER_DATA_RESET] Customer #${numCustomerId} reset completed. ${resetResult.totalDeleted} records removed.`,
-    );
-
-    return {
-      success: true,
-      customerId: numCustomerId,
-      customerName: customer.companyName || customer.name,
-      recordsDeleted: resetResult.totalDeleted,
-      message: `Successfully reset all application data for ${customer.companyName || customer.name} (${resetResult.totalDeleted} records permanently removed). Customer profile, employees, and settings remain preserved.`,
-    };
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -1962,177 +1413,8 @@ export class DataManagementService {
     tx: Prisma.TransactionClient,
     customerId: number,
     preserveCustomerId?: number | null,
-  ) {
-    const counts: Record<string, number> = {};
-    const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
-
-    // 0. Safety check: Root enterprise customer #1 or customers with employees cannot be deleted
-    const cust = await tx.customer.findUnique({
-      where: { id: customerId },
-      include: {
-        _count: {
-          select: { employees: true },
-        },
-      },
-    });
-
-    if (!cust) return { success: false, notFound: true, counts };
-    if (customerId === 1 || cust._count.employees > 0) {
-      throw new ForbiddenException(
-        `Customer #${customerId} (${cust.name}) is an organization account with employees and cannot be deleted via Customer Reset.`,
-      );
-    }
-
-    const keeper =
-      typeof preserveCustomerId === 'number' &&
-      Number.isInteger(preserveCustomerId) &&
-      preserveCustomerId > 0 &&
-      preserveCustomerId !== customerId
-        ? preserveCustomerId
-        : null;
-
-    // 1. Detach pointers from Customer row. Clearing leadId keeps the origin Lead row.
-    await tx.customer.update({
-      where: { id: customerId },
-      data: {
-        leadId: null,
-        assignedEmployeeId: null,
-        assignedTeamId: null,
-        createdByEmployeeId: null,
-        mobileRoleId: null,
-      },
-    });
-
-    // Leads, payment history, and prior audit rows cascade with the customer.
-    // Move them to the acting company so this reset keeps unconverted leads and the ledger.
-    if (keeper) {
-      await tx.lead.updateMany({ where: { customerId }, data: { customerId: keeper } });
-      await tx.paymentHistory.updateMany({
-        where: { customerId },
-        data: { customerId: keeper, subscriptionId: null },
-      });
-      await tx.auditLog.updateMany({ where: { customerId }, data: { customerId: keeper } });
-    }
-
-    // 2. Child leaf tables that reference parents referencing customer
-    await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId } } });
-    await tx.leadNote?.deleteMany?.({ where: { lead: { customerId } } });
-    await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId } } });
-    await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId } } });
-
-    // Task children: reviews, proofs, history
-    await tx.taskReview?.deleteMany?.({ where: { task: { customerId } } });
-    await tx.taskProof?.deleteMany?.({ where: { task: { customerId } } });
-    await tx.taskHistory?.deleteMany?.({ where: { task: { customerId } } });
-
-    // Work children: work tasks
-    await tx.workTask?.deleteMany?.({ where: { work: { customerId } } });
-
-    // Ticket children: comments
-    await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId } } });
-
-    // Contact children: communication history
-    await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId } } });
-
-    // Invoice & quotation children: items
-    await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId } } });
-    await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId } } });
-
-    // Subscription installments
-    const installments = await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId } });
-    counts.installments = cnt(installments);
-
-    // AI asset children
-    await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId } } });
-
-    // 3. Operational & Calendar records
-    const schedules = await tx.monthlySchedule?.deleteMany?.({ where: { customerId } });
-    counts.monthlySchedules = cnt(schedules);
-
-    const works = await tx.work?.deleteMany?.({ where: { customerId } });
-    counts.works = cnt(works);
-
-    const tasks = await tx.task?.deleteMany?.({ where: { customerId } });
-    counts.tasks = cnt(tasks);
-
-    const visits = await tx.visit?.deleteMany?.({ where: { customerId } });
-    counts.visits = cnt(visits);
-
-    // 4. Invoices & Billing & Subscriptions
-    const invoices = await tx.invoice?.deleteMany?.({ where: { customerId } });
-    counts.invoices = cnt(invoices);
-
-    const quotations = await tx.quotation?.deleteMany?.({ where: { customerId } });
-    counts.quotations = cnt(quotations);
-
-    const subscriptions = await tx.customerSubscription?.deleteMany?.({ where: { customerId } });
-    counts.subscriptions = cnt(subscriptions);
-
-    const customPlanOrders = await tx.customPlanOrder?.deleteMany?.({ where: { customerId } });
-    counts.customPlanOrders = cnt(customPlanOrders);
-
-    const payments = await tx.paymentHistory?.deleteMany?.({ where: { customerId } });
-    counts.payments = cnt(payments);
-
-    const couponRedemptions = await tx.couponRedemption?.deleteMany?.({ where: { customerId } });
-    counts.couponRedemptions = cnt(couponRedemptions);
-
-    // 5. CRM: Deals, Contacts, Support Tickets, Notifications
-    const deals = await tx.deal?.deleteMany?.({ where: { customerId } });
-    counts.deals = cnt(deals);
-
-    const contacts = await tx.contact?.deleteMany?.({ where: { customerId } });
-    counts.contacts = cnt(contacts);
-
-    const tickets = await tx.supportTicket?.deleteMany?.({ where: { customerId } });
-    counts.tickets = cnt(tickets);
-
-    const notifications = await tx.notification?.deleteMany?.({ where: { customerId } });
-    counts.notifications = cnt(notifications);
-
-    // 6. Marketing, Data Capture, AI & Social
-    await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId } });
-    await tx.marketingVideo?.deleteMany?.({ where: { customerId } });
-    await tx.marketingBanner?.deleteMany?.({ where: { customerId } });
-    await tx.trendingContent?.deleteMany?.({ where: { customerId } });
-    await tx.socialPublish?.deleteMany?.({ where: { customerId } });
-    await tx.socialAccount?.deleteMany?.({ where: { customerId } });
-    await tx.socialMediaHandler?.deleteMany?.({ where: { customerId } });
-    await tx.aiGeneration?.deleteMany?.({ where: { customerId } });
-    await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId } });
-    await tx.aiCreditWallet?.deleteMany?.({ where: { customerId } });
-    await tx.dataCaptureJob?.deleteMany?.({ where: { customerId } });
-    await tx.dataCapturePlace?.deleteMany?.({ where: { customerId } });
-    await tx.dataCaptureSearch?.deleteMany?.({ where: { customerId } });
-    await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId } });
-    await tx.influencerBooking?.deleteMany?.({ where: { customerId } });
-    await tx.influencerReview?.deleteMany?.({ where: { customerId } });
-    await tx.workAccessRequest?.deleteMany?.({ where: { customerId } });
-    await tx.roleWorkPermission?.deleteMany?.({ where: { customerId } });
-    await tx.customerModuleOverride?.deleteMany?.({ where: { subjectCustomerId: customerId } });
-
-    // 7. Client Portal Users (users belonging exclusively to this client customer, if any)
-    const clientUsers = await tx.user.findMany({
-      where: { customerId },
-      select: { id: true },
-    });
-    if (clientUsers.length > 0) {
-      const clientUserIds = clientUsers.map((u) => u.id);
-      await tx.userRole?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
-      await tx.userDeviceToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
-      await tx.refreshToken?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
-      await tx.session?.deleteMany?.({ where: { userId: { in: clientUserIds } } });
-      await tx.user?.deleteMany?.({ where: { id: { in: clientUserIds } } });
-    }
-
-    // 8. Delete the Customer row
-    await tx.customer.delete({ where: { id: customerId } });
-
-    return {
-      success: true,
-      customerId,
-      counts,
-    };
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -2145,87 +1427,8 @@ export class DataManagementService {
     userRole: string,
     reason?: string,
     auditCustomerId?: number | string,
-  ) {
-    if (!Array.isArray(customerIds) || customerIds.length === 0) {
-      throw new BadRequestException('Please select at least one customer to reset.');
-    }
-
-    const numericIds = Array.from(
-      new Set(
-        customerIds
-          .map((id) => Number(id))
-          .filter((n) => Number.isInteger(n) && n > 0 && n !== 1),
-      ),
-    );
-
-    if (numericIds.length === 0) {
-      throw new BadRequestException('No valid client customer IDs selected for reset.');
-    }
-
-    // Verify authorized eligible customers
-    const eligibleCustomers = await this.prisma.customer.findMany({
-      where: {
-        id: { in: numericIds },
-        ...this.getBaseCustomerFilter(),
-      },
-      select: { id: true, name: true, companyName: true },
-    });
-
-    if (eligibleCustomers.length === 0) {
-      throw new BadRequestException('None of the selected customers are eligible for reset.');
-    }
-
-    const eligibleIds = eligibleCustomers.map((customer) => customer.id);
-    const keepId = Number(auditCustomerId);
-    const keeper = Number.isInteger(keepId) && keepId > 0 && !eligibleIds.includes(keepId) ? keepId : null;
-
-    const succeeded: number[] = [];
-    const aggregatedCounts: Record<string, number> = {};
-
-    for (const cust of eligibleCustomers) {
-      await this.prisma.$transaction(async (tx) => {
-        const res = await this.deleteCustomerAndDependencies(tx, cust.id, keeper);
-        if (res.success) {
-          succeeded.push(cust.id);
-          for (const [k, v] of Object.entries(res.counts)) {
-            aggregatedCounts[k] = (aggregatedCounts[k] || 0) + v;
-          }
-        }
-      });
-    }
-
-    // Record audit log
-    const totalRecords = Object.values(aggregatedCounts).reduce((a, b) => a + b, 0);
-    const initiatingUserId = Number(userId) || null;
-    await this.prisma.auditLog.create({
-      data: {
-        customerId: keeper,
-        userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
-        action: 'DATA_RESET',
-        module: 'CUSTOMER_RESET',
-        details: {
-          scope: 'RESET_SELECTED_CUSTOMERS',
-          operation: 'RESET_SELECTED_CUSTOMERS',
-          customersAffected: succeeded.length,
-          customerIds: succeeded,
-          recordsDeletedByCategory: aggregatedCounts,
-          totalRecordsDeleted: totalRecords,
-          performedByRole: userRole || 'SUPER_ADMIN',
-          reason: reason || 'Admin executed reset for selected customers',
-          status: 'SUCCESS',
-          timestamp: new Date().toISOString(),
-        },
-      },
-    });
-
-    return {
-      success: true,
-      customersAffected: succeeded.length,
-      customerIds: succeeded,
-      recordsDeletedByCategory: aggregatedCounts,
-      totalRecordsDeleted: totalRecords,
-      message: `Successfully reset and deleted ${succeeded.length} customer(s) and ${totalRecords} related records.`,
-    };
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -2238,102 +1441,8 @@ export class DataManagementService {
     userRole: string,
     reason?: string,
     auditCustomerId?: number | string,
-  ) {
-    const typed = String(confirmation || '').trim().toUpperCase();
-    if (typed !== 'DELETE ALL CUSTOMERS' && typed !== 'DELETE ALL CUSTOMER DATA') {
-      throw new BadRequestException(
-        'Confirmation phrase must be "DELETE ALL CUSTOMER DATA" to proceed.',
-      );
-    }
-    const scope = typed === 'DELETE ALL CUSTOMER DATA' ? 'RESET_ALL_CUSTOMER_DATA' : 'RESET_ALL_CUSTOMERS';
-
-    // Query ALL eligible client customers using backend filter
-    const eligibleCustomers = await this.prisma.customer.findMany({
-      where: this.getBaseCustomerFilter(),
-      select: { id: true, name: true, companyName: true },
-    });
-
-    const eligibleIds = eligibleCustomers.map((customer) => customer.id);
-    const keepId = Number(auditCustomerId);
-    const keeper = Number.isInteger(keepId) && keepId > 0 && !eligibleIds.includes(keepId) ? keepId : null;
-
-    if (eligibleCustomers.length === 0) {
-      await this.prisma.auditLog.create({
-        data: {
-          customerId: keeper,
-          userId: Number(userId) || null,
-          action: 'DATA_RESET',
-          module: 'CUSTOMER_RESET',
-          details: {
-            scope,
-            operation: scope,
-            customersAffected: 0,
-            customerIds: [],
-            recordsDeletedByCategory: {},
-            totalRecordsDeleted: 0,
-            performedByRole: userRole || 'SUPER_ADMIN',
-            reason: reason || 'Admin executed Reset All Customer Data',
-            status: 'SUCCESS',
-            timestamp: new Date().toISOString(),
-          },
-        },
-      });
-      return {
-        success: true,
-        customersAffected: 0,
-        customerIds: [],
-        recordsDeletedByCategory: {},
-        totalRecordsDeleted: 0,
-        message: 'No eligible saved customers found to reset.',
-      };
-    }
-
-    const succeeded: number[] = [];
-    const aggregatedCounts: Record<string, number> = {};
-
-    for (const cust of eligibleCustomers) {
-      await this.prisma.$transaction(async (tx) => {
-        const res = await this.deleteCustomerAndDependencies(tx, cust.id, keeper);
-        if (res.success) {
-          succeeded.push(cust.id);
-          for (const [k, v] of Object.entries(res.counts)) {
-            aggregatedCounts[k] = (aggregatedCounts[k] || 0) + v;
-          }
-        }
-      });
-    }
-
-    const totalRecords = Object.values(aggregatedCounts).reduce((a, b) => a + b, 0);
-    const initiatingUserId = Number(userId) || null;
-    await this.prisma.auditLog.create({
-      data: {
-        customerId: keeper,
-        userId: initiatingUserId && !isNaN(initiatingUserId) ? initiatingUserId : null,
-        action: 'DATA_RESET',
-        module: 'CUSTOMER_RESET',
-        details: {
-          scope,
-          operation: scope,
-          customersAffected: succeeded.length,
-          customerIds: succeeded,
-          recordsDeletedByCategory: aggregatedCounts,
-          totalRecordsDeleted: totalRecords,
-          performedByRole: userRole || 'SUPER_ADMIN',
-          reason: reason || 'Admin executed Reset All Customers',
-          status: 'SUCCESS',
-          timestamp: new Date().toISOString(),
-        },
-      },
-    });
-
-    return {
-      success: true,
-      customersAffected: succeeded.length,
-      customerIds: succeeded,
-      recordsDeletedByCategory: aggregatedCounts,
-      totalRecordsDeleted: totalRecords,
-      message: `Successfully reset and deleted all ${succeeded.length} customer(s) and ${totalRecords} related records.`,
-    };
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2429,7 +1538,7 @@ export class DataManagementService {
         lastName: true,
         email: true,
         employeeCode: true,
-        customerId: true,
+        
         updatedAt: true,
         department: { select: { name: true } },
         designation: { select: { name: true } },
@@ -2442,7 +1551,7 @@ export class DataManagementService {
             payrollItems: true,
           },
         },
-        customer: { select: { name: true, companyName: true } },
+        
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -2474,7 +1583,7 @@ export class DataManagementService {
       employeeCode: e.employeeCode || '',
       department: e.department?.name || '',
       designation: e.designation?.name || '',
-      customerName: e.customer?.name || e.customer?.companyName || '',
+      customerName: '',
       deletedAt: e.updatedAt ? e.updatedAt.toISOString() : null,
       deletedBy: 'Admin',
       dataCounts: {
@@ -2504,149 +1613,15 @@ export class DataManagementService {
    * Restore a soft-deleted customer from the Bin.
    * Reactivates the customer record and linked User accounts.
    */
-  async restoreCustomerFromBin(customerId: number | string) {
-    const numId = Number(customerId);
-    if (isNaN(numId) || numId <= 0) {
-      throw new BadRequestException('Invalid customer ID');
-    }
-
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: numId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found.`);
-    }
-
-    if (!customer.deletedAt && customer.isActive) {
-      throw new BadRequestException('Customer is not in the Bin.');
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.customer.update({
-        where: { id: numId },
-        data: { isActive: true, deletedAt: null },
-      });
-      await tx.user.updateMany({
-        where: { customerId: numId },
-        data: { isActive: true, deletedAt: null },
-      });
-      await tx.auditLog.create({
-        data: {
-          customerId: numId,
-          action: 'RESTORE_FROM_BIN',
-          module: 'CUSTOMER',
-          details: `Restored Customer #${numId} from Bin`,
-        },
-      });
-    });
-
-    this.logger.log(`[BIN_RESTORE_CUSTOMER] Customer #${numId} restored from Bin.`);
-    return { success: true, message: `Customer #${numId} restored from Bin successfully.` };
+  async restoreCustomerFromBin(customerId: number | string) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
    * Helper to execute customer-scoped cascade purge inside a Prisma transaction.
    */
   private async purgeCustomerInTx(tx: any, numId: number): Promise<void> {
-    await tx.customer.update?.({
-      where: { id: numId },
-      data: { assignedEmployeeId: null, assignedTeamId: null },
-    });
-
-    await tx.leadActivityTimeline?.deleteMany?.({ where: { lead: { customerId: numId } } });
-    await tx.leadNote?.deleteMany?.({ where: { lead: { customerId: numId } } });
-    await tx.leadReminder?.deleteMany?.({ where: { lead: { customerId: numId } } });
-    await tx.leadStatusHistory?.deleteMany?.({ where: { lead: { customerId: numId } } });
-    await tx.taskReview?.deleteMany?.({ where: { task: { customerId: numId } } });
-    await tx.taskProof?.deleteMany?.({ where: { task: { customerId: numId } } });
-    await tx.taskHistory?.deleteMany?.({ where: { task: { customerId: numId } } });
-    await tx.ticketComment?.deleteMany?.({ where: { ticket: { customerId: numId } } });
-    await tx.communicationHistory?.deleteMany?.({ where: { contact: { customerId: numId } } });
-    await tx.workTask?.deleteMany?.({ where: { work: { customerId: numId } } });
-    await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { customerId: numId } } });
-    await tx.subscriptionInstallment?.deleteMany?.({ where: { customerId: numId } });
-    await tx.invoiceItem?.deleteMany?.({ where: { invoice: { customerId: numId } } });
-    await tx.invoice?.deleteMany?.({ where: { customerId: numId } });
-    await tx.quotationItem?.deleteMany?.({ where: { quotation: { customerId: numId } } });
-    await tx.quotation?.deleteMany?.({ where: { customerId: numId } });
-    await tx.visit?.deleteMany?.({ where: { customerId: numId } });
-    await tx.task?.deleteMany?.({ where: { customerId: numId } });
-    await tx.deal?.deleteMany?.({ where: { customerId: numId } });
-    await tx.contact?.deleteMany?.({ where: { customerId: numId } });
-    await tx.lead?.deleteMany?.({ where: { customerId: numId } });
-    await tx.company?.deleteMany?.({ where: { customerId: numId } });
-    await tx.supportTicket?.deleteMany?.({ where: { customerId: numId } });
-    await tx.work?.deleteMany?.({ where: { customerId: numId } });
-    await tx.attendance?.deleteMany?.({ where: { customerId: numId } });
-    await tx.leaveRequest?.deleteMany?.({ where: { customerId: numId } });
-    await tx.remoteRequest?.deleteMany?.({ where: { customerId: numId } });
-    await tx.salarySlip?.deleteMany?.({ where: { customerId: numId } });
-    await tx.payrollItem?.deleteMany?.({ where: { customerId: numId } });
-    await tx.payroll?.deleteMany?.({ where: { customerId: numId } });
-    await tx.dataCapturePlace?.deleteMany?.({ where: { customerId: numId } });
-    await tx.dataCaptureJob?.deleteMany?.({ where: { customerId: numId } });
-    await tx.influencerBookingPayment?.deleteMany?.({ where: { customerId: numId } });
-    await tx.influencerBooking?.deleteMany?.({ where: { customerId: numId } });
-    await tx.influencerReview?.deleteMany?.({ where: { customerId: numId } });
-    await tx.aiGenerationAsset?.deleteMany?.({ where: { generation: { customerId: numId } } });
-    await tx.socialPublish?.deleteMany?.({ where: { customerId: numId } });
-    await tx.socialAccount?.deleteMany?.({ where: { customerId: numId } });
-    await tx.aiGeneration?.deleteMany?.({ where: { customerId: numId } });
-    await tx.aiCreditTransaction?.deleteMany?.({ where: { customerId: numId } });
-    await tx.aiCreditWallet?.deleteMany?.({ where: { customerId: numId } });
-    await tx.customerMarketingVideoView?.deleteMany?.({ where: { customerId: numId } });
-    await tx.paymentHistory?.deleteMany?.({ where: { customerId: numId } });
-    await tx.customPlanOrder?.deleteMany?.({ where: { customerId: numId } });
-    await tx.monthlySchedule?.deleteMany?.({ where: { customerId: numId } });
-    await tx.customerSubscription?.deleteMany?.({ where: { customerId: numId } });
-
-    await tx.salaryStructure?.deleteMany?.({ where: { employee: { customerId: numId } } });
-    await tx.employeeClaim?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employeeLoan?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employeeLocation?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employeeLeaveBalance?.deleteMany?.({ where: { customerId: numId } });
-    await tx.leaveAdjustmentHistory?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employeeModuleOverride?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employeeLeadLimit?.deleteMany?.({ where: { customerId: numId } });
-    await tx.roleLeadLimit?.deleteMany?.({ where: { customerId: numId } });
-    await tx.roleWorkPermission?.deleteMany?.({ where: { customerId: numId } });
-    await tx.workAccessRequest?.deleteMany?.({ where: { customerId: numId } });
-    await tx.socialMediaHandler?.deleteMany?.({ where: { customerId: numId } });
-    await tx.marketingVideo?.deleteMany?.({ where: { customerId: numId } });
-    await tx.marketingBanner?.deleteMany?.({ where: { customerId: numId } });
-    await tx.trendingContent?.deleteMany?.({ where: { customerId: numId } });
-    await tx.branchGeofence?.deleteMany?.({ where: { customerId: numId } });
-    await tx.locationTrackingSetting?.deleteMany?.({ where: { customerId: numId } });
-    await tx.shiftGuidance?.deleteMany?.({ where: { customerId: numId } });
-    await tx.shift?.deleteMany?.({ where: { customerId: numId } });
-    await tx.publicHoliday?.deleteMany?.({ where: { customerId: numId } });
-    await tx.attendancePolicy?.deleteMany?.({ where: { customerId: numId } });
-    await tx.claimPolicy?.deleteMany?.({ where: { customerId: numId } });
-    await tx.leavePolicy?.deleteMany?.({ where: { customerId: numId } });
-    await tx.salaryPolicy?.deleteMany?.({ where: { customerId: numId } });
-    await tx.payrollPolicy?.deleteMany?.({ where: { customerId: numId } });
-    await tx.leadStage?.deleteMany?.({ where: { customerId: numId } });
-    await tx.pipeline?.deleteMany?.({ where: { customerId: numId } });
-    await tx.product?.deleteMany?.({ where: { customerId: numId } });
-    await tx.planEntitlement?.deleteMany?.({ where: { customerId: numId } });
-    await tx.featureToggle?.deleteMany?.({ where: { customerId: numId } });
-    await tx.notification?.deleteMany?.({ where: { customerId: numId } });
-
-    await tx.userRole?.deleteMany?.({ where: { user: { customerId: numId } } });
-    await tx.userDeviceToken?.deleteMany?.({ where: { user: { customerId: numId } } });
-    await tx.refreshToken?.deleteMany?.({ where: { user: { customerId: numId } } });
-    await tx.session?.deleteMany?.({ where: { user: { customerId: numId } } });
-
-    await tx.teamMember?.deleteMany?.({ where: { team: { customerId: numId } } });
-    await tx.team?.deleteMany?.({ where: { customerId: numId } });
-    await tx.auditLog?.deleteMany?.({ where: { customerId: numId } });
-    await tx.employee?.deleteMany?.({ where: { customerId: numId } });
-    await tx.designation?.deleteMany?.({ where: { customerId: numId } });
-    await tx.department?.deleteMany?.({ where: { customerId: numId } });
-    await tx.role?.deleteMany?.({ where: { customerId: numId } });
-    await tx.user?.deleteMany?.({ where: { customerId: numId } });
-    await tx.customer.delete({ where: { id: numId } });
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -2661,7 +1636,7 @@ export class DataManagementService {
     if (!employee) return;
 
     const userId = employee.userId ? Number(employee.userId) : null;
-    const empCustomerId = Number(employee.customerId);
+    const empCustomerId = Number(undefined);
 
     if (userId) {
       await tx.refreshToken?.deleteMany?.({ where: { userId } });
@@ -2698,7 +1673,7 @@ export class DataManagementService {
     await tx.attendanceBreak?.deleteMany?.({ where: { attendance: { employeeId: numId } } });
     await tx.attendance?.deleteMany?.({ where: { employeeId: numId } });
 
-    await tx.auditLog?.updateMany?.({ where: { customerId: empCustomerId, userId }, data: { userId: null } });
+    await tx.auditLog?.updateMany?.({ where: {  userId }, data: { userId: null } });
     await tx.employee.delete({ where: { id: numId } });
 
     if (userId) {
@@ -2712,31 +1687,8 @@ export class DataManagementService {
    * Permanently delete a customer from the Bin.
    * Runs a full FK-safe purge atomically in a transaction with post-commit verification.
    */
-  async deleteCustomerPermanently(customerId: number | string) {
-    const numId = Number(customerId);
-    if (isNaN(numId) || numId <= 0) {
-      throw new BadRequestException('Invalid customer ID');
-    }
-
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: numId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found.`);
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await this.purgeCustomerInTx(tx, numId);
-    });
-
-    const stillExists = await this.prisma.customer.findUnique({ where: { id: numId } });
-    if (stillExists) {
-      throw new InternalServerErrorException(`Permanent deletion verification failed: Customer #${numId} still exists in database.`);
-    }
-
-    this.logger.log(`[BIN_PERMANENT_DELETE_CUSTOMER] Customer #${numId} permanently deleted and verified removed from database.`);
-    return { success: true, message: `Customer #${numId} permanently deleted from database.` };
+  async deleteCustomerPermanently(customerId: number | string) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -2870,9 +1822,7 @@ export class DataManagementService {
       });
       const foundCustomerIds = new Set(foundCustomers.map((c) => c.id));
       for (const cid of customerIds) {
-        if (!foundCustomerIds.has(cid)) {
-          throw new NotFoundException(`Customer #${cid} not found in database.`);
-        }
+        
       }
     }
 

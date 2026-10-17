@@ -18,10 +18,7 @@ export class CreateVisitDto {
   @IsOptional()
   contactId?: string;
 
-  @ApiPropertyOptional({ example: '1' })
-  @IsString()
-  @IsOptional()
-  leadId?: string;
+  
 
   @ApiPropertyOptional({ example: '1' })
   @IsString()

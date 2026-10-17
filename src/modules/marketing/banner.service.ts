@@ -86,7 +86,7 @@ export class BannerService {
       throw new BadRequestException('endAt cannot be earlier than startAt');
     }
 
-    const customerId = user.customerId ?? null;
+    const customerId = null;
     const cleanKey = imagePublicId || this.s3Service.extractKey(imageUrl);
 
     const couponMetadata: Record<string, any> = {
@@ -104,7 +104,7 @@ export class BannerService {
     try {
       banner = await this.prisma.marketingBanner.create({
         data: {
-          customerId,
+          
           title: dto.title?.trim() || 'Home Banner',
           subtitle: dto.subtitle?.trim() || null,
           description: dto.description?.trim() || null,
@@ -167,9 +167,7 @@ export class BannerService {
     };
 
     // Workspace scoping: If user belongs to a customer/tenant, limit to that customer or global
-    if (user.customerId) {
-      where.OR = [{ customerId: user.customerId }, { customerId: null }];
-    }
+    
 
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
@@ -244,13 +242,7 @@ export class BannerService {
       throw new NotFoundException(`Marketing banner with ID ${id} not found`);
     }
 
-    if (
-      user.customerId &&
-      banner.customerId &&
-      banner.customerId !== user.customerId
-    ) {
-      throw new NotFoundException(`Marketing banner with ID ${id} not found`);
-    }
+    
 
     const resolved = await this.resolveBannerMedia(banner);
 
@@ -460,7 +452,7 @@ export class BannerService {
     role?: string;
   }) {
     const now = new Date();
-    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
+    const resolvedCustomerId = null;
 
     // ── RBAC: enforce CUSTOMER_MARKETING:VIEW ───────────────────────────────
     if (resolvedCustomerId) {
@@ -487,7 +479,7 @@ export class BannerService {
     // ─────────────────────────────────────────────────────────────────────────
 
     console.log('[BANNER_API_REQUEST]', {
-      customerId: resolvedCustomerId,
+      
       userId: user?.id ?? null,
     });
 
@@ -497,7 +489,7 @@ export class BannerService {
       try {
         const activeSub = await (this.prisma as any).customerSubscription.findFirst({
           where: {
-            customerId: resolvedCustomerId,
+            
             status: 'ACTIVE',
             deletedAt: null,
           },
@@ -525,8 +517,8 @@ export class BannerService {
     const statusFiltered = allBanners.filter((b) => b.isActive && b.isPublished);
 
     const customerFiltered = statusFiltered.filter((b) => {
-      if (b.customerId === null) return true;
-      if (resolvedCustomerId && b.customerId === resolvedCustomerId) return true;
+      
+      if (resolvedCustomerId && undefined === resolvedCustomerId) return true;
       const meta = b.metadata as any;
       if (meta && Array.isArray(meta.customerIds) && resolvedCustomerId) {
         return meta.customerIds.map(Number).includes(resolvedCustomerId);
@@ -629,7 +621,7 @@ export class BannerService {
         `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
       );
       this.logger.log(
-        `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${item.customerId ?? 'GLOBAL'}`,
+        `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${'GLOBAL'}`,
       );
     }
 

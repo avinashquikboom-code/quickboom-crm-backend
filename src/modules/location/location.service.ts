@@ -77,12 +77,12 @@ export class LocationService {
       throw new BadRequestException('Invalid GPS coordinates (0, 0).');
     }
 
-    const targetCustomerId = user?.customerId || (customerId ? Number(customerId) : undefined);
+    const targetCustomerId = (customerId ? Number(customerId) : undefined);
 
     // 2. Resolve Employee Profile
     let employee = await this.prisma.employee.findFirst({
       where: {
-        ...(targetCustomerId ? { customerId: targetCustomerId } : {}),
+        ...(targetCustomerId ? {  } : {}),
         OR: [
           { userId: user.id },
           { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -156,7 +156,7 @@ export class LocationService {
     // 5. Persist to EmployeeLocation table
     const saved = await this.prisma.employeeLocation.create({
       data: {
-        customerId: employee.customerId,
+        
         employeeId: employee.id,
         latitude: Number(dto.latitude),
         longitude: Number(dto.longitude),
@@ -214,7 +214,7 @@ export class LocationService {
       locationPermission: 'GRANTED',
     };
 
-    this.locationGateway.broadcastLocationUpdate(employee.customerId, broadcastPayload);
+    this.locationGateway.broadcastLocationUpdate(undefined, broadcastPayload);
 
     return {
       success: true,
@@ -235,7 +235,7 @@ export class LocationService {
     const numCustomerId = customerId ? Number(customerId) : NaN;
     const whereClause: any = {
       status: 'ACTIVE',
-      ...( !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {} ),
+      ...( !isNaN(numCustomerId) && numCustomerId > 0 ? {  } : {} ),
     };
 
     const employees = await this.prisma.employee.findMany({
@@ -350,7 +350,7 @@ export class LocationService {
     };
 
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      whereClause.customerId = numCustomerId;
+      
     }
     if (!isNaN(numEmployeeId) && numEmployeeId > 0) {
       whereClause.employeeId = numEmployeeId;
@@ -367,7 +367,7 @@ export class LocationService {
     const numCustomerId = customerId ? Number(customerId) : NaN;
     const whereClause: any = { isActive: true };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      whereClause.customerId = numCustomerId;
+      
     }
 
     return this.prisma.branchGeofence.findMany({
@@ -383,7 +383,7 @@ export class LocationService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && branch.customerId !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
       throw new ForbiddenException('You do not have access to this branch location');
     }
     return {
@@ -412,7 +412,7 @@ export class LocationService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && branch.customerId !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
       throw new ForbiddenException('You do not have access to update this branch location');
     }
 
@@ -446,15 +446,9 @@ export class LocationService {
     customerId: number | string,
     data: { name: string; city?: string; latitude: number; longitude: number; radiusMeters?: number },
   ) {
-    let numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCust = await this.prisma.customer.findFirst({ select: { id: true } });
-      numCustomerId = defaultCust?.id || 1;
-    }
-
     return this.prisma.branchGeofence.create({
       data: {
-        customerId: numCustomerId,
+        
         name: data.name,
         city: data.city,
         latitude: data.latitude,

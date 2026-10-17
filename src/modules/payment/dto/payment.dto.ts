@@ -27,9 +27,7 @@ export class CreateRazorpayOrderDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Optional Subscription ID when paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'INR', default: 'INR' })
   @IsOptional()
@@ -80,9 +78,7 @@ export class VerifyRazorpayPaymentDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({
     example: '2026-10-03',
@@ -113,9 +109,7 @@ export class CreateOfflinePaymentDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'BANK_TRANSFER', description: 'Offline payment method' })
   @IsOptional()
@@ -147,13 +141,9 @@ export class CreateOfflinePaymentDto {
 }
 
 export class SendPaymentReminderDto {
-  @ApiProperty({ example: 101, description: 'Target Customer ID' })
-  @IsNotEmpty()
-  customerId: number | string;
+  
 
-  @ApiPropertyOptional({ example: 501, description: 'Target Subscription ID' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'Your balance payment is due in 3 days.', description: 'Custom reminder note' })
   @IsOptional()

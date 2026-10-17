@@ -49,8 +49,7 @@ export class SocialPublishingController {
   private resolveCustomerId(req: any): number {
     const user = req.user;
     const rawId =
-      user?.customerId ??
-      (user?.role === 'CUSTOMER' ? user?.customerId || user?.id : undefined) ??
+      (user?.role === 'CUSTOMER' ? user?.id : undefined) ??
       req.headers?.['x-customer-id'];
     const parsed = parseInt(String(rawId), 10);
     if (isNaN(parsed) || parsed <= 0) {
@@ -78,14 +77,14 @@ export class SocialPublishingController {
   private signState(customerId: number, platform: string): string {
     const secret = process.env.JWT_SECRET || 'quikboom_production_secure_token_secret_key_3847291847';
     const payload = Buffer.from(
-      JSON.stringify({ customerId, platform: platform.toUpperCase(), ts: Date.now() }),
+      JSON.stringify({  platform: platform.toUpperCase(), ts: Date.now() }),
     ).toString('base64url');
     const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     return `${payload}.${sig}`;
   }
 
   /** Verify and decode a state token. Returns null if invalid or expired (>10 min). */
-  private decodeState(state: string): { customerId: number; platform: string } | null {
+  private decodeState(state: string): { customerId?: number; platform: string } | null {
     try {
       const secret = process.env.JWT_SECRET || 'quikboom_production_secure_token_secret_key_3847291847';
       const dotIdx = state.lastIndexOf('.');
@@ -96,7 +95,7 @@ export class SocialPublishingController {
       if (sig !== expectedSig) return null;
       const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
       if (Date.now() - data.ts > 10 * 60 * 1000) return null;
-      return { customerId: Number(data.customerId), platform: String(data.platform) };
+      return {  platform: String(data.platform) };
     } catch {
       return null;
     }

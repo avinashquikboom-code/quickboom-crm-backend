@@ -12,10 +12,10 @@ export const CurrentCustomer = createParamDecorator(
     // We check for the presence of the property first so that the intentional
     // `undefined` set by the guard is honoured and NOT overridden by user.customerId.
     if ('customerId' in request) {
-      return request.customerId ?? undefined;
+      return undefined;
     }
 
     // Fallback for routes where CustomerGuard is not applied (e.g. public routes).
-    return request.user?.customerId ?? request.headers['x-customer-id'];
+    return request.headers['x-customer-id'];
   },
 );

@@ -9,7 +9,7 @@ export class DashboardService {
     const numCustomerId = Number(customerId);
     const hasValidCustomerId = !isNaN(numCustomerId) && numCustomerId > 0;
 
-    const customerWhere = hasValidCustomerId ? { customerId: numCustomerId } : {};
+    const customerWhere = hasValidCustomerId ? {  } : {};
 
     // Real DB counts
     const [
@@ -22,7 +22,7 @@ export class DashboardService {
       this.prisma.employee.count({ where: customerWhere }),
       this.prisma.employee.count({ where: { ...customerWhere, status: 'ACTIVE' } }),
       this.prisma.branchGeofence.findMany({
-        where: hasValidCustomerId ? { customerId: numCustomerId } : {},
+        where: hasValidCustomerId ? {  } : {},
       }),
       this.prisma.department.findMany({
         where: customerWhere,
@@ -87,7 +87,7 @@ export class DashboardService {
     return {
       success: true,
       timestamp: new Date().toISOString(),
-      customerId,
+      
       selectedOfficeId: officeId || 'all',
       summary,
       offices,
@@ -105,7 +105,7 @@ export class DashboardService {
     }
 
     const branches = await this.prisma.branchGeofence.findMany({
-      where: { customerId: numCustomerId },
+      where: {  },
     });
 
     return [
@@ -115,38 +115,7 @@ export class DashboardService {
   }
 
   async getSuperAdminMetrics() {
-    const [
-      totalCustomers,
-      activeCustomers,
-      totalUsers,
-      totalLeads,
-      totalDeals,
-      activeSubs,
-    ] = await Promise.all([
-      this.prisma.customer.count({ where: { deletedAt: null } }),
-      this.prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
-      this.prisma.user.count({ where: { deletedAt: null } }),
-      this.prisma.lead.count({ where: { deletedAt: null } }),
-      this.prisma.deal.count({ where: { deletedAt: null } }),
-      this.prisma.customerSubscription.findMany({
-        where: { status: 'ACTIVE' },
-        include: { plan: true },
-      }),
-    ]);
-
-    const mrr = activeSubs.reduce(
-      (acc, sub) => acc + (sub.plan ? Number(sub.plan.monthlyPrice) : 0),
-      0
-    );
-
-    return {
-      totalCustomers,
-      activeCustomers,
-      totalUsers,
-      totalLeads,
-      totalDeals,
-      mrr,
-      uptime: '99.99%',
-    };
+const [totalUsers, totalDeals, totalEmployees, totalTasks] = await Promise.all([this.prisma.user.count({where:{deletedAt:null}}),this.prisma.deal.count({where:{deletedAt:null}}),this.prisma.employee.count({where:{status:'ACTIVE'}}),this.prisma.task.count({where:{deletedAt:null}})]);
+return {totalUsers,totalDeals,totalEmployees,totalTasks};
   }
 }

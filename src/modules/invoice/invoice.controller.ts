@@ -75,7 +75,7 @@ export class InvoiceController {
       {
         status: status as any,
         search,
-        customerId: queryCustomerId || queryClientId,
+        
         page: pageNum,
         limit: limitNum,
       },

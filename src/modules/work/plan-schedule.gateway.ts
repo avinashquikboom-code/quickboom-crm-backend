@@ -14,7 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface PlanScheduleEventPayload {
-  customerId: string;
+  customerId?: string;
   planId?: string | number;
   scheduleId?: string | number;
   event:
@@ -59,8 +59,8 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
       (client.handshake.query?.token as string);
 
     const rawCustomerId =
-      (client.handshake.query?.customerId as string) ||
-      (client.handshake.auth?.customerId as string) ||
+      (undefined as string) ||
+      (undefined as string) ||
       (client.handshake.headers?.['x-customer-id'] as string);
 
     const hasToken = Boolean(token && token.trim().length > 0 && token !== 'null' && token !== 'undefined');
@@ -98,7 +98,7 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
             String(ur.role?.name || '').toUpperCase().replace(/[\s_]+/g, '') === 'SUPERADMIN',
         );
 
-        const authCustomerPk = user.customerId ? Number(user.customerId) : null;
+        const authCustomerPk = null;
 
         if (!isSuperAdmin) {
           if (!authCustomerPk || authCustomerPk <= 0) {
@@ -185,26 +185,16 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
   @SubscribeMessage('joinCustomerRoom')
   handleJoinCustomerRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { customerId: string | number },
+    @MessageBody() data: { customerId?: string | number },
   ) {
-    if (data?.customerId) {
-      const normalized = this.normalizeCustomerId(String(data.customerId));
-      const numeric = this.extractNumericPk(String(data.customerId));
-      client.join(`customer-${normalized}`);
-      if (numeric !== undefined) {
-        client.join(`customer-${numeric}`);
-      }
-      client.join(`customer-${String(data.customerId).trim()}`);
-      this.logger.log(`[REALTIME] Customer joined room: customer-${normalized} (Socket: ${client.id})`);
-      return { success: true, room: `customer-${normalized}` };
-    }
+    
     return { success: false, message: 'Invalid customerId' };
   }
 
   @SubscribeMessage('subscribePlanSchedule')
   handleSubscribePlanSchedule(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { customerId: string | number },
+    @MessageBody() data: { customerId?: string | number },
   ) {
     return this.handleJoinCustomerRoom(client, data);
   }
@@ -220,7 +210,7 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
     const numericCustId = this.extractNumericPk(String(customerId));
 
     const finalPayload: PlanScheduleEventPayload = {
-      customerId: normalizedCustId,
+      
       ...payload,
     };
 
@@ -308,7 +298,7 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
   ) {
     const payload = {
       event: 'lead_limit_updated',
-      customerId,
+      
       ...data,
       timestamp: new Date().toISOString(),
     };
@@ -330,7 +320,7 @@ export class PlanScheduleGateway implements OnGatewayConnection, OnGatewayDiscon
   notifyCustomerPermissionsUpdated(customerId: number) {
     const payload = {
       event: 'customer_permissions_updated',
-      customerId,
+      
       timestamp: new Date().toISOString(),
     };
     if (this.server) {

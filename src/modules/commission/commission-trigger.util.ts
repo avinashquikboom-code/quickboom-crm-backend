@@ -3,7 +3,7 @@ import type { CommissionService } from './commission.service';
 
 export interface QualifyingPayment {
   id: number;
-  customerId: number;
+  customerId?: number;
   amount: number;
   planId?: number | null;
   orderId?: string | null;
@@ -22,7 +22,7 @@ export async function awardCommissionForPayment(
   if (!commissionService || !payment?.id) return;
   try {
     await commissionService.calculateAndAwardCommission({
-      customerId: payment.customerId,
+      
       purchaseId: payment.id,
       purchaseAmount: Number(payment.amount),
       planId: payment.planId ?? null,

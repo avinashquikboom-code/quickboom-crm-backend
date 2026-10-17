@@ -53,8 +53,7 @@ export class InfluencerController {
   private resolveCustomerId(req: any): number {
     const user = req.user;
     const rawId =
-      user?.customerId ??
-      (user?.role === 'CUSTOMER' ? user?.customerId || user?.id : undefined) ??
+      (user?.role === 'CUSTOMER' ? user?.id : undefined) ??
       req.headers?.['x-customer-id'];
     const parsed = parseInt(String(rawId), 10);
     if (isNaN(parsed) || parsed <= 0) {

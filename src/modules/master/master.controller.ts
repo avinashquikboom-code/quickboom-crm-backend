@@ -22,7 +22,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getMasterSummary(targetCustomerId);
   }
 
@@ -35,7 +35,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getEmployeeTypes(targetCustomerId);
   }
 
@@ -48,7 +48,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getWorkTypes(targetCustomerId);
   }
 
@@ -61,7 +61,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getActivityTypes(targetCustomerId);
   }
 
@@ -74,7 +74,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getTaskStatuses(targetCustomerId);
   }
 
@@ -87,7 +87,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getExpenseCategories(targetCustomerId);
   }
 
@@ -100,7 +100,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getLoanTypes(targetCustomerId);
   }
 
@@ -113,7 +113,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.masterService.getPaymentMethods(targetCustomerId);
   }
 
@@ -125,7 +125,7 @@ export class MasterController {
     @Body() dto: any,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerId) : undefined;
     return this.masterService.createMasterItem(targetCustomerId, dto);
   }
 
@@ -138,7 +138,7 @@ export class MasterController {
     @Body() dto: any,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerId) : undefined;
     return this.masterService.updateMasterItem(id, targetCustomerId, dto);
   }
 
@@ -150,7 +150,7 @@ export class MasterController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? customerId : undefined;
     return this.masterService.deleteMasterItem(id, targetCustomerId);
   }
 }

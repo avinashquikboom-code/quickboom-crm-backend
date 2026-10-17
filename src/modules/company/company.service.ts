@@ -8,15 +8,9 @@ export class CompanyService {
   constructor(private prisma: PrismaService) {}
 
   async create(customerId: number | string | undefined, dto: CreateCompanyDto) {
-    let numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true, deletedAt: null } });
-      numCustomerId = defaultCustomer?.id || 1;
-    }
-
     return this.prisma.company.create({
       data: {
-        customerId: numCustomerId,
+        
         name: dto.name,
         domain: dto.domain || (dto.website ? dto.website.replace(/^https?:\/\//, '') : undefined),
         website: dto.website,
@@ -53,15 +47,13 @@ export class CompanyService {
     const baseWhere: any = { deletedAt: null };
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        baseWhere.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      baseWhere.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
+      
+      
     }
 
     const [total, active, newCompanies, withDeals] = await Promise.all([
@@ -98,7 +90,7 @@ export class CompanyService {
 
     const where: any = { deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     if (placeId) {
@@ -152,15 +144,13 @@ export class CompanyService {
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        where.customerId = numCustomerId;
+        
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-      if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-        throw new UnauthorizedException('User is not associated with any customer account');
-      }
-      where.customerId = effectiveCustomerId;
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
+      
+      
     }
 
     if (query.industry && query.industry.toUpperCase() !== 'ALL') where.industry = query.industry;
@@ -208,7 +198,7 @@ export class CompanyService {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+      
     }
 
     const company = await this.prisma.company.findFirst({

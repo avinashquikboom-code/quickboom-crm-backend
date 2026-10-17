@@ -30,8 +30,8 @@ export class ReportController {
   ): number {
     const isSuperAdmin = isUserSuperAdmin(user);
     const target = isSuperAdmin
-      ? (queryCustomerId || customerParam || user?.customerId)
-      : (user?.customerId || customerParam);
+      ? (queryCustomerId || customerParam || undefined)
+      : (customerParam);
 
     const num = Number(target);
     if (!num || isNaN(num)) {
@@ -51,7 +51,7 @@ export class ReportController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query() query: QueryReportDto,
   ) {
-    const targetCustomer = this.resolveCustomerId(user, customerId, query.customerId);
+    const targetCustomer = this.resolveCustomerId(user, customerId, undefined);
     return this.reportService.getSummaryReport(targetCustomer, query);
   }
 
@@ -72,7 +72,7 @@ export class ReportController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query() query: QueryReportDto,
   ) {
-    const targetCustomer = this.resolveCustomerId(user, customerId, query.customerId);
+    const targetCustomer = this.resolveCustomerId(user, customerId, undefined);
     return this.reportService.getReportData(targetCustomer, query);
   }
 

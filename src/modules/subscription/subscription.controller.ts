@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import {
   Controller,
   Get,
@@ -26,7 +27,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { RoleType, SubscriptionStatus } from '@prisma/client';
+import { RoleType,  } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -59,27 +60,7 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) {
-    const rawCustId =
-      customerIdStr ??
-      req?.customerId ??
-      user?.customerId ??
-      headerCustomerId ??
-      req?.headers?.['x-customer-id'];
-
-    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
-    if (!customerId || isNaN(customerId)) {
-      return {
-        success: false,
-        message: 'No customer organization associated with current user',
-      };
-    }
-    const summary = await this.installmentService.getCustomerInstallmentSummary(customerId);
-    return {
-      success: true,
-      data: summary,
-    };
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('subscriptions/installments/:id/pay')
   @UseGuards(JwtAuthGuard)
@@ -89,17 +70,7 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Param('id') id: string,
     @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string },
-  ) {
-    const customerId = user?.customerId;
-    if (!customerId) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
-    return this.installmentService.payInstallment(customerId, id, {
-      paymentMethod: dto.paymentMethod,
-      transactionId: dto.transactionId,
-      orderId: dto.orderId,
-    });
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('subscriptions/current')
   @UseGuards(JwtAuthGuard, CustomerGuard)
@@ -110,24 +81,7 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) {
-    const rawCustId =
-      customerIdStr ??
-      req?.customerId ??
-      user?.customerId ??
-      headerCustomerId ??
-      req?.headers?.['x-customer-id'];
-
-    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
-    if (!customerId || isNaN(customerId)) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
-    const res = await this.installmentService.getCurrentSubscription(customerId);
-    this.logger.log(
-      `[GET_CURRENT_SUBSCRIPTION] user=${user?.id || 'N/A'} customerId=${customerId} status=${res?.subscription?.status || res?.data?.status || 'NO_SUB'}`,
-    );
-    return res;
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('subscriptions/renewal-status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
@@ -138,20 +92,7 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) {
-    const rawCustId =
-      customerIdStr ??
-      req?.customerId ??
-      user?.customerId ??
-      headerCustomerId ??
-      req?.headers?.['x-customer-id'];
-
-    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
-    if (!customerId || isNaN(customerId)) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
-    return this.installmentService.getRenewalStatus(customerId);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('subscriptions/:subscriptionId/renew')
   @UseGuards(JwtAuthGuard)
@@ -161,13 +102,7 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: { installmentId: number | string; paymentMethod?: string },
-  ) {
-    const customerId = user?.customerId;
-    if (!customerId) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
-    return this.installmentService.renewExistingInstallment(customerId, subscriptionId, dto);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
@@ -186,32 +121,7 @@ export class SubscriptionController {
       transactionId?: string;
       orderNumber?: string;
     },
-  ) {
-    const customerId = user?.customerId;
-    if (!customerId) {
-      throw new ForbiddenException('No customer organization associated with current user');
-    }
-    const result = await this.installmentService.startNewPlan(customerId, {
-      ...dto,
-      planId: dto.planId ? Number(dto.planId) : undefined,
-    });
-
-    return {
-      success: true,
-      message: 'New plan created successfully.',
-      data: {
-        subscriptionId: String(result.newSubscriptionId),
-        planId: String(result.summary.planId),
-        planName: result.summary.planName,
-        planValue: result.summary.originalPlanValue,
-        status: result.summary.planStatus,
-        startDate: new Date().toISOString(),
-        expiryDate: result.summary.nextDueDate
-          ? new Date(result.summary.nextDueDate).toISOString()
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      },
-    };
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('admin/installments/evaluate')
   @UseGuards(JwtAuthGuard)
@@ -249,115 +159,7 @@ export class SubscriptionController {
     @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
-  ) {
-    const customerId = customerIdStr || req?.customerId || user?.customerId;
-    if (!customerId) {
-      return {
-        success: true,
-        data: null,
-        message: 'No customer organization associated with current user',
-      };
-    }
-    try {
-      const plan = await this.planAccessService.getEffectivePlan(customerId);
-      const upcomingPlan = plan?.upcomingPlan || null;
-      const isCurrentActive = Boolean(
-        plan &&
-        plan.subscriptionId &&
-        !plan.isExpired &&
-        String(plan.status) === 'ACTIVE',
-      );
-      // Purchased subscription whose startDate is still in the future is not
-      // entitlement-active, but it is the customer's current plan record and must
-      // be returned in `data` so Plans/Calendar share this same source.
-      const isPurchasedUpcoming = Boolean(
-        !isCurrentActive &&
-        plan &&
-        plan.subscriptionId &&
-        upcomingPlan &&
-        !plan.isExpired,
-      );
-      const isPurchasedPending = Boolean(
-        !isCurrentActive &&
-        plan &&
-        plan.subscriptionId &&
-        String(plan.status) === 'PENDING' &&
-        !plan.isExpired,
-      );
-
-      const currentPlanData = (isCurrentActive || isPurchasedUpcoming || isPurchasedPending) && plan
-        ? {
-            id: String(plan.subscriptionId || plan.planId),
-            subscriptionId: plan.subscriptionId ? String(plan.subscriptionId) : null,
-            planId: String(plan.planId),
-            name: plan.planName,
-            planName: plan.planName,
-            code: plan.planCode,
-            planCode: plan.planCode,
-            status: String(plan.status) === 'PENDING'
-              ? 'PENDING'
-              : (String(plan.status) === 'ACTIVE' ? 'ACTIVE' : 'UPCOMING'),
-            customerId: String(plan.customerId || customerId),
-            workspaceId: String(plan.customerId || customerId),
-            billingCycle: plan.billingCycle || 'MONTHLY',
-            price: plan.price,
-            startDate: plan.startDate,
-            endDate: plan.endDate,
-            expiryDate: plan.endDate,
-            purchaseDate: plan.startDate,
-            isActive: Boolean(isCurrentActive),
-            isExpired: plan.isExpired,
-            remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
-            usedDays: Math.max(0, Math.floor((Date.now() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
-            totalDays: Math.max(1, Math.round((new Date(plan.endDate).getTime() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
-            features: Array.isArray(plan.features) ? plan.features : [],
-            quotas: {
-              userLimit: plan.userLimit,
-              leadLimit: plan.leadLimit,
-              storageLimitBytes: Number(plan.storageLimitBytes),
-              scheduleLimit: plan.scheduleLimit,
-              usedSchedules: plan.usedSchedules,
-              remainingSchedules: plan.remainingSchedules,
-            },
-            services: plan.services || [],
-            usage: {
-              currentUsers: plan.usage?.currentUsers || 0,
-              currentLeads: plan.usage?.currentLeads || 0,
-              currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
-              scheduledWorks: plan.usage?.scheduledWorks || 0,
-            },
-            couponCode: plan.couponCode || null,
-            originalAmount: plan.originalAmount ?? null,
-            discountAmount: plan.discountAmount ?? null,
-            paidAmount: plan.paidAmount ?? null,
-            upcomingPlan,
-          }
-        : null;
-
-      this.logger.log(
-        `[EFFECTIVE_PLAN_API] AUTH_USER_ID: ${user?.id || customerId} | CUSTOMER_ID: ${customerId} | WORKSPACE_ID: ${customerId} | PLAN_ID: ${currentPlanData?.planId || 'NONE'} | SUBSCRIPTION_ID: ${currentPlanData?.subscriptionId || 'NONE'} | SUBSCRIPTION_STATUS: ${currentPlanData?.status || 'NONE'} | START_DATE: ${currentPlanData?.startDate || 'NONE'} | END_DATE: ${currentPlanData?.endDate || 'NONE'}`,
-      );
-
-      return {
-        success: true,
-        data: currentPlanData,
-        currentPlan: currentPlanData,
-        subscription: currentPlanData,
-        upcomingPlan,
-        effectivePlan: currentPlanData,
-        message: currentPlanData
-          ? undefined
-          : upcomingPlan
-          ? 'Upcoming plan scheduled'
-          : 'No active subscription found',
-      };
-    } catch (err: any) {
-      this.logger.warn(
-        `[EFFECTIVE_PLAN_API] Failed for customerId=${customerId}: ${err?.message || 'unknown error'}`,
-      );
-      throw err;
-    }
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('subscriptions/orders')
   @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
@@ -368,13 +170,7 @@ export class SubscriptionController {
     @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
-  ) {
-    const customerId = customerIdStr || req?.customerId || user?.customerId;
-    if (!customerId) {
-      return { success: true, data: [] };
-    }
-    return this.subscriptionService.getCustomerOrders(customerId);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('subscriptions/orders/:paymentId/agreement/download')
   @UseGuards(JwtAuthGuard, CustomerGuard)
@@ -386,171 +182,8 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Res() res: Response,
-  ) {
-    const customerId = Number(customerIdStr || req?.customerId || user?.customerId);
-    const rawKey = String(paymentId ?? '').trim();
-    const ordPay = rawKey.match(/^ORD-PAY-(\d+)$/i);
-    const ordCust = rawKey.match(/^ORD-CUST-(\d+)$/i);
-    const digitsOnly = /^\d+$/.test(rawKey) ? Number(rawKey) : NaN;
-    const paidStatuses = ['SUCCESS', 'PAID', 'success', 'paid'];
-    const scope = !isNaN(customerId) && customerId > 0 ? { customerId } : {};
-
-    const paymentInclude = {
-      customer: true,
-      subscription: { include: { plan: true } },
-    } as const;
-
-    let paymentData: any = null;
-
-    if (ordPay) {
-      paymentData = await this.prisma.paymentHistory.findFirst({
-        where: {
-          id: Number(ordPay[1]),
-          ...scope,
-          deletedAt: null,
-          status: { in: paidStatuses },
-        },
-        include: paymentInclude,
-      });
-    }
-
-    const customOrderId = ordCust
-      ? Number(ordCust[1])
-      : !isNaN(digitsOnly) && digitsOnly >= 100000
-        ? digitsOnly - 100000
-        : null;
-
-    if (!paymentData && customOrderId && customOrderId > 0) {
-      const customOrder = await this.prisma.customPlanOrder.findFirst({
-        where: {
-          id: customOrderId,
-          ...scope,
-          deletedAt: null,
-          status: { in: ['PAID', 'ACTIVATED', 'SUCCESS'] },
-        },
-      });
-      if (customOrder) {
-        paymentData = await this.prisma.paymentHistory.findFirst({
-          where: {
-            orderNumber: customOrder.orderNumber,
-            ...scope,
-            deletedAt: null,
-            status: { in: paidStatuses },
-          },
-          include: paymentInclude,
-        });
-        if (!paymentData) {
-          const customer = await this.prisma.customer.findFirst({
-            where: { id: customOrder.customerId },
-          });
-          if (!customer) {
-            throw new NotFoundException('Agreement is not available for this order.');
-          }
-          const activationDate = customOrder.startDate || customOrder.createdAt;
-          let endDate = customOrder.expiryDate;
-          if (!endDate) {
-            endDate = new Date(activationDate);
-            endDate.setMonth(endDate.getMonth() + (customOrder.duration || 1));
-          }
-          const pdfBuffer = await generateAgreementPdfBuffer({
-            customerName: customer.name || customer.companyName || 'Valued Customer',
-            companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
-            purchaseDate: customOrder.createdAt,
-            activationDate,
-            planName: `Custom Plan (${customOrder.duration} ${customOrder.durationUnit || 'MONTH'})`,
-            planFeatures: [],
-            amount: Number(customOrder.subtotal),
-            taxAmount: Number(customOrder.tax || 0),
-            totalAmount: Number(customOrder.totalAmount),
-            startDate: activationDate,
-            endDate,
-            orderNumber: customOrder.orderNumber || `ORD-CUST-${customOrder.id}`,
-            invoiceNumber: null,
-          });
-          const safeCompany = (customer.companyName || customer.name || 'Agreement').replace(/[^a-zA-Z0-9_-]/g, '_');
-          res.set({
-            'Content-Type': 'application/pdf',
-            'Content-Disposition': `attachment; filename="Agreement_${safeCompany}.pdf"`,
-            'Content-Length': pdfBuffer.length,
-          });
-          res.end(pdfBuffer);
-          return;
-        }
-      }
-    }
-
-    if (!paymentData && !isNaN(digitsOnly) && digitsOnly > 0 && digitsOnly < 100000) {
-      paymentData = await this.prisma.paymentHistory.findFirst({
-        where: {
-          id: digitsOnly,
-          ...scope,
-          deletedAt: null,
-          status: { in: paidStatuses },
-        },
-        include: paymentInclude,
-      });
-    }
-
-    if (!paymentData && rawKey) {
-      paymentData = await this.prisma.paymentHistory.findFirst({
-        where: {
-          OR: [{ orderNumber: rawKey }, { orderId: rawKey }],
-          ...scope,
-          deletedAt: null,
-          status: { in: paidStatuses },
-        },
-        include: paymentInclude,
-      });
-    }
-
-    if (!paymentData || !paymentData.customer) {
-      this.logger.warn(
-        `[AGREEMENT_DEBUG] method: GET path: /api/v1/subscriptions/orders/${rawKey}/agreement/download customerId: ${isNaN(customerId) ? '' : customerId} result: NOT_FOUND`,
-      );
-      throw new NotFoundException('Agreement is not available for this order.');
-    }
-    this.logger.log(
-      `[AGREEMENT_DEBUG] method: GET path: /api/v1/subscriptions/orders/${rawKey}/agreement/download customerId: ${paymentData.customerId} paymentId: ${paymentData.id} status: ${paymentData.status}`,
-    );
-
-    const sub = paymentData.subscription;
-    const plan = sub?.plan;
-    const customer = paymentData.customer;
-
-    const planName = plan?.name || paymentData.planName || 'Custom Plan';
-    const planFeatures = (plan?.features as any[]) || [];
-    const activationDate = sub?.startDate || paymentData.createdAt;
-
-    let endDate = sub?.endDate;
-    if (!endDate) {
-      const durationMonths = paymentData.billingCycle === 'YEARLY' ? 12 : 1;
-      endDate = new Date(activationDate);
-      endDate.setMonth(endDate.getMonth() + durationMonths);
-    }
-
-    const pdfBuffer = await generateAgreementPdfBuffer({
-      customerName: customer.name || customer.companyName || 'Valued Customer',
-      companyName: customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency',
-      purchaseDate: paymentData.createdAt,
-      activationDate,
-      planName,
-      planFeatures,
-      amount: Number(paymentData.amount),
-      taxAmount: Number(paymentData.taxAmount || 0),
-      totalAmount: Number(paymentData.totalAmount || paymentData.amount),
-      startDate: activationDate,
-      endDate,
-      orderNumber: paymentData.orderNumber || `ORD-PAY-${paymentData.id}`,
-      invoiceNumber: paymentData.invoiceUrl || null,
-    });
-
-    const safeCompany = (customer.companyName || customer.name || 'Agreement').replace(/[^a-zA-Z0-9_-]/g, '_');
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="Agreement_${safeCompany}.pdf"`,
-      'Content-Length': pdfBuffer.length,
-    });
-    res.end(pdfBuffer);
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   // ==========================================
@@ -730,32 +363,20 @@ export class SubscriptionController {
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-  ) {
-    return this.subscriptionService.getAllSubscriptions({
-      search,
-      status,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-    });
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('admin/subscriptions/expiring')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get subscriptions expiring soon (Admin)' })
   @ApiQuery({ name: 'days', required: false, description: 'Default is 10 days' })
-  async getExpiringSubscriptions(@Query('days') days?: string) {
-    const numDays = days ? parseInt(days, 10) : 10;
-    return this.subscriptionService.getExpiringSubscriptions(numDays);
-  }
+  async getExpiringSubscriptions(@Query('days') days?: string) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('admin/subscriptions/expired')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get expired subscriptions (Admin)' })
-  async getExpiredSubscriptions() {
-    return this.subscriptionService.getExpiredSubscriptions();
-  }
+  async getExpiredSubscriptions() { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('admin/subscriptions/check-expiry')
   @UseGuards(JwtAuthGuard)
@@ -779,10 +400,7 @@ export class SubscriptionController {
   async activateSubscription(
     @Param() params: any,
     @CurrentUser() user: any,
-  ) {
-    const subscriptionId = params.subscriptionId || params.id;
-    return this.subscriptionService.activateCustomerSubscription(subscriptionId, user?.id);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('admin/subscriptions/:subscriptionId/deactivate')
   @Patch('admin/subscriptions/:subscriptionId/deactivate')
@@ -798,10 +416,7 @@ export class SubscriptionController {
   async deactivateSubscription(
     @Param() params: any,
     @CurrentUser() user: any,
-  ) {
-    const subscriptionId = params.subscriptionId || params.id;
-    return this.subscriptionService.deactivateCustomerSubscription(subscriptionId, user?.id);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('admin/subscriptions/:subscriptionId/change-plan')
   @Patch('admin/subscriptions/:subscriptionId/change-plan')
@@ -813,9 +428,7 @@ export class SubscriptionController {
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: any,
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.changeCustomerPlan(subscriptionId, dto, user?.id);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post('admin/subscriptions/:subscriptionId/renew')
   @Patch('admin/subscriptions/:subscriptionId/renew')
@@ -827,9 +440,7 @@ export class SubscriptionController {
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: any,
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.renewCustomerSubscription(subscriptionId, dto, user?.id);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post([
     'admin/subscriptions/bulk-delete',
@@ -844,17 +455,7 @@ export class SubscriptionController {
     @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) {
-    let ids = dto?.ids || dto?.subscriptionIds;
-    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
-      if (Array.isArray(queryIds)) {
-        ids = queryIds;
-      } else if (typeof queryIds === 'string') {
-        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Delete([
     'admin/subscriptions/bulk',
@@ -869,17 +470,7 @@ export class SubscriptionController {
     @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) {
-    let ids = dto?.ids || dto?.subscriptionIds;
-    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
-      if (Array.isArray(queryIds)) {
-        ids = queryIds;
-      } else if (typeof queryIds === 'string') {
-        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Delete(['admin/subscriptions/:subscriptionId', 'subscriptions/:subscriptionId'])
   @UseGuards(JwtAuthGuard)
@@ -888,9 +479,7 @@ export class SubscriptionController {
   async deleteSubscription(
     @Param('subscriptionId') subscriptionId: string,
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   // ==========================================
   // Offline Payment Requests (Admin)
@@ -909,14 +498,7 @@ export class SubscriptionController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-  ) {
-    return this.subscriptionService.getAdminOfflinePaymentRequests({
-      status,
-      search,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-    });
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post([
     'admin/subscriptions/offline-requests/:id/approve',
@@ -929,9 +511,7 @@ export class SubscriptionController {
   async approveOfflinePaymentRequest(
     @Param('id') id: string,
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.approveOfflinePaymentRequest(id, user?.id);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post([
     'admin/subscriptions/offline-requests/:id/reject',
@@ -945,9 +525,7 @@ export class SubscriptionController {
     @Param('id') id: string,
     @Body() dto: { reason?: string },
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.rejectOfflinePaymentRequest(id, user?.id, dto?.reason);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Post([
     'admin/subscriptions/offline-requests/bulk-delete',
@@ -964,17 +542,7 @@ export class SubscriptionController {
     @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) {
-    let ids = dto?.ids || dto?.requestIds;
-    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
-      if (Array.isArray(queryIds)) {
-        ids = queryIds;
-      } else if (typeof queryIds === 'string') {
-        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Delete([
     'admin/subscriptions/offline-requests/bulk',
@@ -991,17 +559,7 @@ export class SubscriptionController {
     @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) {
-    let ids = dto?.ids || dto?.requestIds;
-    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
-      if (Array.isArray(queryIds)) {
-        ids = queryIds;
-      } else if (typeof queryIds === 'string') {
-        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Delete([
     'admin/subscriptions/offline-requests/:id',
@@ -1014,9 +572,7 @@ export class SubscriptionController {
   async deleteOfflinePaymentRequest(
     @Param('id') id: string,
     @CurrentUser() user: any,
-  ) {
-    return this.subscriptionService.deleteOfflinePaymentRequest(id, user);
-  }
+  ) { throw new GoneException('Customer subscriptions have been removed'); }
 }
 
 

@@ -59,7 +59,7 @@ export class CustomPlanController {
     @Req() req: any,
     @Body() dto: CreateCustomPlanDto,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.customPlanService.createCustomPlanOrder(customerId, dto);
   }
 
@@ -73,7 +73,7 @@ export class CustomPlanController {
     @Body() dto: VerifyCustomPlanPaymentDto,
     @Query('orderId') orderIdQuery?: string,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     const parsedOrderId = parseCustomPlanOrderId(
       dto.customPlanOrderId ?? dto.quoteId ?? dto.orderId ?? orderIdQuery,
     );
@@ -90,7 +90,7 @@ export class CustomPlanController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get authenticated customer custom plan purchase history' })
   async getCustomerCustomPlans(@CurrentUser() user: any, @Req() req: any) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.customPlanService.getCustomerCustomPlans(customerId);
   }
 

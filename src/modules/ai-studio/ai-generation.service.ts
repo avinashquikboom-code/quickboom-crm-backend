@@ -271,7 +271,7 @@ export class AiGenerationService {
     const generation = await this.prisma.aiGeneration.create({
       data: {
         generationId,
-        customerId,
+        
         type: dto.type,
         status,
         product: dto.product,
@@ -309,7 +309,7 @@ export class AiGenerationService {
     let deduction = { creditsSpent: 0, newBalance: 0 };
     if (status === 'COMPLETED') {
       deduction = await this.aiCredit.deductCreditsOnSuccess({
-        customerId,
+        
         serviceCode,
         generationDbId: generation.id,
         generationCode: generationId,
@@ -339,7 +339,7 @@ export class AiGenerationService {
     const generation = await this.prisma.aiGeneration.findFirst({
       where: {
         OR: [{ generationId }, { id: parseInt(generationId, 10) || -1 }],
-        customerId,
+        
         deletedAt: null,
       },
       include: { assets: true },
@@ -362,7 +362,7 @@ export class AiGenerationService {
               serviceCode,
             );
             const deduction = await this.aiCredit.deductCreditsOnSuccess({
-              customerId,
+              
               serviceCode,
               generationDbId: generation.id,
               generationCode: generation.generationId,
@@ -410,7 +410,7 @@ export class AiGenerationService {
     const generation = await this.prisma.aiGeneration.findFirst({
       where: {
         OR: [{ generationId }, { id: parseInt(generationId, 10) || -1 }],
-        customerId,
+        
         deletedAt: null,
       },
     });
@@ -433,7 +433,7 @@ export class AiGenerationService {
    */
   async getMyGenerations(customerId: number, type?: string) {
     const where: any = {
-      customerId,
+      
       deletedAt: null,
     };
 
@@ -484,9 +484,7 @@ export class AiGenerationService {
       this.prisma.aiGeneration.findMany({
         where,
         include: {
-          customer: {
-            select: { id: true, name: true, email: true, phone: true, companyName: true },
-          },
+          
           assets: true,
         },
         orderBy: { id: 'desc' },

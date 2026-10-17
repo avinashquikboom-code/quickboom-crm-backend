@@ -128,7 +128,7 @@ export class DataManagementController {
       search,
       limit: limit ? parseInt(limit, 10) : 20,
       page: page ? parseInt(page, 10) : 1,
-      customerId,
+      
     });
   }
 
@@ -211,10 +211,10 @@ export class DataManagementController {
   async resetCustomerBody(
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
-    @Body() dto: { customerId: string | number; confirmation?: string; reason?: string },
+    @Body() dto: { customerId?: string | number; confirmation?: string; reason?: string },
   ) {
     return this.dataManagementService.resetCustomerData(
-      dto.customerId,
+      undefined,
       userId,
       userRole,
       dto,

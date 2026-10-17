@@ -39,7 +39,7 @@ export class ShiftController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.shiftService.getMetrics(targetCustomerId, isSuperAdmin);
   }
 
@@ -58,7 +58,7 @@ export class ShiftController {
     @Query('type') type?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.shiftService.findAll(targetCustomerId, { status, search, type }, isSuperAdmin);
   }
 
@@ -72,7 +72,7 @@ export class ShiftController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.shiftService.findOne(targetCustomerId, id, isSuperAdmin);
   }
 
@@ -83,7 +83,7 @@ export class ShiftController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Body() dto: CreateShiftDto,
   ) {
-    const targetCustomerId = customerId || user?.customerId;
+    const targetCustomerId = customerId || undefined;
     return this.shiftService.create(targetCustomerId, dto);
   }
 
@@ -96,7 +96,7 @@ export class ShiftController {
     @Body() dto: UpdateShiftDto,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? customerId : undefined;
     return this.shiftService.update(targetCustomerId, id, dto, isSuperAdmin);
   }
 
@@ -109,7 +109,7 @@ export class ShiftController {
     @Body() dto: UpdateShiftGuidanceDto,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? customerId : undefined;
     return this.shiftService.updateGuidance(targetCustomerId, id, dto, isSuperAdmin);
   }
 
@@ -122,7 +122,7 @@ export class ShiftController {
     @Body() dto: AssignEmployeesToShiftDto,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? customerId : undefined;
     return this.shiftService.assignEmployees(targetCustomerId, id, dto, isSuperAdmin);
   }
 
@@ -134,7 +134,7 @@ export class ShiftController {
     @Param('id') id: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? customerId : undefined;
     return this.shiftService.delete(targetCustomerId, id, isSuperAdmin);
   }
 }

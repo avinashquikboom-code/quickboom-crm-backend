@@ -29,7 +29,7 @@ export class ReceiptController {
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const numCustomerId = customerId ? parseInt(customerId, 10) : req?.customerId || user?.customerId;
+    const numCustomerId = customerId ? parseInt(customerId, 10) : undefined;
     return this.receiptService.getReceipt(receiptId, numCustomerId, user);
   }
 
@@ -42,7 +42,7 @@ export class ReceiptController {
     @Req() req: any,
     @Res() res: Response,
   ) {
-    const numCustomerId = customerId ? parseInt(customerId, 10) : req?.customerId || user?.customerId;
+    const numCustomerId = customerId ? parseInt(customerId, 10) : undefined;
     return this.receiptService.downloadReceiptPdf(receiptId, numCustomerId, user, res);
   }
 }

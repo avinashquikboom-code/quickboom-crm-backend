@@ -68,7 +68,7 @@ export class NotificationController {
     @Query('search') search?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = customerId || user?.customerId || (isSuperAdmin ? undefined : undefined);
+    const targetCustomerId = customerId || undefined || (isSuperAdmin ? undefined : undefined);
     return this.notificationService.findAll(
       targetCustomerId,
       userId,
@@ -108,10 +108,10 @@ export class NotificationController {
     @CurrentCustomer() currentCustomerId: number | string | undefined,
     @Body() dto: SendNotificationDto,
   ) {
-    const customerId = dto.customerId || (currentCustomerId ? Number(currentCustomerId) : undefined);
+    const customerId = (currentCustomerId ? Number(currentCustomerId) : undefined);
     return this.notificationService.sendPushNotification({
       userId: dto.userId,
-      customerId,
+      
       title: dto.title,
       body: dto.body,
       type: dto.type || 'GENERAL',
@@ -133,7 +133,7 @@ export class NotificationController {
     @CurrentCustomer() currentCustomerId: number | string | undefined,
     @Body() dto: TestCustomerNotificationDto,
   ) {
-    const targetCustomerId = dto.customerId || currentCustomerId;
+    const targetCustomerId = currentCustomerId;
     return this.notificationService.sendCustomerTestNotification(targetCustomerId);
   }
 
@@ -365,7 +365,7 @@ export class NotificationController {
       slipId: Number(slipId),
       force: true,
       channels: body?.channel || 'BOTH',
-      customerId: customerId ? Number(customerId) : undefined,
+      
     });
   }
 
@@ -399,7 +399,7 @@ export class NotificationController {
       month: Number(body.month),
       force: Boolean(body.force),
       channels: body.channel || 'BOTH',
-      customerId: customerId ? Number(customerId) : undefined,
+      
     });
   }
 
