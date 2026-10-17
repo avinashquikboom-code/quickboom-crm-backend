@@ -3,7 +3,6 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
-import * as jwt from 'jsonwebtoken';
 
 
 @Injectable()
@@ -41,41 +40,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
-      secretOrKeyProvider: (
-        req: any,
-        rawJwtToken: any,
-        done: (err: any, secret?: string) => void,
-      ) => {
-        const rawConfigSecret = configService.get<string>('JWT_SECRET');
-        const rawEnvSecret = process.env.JWT_SECRET;
-        const fallbackSecret = 'quikboom_super_secret_jwt_access_key_2026';
-        const devSecret = 'quikboom_jwt_secret_development_key_3847291847';
-        const prodSecret = 'quikboom_production_secure_token_secret_key_3847291847';
-
-        const candidateSecrets = Array.from(
-          new Set(
-            [rawConfigSecret, rawEnvSecret, fallbackSecret, devSecret, prodSecret]
-              .map((s) => (s ? s.replace(/^["']|["']$/g, '').trim() : ''))
-              .filter((s): s is string => Boolean(s && s.length > 0)),
-          ),
-        );
-
-        if (typeof rawJwtToken === 'string' && rawJwtToken.length > 0) {
-          const cleanToken = rawJwtToken.replace(/^["']|["']$/g, '').trim();
-          for (const sec of candidateSecrets) {
-            try {
-              jwt.verify(cleanToken, sec, { ignoreExpiration: true });
-              return done(null, sec);
-            } catch (e: any) {
-              if (e?.name === 'TokenExpiredError') {
-                return done(null, sec);
-              }
-            }
-          }
-        }
-
-        done(null, candidateSecrets[0] || fallbackSecret);
-      },
+      // Match generateTokens exactly; never accept alternate hardcoded keys.
+      secretOrKey: (
+        configService.get<string>('JWT_SECRET') ||
+        process.env.JWT_SECRET ||
+        'quikboom_super_secret_jwt_access_key_2026'
+      ).replace(/^["']|["']$/g, '').trim(),
+      algorithms: ['HS256'],
     });
   }
 
