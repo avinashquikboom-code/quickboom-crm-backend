@@ -71,8 +71,8 @@ export class LeadService {
   }
 
   async findAll(query: LeadQueryDto, user: any) {
-    const page = query.page || 1;
-    const limit = query.limit || 20;
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const where: Prisma.LeadWhereInput = { AND: [{ deletedAt: null }, this.scope(user)] };
     if (query.status) where.status = query.status;
     if (query.source) where.source = query.source;
@@ -102,7 +102,9 @@ export class LeadService {
     ]);
     const data = rawList.map((lead) => this.mapLeadWithStage(lead));
     this.logger.debug(`[LEAD_LIST_DEBUG] ${JSON.stringify({ userId: user.id, employeeId: user.employee?.id, page, limit, filtered: Boolean(query.search || query.status || query.source || query.createdFrom), total, returnedIds: data.map((lead) => lead.id) })}`);
-    return { data, total, page, totalPages: Math.max(1, Math.ceil(total / limit)), pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } };
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const pagination = { page, limit, total, totalPages };
+    return { data, items: data, total, page, limit, totalPages, pagination, meta: pagination };
   }
 
   async findOne(id: number, user: any) {
