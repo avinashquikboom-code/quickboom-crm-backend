@@ -198,3 +198,44 @@ it('prevents an employee import from assigning a Lead to another employee', asyn
   await expect(service.importCapture(11, employee, platform, { assignedToId: 99 })).rejects.toBeInstanceOf(ForbiddenException);
   expect(tx.lead.create).not.toHaveBeenCalled();
 });
+
+describe('shared BPO and Admin pipeline stage synchronization', () => {
+  const bpo = { id: 4, accountType: 'EMPLOYEE', employee: { id: 7, status: 'ACTIVE', designation: { name: 'BPO' } } };
+  function fixture(assignedToId: number | null = 7) {
+    let record = { id: 943, createdById: 2, assignedToId, status: 'NEW', notes: 'Existing history', deletedAt: null };
+    const prisma = { lead: {
+      findFirst: jest.fn(async () => record),
+      update: jest.fn(async ({ data }) => (record = { ...record, ...data })),
+    } };
+    return { prisma, service: new LeadService(prisma as any) };
+  }
+  it('returns the same configured stage keys, labels, order and colors to BPO and Admin', () => {
+    const { service } = fixture();
+    expect(service.getStages(bpo)).toEqual(service.getStages(admin));
+    expect(service.getStages(bpo)).toHaveLength(11);
+  });
+  it('saves New to Contacted for an assigned BPO employee and returns it on subsequent Admin and Mobile reads', async () => {
+    const { service, prisma } = fixture();
+    const updated = await service.updateStage(943, { status: 'CONTACTED', stageId: 2, notes: 'Called prospect' }, bpo);
+    expect(updated).toMatchObject({ id: 943, status: 'CONTACTED', stage: { key: 'CONTACTED', name: 'Contacted' }, notes: 'Existing history\nCalled prospect' });
+    expect(await service.findOne(943, admin)).toMatchObject({ status: 'CONTACTED', stageId: 2 });
+    expect(await service.findOne(943, bpo)).toMatchObject({ status: 'CONTACTED', stageId: 2 });
+    expect(prisma.lead.update).toHaveBeenCalledTimes(1);
+  });
+  it('denies a BPO user access to another employee Lead', async () => {
+    const { service, prisma } = fixture(99);
+    await expect(service.updateStage(943, { status: 'CONTACTED' }, bpo)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+  });
+  it.each([{ accountType: 'CUSTOMER', id: 9 }, { accountType: 'EMPLOYEE', id: 9, employee: { id: 9, status: 'INACTIVE' } }])('denies accounts without active employee scope', async user => {
+    const { service, prisma } = fixture();
+    expect(() => service.getStages(user)).toThrow(ForbiddenException);
+    await expect(service.updateStage(943, { status: 'CONTACTED' }, user)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+  });
+  it.each([{}, { status: 'INVALID' }, { stageId: 999 }, { status: 'NEW', stageId: 2 }])('rejects invalid/conflicting stage input instead of resetting to New', async dto => {
+    const { service, prisma } = fixture();
+    await expect(service.updateStage(943, dto, bpo)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+  });
+});
