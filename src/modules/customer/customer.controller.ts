@@ -10,6 +10,8 @@ import {
   Post,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   IsInt,
@@ -23,7 +25,6 @@ import {
   IsBoolean,
   IsOptional,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CustomerService } from './customer.service';
@@ -31,7 +32,6 @@ export class BulkDeleteCustomersDto {
   @IsArray()
   @ArrayNotEmpty()
   @ArrayMaxSize(100)
-  @Type(() => Number)
   @IsInt({ each: true })
   @Min(1, { each: true })
   ids: number[];
@@ -63,15 +63,25 @@ export class CustomerController {
       .then((c) => this.customers.detail(user, c.id));
   }
   @Post(['customers/bulk-delete', 'customers/bulk'])
-  @Delete(['customers/bulk-delete', 'customers/bulk'])
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
   bulkDelete(
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteCustomersDto,
     @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
     const cancel = dto?.cancelSubscriptions ?? (cancelQuery === 'true' || cancelQuery === '1');
-    const ids = Array.isArray(dto) ? dto : (dto?.ids || []);
+    const ids = dto?.ids || [];
     return this.customers.bulkRemove(ids, user, cancel);
+  }
+  // Nest method decorators overwrite each other; keep compatibility on its own handler.
+  @Delete(['customers/bulk-delete', 'customers/bulk'])
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  bulkDeleteViaDelete(
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteCustomersDto,
+    @Query('cancelSubscriptions') cancelQuery?: string,
+  ) {
+    return this.bulkDelete(user, dto, cancelQuery);
   }
   @Delete('customers/:id') remove(
     @CurrentUser() user: any,
