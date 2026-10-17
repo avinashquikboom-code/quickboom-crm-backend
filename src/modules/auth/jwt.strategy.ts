@@ -4,7 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RoleType } from '@prisma/client';
+import { RoleType } from '../../common/enums/role-type.enum';
 import * as jwt from 'jsonwebtoken';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
 import {

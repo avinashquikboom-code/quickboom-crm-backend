@@ -2013,71 +2013,6 @@ return undefined;
         },
       });
 
-      // Synchronize UserRole with updated Designation
-      if (updatedEmployee.userId && updatedEmployee.designation?.name) {
-        const desigName = updatedEmployee.designation.name.trim();
-        let targetRole: any = null;
-        if (updatedEmployee.designationId) {
-          targetRole = await tx.role.findFirst({
-            where: {
-              designationId: updatedEmployee.designationId,
-              deletedAt: null,
-            },
-          });
-        }
-        if (!targetRole) {
-          targetRole = await tx.role.findFirst({
-            where: {
-              OR: [
-                {  name: { equals: desigName, mode: 'insensitive' } },
-                {  name: { equals: desigName, mode: 'insensitive' } },
-              ],
-              deletedAt: null,
-              name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-            },
-          });
-          if (targetRole && updatedEmployee.designationId && !targetRole.designationId) {
-            await tx.role.update({
-              where: { id: targetRole.id },
-              data: { designationId: updatedEmployee.designationId },
-            }).catch(() => null);
-          }
-        }
-        if (!targetRole) {
-          targetRole = await tx.role.create({
-            data: {
-              name: desigName,
-              description: `${desigName} role`,
-              type: RoleType.CUSTOM,
-
-              designationId: updatedEmployee.designationId,
-            },
-          });
-        }
-        // Remove existing functional roles and assign targetRole
-        const existingRoles = await tx.userRole.findMany({
-          where: { userId: updatedEmployee.userId },
-          include: { role: true },
-        });
-        for (const ur of existingRoles) {
-          if (
-            ur.role.name !== 'SUPER_ADMIN' &&
-            ur.role.name !== 'COMPANY_ADMIN' &&
-            ur.roleId !== targetRole.id
-          ) {
-            await tx.userRole.delete({
-              where: { userId_roleId: { userId: updatedEmployee.userId, roleId: ur.roleId } },
-            });
-          }
-        }
-        const hasRole = existingRoles.some((ur) => ur.roleId === targetRole.id);
-        if (!hasRole) {
-          await tx.userRole.create({
-            data: { userId: updatedEmployee.userId, roleId: targetRole.id },
-          });
-        }
-      }
-
       // Persist compensation through the same transactional salary flow as payroll edits.
       let bank: any = dto.bankDetails;
       if (typeof bank === 'string') {
@@ -2152,9 +2087,6 @@ return undefined;
 
       if (tx.workAccessRequest?.deleteMany) {
         await tx.workAccessRequest.deleteMany({ where: { employeeId: numId } });
-      }
-      if (tx.employeeModuleOverride?.deleteMany) {
-        await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
       }
 
       if (tx.locationTrackingSetting?.deleteMany) {
@@ -2271,8 +2203,7 @@ return undefined;
           where: {
             id: userId,
             OR: [
-              { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
-
+              { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
 
               { assignedDeals: { some: {} } },
               { assignedContacts: { some: {} } },
@@ -2294,9 +2225,6 @@ return undefined;
           }
           if (tx.notification?.deleteMany) {
             await tx.notification.deleteMany({ where: { userId } });
-          }
-          if (tx.userRole?.deleteMany) {
-            await tx.userRole.deleteMany({ where: { userId } });
           }
           await tx.user.delete({ where: { id: userId } });
         } else {
@@ -2772,24 +2700,7 @@ return undefined;
       where: { id: empId },
       include: {
         designation: true,
-        user: {
-          include: {
-            userRoles: {
-              include: {
-                role: {
-                  include: {
-                    rolePermissions: {
-                      include: {
-                        permission: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        employeeModuleOverrides: true,
+        user: true,
       },
     });
 
@@ -2803,220 +2714,13 @@ return undefined;
 
     // 1. Derive canonical role name strictly from Employee's configured Designation
     const desigName = employee.designation?.name?.trim() || employee.user?.designation?.trim();
-    const userRoleNames = (employee.user?.userRoles?.map((ur) => ur.role.name) || []).filter(
-      (r) => !['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'].includes(r),
-    );
-    const roleName = desigName || userRoleNames[0] || 'TELECALLER';
+    const roleName = desigName || "EMPLOYEE";
 
-    // 2. Query matching Role from DB for this customer/global to load role defaults
+    // 2. Load role defaults from constant
     const rolePermissionsSet = new Set<string>();
-    let hasDbPermissions = false;
-
-    // First check if a Role is directly linked to this employee's Designation
-    let effectiveDesigId = employee.designationId;
-    if (!effectiveDesigId && desigName) {
-      try {
-        const matchedDesig = await this.prisma.designation.findFirst({
-          where: {
-
-            name: { equals: desigName, mode: 'insensitive' },
-            isActive: true,
-          },
-        });
-        if (matchedDesig) effectiveDesigId = matchedDesig.id;
-      } catch (_) {}
-    }
-
-    if (effectiveDesigId) {
-      let linkedRole = await this.prisma.role.findFirst({
-        where: { designationId: effectiveDesigId },
-        include: {
-          rolePermissions: {
-            include: { permission: true },
-          },
-        },
-      });
-
-      // Auto-heal Role linkage and default permissions for this designation if missing or empty
-      if (!linkedRole || !linkedRole.rolePermissions || linkedRole.rolePermissions.length === 0) {
-        try {
-          const upperName = (employee.designation?.name || desigName || 'TELECALLER').toUpperCase().replace(/\s+/g, '_');
-          if (!linkedRole) {
-            const existingUnlinked = await this.prisma.role.findFirst({
-              where: {
-
-                OR: [
-                  { name: { equals: employee.designation?.name || desigName, mode: 'insensitive' } },
-                  { name: { equals: upperName, mode: 'insensitive' } },
-                ],
-                designationId: null,
-                name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-              },
-            });
-            if (existingUnlinked) {
-              linkedRole = await this.prisma.role.update({
-                where: { id: existingUnlinked.id },
-                data: { designationId: effectiveDesigId },
-                include: { rolePermissions: { include: { permission: true } } },
-              });
-            } else {
-              linkedRole = await this.prisma.role.create({
-                data: {
-                  name: employee.designation?.name || desigName,
-                  description: `${employee.designation?.name || desigName} role`,
-                  type: RoleType.CUSTOM,
-
-                  designationId: effectiveDesigId,
-                },
-                include: { rolePermissions: { include: { permission: true } } },
-              });
-            }
-          }
-
-          if (linkedRole && (!linkedRole.rolePermissions || linkedRole.rolePermissions.length === 0)) {
-            let defaultKeys: { module: string; action: string }[] = [];
-            if (ROLE_PERMISSION_DEFAULTS[upperName]) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
-            } else if (upperName.includes('PRODUCTION')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
-            } else if (upperName.includes('DESIGNER')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
-            } else if (upperName.includes('EDITOR')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
-            } else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
-            } else if (upperName.includes('PHOTO')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
-            } else if (upperName.includes('SALES')) {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.SALES_EXECUTIVE || [];
-            } else {
-              defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
-            }
-
-            for (const p of defaultKeys) {
-              let permRecord = await this.prisma.permission.findUnique({
-                where: { module_action: { module: p.module, action: p.action } },
-              });
-              if (!permRecord) {
-                permRecord = await this.prisma.permission.create({
-                  data: {
-                    module: p.module,
-                    action: p.action,
-                    description: `${p.action} permission for ${p.module}`,
-                  },
-                });
-              }
-              if (permRecord) {
-                await this.prisma.rolePermission.create({
-                  data: { roleId: linkedRole.id, permissionId: permRecord.id },
-                }).catch(() => null);
-              }
-            }
-
-            linkedRole = await this.prisma.role.findUnique({
-              where: { id: linkedRole.id },
-              include: { rolePermissions: { include: { permission: true } } },
-            });
-          }
-        } catch (_) {}
-      }
-
-      if (linkedRole && linkedRole.rolePermissions && linkedRole.rolePermissions.length > 0) {
-        hasDbPermissions = true;
-        linkedRole.rolePermissions.forEach((rp) => {
-          if (rp.permission) {
-            rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
-          }
-        });
-      }
-    }
-
-    // Look for Role in DB matching roleName or designation if not yet resolved
-    if (!hasDbPermissions) {
-      const matchingRoles = await this.prisma.role.findMany({
-        where: {
-          OR: [
-            {  name: { equals: roleName, mode: 'insensitive' } },
-            {  name: { equals: roleName, mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-          name: { notIn: ['CUSTOMER'] },
-        },
-        include: {
-          rolePermissions: {
-            include: { permission: true },
-          },
-        },
-        orderBy: {  }, // prioritize tenant-specific role
-      });
-
-      if (matchingRoles.length > 0) {
-        for (const r of matchingRoles) {
-          if (r.rolePermissions && r.rolePermissions.length > 0) {
-            hasDbPermissions = true;
-            r.rolePermissions.forEach((rp) => {
-              if (rp.permission) {
-                rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
-              }
-            });
-            break;
-          }
-        }
-      }
-    }
-
-    // Also check employee.user.userRoles if not matched
-    if (!hasDbPermissions && employee.user?.userRoles) {
-      for (const ur of employee.user.userRoles) {
-        if (ur.role?.rolePermissions && ur.role.rolePermissions.length > 0) {
-          hasDbPermissions = true;
-          ur.role.rolePermissions.forEach((rp) => {
-            if (rp.permission) {
-              rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
-            }
-          });
-        }
-      }
-    }
-
-    // Fallback to static defaults if rolePermissionsSet is still empty
-    if (rolePermissionsSet.size === 0) {
-      const upper = roleName.toUpperCase().replace(/\s+/g, '_');
-      let matchedKey: string | null = null;
-      if (ROLE_PERMISSION_DEFAULTS[upper]) {
-        matchedKey = upper;
-      } else if (upper.includes('PRODUCTION')) {
-        matchedKey = 'PRODUCTION_TEAM_MEMBER';
-      } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
-        matchedKey = 'VISITOR';
-      } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
-        matchedKey = 'TELECALLER';
-      } else if (upper.includes('DESIGNER')) {
-        matchedKey = 'DESIGNER';
-      } else if (upper.includes('EDITOR')) {
-        matchedKey = 'EDITOR';
-      } else if (upper.includes('SOCIAL') || upper.includes('SSM')) {
-        matchedKey = 'SOCIAL_MEDIA_MANAGER';
-      } else if (upper.includes('PHOTO') || upper.includes('SHOOT')) {
-        matchedKey = 'PHOTOGRAPHER';
-      } else if (upper.includes('SALES')) {
-        matchedKey = 'SALES_EXECUTIVE';
-      } else if (upper.includes('HR')) {
-        matchedKey = 'HR';
-      } else if (upper.includes('MANAGER')) {
-        matchedKey = 'MANAGER';
-      } else if (upper.includes('EMPLOYEE')) {
-        matchedKey = 'EMPLOYEE';
-      } else {
-        matchedKey = 'TELECALLER';
-      }
-
-      if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
-        ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
-          rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
-        });
-      }
-    }
+    const upperName = (roleName || "").toUpperCase().replace(/\s+/g, "_");
+    const defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName] || ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
+    defaultKeys.forEach((p) => rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`));
 
     const desigUpper = (employee.designation?.name || roleName || '').toUpperCase();
     const isVisitorDesignation = Boolean(
@@ -3073,10 +2777,6 @@ return undefined;
 
     // Build lookup for existing individual employee overrides
     const overrideMap = new Map<string, string>();
-    (employee.employeeModuleOverrides || []).forEach((ov) => {
-      overrideMap.set(ov.moduleKey.toUpperCase(), String(ov.override).toUpperCase());
-      overrideMap.set(ov.moduleKey.toLowerCase(), String(ov.override).toUpperCase());
-    });
 
     // Standard mobile modules definition
     const MODULE_METADATA: Array<{ key: string; label: string; category: string; description: string }> = [
@@ -3164,12 +2864,10 @@ return undefined;
     const effectiveKeys = granularPermissions.filter((p) => p.effective).map((p) => p.key);
 
     this.logger.log(
-      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${undefined} tenantId=${undefined} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
+      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
     );
 
-    const customPermissionsEnabled = (employee.employeeModuleOverrides || []).some(
-      (ov) => ov.override === 'ALLOW' || ov.override === 'DENY',
-    );
+    const customPermissionsEnabled = false;
 
     const isCrmEligible = employee.designation?.crmMobileAccess !== undefined && employee.designation?.crmMobileAccess !== null
       ? Boolean(employee.designation.crmMobileAccess)
