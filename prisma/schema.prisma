@@ -458,8 +458,41 @@ model QuotationItem {
   quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
 }
 
+model Invoice {
+  id          Int           @id @default(autoincrement())
+  contactId   Int
+  quotationId Int?
+  invoiceNo   String
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime
+  dueDate     DateTime
+  subTotal    Float
+  taxAmount   Float
+  discount    Float         @default(0)
+  totalAmount Float
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  contact     Contact       @relation(fields: [contactId], references: [id])
+  quotation   Quotation?    @relation(fields: [quotationId], references: [id])
+  items       InvoiceItem[]
 
+  @@index([contactId])
+  @@index([status])
+  @@index([deletedAt])
+}
 
+model InvoiceItem {
+  id        Int     @id @default(autoincrement())
+  invoiceId Int
+  productId Int
+  quantity  Int
+  unitPrice Float
+  total     Float
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
 
 model SupportTicket {
   id           Int             @id @default(autoincrement())
