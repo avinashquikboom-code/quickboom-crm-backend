@@ -2,6 +2,7 @@ import { CustomerBillingAccess } from '../../common/decorators/customer-billing.
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -10,10 +11,27 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsInt, Min, IsString, MinLength, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  Min,
+  IsString,
+  MinLength,
+  MaxLength,
+  IsArray,
+  ArrayNotEmpty,
+  ArrayMaxSize,
+} from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CustomerService } from './customer.service';
+export class BulkDeleteCustomersDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
+}
 class CustomerAccountDto {
   @IsString() @MinLength(10) @MaxLength(128) password: string;
 }
@@ -35,6 +53,18 @@ export class CustomerController {
     return this.customers
       .authorize(user)
       .then((c) => this.customers.detail(user, c.id));
+  }
+  @Post('customers/bulk-delete') bulkDelete(
+    @CurrentUser() user: any,
+    @Body() dto: BulkDeleteCustomersDto,
+  ) {
+    return this.customers.bulkRemove(dto.ids, user);
+  }
+  @Delete('customers/:id') remove(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.customers.remove(id, user);
   }
   @Get('customers/:id') detail(
     @CurrentUser() user: any,

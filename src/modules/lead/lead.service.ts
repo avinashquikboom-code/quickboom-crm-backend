@@ -1,4 +1,4 @@
-import { convertWonLead } from '../customer/customer-lifecycle.util';
+import { convertWonLead, deleteCustomersForLeads } from '../customer/customer-lifecycle.util';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -254,7 +254,11 @@ export class LeadService {
       );
     }
     const targetStage = matches[0];
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const runInTx = this.prisma.$transaction
+      ? (fn: (tx: any) => Promise<any>) => this.prisma.$transaction(fn)
+      : (fn: (tx: any) => Promise<any>) => fn(this.prisma);
+
+    const updated = await runInTx(async (tx) => {
       const updated = await tx.lead.update({
         where: { id },
         data: {
@@ -342,7 +346,11 @@ export class LeadService {
         : { disconnect: true };
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const runInTx = this.prisma.$transaction
+      ? (fn: (tx: any) => Promise<any>) => this.prisma.$transaction(fn)
+      : (fn: (tx: any) => Promise<any>) => fn(this.prisma);
+
+    const updated = await runInTx(async (tx) => {
       const updated = await tx.lead.update({
         where: { id },
         data,
@@ -373,9 +381,16 @@ export class LeadService {
     this.assertCanRead(existing, user);
 
     const now = new Date();
-    await this.prisma.lead.update({
-      where: { id },
-      data: { deletedAt: now },
+    const runInTx = this.prisma.$transaction
+      ? (fn: (tx: any) => Promise<any>) => this.prisma.$transaction(fn)
+      : (fn: (tx: any) => Promise<any>) => fn(this.prisma);
+
+    await runInTx(async (tx) => {
+      await tx.lead.update({
+        where: { id },
+        data: { deletedAt: now },
+      });
+      await deleteCustomersForLeads(tx, [id], now);
     });
 
     this.logger.debug(`[LEAD_DELETE] leadId=${id} deletedBy=${user.id}`);
@@ -413,9 +428,18 @@ export class LeadService {
       ];
     }
 
-    const result = await this.prisma.lead.updateMany({
-      where,
-      data: { deletedAt: new Date() },
+    const now = new Date();
+    const runInTx = this.prisma.$transaction
+      ? (fn: (tx: any) => Promise<any>) => this.prisma.$transaction(fn)
+      : (fn: (tx: any) => Promise<any>) => fn(this.prisma);
+
+    const result = await runInTx(async (tx) => {
+      const res = await tx.lead.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await deleteCustomersForLeads(tx, validIds, now);
+      return res;
     });
 
     this.logger.debug(`[LEAD_BULK_DELETE] requested=${validIds.length} deleted=${result.count} deletedBy=${user.id}`);

@@ -2655,6 +2655,7 @@ enum CrmLeadStatus {
 
 // Customer billing for the current single organization. Legacy billing rows remain untouched.
 model Customer {
+  deletedAt DateTime?
   id Int @id @default(autoincrement())
   originLeadId Int @unique
   userId Int? @unique
@@ -2670,6 +2671,7 @@ model Customer {
   user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
   subscriptions CustomerSubscription[]
   checkouts CustomerCheckout[]
+  @@index([deletedAt])
   @@map("customer_accounts")
 }
 

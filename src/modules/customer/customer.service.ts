@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import {
   BadRequestException,
@@ -27,7 +28,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     // Run an initial check after 2 seconds of startup
     setTimeout(() => {
       this.activatePendingSubscriptions().catch((err) => {
-        this.logger.error(`Initial pending subscription activation check failed: ${err?.message}`);
+        this.logger.error(
+          `Initial pending subscription activation check failed: ${err?.message}`,
+        );
       });
     }, 2000);
 
@@ -37,7 +40,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.expire();
       } catch {
-        this.logger.error("Customer subscription expiry and activation reconciliation failed");
+        this.logger.error(
+          "Customer subscription expiry and activation reconciliation failed",
+        );
       } finally {
         this.expiryRunning = false;
       }
@@ -52,7 +57,10 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
   async authorize(user: any, customerId?: number) {
     const customer = await this.prisma.customer.findFirst({
-      where: customerId ? { id: customerId } : { userId: Number(user.id) },
+      where: {
+        deletedAt: null,
+        ...(customerId ? { id: customerId } : { userId: Number(user.id) }),
+      },
     });
     if (!customer) throw new NotFoundException("Customer account not found");
     if (!isUserAdmin(user) && customer.userId !== Number(user.id))
@@ -62,17 +70,23 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
   async list(user: any, search = "") {
     const where: any = isUserAdmin(user)
-      ? {}
+      ? { deletedAt: null, lead: { deletedAt: null } }
       : user.employee?.id
         ? {
+            deletedAt: null,
             lead: {
+              deletedAt: null,
               OR: [
                 { createdById: Number(user.id) },
                 { assignedToId: Number(user.employee.id) },
               ],
             },
           }
-        : { userId: Number(user.id) };
+        : {
+            userId: Number(user.id),
+            deletedAt: null,
+            lead: { deletedAt: null },
+          };
     if (search.trim())
       where.companyName = { contains: search.trim(), mode: "insensitive" };
     const customers = await this.prisma.customer.findMany({
@@ -88,7 +102,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       counts: {
         all: data.length,
         active: data.filter((c) => c.status === "ACTIVE").length,
-        pendingActivation: data.filter((c) => c.subscriptionStatus === "PENDING_ACTIVATION").length,
+        pendingActivation: data.filter(
+          (c) => c.subscriptionStatus === "PENDING_ACTIVATION",
+        ).length,
         inactive: data.filter((c) => c.status === "INACTIVE").length,
       },
     };
@@ -98,6 +114,16 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     if (!scopedList) await this.authorize(user, id);
     return this.prisma.$transaction(async (tx) => {
       const customer = await recalculateCustomer(tx, id);
+      if (customer.deletedAt)
+        throw new NotFoundException("Customer account not found");
+      if (tx.lead?.findUnique && customer.originLeadId) {
+        const lead = await tx.lead.findUnique({
+          where: { id: customer.originLeadId },
+          select: { deletedAt: true },
+        });
+        if (lead?.deletedAt)
+          throw new NotFoundException("Customer account not found");
+      }
       const subscriptions = await tx.customerSubscription.findMany({
         where: { customerId: id },
         include: { plan: { select: { name: true } }, checkout: true },
@@ -148,7 +174,10 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       where: { id: userId, isActive: true, deletedAt: null },
     });
     if (!user) throw new BadRequestException("Active user not found");
-    return this.prisma.customer.update({ where: { id }, data: { userId } });
+    return this.prisma.customer.update({
+      where: { id, deletedAt: null },
+      data: { userId },
+    });
   }
 
   async createAccount(id: number, password: string, actor: any) {
@@ -157,7 +186,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     const passwordHash = await bcrypt.hash(password, 12);
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${id} FOR UPDATE`;
-      const customer = await tx.customer.findUniqueOrThrow({ where: { id } });
+      const customer = await tx.customer.findUniqueOrThrow({
+        where: { id, deletedAt: null },
+      });
       if (customer.userId || !customer.email)
         throw new BadRequestException(
           "Customer needs an email and must not already have a login",
@@ -173,6 +204,70 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         },
       });
       return tx.customer.update({ where: { id }, data: { userId: user.id } });
+    });
+  }
+
+  async remove(id: number, actor: any) {
+    return this.bulkRemove([id], actor);
+  }
+
+  async bulkRemove(rawIds: number[], actor: any) {
+    if (!isUserAdmin(actor))
+      throw new ForbiddenException("Administrator required");
+    if (
+      !Array.isArray(rawIds) ||
+      !rawIds.length ||
+      rawIds.length > 100 ||
+      rawIds.some((id) => !Number.isSafeInteger(id) || id < 1)
+    ) {
+      throw new BadRequestException(
+        "Provide between 1 and 100 valid customer IDs",
+      );
+    }
+    const ids = [...new Set(rawIds)].sort((a, b) => a - b);
+    return this.prisma.$transaction(async (tx) => {
+      // Stable ordering avoids deadlocks between overlapping bulk deletions.
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM customer_accounts WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`,
+      );
+      const customers = await tx.customer.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, deletedAt: true },
+      });
+      if (customers.length !== ids.length)
+        throw new NotFoundException("One or more customers were not found");
+      const liveIds = customers
+        .filter((customer) => !customer.deletedAt)
+        .map((customer) => customer.id);
+      if (!liveIds.length) return { deletedCount: 0, ids: [] };
+      const liveSubscription = await tx.customerSubscription.findFirst({
+        where: {
+          customerId: { in: liveIds },
+          status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
+          endDate: { gt: new Date() },
+        },
+        select: { customerId: true },
+      });
+      if (liveSubscription)
+        throw new BadRequestException(
+          `Customer #${liveSubscription.customerId} has an active or pending subscription. Cancel it before deleting.`,
+        );
+      const unsettledCheckout = await tx.customerCheckout.findFirst({
+        where: {
+          customerId: { in: liveIds },
+          status: { notIn: ["PAID", "CANCELLED"] },
+        },
+        select: { customerId: true },
+      });
+      if (unsettledCheckout)
+        throw new BadRequestException(
+          `Customer #${unsettledCheckout.customerId} has an unresolved checkout. Resolve it before deleting.`,
+        );
+      const result = await tx.customer.updateMany({
+        where: { id: { in: liveIds }, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      return { deletedCount: result.count, ids: liveIds };
     });
   }
 
@@ -199,51 +294,59 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     },
   ) {
     const customer = await this.authorize(user, dto.customerId);
-    const existing = await this.prisma.customerCheckout.findUnique({
-      where: {
-        customerId_idempotencyKey: {
-          customerId: customer.id,
-          idempotencyKey: dto.idempotencyKey,
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${customer.id} FOR UPDATE`;
+      const currentCustomer = await tx.customer.findFirst({
+        where: { id: customer.id, deletedAt: null },
+      });
+      if (!currentCustomer)
+        throw new NotFoundException("Customer account not found");
+      const existing = await tx.customerCheckout.findUnique({
+        where: {
+          customerId_idempotencyKey: {
+            customerId: customer.id,
+            idempotencyKey: dto.idempotencyKey,
+          },
         },
-      },
-    });
-    if (existing) {
+      });
+      if (existing) {
+        if (
+          existing.planId !== Number(dto.planId) ||
+          existing.billingCycle !== (dto.billingCycle || "MONTHLY")
+        )
+          throw new BadRequestException(
+            "Idempotency key already used for another purchase",
+          );
+        return existing;
+      }
+      const { planId, planName, currency, ...price } = await this.quote(
+        Number(dto.planId),
+        dto.billingCycle,
+      );
+      const prepared = await tx.customerCheckout.upsert({
+        where: {
+          customerId_idempotencyKey: {
+            customerId: customer.id,
+            idempotencyKey: dto.idempotencyKey,
+          },
+        },
+        update: {},
+        create: {
+          customerId: customer.id,
+          planId,
+          idempotencyKey: dto.idempotencyKey,
+          ...price,
+        },
+      });
       if (
-        existing.planId !== Number(dto.planId) ||
-        existing.billingCycle !== (dto.billingCycle || "MONTHLY")
+        prepared.planId !== planId ||
+        prepared.billingCycle !== price.billingCycle
       )
         throw new BadRequestException(
           "Idempotency key already used for another purchase",
         );
-      return existing;
-    }
-    const { planId, planName, currency, ...price } = await this.quote(
-      Number(dto.planId),
-      dto.billingCycle,
-    );
-    const prepared = await this.prisma.customerCheckout.upsert({
-      where: {
-        customerId_idempotencyKey: {
-          customerId: customer.id,
-          idempotencyKey: dto.idempotencyKey,
-        },
-      },
-      update: {},
-      create: {
-        customerId: customer.id,
-        planId,
-        idempotencyKey: dto.idempotencyKey,
-        ...price,
-      },
+      return prepared;
     });
-    if (
-      prepared.planId !== planId ||
-      prepared.billingCycle !== price.billingCycle
-    )
-      throw new BadRequestException(
-        "Idempotency key already used for another purchase",
-      );
-    return prepared;
   }
 
   async settle(
@@ -336,6 +439,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
   async activatePendingSubscriptions(now = new Date()) {
     const pendingSubs = await this.prisma.customerSubscription.findMany({
       where: {
+        customer: { deletedAt: null },
         status: "PENDING_ACTIVATION",
         OR: [
           { activationDate: { lte: now } },
@@ -400,6 +504,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
   async expire() {
     await this.activatePendingSubscriptions();
     const customers = await this.prisma.customer.findMany({
+      where: { deletedAt: null },
       select: { id: true },
     });
     for (const customer of customers)

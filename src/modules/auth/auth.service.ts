@@ -209,7 +209,7 @@ const dto = typeof emailOrDto === 'object' ? emailOrDto : { email: emailOrDto, p
    */
   private async ensureEmployee(user: any): Promise<any> {
     if (user.accountType === 'CUSTOMER') {
-      const customer = await this.prisma.customer.findUnique({ where: { userId: user.id } });
+      const customer = await this.prisma.customer.findUnique({ where: { userId: user.id, deletedAt: null } });
       if (!customer) throw new ForbiddenException('Linked customer account required');
       return null;
     }

@@ -87,7 +87,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     } });
     if (!user || !user.isActive || user.deletedAt) throw new UnauthorizedException('Account is inactive or no longer exists');
     const accountType = user.accountType;
-    if (accountType === 'CUSTOMER' && !await this.prisma.customer.findUnique({ where: { userId: user.id } })) throw new UnauthorizedException('Linked customer account required');
+    if (accountType === 'CUSTOMER' && (!this.prisma.customer?.findUnique || !await this.prisma.customer.findUnique({ where: { userId: user.id, deletedAt: null } }))) throw new UnauthorizedException('Linked customer account required');
     if (!['SUPER_ADMIN', 'ADMIN', 'CUSTOMER'].includes(accountType) &&
       (!user.employee || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false)) {
       throw new UnauthorizedException('Active employee profile required');

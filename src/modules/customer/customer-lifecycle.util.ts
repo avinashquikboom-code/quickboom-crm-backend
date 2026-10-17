@@ -30,6 +30,51 @@ export async function convertWonLead(
   });
 }
 
+export async function deleteCustomersForLeads(
+  tx: any,
+  leadIds: number[],
+  now = new Date(),
+) {
+  if (!leadIds || !leadIds.length || !tx.customer?.findMany) return;
+
+  const customers = await tx.customer.findMany({
+    where: { originLeadId: { in: leadIds }, deletedAt: null },
+    select: { id: true, userId: true },
+  });
+
+  if (!customers || !customers.length) return;
+
+  const customerIds = customers.map((c: any) => c.id);
+  const userIds = customers
+    .map((c: any) => c.userId)
+    .filter((id: any): id is number => typeof id === "number" && id > 0);
+
+  // Soft-delete the customer accounts
+  await tx.customer.updateMany({
+    where: { id: { in: customerIds } },
+    data: { deletedAt: now },
+  });
+
+  // Cancel any active or pending subscriptions
+  if (tx.customerSubscription?.updateMany) {
+    await tx.customerSubscription.updateMany({
+      where: {
+        customerId: { in: customerIds },
+        status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
+      },
+      data: { status: "CANCELLED" },
+    });
+  }
+
+  // Deactivate any customer user logins associated with these deleted customers
+  if (userIds.length > 0 && tx.user?.updateMany) {
+    await tx.user.updateMany({
+      where: { id: { in: userIds }, accountType: "CUSTOMER" },
+      data: { isActive: false, deletedAt: now },
+    });
+  }
+}
+
 export async function recalculateCustomer(
   tx: Prisma.TransactionClient,
   customerId: number,

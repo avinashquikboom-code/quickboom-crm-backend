@@ -286,4 +286,84 @@ describe('Lead single and multiple deletion', () => {
     await expect(service.removeMany([], admin)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.lead.updateMany).not.toHaveBeenCalled();
   });
+
+  it('soft deletes associated customer, cancels subscriptions, and deactivates customer user when lead is deleted', async () => {
+    let lead = { id: 201, createdById: 2, assignedToId: null, deletedAt: null };
+    const prisma = {
+      lead: {
+        findFirst: jest.fn(async () => lead),
+        update: jest.fn(async ({ data }) => (lead = { ...lead, ...data })),
+      },
+      customer: {
+        findMany: jest.fn().mockResolvedValue([{ id: 50, userId: 99 }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      customerSubscription: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      user: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest.fn(async (fn) => fn(prisma)),
+    };
+    const service = new LeadService(prisma as any);
+    const res = await service.remove(201, admin);
+    expect(res).toEqual({ success: true, message: 'Lead deleted successfully', id: 201 });
+    expect(prisma.customer.findMany).toHaveBeenCalledWith({
+      where: { originLeadId: { in: [201] }, deletedAt: null },
+      select: { id: true, userId: true },
+    });
+    expect(prisma.customer.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [50] } },
+      data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+    });
+    expect(prisma.customerSubscription.updateMany).toHaveBeenCalledWith({
+      where: {
+        customerId: { in: [50] },
+        status: { in: ['ACTIVE', 'PENDING_ACTIVATION'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [99] }, accountType: 'CUSTOMER' },
+      data: expect.objectContaining({ isActive: false, deletedAt: expect.any(Date) }),
+    });
+  });
+
+  it('soft deletes associated customers in bulk when leads are deleted in bulk', async () => {
+    const prisma = {
+      lead: {
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+      customer: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 61, userId: null },
+          { id: 62, userId: 102 },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+      customerSubscription: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      user: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest.fn(async (fn) => fn(prisma)),
+    };
+    const service = new LeadService(prisma as any);
+    const res = await service.removeMany([201, 202], admin);
+    expect(res).toEqual({ success: true, message: 'Successfully deleted 2 leads', count: 2 });
+    expect(prisma.customer.findMany).toHaveBeenCalledWith({
+      where: { originLeadId: { in: [201, 202] }, deletedAt: null },
+      select: { id: true, userId: true },
+    });
+    expect(prisma.customer.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [61, 62] } },
+      data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+    });
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [102] }, accountType: 'CUSTOMER' },
+      data: expect.objectContaining({ isActive: false, deletedAt: expect.any(Date) }),
+    });
+  });
 });

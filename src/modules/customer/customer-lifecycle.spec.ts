@@ -1,5 +1,5 @@
 import { CustomerService } from './customer.service';
-import { convertWonLead, recalculateCustomer } from './customer-lifecycle.util';
+import { convertWonLead, recalculateCustomer, deleteCustomersForLeads } from './customer-lifecycle.util';
 import { LeadService } from '../lead/lead.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PlanAdminGuard } from '../subscription/plan-admin.guard';
@@ -60,6 +60,60 @@ describe('Won customer conversion', () => {
     ).rejects.toThrow('customer write failed');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.lead.update).toHaveBeenCalled();
+  });
+
+  it('deletes customers, cancels subscriptions, and deactivates users for deleted leads', async () => {
+    const tx = {
+      customer: {
+        findMany: jest.fn().mockResolvedValue([{ id: 11, userId: 44 }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      customerSubscription: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      user: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const now = new Date('2026-10-17');
+    await deleteCustomersForLeads(tx as any, [11], now);
+    expect(tx.customer.findMany).toHaveBeenCalledWith({
+      where: { originLeadId: { in: [11] }, deletedAt: null },
+      select: { id: true, userId: true },
+    });
+    expect(tx.customer.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [11] } },
+      data: { deletedAt: now },
+    });
+    expect(tx.customerSubscription.updateMany).toHaveBeenCalledWith({
+      where: {
+        customerId: { in: [11] },
+        status: { in: ['ACTIVE', 'PENDING_ACTIVATION'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [44] }, accountType: 'CUSTOMER' },
+      data: { isActive: false, deletedAt: now },
+    });
+  });
+
+  it('list excludes customers whose lead is deleted', async () => {
+    const prisma = {
+      customer: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new CustomerService(prisma as any);
+    await service.list(admin);
+    expect(prisma.customer.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deletedAt: null,
+          lead: { deletedAt: null },
+        }),
+      }),
+    );
   });
 });
 
@@ -124,7 +178,7 @@ describe('subscription lifecycle', () => {
     });
   });
   it('rejects access to another customer and conflicting retries', async () => {
-    const prisma = {
+    const prisma: any = {
       customer: {
         findFirst: jest.fn().mockResolvedValue({ id: 9, userId: 3 }),
       },
@@ -133,6 +187,8 @@ describe('subscription lifecycle', () => {
           .fn()
           .mockResolvedValue({ planId: 2, billingCycle: 'YEARLY' }),
       },
+      $queryRaw: jest.fn(),
+      $transaction: jest.fn(fn => fn(prisma)),
     };
     const service = new CustomerService(prisma as any);
     await expect(service.authorize({ id: 4 }, 9)).rejects.toThrow(
