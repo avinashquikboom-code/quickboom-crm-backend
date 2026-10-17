@@ -80,6 +80,7 @@ export class LeadService {
     if (query.search?.trim()) {
       where.OR = ['companyName', 'firstName', 'lastName', 'phone', 'email'].map((field) => ({ [field]: { contains: query.search.trim(), mode: 'insensitive' } }));
     }
+    this.logger.debug(`[LEAD_LIST_WHERE] ${JSON.stringify(where)}`);
     const [rawList, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
