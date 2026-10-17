@@ -31,3 +31,32 @@ export class LeadQueryDto {
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsEnum(RecordCreatedFrom) createdFrom?: RecordCreatedFrom;
 }
+
+export class UpdateLeadStageDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @Type(() => Number) @IsInt() stageId?: number;
+  @IsOptional() @IsString() stage?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+
+export class UpdateLeadDto {
+  @IsOptional() @IsString() @MaxLength(500) companyName?: string;
+  @IsOptional() @IsString() @MaxLength(200) firstName?: string;
+  @IsOptional() @IsString() @MaxLength(200) lastName?: string;
+  @IsOptional() @IsString() @MaxLength(100) phone?: string;
+  @IsOptional() @IsEmail() email?: string;
+  @IsOptional() @IsString() website?: string;
+  @IsOptional() @IsString() address?: string;
+  @IsOptional() @IsString() city?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsString() pincode?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() source?: string;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @Type(() => Number) @IsInt() stageId?: number;
+  @IsOptional() @IsString() stage?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) assignedToId?: number;
+}
+

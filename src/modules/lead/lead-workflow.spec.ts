@@ -111,4 +111,46 @@ describe('independent Lead creation and Data Capture conversion', () => {
     expect(result).toMatchObject({ id: 44, companyName: 'Manual business', source: 'MANUAL', status: 'NEW', createdFrom: 'ADMIN_PANEL', deletedAt: null, createdById: 2 });
     expect(result).not.toHaveProperty('customerId');
   });
+
+  it('provides all 11 CRM lead pipeline stages in the exact required order', () => {
+    const service = new LeadService({} as any);
+    const stages = service.getStages();
+    expect(stages).toHaveLength(11);
+    expect(stages.map((s) => ({ order: s.sortOrder, key: s.key, name: s.name }))).toEqual([
+      { order: 1, key: 'NEW', name: 'New' },
+      { order: 2, key: 'CONTACTED', name: 'Contacted' },
+      { order: 3, key: 'DETAILS_SEND', name: 'Details send' },
+      { order: 4, key: 'FOLLOW_UP', name: 'Follow-up' },
+      { order: 5, key: 'VISIT_SCHEDULED', name: 'Visit Scheduled' },
+      { order: 6, key: 'VISIT_DONE', name: 'Visit Done' },
+      { order: 7, key: 'PROPOSAL_SENT', name: 'Proposal Sent' },
+      { order: 8, key: 'NEGOTIATION', name: 'Negotiation' },
+      { order: 9, key: 'FINAL_CALL', name: 'Final Call' },
+      { order: 10, key: 'WON', name: 'Won' },
+      { order: 11, key: 'LOST', name: 'Lost' },
+    ]);
+  });
+
+  it('updates lead stage and returns mapped stage info with permissions check', async () => {
+    const existingLead = { id: 50, createdById: 2, assignedToId: null, status: 'NEW', deletedAt: null, notes: 'Original note' };
+    const updatedLead = { ...existingLead, status: 'DETAILS_SEND', notes: 'Original note\nSent catalog' };
+    const prisma = {
+      lead: {
+        findFirst: jest.fn().mockResolvedValue(existingLead),
+        update: jest.fn().mockResolvedValue(updatedLead),
+      },
+    };
+    const service = new LeadService(prisma as any);
+    const result = await service.updateStage(50, { status: 'DETAILS_SEND', notes: 'Sent catalog' }, admin);
+    expect(prisma.lead.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 50 },
+        data: { status: 'DETAILS_SEND', notes: 'Original note\nSent catalog' },
+      }),
+    );
+    expect(result.status).toBe('DETAILS_SEND');
+    expect(result.stageId).toBe(3);
+    expect(result.stage).toMatchObject({ id: 3, key: 'DETAILS_SEND', name: 'Details send', sortOrder: 3 });
+  });
 });
+

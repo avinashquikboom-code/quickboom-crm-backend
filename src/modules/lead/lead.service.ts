@@ -2,7 +2,33 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isUserAdmin } from '../../common/utils/account.util';
-import { CreateLeadDto, LeadQueryDto } from './dto/lead.dto';
+import { CreateLeadDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
+
+export interface LeadStageConfig {
+  id: number;
+  key: string;
+  name: string;
+  sortOrder: number;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export const CRM_LEAD_STAGES: LeadStageConfig[] = [
+  { id: 1, key: 'NEW', name: 'New', sortOrder: 1, color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD', isActive: true, isDefault: true },
+  { id: 2, key: 'CONTACTED', name: 'Contacted', sortOrder: 2, color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A', isActive: true, isDefault: false },
+  { id: 3, key: 'DETAILS_SEND', name: 'Details send', sortOrder: 3, color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#C7D2FE', isActive: true, isDefault: false },
+  { id: 4, key: 'FOLLOW_UP', name: 'Follow-up', sortOrder: 4, color: '#7C3AED', bgColor: '#F5F3FF', borderColor: '#DDD6FE', isActive: true, isDefault: false },
+  { id: 5, key: 'VISIT_SCHEDULED', name: 'Visit Scheduled', sortOrder: 5, color: '#0891B2', bgColor: '#ECFEFF', borderColor: '#A5F3FC', isActive: true, isDefault: false },
+  { id: 6, key: 'VISIT_DONE', name: 'Visit Done', sortOrder: 6, color: '#0D9488', bgColor: '#F0FDFA', borderColor: '#99F6E4', isActive: true, isDefault: false },
+  { id: 7, key: 'PROPOSAL_SENT', name: 'Proposal Sent', sortOrder: 7, color: '#2563EB', bgColor: '#EFF6FF', borderColor: '#BFDBFE', isActive: true, isDefault: false },
+  { id: 8, key: 'NEGOTIATION', name: 'Negotiation', sortOrder: 8, color: '#F59E0B', bgColor: '#FFFBEB', borderColor: '#FDE68A', isActive: true, isDefault: false },
+  { id: 9, key: 'FINAL_CALL', name: 'Final Call', sortOrder: 9, color: '#EA580C', bgColor: '#FFF7ED', borderColor: '#FFEDD5', isActive: true, isDefault: false },
+  { id: 10, key: 'WON', name: 'Won', sortOrder: 10, color: '#16A34A', bgColor: '#DCFCE7', borderColor: '#BBF7D0', isActive: true, isDefault: false },
+  { id: 11, key: 'LOST', name: 'Lost', sortOrder: 11, color: '#DC2626', bgColor: '#FFE4E6', borderColor: '#FECDD3', isActive: true, isDefault: false },
+];
 
 @Injectable()
 export class LeadService {
@@ -28,19 +54,43 @@ export class LeadService {
     }
   }
 
+  resolveStage(identifier: string | number | undefined | null): LeadStageConfig {
+    if (typeof identifier === 'number') {
+      const byId = CRM_LEAD_STAGES.find((s) => s.id === identifier);
+      if (byId) return byId;
+    }
+    const cleanKey = String(identifier || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, '_');
+
+    // Canonical key lookup
+    const directMatch = CRM_LEAD_STAGES.find((s) => s.key === cleanKey);
+    if (directMatch) return directMatch;
+
+    // Common aliases & backwards compatibility
+    if (cleanKey === 'DETAILS_SENT' || cleanKey === 'COMPANY_DETAILS_SENT') return CRM_LEAD_STAGES[2]; // DETAILS_SEND
+    if (cleanKey === 'VISIT' || cleanKey === 'VISIT_PENDING') return CRM_LEAD_STAGES[4]; // VISIT_SCHEDULED
+    if (cleanKey === 'VISIT_COMPLETED') return CRM_LEAD_STAGES[5]; // VISIT_DONE
+    if (cleanKey === 'PROPOSAL') return CRM_LEAD_STAGES[6]; // PROPOSAL_SENT
+    if (cleanKey === 'FINAL_DISCUSSION') return CRM_LEAD_STAGES[8]; // FINAL_CALL
+    if (cleanKey === 'CONVERTED' || cleanKey === 'CLOSED_WON' || cleanKey === 'DEAL_WON') return CRM_LEAD_STAGES[9]; // WON
+    if (cleanKey === 'CANCELLED' || cleanKey === 'CLOSED_LOST' || cleanKey === 'DEAL_LOST') return CRM_LEAD_STAGES[10]; // LOST
+    if (cleanKey === 'QUALIFIED') return CRM_LEAD_STAGES[3]; // FOLLOW_UP
+
+    return CRM_LEAD_STAGES[0]; // Default: NEW
+  }
+
+  getStages(): LeadStageConfig[] {
+    return CRM_LEAD_STAGES;
+  }
+
   private mapLeadWithStage<T extends { status?: any; [key: string]: any }>(lead: T) {
-    const statusKey = (lead.status || 'NEW').toString();
-    const stageName = statusKey === 'NEW' ? 'New' : statusKey.charAt(0) + statusKey.slice(1).toLowerCase().replace(/_/g, ' ');
+    const stage = this.resolveStage(lead.status);
     return {
       ...lead,
-      stageId: 1,
-      stage: {
-        id: 1,
-        key: statusKey,
-        name: stageName,
-        isDefault: statusKey === 'NEW',
-        sortOrder: 1,
-      },
+      stageId: stage.id,
+      stage,
     };
   }
 
@@ -132,6 +182,92 @@ export class LeadService {
     if (!lead) throw new NotFoundException('Lead not found');
     this.assertCanRead(lead, user);
     return this.mapLeadWithStage(lead);
+  }
+
+  async updateStage(id: number, dto: UpdateLeadStageDto, user: any) {
+    const existing = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!existing) throw new NotFoundException(`Lead with ID ${id} not found`);
+    this.assertCanRead(existing, user);
+
+    const targetStage = this.resolveStage(dto.stageId ?? dto.status ?? dto.stage);
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: {
+        status: targetStage.key as CrmLeadStatus,
+        notes: dto.notes ? (existing.notes ? `${existing.notes}\n${dto.notes.trim()}` : dto.notes.trim()) : existing.notes,
+      },
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+          },
+        },
+      },
+    });
+
+    this.logger.debug(`[LEAD_STAGE_UPDATE] leadId=${id} oldStatus=${existing.status} newStatus=${updated.status} stageId=${targetStage.id}`);
+    return this.mapLeadWithStage(updated);
+  }
+
+  async update(id: number, dto: UpdateLeadDto, user: any) {
+    const existing = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!existing) throw new NotFoundException(`Lead with ID ${id} not found`);
+    this.assertCanRead(existing, user);
+
+    const data: Prisma.LeadUpdateInput = {};
+    if (dto.companyName !== undefined) data.companyName = dto.companyName.trim();
+    if (dto.firstName !== undefined) data.firstName = dto.firstName?.trim() || null;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName?.trim() || null;
+    if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
+    if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
+    if (dto.website !== undefined) data.website = dto.website?.trim() || null;
+    if (dto.address !== undefined) data.address = dto.address?.trim() || null;
+    if (dto.city !== undefined) data.city = dto.city?.trim() || null;
+    if (dto.state !== undefined) data.state = dto.state?.trim() || null;
+    if (dto.country !== undefined) data.country = dto.country?.trim() || null;
+    if (dto.pincode !== undefined) data.pincode = dto.pincode?.trim() || null;
+    if (dto.category !== undefined) data.category = dto.category?.trim() || null;
+    if (dto.source !== undefined) data.source = dto.source?.trim() || existing.source;
+    if (dto.notes !== undefined) data.notes = dto.notes?.trim() || null;
+
+    if (dto.status || dto.stageId || dto.stage) {
+      const targetStage = this.resolveStage(dto.stageId ?? dto.status ?? dto.stage);
+      data.status = targetStage.key as CrmLeadStatus;
+    }
+
+    if (dto.assignedToId !== undefined) {
+      if (!isUserAdmin(user) && dto.assignedToId !== user.employee?.id) {
+        throw new ForbiddenException('Cannot assign a Lead to another employee');
+      }
+      if (dto.assignedToId && !(await this.prisma.employee.findFirst({ where: { id: dto.assignedToId, status: 'ACTIVE' }, select: { id: true } }))) {
+        throw new BadRequestException('Active assigned employee not found');
+      }
+      data.assignedTo = dto.assignedToId ? { connect: { id: dto.assignedToId } } : { disconnect: true };
+    }
+
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data,
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+          },
+        },
+      },
+    });
+
+    return this.mapLeadWithStage(updated);
   }
 
   async importCapture(

@@ -85,7 +85,7 @@ describe('LeadService - Data Capture -> Import Lead Flow', () => {
     expect(result.alreadyImported).toBe(false);
     expect(result.lead.id).toBe(55);
     expect(result.lead.status).toBe(CrmLeadStatus.NEW);
-    expect(result.lead.stage).toEqual({
+    expect(result.lead.stage).toMatchObject({
       id: 1,
       key: 'NEW',
       name: 'New',
