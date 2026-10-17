@@ -126,13 +126,13 @@ throw new GoneException('This Customer/Lead operation has been removed');
       where: { id, deletedAt: null },
       include: {
         plans: { include: { plan: true } },
-        
+
       },
     });
     if (!row) throw new NotFoundException('Coupon not found');
     return {
       ...this.toAdmin(row),
-      
+
     };
   }
 
@@ -210,7 +210,7 @@ throw new GoneException('This Customer/Lead operation has been removed');
     return {
       success: true,
       softDeleted: true,
-      hadRedemptions: existing._count.redemptions > 0,
+      hadRedemptions: existing.timesRedeemed > 0,
     };
   }
 
@@ -233,7 +233,6 @@ throw new GoneException('This Customer/Lead operation has been removed');
       expiresAt: Date | null;
       maxRedemptions: number;
       timesRedeemed: number;
-      perCustomerLimit: number;
       appliesToAllPlans: boolean;
       minimumAmount: number | null;
       plans: { planId: number }[];
@@ -341,11 +340,10 @@ throw new GoneException('This Customer/Lead operation has been removed');
       throw new BadRequestException('Percentage discount cannot exceed 100');
     }
     const usageLimit = Number(dto.usageLimit ?? dto.maxRedemptions ?? 1);
-    const perCustomerLimit = Number(dto.perCustomerLimit ?? 1);
     if (!Number.isFinite(usageLimit) || usageLimit < 1) {
       throw new BadRequestException('Usage limit must be at least 1');
     }
-    
+
     const appliesToAllPlans = dto.appliesToAllPlans !== false && dto.appliesToAll !== false;
     const startsAt = dto.startsAt || dto.startDate ? new Date(dto.startsAt || dto.startDate) : null;
     const expiresAt = dto.expiresAt || dto.endDate || dto.expiryDate
@@ -376,7 +374,6 @@ throw new GoneException('This Customer/Lead operation has been removed');
       startsAt,
       expiresAt,
       maxRedemptions: Math.floor(usageLimit),
-      perCustomerLimit: Math.floor(perCustomerLimit),
       appliesToAllPlans,
       isActive: dto.isActive !== false,
     };
@@ -432,7 +429,6 @@ throw new GoneException('This Customer/Lead operation has been removed');
       usageLimit: row.maxRedemptions,
       usedCount: row.timesRedeemed,
       remainingUsage: Math.max(0, row.maxRedemptions - row.timesRedeemed),
-      perCustomerLimit: row.perCustomerLimit,
       appliesToAllPlans: row.appliesToAllPlans,
       planIds: (row.plans || []).map((item: any) => item.planId),
       planNames,

@@ -28,7 +28,7 @@ return undefined;
   async getMetrics(customerId: number | string | undefined, user?: any) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
+    const hasExplicitCustomer = false;
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -38,13 +38,13 @@ return undefined;
     const baseWhere: any = {};
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        
+
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
       const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
-      
-      
+
+
     }
 
     const [todayVisits, upcoming, completed, cancelled] = await Promise.all([
@@ -95,19 +95,19 @@ return undefined;
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
+    const hasExplicitCustomer = false;
     const skip = (page - 1) * limit;
     const where: any = {};
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-        
+
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
       const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
-      
-      
+
+
     }
 
     if (status && (status as any) !== 'ALL') where.status = status;
@@ -134,7 +134,7 @@ return undefined;
           company: { select: { id: true, name: true, city: true } },
           contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
           deal: { select: { id: true, title: true, amount: true } },
-          
+
         },
       }),
       this.prisma.visit.count({ where }),
@@ -217,9 +217,7 @@ return undefined;
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     const where: any = { id: numId };
-    if (numCustomerId !== undefined && numCustomerId > 0) {
-      
-    }
+
 
     const visit = await this.prisma.visit.findFirst({
       where,
@@ -228,7 +226,7 @@ return undefined;
         company: true,
         contact: true,
         deal: true,
-        
+
       },
     });
 
@@ -289,7 +287,7 @@ return undefined;
     if (!employeeId) {
       const emp = await this.prisma.employee.create({
         data: {
-          
+
           employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
           firstName: 'CRM',
           lastName: 'Executive',
@@ -301,12 +299,12 @@ return undefined;
 
     const visit = await this.prisma.visit.create({
       data: {
-        
+
         employeeId: employeeId,
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
         contactId: dto.contactId ? Number(dto.contactId) : undefined,
         dealId: dto.dealId ? Number(dto.dealId) : undefined,
-        
+
         customerName: dto.customerName,
         purpose: dto.purpose,
         visitType: dto.visitType || 'CLIENT_MEETING',
@@ -338,7 +336,7 @@ return undefined;
       const customerLabel = visit.customerName || (visit.contact ? `${visit.contact.firstName || ''} ${visit.contact.lastName || ''}`.trim() : null);
       this.notificationService
         .sendVisitScheduledNotification({
-          
+
           visitId: visit.id,
           employeeId: visit.employeeId,
           customerName: customerLabel,
@@ -347,7 +345,7 @@ return undefined;
           time: visit.time,
           location: visit.location,
           notes: visit.notes,
-          
+
         })
         .catch((err: any) => {
           this.logger.warn(`Failed to dispatch VISIT_SCHEDULED notification: ${err?.message}`);
@@ -355,7 +353,7 @@ return undefined;
     }
 
     // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
-    
+
 
     // Dispatch Calendar Appointment Email & WhatsApp with PDF (non-blocking)
     try {
@@ -467,7 +465,7 @@ return undefined;
         try {
           await this.whatsappService.sendCalendarScheduledMessage({
             to: clientPhone,
-            
+
             customerName: clientName,
             eventTitle,
             date: visitDate,
@@ -562,9 +560,9 @@ return undefined;
 
       try {
         await this.notificationService.sendVisitCompletedNotification({
-          
+
           visitId: numId,
-          
+
           visitorName: finalVisitedByName || updated.employee
             ? `${updated.employee?.firstName || ''} ${updated.employee?.lastName || ''}`.trim()
             : null,

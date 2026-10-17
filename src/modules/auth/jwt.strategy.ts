@@ -106,7 +106,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             ledTeams: true,
           },
         },
-        
+
         userRoles: {
           include: {
             role: {
@@ -227,7 +227,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       try {
         const matchedDesig = await this.prisma.designation.findFirst({
           where: {
-            
+
             name: { equals: desigName, mode: 'insensitive' },
             isActive: true,
           },
@@ -244,8 +244,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         where: {
           designationId: desigId,
           OR: [
-            
-            
+
+
           ],
           deletedAt: null,
         },
@@ -263,7 +263,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           if (!desigRole) {
             const existingUnlinked = await this.prisma.role.findFirst({
               where: {
-                
+
                 OR: [
                   { name: { equals: user.employee?.designation?.name || desigName, mode: 'insensitive' } },
                   { name: { equals: upperName, mode: 'insensitive' } },
@@ -284,7 +284,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
                   name: user.employee?.designation?.name || desigName,
                   description: `${user.employee?.designation?.name || desigName} role`,
                   type: RoleType.CUSTOM,
-                  
+
                   designationId: desigId,
                 },
                 include: { rolePermissions: { include: { permission: true } } },
@@ -358,8 +358,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             },
             {
               OR: [
-                
-                
+
+
               ],
             },
           ],
@@ -658,24 +658,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       primaryRole === 'CUSTOMER_ADMIN' ||
       payload.role === 'CUSTOMER' ||
       !user.employee;
-    if (isCustomerUser) {
-      const customerItems = await resolveCustomerAppPermissionItems(
-        this.prisma,
-        customerId || undefined,
-      );
-      applyCustomerEffectivePermissions(
-        permissionsMap,
-        customerItems,
-        !user.employee || primaryRole === 'CUSTOMER' || payload.role === 'CUSTOMER',
-      );
-    }
+
 
     const isBpo = user.employee ? this.checkIsBpo(user.employee) : false;
 
     return {
       id: user.id,
       email: user.email,
-      
+
       customerCode: customerCode,
       firstName: user.firstName,
       lastName: user.lastName,
@@ -685,7 +675,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       roles: Array.from(new Set([primaryRole, primaryRoleType, ...roles])),
       permissions: Array.from(permissionsMap.values()),
       employee: user.employee || null,
-      
+
       isBpo,
     };
   }

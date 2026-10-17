@@ -33,22 +33,7 @@ export class TeamController {
   constructor(private readonly teamService: TeamService) {}
 
   private resolveTargetCustomerId(user: any, customerId: any, queryCustomerId?: any): number | undefined {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const target = isSuperAdmin
-      ? queryCustomerId || customerId || undefined
-      : customerId;
-
-    if (target === undefined || target === null || target === '') {
-      if (isSuperAdmin) return undefined;
-      throw new ForbiddenException('User does not belong to any customer account');
-    }
-
-    const num = Number(target);
-    if (isNaN(num) || num <= 0) {
-      if (isSuperAdmin) return undefined;
-      throw new ForbiddenException('Invalid customer context');
-    }
-    return num;
+return undefined;
   }
 
   @Get()

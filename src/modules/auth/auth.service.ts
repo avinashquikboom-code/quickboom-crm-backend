@@ -129,7 +129,7 @@ export class AuthService {
         // 2. Create User account (isVerified: true, isActive: true)
         const user = await tx.user.create({
           data: {
-            
+
             email: normalizedEmail,
             phone: normalizedPhone || null,
             passwordHash: hashedPassword,
@@ -148,7 +148,7 @@ export class AuthService {
         // 4. Create Employee record
         const employee = await tx.employee.create({
           data: {
-            
+
             userId: user.id,
             employeeCode,
             firstName,
@@ -166,14 +166,14 @@ export class AuthService {
         // 5. Ensure employee role exists and assign it
         let employeeRole = await tx.role.findFirst({
           where: {
-            
+
             name: { in: ['Employee', 'EMPLOYEE', 'Staff'] },
           },
         });
         if (!employeeRole) {
           employeeRole = await tx.role.create({
             data: {
-              
+
               name: 'Employee',
               type: RoleType.CUSTOM,
               description: 'Employee member role',
@@ -219,7 +219,7 @@ export class AuthService {
         employeeCode: createdResult.employee.employeeCode,
         employeeType: createdResult.employee.employeeType,
         city: createdResult.employee.city,
-        
+
       },
       tokens,
       accessToken: tokens.accessToken,
@@ -305,7 +305,7 @@ export class AuthService {
           ],
         },
         include: {
-          
+
           employee: {
             include: {
               department: true,
@@ -327,12 +327,12 @@ export class AuthService {
             OR: empWhere,
           },
           include: {
-            
+
             department: true,
             designation: true,
             user: {
               include: {
-                
+
                 employee: {
                   include: {
                     department: true,
@@ -359,7 +359,7 @@ export class AuthService {
           const existingUserForEmp = await this.prisma.user.findUnique({
             where: { email: matchedEmployee.email.toLowerCase() },
             include: {
-              
+
               userRoles: { include: { role: true } },
             },
           });
@@ -369,7 +369,7 @@ export class AuthService {
               where: { id: matchedEmployee.id },
               data: { userId: existingUserForEmp.id },
             });
-            
+
             user = {
               ...existingUserForEmp,
               employee: matchedEmployee,
@@ -379,7 +379,7 @@ export class AuthService {
             const passwordHash = await bcrypt.hash(rawPassword, 10);
             const createdUser = await this.prisma.user.create({
               data: {
-                
+
                 email: matchedEmployee.email.toLowerCase(),
                 phone: matchedEmployee.phone || null,
                 firstName: matchedEmployee.firstName,
@@ -389,7 +389,7 @@ export class AuthService {
                 isVerified: true,
               },
               include: {
-                
+
                 userRoles: { include: { role: true } },
               },
             });
@@ -433,7 +433,7 @@ export class AuthService {
           ],
         },
         include: {
-          
+
           employee: {
             include: {
               department: true,
@@ -455,12 +455,12 @@ export class AuthService {
           OR: empWhere,
         },
         include: {
-          
+
           department: true,
           designation: true,
           user: {
             include: {
-              
+
               employee: {
                 include: {
                   department: true,
@@ -487,7 +487,7 @@ export class AuthService {
         const existingUserForEmp = await this.prisma.user.findUnique({
           where: { email: matchedEmployee.email.toLowerCase() },
           include: {
-            
+
             userRoles: { include: { role: true } },
           },
         });
@@ -497,7 +497,7 @@ export class AuthService {
             where: { id: matchedEmployee.id },
             data: { userId: existingUserForEmp.id },
           });
-          
+
           user = {
             ...existingUserForEmp,
             employee: matchedEmployee,
@@ -507,7 +507,7 @@ export class AuthService {
           const passwordHash = await bcrypt.hash(rawPassword, 10);
           const createdUser = await this.prisma.user.create({
             data: {
-              
+
               email: matchedEmployee.email.toLowerCase(),
               phone: matchedEmployee.phone || null,
               firstName: matchedEmployee.firstName,
@@ -517,7 +517,7 @@ export class AuthService {
               isVerified: true,
             },
             include: {
-              
+
               userRoles: { include: { role: true } },
             },
           });
@@ -569,7 +569,7 @@ export class AuthService {
           data: { userId: user.id },
         }).catch(() => null);
         user.employee = unlinkedEmployee;
-        
+
       }
     }
 
@@ -719,7 +719,7 @@ export class AuthService {
     }
 
     // Align user.customerId with employee.customerId if employee is present and user.customerId is missing or unaligned
-    
+
 
     const rawApp = (appType || '').trim().toLowerCase();
 
@@ -740,7 +740,7 @@ export class AuthService {
       if (userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
       }
-      
+
     } else if (upperExpectedRole === 'ADMIN') {
       if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as an Admin account.');
@@ -775,7 +775,7 @@ export class AuthService {
       if (user.employee.mobileLoginEnabled === false) {
         throw new UnauthorizedException('Mobile login is disabled for this employee.');
       }
-      
+
 
     } else if (rawApp === 'mobile') {
       const allowedRoles = ['CUSTOMER', 'CUSTOMER_ADMIN', 'EMPLOYEE', 'COMPANY_ADMIN', 'SUPER_ADMIN'];
@@ -791,7 +791,7 @@ export class AuthService {
       if (!user.isActive) {
         throw new UnauthorizedException('Company admin account is inactive.');
       }
-      
+
     } else if (userRole === 'EMPLOYEE') {
       if (!user.employee) {
         throw new UnauthorizedException('Employee profile not found.');
@@ -808,7 +808,7 @@ export class AuthService {
       if (user.employee.mobileLoginEnabled === false) {
         throw new UnauthorizedException('Mobile login is disabled for this employee.');
       }
-      
+
     } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
       if (!user.isActive) {
         throw new UnauthorizedException({
@@ -847,7 +847,7 @@ export class AuthService {
         where: { id: user.id },
         data: {  },
       }).catch(() => null);
-      
+
     }
 
     let emp: any = null;
@@ -923,7 +923,7 @@ export class AuthService {
       roles: roles.length > 0 ? roles : [userRole],
       userId: qbCode,
       ...(userRole !== 'SUPER_ADMIN' && effectiveCustomerId && {
-        
+
         customerCode: customerCode,
         customerName: personFullName || undefined || null,
         businessName: company || null,
@@ -974,7 +974,7 @@ export class AuthService {
 
     try {
       let customerId = undefined;
-      
+
 
       // Generate next sequential EMP code
       const totalEmployees = await this.prisma.employee.count();
@@ -983,7 +983,7 @@ export class AuthService {
 
       const newEmployee = await this.prisma.employee.create({
         data: {
-          
+
           userId: user.id,
           employeeCode,
           firstName: user.firstName || 'Employee',
@@ -1078,7 +1078,7 @@ export class AuthService {
               },
             },
             employee: true,
-            
+
           },
         },
       },
@@ -1099,7 +1099,7 @@ export class AuthService {
             },
           },
           employee: true,
-          
+
         },
       }));
 
@@ -1216,7 +1216,7 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
-        
+
         role: resolvedRole,
         roleType: resolvedRoleType,
       },
@@ -1424,7 +1424,7 @@ export class AuthService {
         deletedAt: null,
       },
       include: {
-        
+
         employee: {
           include: {
             department: true,
@@ -1612,7 +1612,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findFirst({
       where: { email: rawEmail, deletedAt: null },
-      
+
     });
 
     // To prevent user enumeration, return generic success if email does not exist
@@ -1721,7 +1721,7 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({
       where: { email: rawEmail, deletedAt: null },
       include: {
-        
+
         employee: {
           include: {
             department: true,
@@ -1900,7 +1900,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { id: numericUserId },
       include: {
-        
+
         employee: {
           include: {
             department: true,
@@ -2033,7 +2033,7 @@ export class AuthService {
         const queryPromise = this.prisma.user.findUnique({
           where: { id: Number(userId) },
           include: {
-            
+
             employee: {
               include: {
                 department: true,
@@ -2141,7 +2141,7 @@ export class AuthService {
       try {
         const matchedDesig = await this.prisma.designation.findFirst({
           where: {
-            
+
             name: { equals: desigName, mode: 'insensitive' },
             isActive: true,
           },
@@ -2159,8 +2159,8 @@ export class AuthService {
           where: {
             designationId: desigId,
             OR: [
-              
-              
+
+
             ],
             deletedAt: null,
           },
@@ -2460,17 +2460,7 @@ export class AuthService {
         return name.includes('CUSTOMER') || type.includes('CUSTOMER');
       });
 
-    if (isCustomerUser) {
-      const customerItems = await resolveCustomerAppPermissionItems(
-        this.prisma,
-        undefined,
-      );
-      const isPureCustomer =
-        user.role === 'CUSTOMER' ||
-        !user.employee ||
-        user.userRoles?.some((ur: any) => String(ur.role?.name || '').toUpperCase() === 'CUSTOMER');
-      applyCustomerEffectivePermissions(permissionsMap, customerItems, isPureCustomer);
-    }
+
 
     const permissions = Array.from(permissionsMap.values());
 
@@ -2672,7 +2662,7 @@ export class AuthService {
     const payload: any = {
       sub: userId,
       userId,
-      
+
       email,
       role: resolvedRole,
       roleType: resolvedRoleType,
@@ -2700,7 +2690,7 @@ export class AuthService {
 
     const refreshPayload = {
       sub: userId,
-      
+
       email,
       role: resolvedRole,
       roleType: resolvedRoleType,

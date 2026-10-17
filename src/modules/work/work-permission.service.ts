@@ -227,23 +227,7 @@ export class WorkPermissionService {
       });
     }
 
-    if (!employee) {
-      // Fallback if user is customer admin
-      const allModules = STANDARD_WORK_MODULES.map((m) => m.key);
-      const effectiveMap: Record<string, boolean> = {};
-      STANDARD_WORK_MODULES.forEach((m) => {
-        effectiveMap[m.key] = true;
-      });
-
-      return {
-        employeeId: null,
-        employeeCode: null,
-        role: 'Admin',
-        workPermissions: allModules,
-        effectivePermissions: effectiveMap,
-        commonModules: COMMON_MODULES.map((m) => m.key),
-      };
-    }
+    if (!employee) throw new ForbiddenException('Employee profile required');
 
     // Determine primary role name from designation or user roles
     const isUserAdm = employee.user && (isUserSuperAdmin(employee.user) || isUserAdmin(employee.user));
@@ -260,7 +244,7 @@ export class WorkPermissionService {
     // 2. Fetch role work permissions from DB
     const dbRolePermissions = await this.prisma.roleWorkPermission.findMany({
       where: {
-        
+
         roleName: normalizedRole,
       },
     });
@@ -282,7 +266,7 @@ export class WorkPermissionService {
     // 3. Fetch approved employee specific access requests
     const approvedRequests = await this.prisma.workAccessRequest.findMany({
       where: {
-        
+
         employeeId: employee.id,
         status: WorkAccessRequestStatus.APPROVED,
       },
@@ -352,20 +336,9 @@ export class WorkPermissionService {
     isProductionManager: boolean;
     workPermissions: string[];
   }> {
-    const providedTenantId = Number(customerId);
-    const employee = Number.isInteger(providedTenantId) && providedTenantId > 0
-      ? null
-      : await this.prisma.employee.findUnique({
-          where: { id: Number(employeeId) },
-          
-        });
-    const custId = Number.isInteger(providedTenantId) && providedTenantId > 0
-      ? providedTenantId
-      : Number(undefined);
-    if (!Number.isInteger(custId) || custId <= 0) {
-      throw new ForbiddenException('Employee organization context is required');
-    }
-    const effective = await this.getEmployeeEffectivePermissions(custId, { employeeId });
+    const employee = await this.prisma.employee.findUnique({ where: { id: Number(employeeId) }, select: { id: true, status: true } });
+    if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
+    const effective = await this.getEmployeeEffectivePermissions(undefined, { employeeId });
 
     const roleName = (effective.role || '').toUpperCase();
     const isProductionManager =

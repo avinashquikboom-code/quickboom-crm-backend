@@ -1,4 +1,4 @@
-import { RoleType } from '@prisma/client';
+import { RoleType } from '../enums/role-type.enum';
 
 export function isUserSuperAdmin(user: any): boolean {
   if (!user) return false;
@@ -14,13 +14,6 @@ export function isUserSuperAdmin(user: any): boolean {
       const val = typeof r === 'string' ? r : r?.type || r?.name || String(r);
       const normalized = String(val).toUpperCase().replace(/[\s_]+/g, '');
       return normalized === 'SUPERADMIN' || r === RoleType.SUPER_ADMIN;
-    });
-  }
-  if (Array.isArray(user.userRoles)) {
-    return user.userRoles.some((ur: any) => {
-      const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
-      const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
-      return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
     });
   }
   return false;
@@ -66,12 +59,6 @@ export function isUserAdmin(user: any): boolean {
   if (user.role) rawRoles.push(user.role);
   if (user.roleType) rawRoles.push(user.roleType);
   if (Array.isArray(user.roles)) rawRoles.push(...user.roles);
-  if (Array.isArray(user.userRoles)) {
-    for (const ur of user.userRoles) {
-      if (ur.role?.type) rawRoles.push(ur.role.type);
-      if (ur.role?.name) rawRoles.push(ur.role.name);
-    }
-  }
 
   for (const r of rawRoles) {
     if (!r) continue;

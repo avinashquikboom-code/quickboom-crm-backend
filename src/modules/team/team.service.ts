@@ -74,11 +74,7 @@ export class TeamService {
 
     const where: any = {};
 
-    if (customerId !== undefined && customerId !== null && String(customerId).trim() !== '') {
-      const numCustomerId = Number(customerId);
-      
-      
-    }
+
 
     if (query?.status === 'ACTIVE') {
       where.isActive = true;
@@ -173,12 +169,7 @@ export class TeamService {
     }
 
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({
       where,
@@ -216,7 +207,7 @@ export class TeamService {
 
   async create(customerId: number | string | undefined, dto: CreateTeamDto) {
     const numCustomerId = Number(customerId);
-    
+
 
     // 1. Validate Leader if supplied
     if (dto.leaderId) {
@@ -237,7 +228,7 @@ export class TeamService {
       const validEmployees = await this.prisma.employee.findMany({
         where: {
           id: { in: uniqueMemberIds },
-          
+
         },
         select: { id: true },
       });
@@ -250,7 +241,7 @@ export class TeamService {
     const created = await this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
-          
+
           name: dto.name.trim(),
           description: dto.description?.trim() || null,
           leaderId: dto.leaderId ? Number(dto.leaderId) : null,
@@ -286,12 +277,7 @@ export class TeamService {
   async update(customerId: number | string | undefined, id: number | string, dto: UpdateTeamDto) {
     const numId = Number(id);
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     // 1. Verify Team existence
     const existing = await this.prisma.team.findFirst({ where });
@@ -319,7 +305,7 @@ export class TeamService {
         const validEmployees = await this.prisma.employee.findMany({
           where: {
             id: { in: uniqueMemberIds },
-            
+
           },
           select: { id: true },
         });
@@ -384,12 +370,7 @@ export class TeamService {
     }
 
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({
       where,
@@ -398,7 +379,7 @@ export class TeamService {
           select: {
             members: true,
             works: true,
-            
+
           },
         },
       },
@@ -442,12 +423,7 @@ export class TeamService {
     const numEmployeeId = Number(dto.employeeId);
 
     const where: any = { id: numTeamId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({ where });
     if (!team) {
@@ -492,12 +468,7 @@ export class TeamService {
     const numEmployeeId = Number(employeeId);
 
     const where: any = { id: numTeamId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({ where });
     if (!team) {
@@ -551,7 +522,7 @@ export class TeamService {
     if (customerId) {
       const numCust = Number(customerId);
       if (!isNaN(numCust) && numCust > 0) {
-        
+
       }
     }
 
@@ -640,7 +611,7 @@ export class TeamService {
     const where: any = {
       OR: [
         { teamId: numTeamId },
-        
+
       ],
     };
 
@@ -693,7 +664,7 @@ export class TeamService {
       where,
       orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
       include: {
-        
+
         team: {
           select: { id: true, name: true },
         },
@@ -713,7 +684,7 @@ export class TeamService {
             designation: { select: { id: true, name: true } },
           },
         },
-        
+
         tasks: {
           select: { id: true, title: true, status: true, stepOrder: true, assignedToId: true, notes: true, createdAt: true },
           orderBy: { stepOrder: 'asc' },
@@ -851,8 +822,8 @@ export class TeamService {
         time: startTime,
         startTime: startTime,
         status: w.status,
-        
-        
+
+
         customerName: 'Customer',
         customerBusiness: 'Customer',
         team: {

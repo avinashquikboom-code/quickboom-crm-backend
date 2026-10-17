@@ -28,17 +28,7 @@ export class ReportController {
     customerParam: number | string | undefined,
     queryCustomerId?: number | string,
   ): number {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const target = isSuperAdmin
-      ? (queryCustomerId || customerParam || undefined)
-      : (customerParam);
-
-    const num = Number(target);
-    if (!num || isNaN(num)) {
-      if (isSuperAdmin) return 1; // Default fallback for super-admin platform overview
-      throw new ForbiddenException('Customer context required for reports');
-    }
-    return num;
+return undefined;
   }
 
   @Get('summary')

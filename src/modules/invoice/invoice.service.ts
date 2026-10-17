@@ -60,8 +60,8 @@ export class InvoiceService {
 
     const firstWork = await this.prisma.work.findFirst({
       where: {
-        
-        
+
+
         status: { not: WorkStatus.CANCELLED },
       },
       orderBy: { scheduledDate: 'asc' },
@@ -73,8 +73,8 @@ export class InvoiceService {
 
     const firstMonthly = await this.prisma.monthlySchedule.findFirst({
       where: {
-        
-        
+
+
         deletedAt: null,
       },
       orderBy: { startDate: 'asc' },
@@ -103,7 +103,7 @@ export class InvoiceService {
 
     const payment = await this.prisma.paymentHistory.findFirst({
       where: {
-        
+
         deletedAt: null,
         status: { in: ['SUCCESS', 'PAID'] },
         OR: [
@@ -111,7 +111,7 @@ export class InvoiceService {
           { invoiceUrl: inv.invoiceNo },
         ],
       },
-      
+
       orderBy: { createdAt: 'desc' },
     });
 
@@ -135,10 +135,10 @@ export class InvoiceService {
       // Find all successful or paid paymentHistory records for this customer
       const successfulPayments = await this.prisma.paymentHistory.findMany({
         where: {
-          
+
           status: { in: ['SUCCESS', 'PAID'] },
         },
-        
+
       });
 
       if (!successfulPayments.length) return;
@@ -191,7 +191,7 @@ export class InvoiceService {
           if (!contact) {
             contact = await this.prisma.contact.create({
               data: {
-                
+
                 firstName: 'Customer',
                 lastName: 'Billing',
                 email: `billing-${customerId}@quikboom.com`,
@@ -212,7 +212,7 @@ export class InvoiceService {
           );
 
           console.log('[RECONCILE_CREATING_INVOICE]', {
-            
+
             paymentId: p.id,
             expectedInvoiceNo,
             reason: 'No existing invoice (live or deleted) found for this payment',
@@ -225,7 +225,7 @@ export class InvoiceService {
 
           await this.prisma.invoice.create({
             data: {
-              
+
               contactId: contact.id,
               invoiceNo: expectedInvoiceNo,
               status: InvoiceStatus.PAID,
@@ -249,12 +249,12 @@ export class InvoiceService {
     try {
       const customersWithPayments = await this.prisma.paymentHistory.findMany({
         where: { status: { in: ['SUCCESS', 'PAID'] } },
-        
-        
+
+
       });
 
       for (const row of customersWithPayments) {
-        
+
       }
     } catch (err: any) {
       console.error('[RECONCILE_ALL_INVOICES_ERROR]', err?.message || err);
@@ -272,16 +272,7 @@ export class InvoiceService {
 
     const where: any = { deletedAt: null };
 
-    if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
-      
-      // Auto-reconcile invoices for this customer
-      await this.reconcileCustomerInvoices(numCustomerId);
-    } else if (!isSuperAdmin) {
-      throw new UnauthorizedException('Customer context is required');
-    } else {
-      // Platform-wide Super Admin view: auto-reconcile across all active customers with payments
-      await this.reconcileAllCustomerInvoices();
-    }
+    await this.reconcileAllCustomerInvoices();
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -313,8 +304,8 @@ export class InvoiceService {
         { contact: { firstName: { contains: q, mode: 'insensitive' } } },
         { contact: { lastName: { contains: q, mode: 'insensitive' } } },
         { contact: { email: { contains: q, mode: 'insensitive' } } },
-        
-        
+
+
         { notes: { contains: q, mode: 'insensitive' } },
       ];
     }
@@ -346,7 +337,7 @@ export class InvoiceService {
           orderBy: { issueDate: 'desc' },
           include: {
             contact: true,
-            
+
             items: { include: { product: true } },
           },
         }),
@@ -418,7 +409,7 @@ export class InvoiceService {
         id: inv.id,
         invoiceNumber: inv.invoiceNo,
         invoiceNo: inv.invoiceNo,
-        
+
         clientName: clientDisplayName,
         customerName: 'General Client',
         companyName: 'General Client',
@@ -443,7 +434,7 @@ export class InvoiceService {
         planName,
         notes: inv.notes,
         contact: inv.contact,
-        
+
         items: inv.items || [],
         lineItems: lineItems.items,
         planType: lineItems.planType,
@@ -500,14 +491,14 @@ export class InvoiceService {
     if (!isNaN(numId) && numId > 0) {
       const where: any = { id: numId, deletedAt: null };
       if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
-        
+
       }
       invoice = await this.prisma.invoice.findFirst({
         where,
         include: {
           contact: true,
           items: { include: { product: true } },
-          
+
         },
       });
     }
@@ -516,14 +507,14 @@ export class InvoiceService {
     if (!invoice && rawId) {
       const where: any = { invoiceNo: rawId, deletedAt: null };
       if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
-        
+
       }
       invoice = await this.prisma.invoice.findFirst({
         where,
         include: {
           contact: true,
           items: { include: { product: true } },
-          
+
         },
       });
     }
@@ -536,14 +527,14 @@ export class InvoiceService {
         if (extractedNum > 0) {
           const where: any = { id: extractedNum, deletedAt: null };
           if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
-            
+
           }
           invoice = await this.prisma.invoice.findFirst({
             where,
             include: {
               contact: true,
               items: { include: { product: true } },
-              
+
             },
           });
         }
@@ -557,7 +548,7 @@ export class InvoiceService {
     // Role-based security validation
     if (!isSuperAdmin && user?.role === 'CUSTOMER') {
       const authCustId = numCustomerId || undefined;
-      if (authCustId && undefined !== authCustId) {
+      if (authCustId && false) {
         throw new ForbiddenException('Access to this invoice is forbidden');
       }
     }
@@ -620,7 +611,7 @@ export class InvoiceService {
 
     return this.prisma.invoice.create({
       data: {
-        
+
         contactId: contactId,
         invoiceNo,
         issueDate,
@@ -633,7 +624,7 @@ export class InvoiceService {
       },
       include: {
         contact: true,
-        
+
         items: true,
       },
     });
@@ -677,7 +668,7 @@ export class InvoiceService {
 
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: numId, deletedAt: null },
-      
+
     });
 
     if (!invoice) {
@@ -687,7 +678,7 @@ export class InvoiceService {
     // Tenant / Customer Isolation
     if (!isSuperAdmin) {
       const callerCustomerId = Number(undefined);
-      
+
     }
 
     const now = new Date();
@@ -704,7 +695,7 @@ export class InvoiceService {
             action: 'DELETE_INVOICE',
             module: 'INVOICES',
             userId: user.id ? Number(user.id) : undefined,
-            
+
             details: {
               invoiceId: invoice.id,
               invoiceNo: invoice.invoiceNo,
@@ -769,8 +760,8 @@ export class InvoiceService {
     // Tenant / Customer Isolation for every record
     if (!isSuperAdmin) {
       const callerCustomerId = Number(undefined);
-      const crossTenant = invoices.find((inv) => undefined !== callerCustomerId);
-      
+      const crossTenant = invoices.find((inv) => false);
+
     }
 
     const foundIds = invoices.map((inv) => inv.id);
@@ -792,7 +783,7 @@ export class InvoiceService {
               action: 'BULK_DELETE_INVOICE',
               module: 'INVOICES',
               userId: user.id ? Number(user.id) : undefined,
-              
+
               details: {
                 invoiceId: inv.id,
                 invoiceNo: inv.invoiceNo,
@@ -1353,7 +1344,7 @@ export class InvoiceService {
 
   async downloadAgreementPdf(customerId: string | number, id: string | number, user?: any) {
     const invoice = await this.findOne(customerId, id, user);
-    
+
     let paymentId: number | undefined;
     if (invoice.notes) {
       const match = invoice.notes.match(/Order:?\s*#?\s*(?:ORD-(?:PAY|CUST)-)?(\d+)/i);
@@ -1365,7 +1356,7 @@ export class InvoiceService {
           const rawOrder = orderMatch[1].trim();
           const p = await this.prisma.paymentHistory.findFirst({
             where: {
-              
+
               orderNumber: rawOrder,
               status: { in: ['SUCCESS', 'PAID'] },
             },
@@ -1374,7 +1365,7 @@ export class InvoiceService {
         }
       }
     }
-    
+
     if (!paymentId) {
       const numFromInv = invoice.invoiceNo?.match(/(\d+)$/);
       if (numFromInv) {
@@ -1382,7 +1373,7 @@ export class InvoiceService {
         const p = await this.prisma.paymentHistory.findFirst({
           where: {
             id: testId,
-            
+
             status: { in: ['SUCCESS', 'PAID'] },
           },
         });
@@ -1393,7 +1384,7 @@ export class InvoiceService {
     if (!paymentId) {
       const payment = await this.prisma.paymentHistory.findFirst({
         where: {
-          
+
           OR: [
             { orderNumber: invoice.invoiceNo },
             { invoiceUrl: invoice.invoiceNo },
@@ -1407,36 +1398,36 @@ export class InvoiceService {
     if (!paymentId) {
       const payment = await this.prisma.paymentHistory.findFirst({
         where: {
-          
+
           status: { in: ['SUCCESS', 'PAID'] },
         },
         orderBy: { createdAt: 'desc' },
       });
       if (payment) paymentId = payment.id;
     }
-    
+
     if (!paymentId) {
        throw new BadRequestException('Cannot generate agreement: No associated payment found for this invoice.');
     }
 
     const paymentData = await this.prisma.paymentHistory.findUnique({
       where: { id: paymentId },
-      
+
     });
-    
-    if (!paymentData || true) {
+
+    if (!paymentData) {
       throw new BadRequestException('Payment or customer not found for this invoice');
     }
 
     const sub = undefined;
     const plan = sub?.plan;
     const customer = undefined;
-    
+
     // For custom plans or payments without a standard subscription:
     const planName = plan?.name || paymentData.planName || 'Custom/Customized Plan';
     const planFeatures = plan?.features as any[] || [];
     const activationDate = sub?.startDate || paymentData.createdAt;
-    
+
     // Calculate endDate if not present
     let endDate = sub?.endDate;
     if (!endDate) {

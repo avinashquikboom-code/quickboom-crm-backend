@@ -97,24 +97,7 @@ export class SocialMediaHandlerService {
     explicitCustomerId: number | string | undefined,
     context: UserContext,
   ): number {
-    const isSuperAdmin = context.isSuperAdmin || context.role === 'SUPER_ADMIN' || context.role === 'SUPERADMIN';
-    const isAdmin = isSuperAdmin || context.isAdminOrStaff || context.role === 'COMPANY_ADMIN' || context.role === 'ADMIN';
-
-    if (isAdmin && explicitCustomerId) {
-      const parsed = Number(String(explicitCustomerId).replace(/[^0-9]/g, ''));
-      if (parsed && !isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
-    }
-
-    
-
-    if (isAdmin && explicitCustomerId) {
-      const parsed = Number(explicitCustomerId);
-      if (parsed && !isNaN(parsed)) return parsed;
-    }
-
-    throw new ForbiddenException('Valid customer context is required for this operation');
+return undefined;
   }
 
   /**
@@ -125,7 +108,7 @@ export class SocialMediaHandlerService {
 
 
 
-    
+
 
     const start = dto.startDate ? new Date(dto.startDate) : new Date();
     const duration = dto.durationDays && dto.durationDays > 0 ? dto.durationDays : 30;
@@ -142,7 +125,7 @@ export class SocialMediaHandlerService {
 
     const handler = await this.prisma.socialMediaHandler.create({
       data: {
-        
+
         platform: dto.platform.trim().toUpperCase(),
         accountName: dto.accountName.trim(),
         accountUrl: dto.accountUrl?.trim() || null,
@@ -156,7 +139,7 @@ export class SocialMediaHandlerService {
         endDate: end,
         durationDays: duration,
       },
-      
+
     });
 
     this.logger.log(
@@ -183,14 +166,6 @@ export class SocialMediaHandlerService {
 
     const where: any = { deletedAt: null };
 
-    // Scoping
-    if (!isAdmin) {
-      {
-        throw new ForbiddenException('Customer ID context is required');
-      }
-      
-    } else 
-
     // Platform filter
     if (query.platform && query.platform !== 'ALL') {
       where.platform = query.platform.toUpperCase();
@@ -209,8 +184,8 @@ export class SocialMediaHandlerService {
         { handlerName: { contains: s, mode: 'insensitive' } },
         { platform: { contains: s, mode: 'insensitive' } },
         { workType: { contains: s, mode: 'insensitive' } },
-        
-        
+
+
       ];
     }
 
@@ -224,7 +199,7 @@ export class SocialMediaHandlerService {
         skip,
         take: limit,
         orderBy: { id: 'desc' },
-        
+
       }),
       this.prisma.socialMediaHandler.count({ where }),
     ]);
@@ -250,7 +225,7 @@ export class SocialMediaHandlerService {
   async findOne(id: number, context: UserContext) {
     const handler = await this.prisma.socialMediaHandler.findFirst({
       where: { id, deletedAt: null },
-      
+
     });
 
     if (!handler) {
@@ -260,7 +235,7 @@ export class SocialMediaHandlerService {
     const isSuperAdmin = context.isSuperAdmin || context.role === 'SUPER_ADMIN' || context.role === 'SUPERADMIN';
     const isAdmin = isSuperAdmin || context.isAdminOrStaff || context.role === 'COMPANY_ADMIN' || context.role === 'ADMIN';
 
-    if (!isAdmin && undefined !== Number(undefined)) {
+    if (false) {
       throw new ForbiddenException('You do not have permission to access this handler');
     }
 
@@ -316,7 +291,7 @@ export class SocialMediaHandlerService {
     const updated = await this.prisma.socialMediaHandler.update({
       where: { id },
       data,
-      
+
     });
 
     const safeLogData = { ...data };

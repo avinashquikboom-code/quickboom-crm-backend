@@ -44,7 +44,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     limit = 20,
     search?: string,
   ) {
-    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : NaN;
+    const numCustomerId = NaN;
     const numUserId = userId !== undefined && userId !== null ? Number(userId) : NaN;
     const numPage = Math.max(Number(page) || 1, 1);
     const numLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -53,7 +53,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     const andConditions: any[] = [];
 
     if (!isNaN(numCustomerId)) {
-      andConditions.push({  });
+      andConditions.push();
     }
 
     if (!isNaN(numUserId)) {
@@ -61,7 +61,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
         andConditions.push({
           OR: [
             { userId: numUserId },
-            
+
           ],
         });
       } else {
@@ -139,7 +139,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     if (numUserId) {
       where.userId = numUserId;
     } else if (numCustomerId) {
-      
+
     }
     return this.prisma.notification.updateMany({
       where,
@@ -219,7 +219,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
             this.logger.log(`[WELCOME] Delivering initial welcome push to first registered token for brand-new userId=${userId}`);
             const payload: Record<string, string> = {
               type: 'WELCOME',
-              
+
               notificationId: String(pendingWelcome.id),
             };
 
@@ -236,7 +236,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
             });
 
             await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
-              
+
               notificationType: 'WELCOME',
             });
           }
@@ -259,14 +259,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
         const planData = (pendingPlan.data as any) || {};
         const payload: Record<string, string> = {
           type: 'PLAN_PURCHASE_SUCCESS',
-          
+
           planId: String(planData.planId || ''),
           planName: String(planData.planName || ''),
-          
+
           notificationId: String(pendingPlan.id),
         };
         await this.fcmService.sendToSingleToken(cleanToken, pendingPlan.title, pendingPlan.message, payload, {
-          
+
           notificationType: 'PLAN_PURCHASE_SUCCESS',
         });
       }
@@ -332,7 +332,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       throw new NotFoundException('Notification not found');
     }
 
-    if (undefined !== numCustomerId || notif.userId !== numUserId) {
+    if (notif.userId !== numUserId) {
       throw new ForbiddenException('You do not have permission to delete this notification');
     }
 
@@ -350,50 +350,9 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     let targetUserId = userId;
     let targetCustomerId = customerId;
 
-    
 
-    // Resolve customerId if userId is given but customerId isn't
-    if (targetUserId && !targetCustomerId) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: targetUserId },
-        
-      });
-      {
-        throw new BadRequestException('The notification recipient is not associated with a customer.');
-      }
-      targetCustomerId = undefined;
-    }
 
-    // If customerId is given without userId, find customer owner/active user
-    if (!targetUserId && targetCustomerId) {
-      const activeTokenUser = await this.prisma.userDeviceToken.findFirst({
-        where: {
-          isActive: true,
-          user: {  deletedAt: null },
-        },
-        select: { userId: true },
-      });
-
-      if (activeTokenUser) {
-        targetUserId = activeTokenUser.userId;
-      } else {
-        const firstUser =
-          (await this.prisma.user.findFirst({
-            where: {  deletedAt: null, isActive: true },
-            select: { id: true },
-          })) ||
-          (await this.prisma.user.findFirst({
-            where: {  deletedAt: null },
-            select: { id: true },
-          }));
-        if (firstUser) {
-          targetUserId = firstUser.id;
-        } else {
-          throw new BadRequestException('The customer has no active user to receive this notification.');
-        }
-      }
-    }
-
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) throw new BadRequestException('An explicit recipient userId is required');
     // 1. Create in-app Notification database record(s)
     let dbNotification: any = null;
     if (targetCustomerId && !userId) {
@@ -408,7 +367,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       for (const u of usersToNotify) {
         const created = await this.prisma.notification.create({
           data: {
-            
+
             userId: u.id,
             title,
             message: body,
@@ -422,7 +381,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     } else if (targetUserId && targetCustomerId) {
       dbNotification = await this.prisma.notification.create({
         data: {
-          
+
           userId: targetUserId,
           title,
           message: body,
@@ -478,7 +437,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
     // 3. Dispatch multicast push via FCM Service
     const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
-      
+
       notificationType: type,
     });
 
@@ -528,7 +487,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
    */
   async sendCustomerTestNotification(targetCustomerId: number | string | undefined) {
     const customerId = Number(targetCustomerId);
-    
+
 
     const deviceRecords = await this.prisma.userDeviceToken.findMany({
       where: {
@@ -547,7 +506,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       return {
         success: false,
         message: 'No active FCM device tokens registered for this customer.',
-        
+
       };
     }
 
@@ -555,12 +514,12 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     const body = 'This is a test notification outside the app to verify background FCM delivery.';
     const payloadData: Record<string, string> = {
       type: 'TEST',
-      
+
       timestamp: new Date().toISOString(),
     };
 
     const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
-      
+
       notificationType: 'TEST',
     });
 
@@ -571,7 +530,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       messageId: messageId || (fcmResult.successCount > 0 ? 'FCM_SENT' : undefined),
       deliveredCount: fcmResult.successCount,
       failureCount: fcmResult.failureCount,
-      
+
     };
   }
 
@@ -661,7 +620,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           userId: emp.userId,
           type: 'LEAVE_APPROVED',
           createdAt: { gte: fifteenMinutesAgo },
@@ -688,7 +647,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: 'LEAVE_APPROVED',
@@ -751,7 +710,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'LEAD_IMPORTED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -815,13 +774,13 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        
+
         title,
         body,
         type: 'LEAD_IMPORTED',
         data: {
           type: 'LEAD_IMPORTED',
-          
+
           leadName: resolvedName,
           companyName: companyName || '',
           source: source || 'Data Import',
@@ -863,13 +822,13 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: numBpoUserId,
-        
+
         title,
         body,
         type: 'LEAD_FOLLOW_UP_REMINDER',
         data: {
           type: 'LEAD_FOLLOW_UP_REMINDER',
-          
+
           leadName: resolvedName,
           companyName: companyName || '',
           followUpDate: transitionDate.toISOString(),
@@ -910,7 +869,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'VISIT_SCHEDULED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -961,14 +920,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        
+
         title,
         body,
         type: 'VISIT_SCHEDULED',
         data: {
           type: 'VISIT_SCHEDULED',
           visitId: String(numVisitId),
-          
+
           customerName: leadOrCustomer,
           purpose: purpose || '',
           date: dateStr,
@@ -1011,7 +970,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       // Fetch customer / company info
       let companyName = 'Customer Workspace';
-      
+
 
       const workTitle = work.title || 'Scheduled Activity';
       const dateStr = work.scheduledDate ? new Date(work.scheduledDate).toISOString().split('T')[0] : '';
@@ -1022,14 +981,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: 'WORK_ASSIGNMENT',
         data: {
           type: 'WORK',
           workId: String(work.id),
-          
+
           title: workTitle,
           company: companyName,
           scheduledDate: dateStr,
@@ -1057,14 +1016,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const notifType = isToday ? 'SUBSCRIPTION_EXPIRING_TODAY' : 'SUBSCRIPTION_EXPIRING_SOON';
 
       const pushResult = await this.sendPushNotification({
-        
+
         title,
         body,
         type: notifType,
         data: {
           type: 'SUBSCRIPTION',
-          
-          
+
+
           planName,
           expiryDate: endDate,
           daysRemaining: String(daysRemaining),
@@ -1112,7 +1071,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       try {
         if (this.whatsappService) {
           await this.whatsappService.sendPlanExpiryReminderMessage({
-            
+
             planName,
             expiryDate: endDate,
             daysRemaining,
@@ -1145,7 +1104,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const timeStr = work.scheduledTime ? ` at ${work.scheduledTime}` : '';
 
       let companyName = 'Customer Workspace';
-      
+
 
       const title = `Tomorrow's Schedule: ${workTitle}`;
       const body =
@@ -1155,14 +1114,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId,
-        
+
         title,
         body,
         type: 'CALENDAR_SCHEDULE_REMINDER',
         data: {
           type: 'CALENDAR',
           workId: String(work.id),
-          
+
           title: workTitle,
           recipientType,
         },
@@ -1192,7 +1151,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           userId: emp.userId,
           type: 'LEAVE_REJECTED',
           createdAt: { gte: fifteenMinutesAgo },
@@ -1219,7 +1178,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: 'LEAVE_REJECTED',
@@ -1260,7 +1219,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const notifType = approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED';
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           userId: emp.userId,
           type: notifType,
           createdAt: { gte: fifteenMinutesAgo },
@@ -1291,7 +1250,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: notifType,
@@ -1330,7 +1289,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const notifType = approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED';
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           userId: emp.userId,
           type: notifType,
           createdAt: { gte: fifteenMinutesAgo },
@@ -1361,7 +1320,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: notifType,
@@ -1402,7 +1361,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'SALARY_GENERATED',
           createdAt: { gte: thirtyDaysAgo },
         },
@@ -1448,7 +1407,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        
+
         title,
         body,
         type: 'SALARY_GENERATED',
@@ -1491,7 +1450,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'CALENDAR_SCHEDULE_CREATED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -1517,7 +1476,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const body = `Your schedule "${title}" has been scheduled for ${dateStr}${timeStr}${empStr}${locStr}.`;
 
       return await this.sendPushNotification({
-        
+
         title: notifTitle,
         body,
         type: 'CALENDAR_SCHEDULE_CREATED',
@@ -1570,7 +1529,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'TASK_RESCHEDULED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -1630,7 +1589,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        
+
         title,
         body,
         type: 'TASK_RESCHEDULED',
@@ -1679,7 +1638,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        
+
         title,
         body,
         type: approved ? 'LOAN_APPROVED' : 'LOAN_REJECTED',
@@ -1768,7 +1727,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     let specificIds: number[] = [];
     if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
       specificIds = dto.targetIds.map(Number).filter((n) => !isNaN(n) && n > 0);
-    } else 
+    } else
 
     // If future scheduled delivery is requested, save as SCHEDULED campaign
     if (isScheduled) {
@@ -1841,7 +1800,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
           id: true,
           firstName: true,
           lastName: true,
-          
+
           userId: true,
         },
       });
@@ -1849,41 +1808,13 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       for (const emp of employees) {
         if (emp.userId) {
           recipientPairs.push({
-            
+
             userId: emp.userId,
           });
         }
       }
     } else {
-      // Default: CUSTOMERS
-      const whereClause: any = {
-        deletedAt: null,
-        isActive: true,
-      };
-      if (audience === 'SPECIFIC' && specificIds.length > 0) {
-        whereClause.id = { in: specificIds };
-      }
-
-      const customers = await this.prisma.customer.findMany({
-        where: whereClause,
-        select: {
-          id: true,
-          name: true,
-          users: {
-            where: { deletedAt: null, isActive: true },
-            select: { id: true },
-          },
-        },
-      });
-
-      for (const cust of customers) {
-        for (const u of cust.users) {
-          recipientPairs.push({
-            
-            userId: u.id,
-          });
-        }
-      }
+      throw new GoneException('Customer notification audiences have been removed; select employees');
     }
 
     if (recipientPairs.length === 0) {
@@ -1947,7 +1878,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
     const deduplicatedRecipients = Array.from(uniqueRecipientMap.values());
 
     const inAppNotifications = deduplicatedRecipients.map((r) => ({
-      
+
       userId: r.userId,
       title: dto.title.trim(),
       message: dto.message.trim(),
@@ -2394,12 +2325,12 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
         const authUser = await this.prisma.user.findFirst({
           where: {
             id: targetUserId,
-            
+
             deletedAt: null,
           },
           select: {
             id: true,
-            
+
             createdAt: true,
             deletedAt: true,
           },
@@ -2449,12 +2380,12 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const body = 'Your account has been created successfully. Welcome to QuikBoom!';
       const payloadData: Record<string, string> = {
         type: 'WELCOME',
-        
+
       };
 
       const dbNotification = await this.prisma.notification.create({
         data: {
-          
+
           userId: targetUserId,
           title,
           message: body,
@@ -2509,7 +2440,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
         };
 
         fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
-          
+
           notificationType: 'WELCOME',
         });
 
@@ -2550,7 +2481,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       try {
         if (this.whatsappService) {
           await this.whatsappService.sendCustomerWelcomeMessage({
-            
+
             customerName: params.customerName,
             notificationId: dbNotification?.id,
           });
@@ -2600,7 +2531,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
         type: 'CUSTOMER_REGISTERED',
         data: {
           type: 'CUSTOMER_REGISTERED',
-          
+
           route: '/customers',
         },
       }).catch((adminErr) =>
@@ -2636,7 +2567,7 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          
+
           type: 'VISIT_COMPLETED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -2652,31 +2583,10 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
       let targetUserId: number | null = null;
       let resolvedLeadName = (leadName || '').trim();
 
-      if (leadId) {
-        const lead = await this.prisma.lead.findFirst({
-          where: { id: Number(leadId),  deletedAt: null },
-          select: {
-            id: true,
-            assignedToId: true,
-            createdById: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            title: true,
-          },
-        });
-        if (lead) {
-          targetUserId = lead.assignedToId ? Number(lead.assignedToId) : null;
-          if (!targetUserId && lead.createdById) {
-            targetUserId = Number(lead.createdById);
-          }
-          if (!resolvedLeadName) {
-            const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-            resolvedLeadName = fullName || lead.companyName || lead.title || `Lead #${lead.id}`;
-          }
-        }
-      }
-
+      const visit = await this.prisma.visit.findUnique({ where: { id: Number(visitId) }, include: { employee: { select: { userId: true } } } });
+      const organizer = visit?.scheduledById ? await this.prisma.employee.findUnique({ where: { id: visit.scheduledById }, select: { userId: true } }) : null;
+      targetUserId = organizer?.userId ?? visit?.employee?.userId ?? null;
+      resolvedLeadName = resolvedLeadName || visit?.customerName || '';
       if (!targetUserId) {
         this.logger.warn(
           `[FCM] Visit completed notification skipped — no BPO user for visitId=${visitId}, leadId=${leadId ?? 'none'}`,
@@ -2693,14 +2603,14 @@ throw new GoneException('Customer email lookup has been removed; provide an expl
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        
+
         title,
         body,
         type: 'VISIT_COMPLETED',
         data: {
           type: 'VISIT_COMPLETED',
           visitId: String(visitId),
-          
+
           leadName: resolvedLeadName,
           visitorName: visitorLabel,
           status: 'COMPLETED',
@@ -2777,12 +2687,12 @@ throw new GoneException('This Customer/Lead operation has been removed');
             },
           },
         },
-        
+
       ];
 
       if (numCustomerId) {
         orConditions.push({
-          
+
           userRoles: {
             some: {
               role: {
@@ -2815,7 +2725,7 @@ throw new GoneException('This Customer/Lead operation has been removed');
         try {
           await this.prisma.notification.create({
             data: {
-              
+
               userId: admin.id,
               title,
               message: body,

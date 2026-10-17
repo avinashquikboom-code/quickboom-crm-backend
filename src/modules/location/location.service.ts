@@ -156,7 +156,7 @@ export class LocationService {
     // 5. Persist to EmployeeLocation table
     const saved = await this.prisma.employeeLocation.create({
       data: {
-        
+
         employeeId: employee.id,
         latitude: Number(dto.latitude),
         longitude: Number(dto.longitude),
@@ -350,7 +350,7 @@ export class LocationService {
     };
 
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
     if (!isNaN(numEmployeeId) && numEmployeeId > 0) {
       whereClause.employeeId = numEmployeeId;
@@ -367,7 +367,7 @@ export class LocationService {
     const numCustomerId = customerId ? Number(customerId) : NaN;
     const whereClause: any = { isActive: true };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     return this.prisma.branchGeofence.findMany({
@@ -383,7 +383,7 @@ export class LocationService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && false) {
       throw new ForbiddenException('You do not have access to this branch location');
     }
     return {
@@ -412,7 +412,7 @@ export class LocationService {
     if (!branch) {
       throw new NotFoundException(`Branch with ID ${branchId} not found`);
     }
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && false) {
       throw new ForbiddenException('You do not have access to update this branch location');
     }
 
@@ -448,7 +448,7 @@ export class LocationService {
   ) {
     return this.prisma.branchGeofence.create({
       data: {
-        
+
         name: data.name,
         city: data.city,
         latitude: data.latitude,

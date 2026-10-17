@@ -147,7 +147,7 @@ export class VideoService {
         showInIntroduction: dto.showInIntroduction !== undefined ? Boolean(dto.showInIntroduction) : false,
         startAt,
         endAt,
-        
+
         createdBy: user.id || null,
         metadata: dto.metadata || null,
       },
@@ -420,11 +420,7 @@ export class VideoService {
     });
 
     // 3. Filter by customer isolation (global or matching customer)
-    const customerFiltered = allVideos.filter((v) => {
-      
-      if (undefined === resolvedCustomerId) return true;
-      return false;
-    });
+    const customerFiltered = allVideos;
 
     // 4. Exclude already seen videos for this customer
     const unseenFiltered = customerFiltered.filter((v) => !seenVideoIds.has(v.id));

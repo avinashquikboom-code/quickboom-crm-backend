@@ -1,3 +1,7 @@
+# Superseded pre-edit review
+
+See FINAL_REPORT.md for current implementation, verification, migration proposal and concurrent RBAC conflict. The material below is the original pre-edit analysis.
+
 # Customer and Lead removal — pre-edit review
 
 Status: active schema and backend unchanged pending tenant-isolation decision. No database commands executed.

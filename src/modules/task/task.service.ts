@@ -248,7 +248,7 @@ export class TaskService {
     const task = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.create({
         data: {
-          
+
           createdById: numCreatedById,
           taskNumber,
           title: dto.title,
@@ -311,7 +311,7 @@ export class TaskService {
       if (employee && employee.userId) {
         await tx.notification.create({
           data: {
-            
+
             userId: employee.userId,
             title: `[${dto.priority}] New Task Allocated`,
             message: `You have been allocated ${dto.priority} priority task: "${task.title}". Due: ${dto.dueDate} ${dto.dueTime}.`,
@@ -364,7 +364,7 @@ export class TaskService {
 
     const where: any = { deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     if (query.status && query.status !== 'ALL') {
@@ -486,7 +486,7 @@ export class TaskService {
     const numId = Number(id);
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const task = await this.prisma.task.findFirst({
@@ -606,7 +606,7 @@ export class TaskService {
       if (newEmployee.userId) {
         await tx.notification.create({
           data: {
-            
+
             userId: newEmployee.userId,
             title: `[${task.priority}] Task Reallocated to You`,
             message: `Task "${task.title}" has been reallocated to you. Due: ${task.dueTime || ''} ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : ''}.`,
@@ -738,8 +738,8 @@ export class TaskService {
         { title: { contains: query.search, mode: 'insensitive' } },
         { taskNumber: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
-        
-        
+
+
       ];
       where.AND = [{ OR: searchCond }];
     }
@@ -748,7 +748,7 @@ export class TaskService {
       where,
       orderBy: { dueAt: 'asc' },
       include: {
-        
+
         employee: {
           select: {
             id: true,
@@ -923,8 +923,8 @@ export class TaskService {
           scheduledAt: item.scheduledAt ?? null,
           customerName: item.customerName ?? null,
           source: 'WORK',
-          
-          
+
+
           title: item.title,
           description: item.notes || item.description || null,
           status: item.status,
@@ -986,29 +986,25 @@ export class TaskService {
       { tasks: { some: { assignedToId: { in: assigneeIds } } } },
       // Customer calendar shows every work for a customer. An employee authorized
       // for that customer (direct assignment or their team) sees those same works.
-      
+
     ];
     if (teamIds.length > 0) {
       workOr.push({ teamId: { in: teamIds } });
-      workOr.push({
-        
-      });
+      workOr.push();
     }
     if (productionTeamIds.length > 0) {
-      workOr.push({
-        
-      });
+      workOr.push();
     }
 
     const works = await this.prisma.work.findMany({
       where: {
         status: { not: WorkStatus.CANCELLED },
-        
+
         OR: workOr,
       },
       orderBy: { scheduledDate: 'asc' },
       include: {
-        
+
         assignedTo: {
           select: {
             id: true,
@@ -1049,8 +1045,8 @@ export class TaskService {
       .map((work) => ({
         id: work.id,
         source: 'WORK',
-        
-        
+
+
         title: work.title,
         description: work.description,
         status: work.status,
@@ -1093,7 +1089,7 @@ export class TaskService {
         deletedAt: null,
       },
       include: {
-        
+
         employee: {
           select: {
             id: true,
@@ -1299,7 +1295,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            
+
             userId: task.employee.userId,
             title: `Task Approved! 🎉`,
             message: `Your task "${task.title}" has been approved and marked COMPLETED by HR.`,
@@ -1364,7 +1360,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            
+
             userId: task.employee.userId,
             title: 'Task Proof Rejected',
             message: `Your task "${task.title}" proof was rejected by HR: "${reason}". Please upload clear proof and resubmit.`,

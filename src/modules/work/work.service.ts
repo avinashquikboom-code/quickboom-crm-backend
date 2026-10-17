@@ -164,7 +164,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
           notIn: [WorkStatus.COMPLETED, WorkStatus.APPROVED, WorkStatus.CANCELLED],
         },
       },
-      
+
     });
 
     if (overdueWorks.length === 0) {
@@ -207,7 +207,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         let targetIstD = currentIstDate;
 
         // Check customer attendance policy for weekend/Sunday skipping
-        
+
 
         // Store target date at 10:00 AM IST (04:30:00 UTC) to ensure clean date matching in both UTC and IST
         const targetDateUtc = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 4, 30, 0, 0));
@@ -229,7 +229,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
         );
 
         // Emit real-time notification to subscribed clients
-        
+
       } catch (err: any) {
         this.logger.error(`Failed to carry forward work #${work.id}: ${err?.message}`);
       }
@@ -291,27 +291,7 @@ throw new GoneException('Customer and Lead functionality has been removed');
    * Helper to resolve customer ID from numeric values or clean integers
    */
   private resolveCustomerId(customerId?: number | string): number | undefined {
-    if (customerId === null || customerId === undefined) return undefined;
-    if (typeof customerId === 'number') {
-      return !isNaN(customerId) && customerId > 0 ? customerId : undefined;
-    }
-    const str = String(customerId).trim();
-    if (!str) return undefined;
-    const directNum = parseInt(str, 10);
-    if (!isNaN(directNum) && String(directNum) === str && directNum > 0) {
-      return directNum;
-    }
-
-    const qbMatch = str.match(/^(?:QB-)?(?:CUST|CADMIN|USER|EMP|ADMIN|CUSTOMER|CLIENT|TENANT)?[_-]?0*([0-9]+)$/i) ||
-                    str.match(/^T0*([0-9]+)$/i);
-    if (qbMatch && qbMatch[1]) {
-      const extractedNum = parseInt(qbMatch[1], 10);
-      if (!isNaN(extractedNum) && extractedNum > 0) {
-        return extractedNum;
-      }
-    }
-
-    return undefined;
+return undefined;
   }
 
   /**
@@ -336,7 +316,7 @@ throw new GoneException('Customer and Lead functionality has been removed');
     const where: any = {};
     const resolvedCustId = this.resolveCustomerId(scopedCustomerId);
     if (resolvedCustId) {
-      
+
     }
 
     if (query.status) where.status = query.status;
@@ -356,7 +336,7 @@ throw new GoneException('Customer and Lead functionality has been removed');
         { title: { contains: s, mode: 'insensitive' } },
         { description: { contains: s, mode: 'insensitive' } },
         { notes: { contains: s, mode: 'insensitive' } },
-        
+
       ];
     }
 
@@ -367,7 +347,7 @@ throw new GoneException('Customer and Lead functionality has been removed');
         take: limit,
         orderBy: { scheduledDate: 'desc' },
         include: {
-          
+
           team: true,
           assignedTo: {
             select: { id: true, firstName: true, lastName: true, employeeCode: true },
@@ -419,13 +399,13 @@ throw new GoneException('Customer and Lead functionality has been removed');
     const where: any = { id: numId };
 
     if (scopedCustomerId && !isNaN(Number(scopedCustomerId)) && Number(scopedCustomerId) > 0) {
-      
+
     }
 
     const work = await this.prisma.work.findFirst({
       where,
       include: {
-        
+
         team: true,
         assignedTo: true,
         editor: true,
@@ -464,7 +444,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
    */
   async create(scopedCustomerId: number | string, dto: CreateWorkDto) {
     const numCustomerId = Number(scopedCustomerId);
-    
+
 
     // 2. Validate Non-working Day / Sunday Rule
     const schedDate = new Date(dto.scheduledDate);
@@ -511,7 +491,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
                 employee: {
                   select: {
                     id: true,
-                    
+
                     status: true,
                     firstName: true,
                     lastName: true,
@@ -595,8 +575,8 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       // Create Work deliverable record
       const work = await tx.work.create({
         data: {
-          
-          
+
+
           planId: entitlement?.planId ?? null,
           entitlementId: entitlement?.id ?? null,
           teamId: resolvedTeamId,
@@ -612,11 +592,11 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           notes: dto.notes,
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
           entitlement: true,
-          
+
         },
       });
 
@@ -645,13 +625,11 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       }
 
       // Notify customer user
-      const customerUser = await tx.user.findFirst({
-        where: {  isActive: true },
-      });
+      const customerUser = work.assignedTo?.userId ? await tx.user.findFirst({ where: { id: work.assignedTo.userId, isActive: true, deletedAt: null } }) : null;
       if (customerUser) {
         await tx.notification.create({
           data: {
-            
+
             userId: customerUser.id,
             title: 'Schedule Created',
             message: `Your ${serviceName} schedule "${work.title}" on ${schedDate.toLocaleDateString()} has been scheduled successfully.`,
@@ -677,7 +655,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         : null;
       this.notificationService
         .sendCalendarScheduledNotification({
-          
+
           workId: result.id,
           title: result.title || serviceName || 'Scheduled Activity',
           scheduledDate: result.scheduledDate,
@@ -800,7 +778,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         where: { id: numId },
         data: updateData,
         include: {
-          
+
           assignedTo: true,
           editor: true,
           entitlement: true,
@@ -858,7 +836,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       try {
         const existingNotifs = await this.prisma.notification.findMany({
           where: {
-            
+
             type: 'WORK_STARTED',
           },
           select: { data: true },
@@ -876,14 +854,14 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           const startDateTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
           await this.notificationService.sendPushNotification({
-            
+
             title: '🚀 Work Started',
             body: `${employeeName} has started working on "${workTitle}". Status: In Progress (${startDateTime}).`,
             type: 'WORK_STARTED',
             data: {
               type: 'WORK',
               workId: String(result.id),
-              
+
               employeeName,
               workTitle,
               status: 'IN_PROGRESS',
@@ -913,7 +891,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     if (this.notificationService && result.assignedToId && (isRescheduled || wasCancelled)) {
       this.notificationService
         .sendTaskRescheduledNotification({
-          
+
           employeeId: result.assignedToId,
           workId: result.id,
           taskName: result.title || 'Task',
@@ -957,7 +935,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           if (!alreadyNotified) {
             await this.notificationService.sendPushNotification({
               userId: uid,
-              
+
               title: '✅ Level Approved',
               body: `Your submitted level for "${result.title}" has been approved by Admin.`,
               type: 'LEVEL_APPROVED',
@@ -1000,7 +978,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           submittedAt: new Date(),
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
         },
@@ -1013,13 +991,11 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       });
 
       // Notify customer for review
-      const customerUser = await tx.user.findFirst({
-        where: {  isActive: true },
-      });
+      const customerUser = work.assignedTo?.userId ? await tx.user.findFirst({ where: { id: work.assignedTo.userId, isActive: true, deletedAt: null } }) : null;
       if (customerUser) {
         await tx.notification.create({
           data: {
-            
+
             userId: customerUser.id,
             title: 'Content Ready for Review',
             message: `Deliverable for "${work.title}" has been submitted by your creative team. Please review and approve.`,
@@ -1035,7 +1011,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     if (this.notificationService && undefined) {
       try {
         await this.notificationService.sendPushNotification({
-          
+
           title: 'Content Ready for Review',
           body: `Deliverable for "${updated.title}" has been submitted by your creative team. Please review and approve.`,
           type: 'WORK_SUBMITTED',
@@ -1080,7 +1056,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           completedAt: new Date(),
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
           entitlement: true,
@@ -1110,7 +1086,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         for (const uid of staffUserIds) {
           await tx.notification.create({
             data: {
-              
+
               userId: uid,
               title: '✅ Level Approved',
               message: `Your submitted level for "${work.title}" has been approved by Admin.`,
@@ -1146,7 +1122,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           if (!alreadyNotified) {
             await this.notificationService.sendPushNotification({
               userId: uid,
-              
+
               title: '✅ Level Approved',
               body: `Your submitted level for "${result.work.title}" has been approved by Admin.`,
               type: 'LEVEL_APPROVED',
@@ -1189,7 +1165,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           notes: `${existing.notes || ''}\n[Revision #${existing.revisionCount + 1}]: ${dto.feedback}`.trim(),
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
         },
@@ -1200,7 +1176,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       for (const uid of staffUserIds) {
         await tx.notification.create({
           data: {
-            
+
             userId: uid,
             title: 'Revision Requested',
             message: `Customer requested revision on "${work.title}": "${dto.feedback}"`,
@@ -1265,7 +1241,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       where: { id: numId },
       data: updateData,
       include: {
-        
+
         assignedTo: true,
         editor: true,
         team: true,
@@ -1347,7 +1323,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         where: { id: numId },
         data: { status: WorkStatus.CANCELLED },
         include: {
-          
+
           entitlement: true,
         },
       });
@@ -1377,7 +1353,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     if (this.notificationService && existing.assignedToId) {
       this.notificationService
         .sendTaskRescheduledNotification({
-          
+
           employeeId: existing.assignedToId,
           workId: existing.id,
           taskName: existing.title || 'Task',
@@ -1424,20 +1400,11 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     const where: any = {};
     let numCustomerId: number | undefined;
 
-    if (scopedCustomerId !== undefined && scopedCustomerId !== null && String(scopedCustomerId).trim() !== '') {
-      numCustomerId = this.resolveCustomerId(scopedCustomerId);
-      if (!numCustomerId) {
-        this.logger.log(`[CALENDAR_INVALID_CUSTOMER] scopedCustomerId: ${scopedCustomerId} is invalid. Returning 0 schedules.`);
-        return [];
-      }
 
-      // Strictly scope to this customer's foreign key
-      
-    }
 
     let activeSubForCustomer: any = null;
     if (numCustomerId) {
-      
+
     }
 
     if (query.employeeId && !isNaN(Number(query.employeeId))) {
@@ -1502,11 +1469,11 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        
+
         team: {
           select: {
             id: true,
-            
+
             name: true,
             leaderId: true,
             members: { select: { employeeId: true } },
@@ -1515,7 +1482,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         assignedTo: {
           select: {
             id: true,
-            
+
             firstName: true,
             lastName: true,
             department: { select: { name: true } },
@@ -1532,7 +1499,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         editor: {
           select: {
             id: true,
-            
+
             firstName: true,
             lastName: true,
             department: { select: { name: true } },
@@ -1568,7 +1535,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
           },
         },
         entitlement: { select: { serviceName: true } },
-        
+
       },
     });
     const queryEndTime = Date.now();
@@ -1612,7 +1579,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     }
 
     const result = filteredItems.map((w) => {
-      const purchaseRef = (`PUR-${String(undefined).padStart(3, '0')}`);
+      const purchaseRef = null;
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
@@ -1678,7 +1645,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       return {
         id: String(w.id),
         activityId: String(w.id),
-        
+
         customerName: 'Customer',
         purchaseId: purchaseRef,
         productName: isLocked ? 'Schedule Locked' : prodName,
@@ -1741,7 +1708,7 @@ returnedSchedules: ${result.length}`);
 DB schedules before filtering: ${items.length}`);
 
     this.logger.log(`[CALENDAR_DEBUG]
-DB schedules after customer filter: ${numCustomerId ? items.filter(i => undefined === numCustomerId).length : items.length}`);
+DB schedules after customer filter: ${numCustomerId ? items.filter(i => true).length : items.length}`);
 
     this.logger.log(`[CALENDAR_DEBUG]
 DB schedules after active-plan filter: ${activeSubForCustomer ? items.filter(i => undefined === activeSubForCustomer.id).length : items.length}`);
@@ -2060,7 +2027,7 @@ status: ${item.status}`);
           id: true,
           name: true,
           description: true,
-          
+
           leader: { select: { status: true } },
         },
       }),
@@ -2153,7 +2120,7 @@ status: ${item.status}`);
       { assignedToId: employeeId },
       { editorId: employeeId },
       { tasks: { some: { assignedToId: employeeId } } },
-      
+
     ];
     for (const cid of viewerIds) {
       if (cid !== employeeId) {
@@ -2161,7 +2128,7 @@ status: ${item.status}`);
           { assignedToId: cid },
           { editorId: cid },
           { tasks: { some: { assignedToId: cid } } },
-          {  },
+
         );
       }
     }
@@ -2173,7 +2140,7 @@ status: ${item.status}`);
       },
       select: {
         team: { select: { id: true, name: true, description: true, isActive: true } },
-        
+
       },
     });
     const ids = new Set<number>();
@@ -2303,7 +2270,7 @@ return null; // Team must now be selected explicitly on each work item.
             employee: {
               select: {
                 id: true,
-                
+
                 status: true,
                 firstName: true,
                 lastName: true,
@@ -2325,7 +2292,7 @@ return null; // Team must now be selected explicitly on each work item.
     // Find all works for this customer that are not cancelled and need assignment or team update
     const unassignedWorks = await prisma.work.findMany({
       where: {
-        
+
         status: { not: WorkStatus.CANCELLED },
         OR: options?.onlyMissing ? [
           { assignedToId: null }, { editorId: null }, { teamId: null },
@@ -2478,7 +2445,7 @@ return null; // Team must now be selected explicitly on each work item.
             userId: true,
             firstName: true,
             lastName: true,
-            
+
             employeeCode: true,
             status: true,
             designation: { select: { name: true } },
@@ -2493,7 +2460,7 @@ return null; // Team must now be selected explicitly on each work item.
             userId: true,
             firstName: true,
             lastName: true,
-            
+
             employeeCode: true,
             status: true,
             designation: { select: { name: true } },
@@ -2587,12 +2554,12 @@ return null; // Team must now be selected explicitly on each work item.
         { assignedToId: numEmployeeId },
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
-        
-        
-        
+
+
+
       ];
       if (directCustomerIds.length > 0) {
-        conds.push({  });
+        conds.push();
       }
       for (const cid of viewerCandidateIds) {
         if (cid !== numEmployeeId) {
@@ -2600,11 +2567,9 @@ return null; // Team must now be selected explicitly on each work item.
             { assignedToId: cid },
             { editorId: cid },
             { tasks: { some: { assignedToId: cid } } },
-            {  },
-            {  },
-            {
-              
-            },
+
+
+
           );
         }
       }
@@ -2616,7 +2581,7 @@ return null; // Team must now be selected explicitly on each work item.
         ? []
         : [
             { teamId: { in: teamIds } },
-            
+
           ];
 
     const designationTypes = workTypesForDesignation(designationName);
@@ -2648,10 +2613,10 @@ return null; // Team must now be selected explicitly on each work item.
         status: { not: WorkStatus.CANCELLED },
         ...(query.teamId ? { AND: [{ OR: [
           { teamId: Number(query.teamId) },
-          
+
         ] }] } : {}),
       };
-      
+
     } else if (allTenantCustomers) {
       // Mobile Calendar and My Work always pass this flag. Visibility is the
       // employee's production teams, not customer.id = the company record.
@@ -2664,25 +2629,25 @@ return null; // Team must now be selected explicitly on each work item.
       if (authorizedTeamIds.length > 0) {
         orConditions.push(
           { teamId: { in: authorizedTeamIds } },
-          {  },
-          {  },
+
+
           { team: { id: { in: authorizedTeamIds }, isActive: true } },
         );
       }
       orConditions.push(
         { team: { members: { some: { employeeId: numEmployeeId } } } },
         { team: { leaderId: numEmployeeId } },
-        {  },
-        {  },
+
+
       );
       if (allAuthorizedCustomerIds.length > 0) {
-        orConditions.push({  });
+        orConditions.push();
       }
       if (tenantCustomerId) {
         orConditions.push(
-          {  },
-          {  },
-          {  },
+
+
+
         );
       }
       where = {
@@ -2690,7 +2655,7 @@ return null; // Team must now be selected explicitly on each work item.
         status: { not: WorkStatus.CANCELLED },
       };
 
-      
+
 
       if (query.employeeId && isProductionManager) {
         const filterEmpId = Number(query.employeeId);
@@ -2705,7 +2670,7 @@ return null; // Team must now be selected explicitly on each work item.
         const filterTeamId = Number(query.teamId);
         const teamCond = [
           { teamId: filterTeamId },
-          
+
           { team: { members: { some: { teamId: filterTeamId } } } },
         ];
         if (where.OR) {
@@ -2725,7 +2690,7 @@ return null; // Team must now be selected explicitly on each work item.
       };
 
       // Filter by specific customer if requested
-      
+
 
       // Filter by specific employee if requested
       if (query.employeeId) {
@@ -2742,7 +2707,7 @@ return null; // Team must now be selected explicitly on each work item.
         const filterTeamId = Number(query.teamId);
         const teamCond = [
           { teamId: filterTeamId },
-          
+
           { team: { members: { some: { teamId: filterTeamId } } } },
         ];
         if (where.OR) {
@@ -2767,19 +2732,19 @@ return null; // Team must now be selected explicitly on each work item.
       if (productionTeamIds.length > 0) {
         orConditions.push(
           { teamId: { in: productionTeamIds } },
-          {  },
-          {  },
+
+
           { team: { id: { in: productionTeamIds }, isActive: true } },
         );
       }
       orConditions.push(
         { team: { members: { some: { employeeId: numEmployeeId } } } },
         { team: { leaderId: numEmployeeId } },
-        {  },
-        {  },
+
+
       );
       if (allAuthorizedCustomerIds.length > 0) {
-        orConditions.push({  });
+        orConditions.push();
       }
 
       where = {
@@ -2787,7 +2752,7 @@ return null; // Team must now be selected explicitly on each work item.
         status: { not: WorkStatus.CANCELLED },
       };
 
-      
+
     }
 
 
@@ -2880,14 +2845,14 @@ return null; // Team must now be selected explicitly on each work item.
 
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : []),
-      
+
     ];
 
     if (process.env.EMPLOYEE_CALENDAR_DEBUG === 'true' && typeof this.prisma.work?.count === 'function' && tenantCustomerId) {
       const tenantWork = {
         OR: [
-          
-          
+
+
           ...directAssignment(),
           ...teamCustomerWork(membershipTeamIds),
         ],
@@ -2930,7 +2895,7 @@ return null; // Team must now be selected explicitly on each work item.
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        
+
         team: {
           select: {
             id: true,
@@ -2982,7 +2947,7 @@ return null; // Team must now be selected explicitly on each work item.
           },
         },
         entitlement: { select: { serviceName: true } },
-        
+
         tasks: {
           select: {
             id: true,
@@ -3155,11 +3120,11 @@ return null; // Team must now be selected explicitly on each work item.
 
     const uniqueItems = [...new Map(filteredItems.map((w) => [String(w.id), w])).values()];
     const mapped = uniqueItems.map((w) => {
-      const purchaseRef = (`PUR-${String(undefined).padStart(3, '0')}`);
+      const purchaseRef = null;
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = assignedOnly ? null : '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
-      const planName = 'Active Plan';
+      const planName = null;
 
       const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate) : null;
 
@@ -3229,11 +3194,11 @@ return null; // Team must now be selected explicitly on each work item.
       return {
         id: String(w.id),
         activityId: String(w.id),
-        
-        companyName: 'Customer Workspace',
-        businessName: 'Customer Workspace',
+
+        companyName: 'Workspace',
+        businessName: 'Workspace',
         customerName: 'Customer',
-        customerBusiness: 'Customer Workspace',
+        customerBusiness: 'Workspace',
         purchaseId: purchaseRef,
         productName: prodName,
         serviceName: prodName,
@@ -3293,22 +3258,18 @@ return null; // Team must now be selected explicitly on each work item.
         const tenantId = Number(tenantCustomerId);
         const tenantScope: any[] = [];
         if (authorizedTeamIds.length > 0) {
-          tenantScope.push({
-            
-          });
+          tenantScope.push();
         }
-        tenantScope.push({
-          
-        });
+        tenantScope.push();
         if (allAuthorizedCustomerIds.length > 0) {
-          tenantScope.push({  });
+          tenantScope.push();
         }
         taskWhere.AND = [...(taskWhere.AND || []), { OR: tenantScope }];
       }
 
       taskWhere.AND = [
         ...(taskWhere.AND || []),
-        
+
       ];
 
       // My Calendar includes direct assignments and customers allotted to active teams.
@@ -3326,12 +3287,10 @@ return null; // Team must now be selected explicitly on each work item.
           taskOr.push({ assignedToId: empRecord.userId });
         }
         if (authorizedTeamIds.length > 0) {
-          taskOr.push({
-            
-          });
+          taskOr.push();
         }
         if (allAuthorizedCustomerIds.length > 0) {
-          taskOr.push({  });
+          taskOr.push();
         }
         taskWhere.OR = taskOr;
       }
@@ -3389,7 +3348,7 @@ return null; // Team must now be selected explicitly on each work item.
       tasksList = await this.prisma.task.findMany({
         where: taskWhere,
         include: {
-          
+
           employee: {
             select: {
               id: true,
@@ -3462,11 +3421,11 @@ return null; // Team must now be selected explicitly on each work item.
       return {
         id: String(t.id),
         activityId: String(t.id),
-        
-        companyName: 'Customer Workspace',
-        businessName: 'Customer Workspace',
+
+        companyName: 'Workspace',
+        businessName: 'Workspace',
         customerName: 'Customer',
-        customerBusiness: 'Customer Workspace',
+        customerBusiness: 'Workspace',
         purchaseId: t.taskNumber || `TSK-${t.id}`,
         productName: t.title,
         serviceName: t.category || 'OPERATIONS',
@@ -3518,7 +3477,7 @@ return null; // Team must now be selected explicitly on each work item.
       if (where.scheduledDate) {
         visitWhere.date = where.scheduledDate;
       }
-      
+
       if (typeof this.prisma.visit?.findMany === 'function') {
         const visits = await this.prisma.visit.findMany({
           where: visitWhere,
@@ -3536,7 +3495,7 @@ return null; // Team must now be selected explicitly on each work item.
             id: `visit_${v.id}`,
             activityId: `visit_${v.id}`,
             visitId: v.id,
-            
+
             companyName: custBiz,
             businessName: custBiz,
             customerName: custName,
@@ -3585,7 +3544,7 @@ return null; // Team must now be selected explicitly on each work item.
             tasks: [],
             durationDays: 1,
             itemType: 'VISIT',
-            
+
           };
         });
       }
@@ -3856,7 +3815,7 @@ status: ${item.status}`);
     const teamMap = new Map<number, string>();
 
     for (const w of works) {
-      
+
     }
 
     const numEmployeeId = Number(employeeId);
@@ -3865,7 +3824,7 @@ status: ${item.status}`);
       select: {  status: true },
     });
 
-    
+
 
     return {
       customers: Array.from(customerMap.entries()).map(([id, name]) => ({ id, name })),
@@ -3969,7 +3928,7 @@ status: ${item.status}`);
       employeeCode: { equals: strVal, mode: 'insensitive' },
     };
     if (customerId && Number.isInteger(Number(customerId))) {
-      
+
     }
     const byCode = await this.prisma.employee.findFirst({
       where: codeWhere,
@@ -3991,12 +3950,10 @@ status: ${item.status}`);
   ) {
     const numCustomerId = Number(scopedCustomerId);
     const numId = Number(id);
-    
+
 
     const existing = await this.findOne(numCustomerId, numId);
-    if (undefined !== numCustomerId) {
-      throw new ForbiddenException('You do not have permission to reschedule this item.');
-    }
+
 
     const statusStr = (existing.status || '').toString().toUpperCase();
     if (statusStr === 'COMPLETED' || statusStr === 'CANCELLED' || statusStr === 'DONE' || statusStr === 'APPROVED') {
@@ -4008,17 +3965,6 @@ status: ${item.status}`);
     const newDate = new Date(dto.scheduledDate);
     if (isNaN(newDate.getTime())) {
       throw new BadRequestException('Invalid scheduledDate format.');
-    }
-
-    // Verify Active Plan Validity
-    const activePlan = await this.getActivePlanDirect(numCustomerId);
-    if (activePlan) {
-      if (activePlan.startDate && newDate < new Date(new Date(activePlan.startDate).setHours(0, 0, 0, 0))) {
-        throw new BadRequestException('Cannot reschedule prior to your plan start date.');
-      }
-      if (activePlan.endDate && newDate > new Date(activePlan.endDate)) {
-        throw new BadRequestException('Cannot reschedule past your plan expiration date.');
-      }
     }
 
     const oldDateStr = existing.scheduledDate ? new Date(existing.scheduledDate).toISOString().split('T')[0] : 'N/A';
@@ -4052,7 +3998,7 @@ status: ${item.status}`);
           notes: dto.notes ? `${existing.notes || ''}\n[Rescheduled]: ${dto.notes}`.trim() : existing.notes,
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
           entitlement: true,
@@ -4072,7 +4018,7 @@ status: ${item.status}`);
           if (titleLower.includes('shoot')) {
             const editWork = await tx.work.findFirst({
               where: {
-                
+
                 title: { contains: `Reel #${rNum}: Edit`, mode: 'insensitive' },
                 status: { not: WorkStatus.CANCELLED },
               },
@@ -4091,7 +4037,7 @@ status: ${item.status}`);
                 // Check and shift Post as well
                 const postWork = await tx.work.findFirst({
                   where: {
-                    
+
                     title: { contains: `Reel #${rNum}: Post`, mode: 'insensitive' },
                     status: { not: WorkStatus.CANCELLED },
                   },
@@ -4114,7 +4060,7 @@ status: ${item.status}`);
             // If Edit was moved, ensure Shoot is before it, and shift Post if necessary
             const shootWork = await tx.work.findFirst({
               where: {
-                
+
                 title: { contains: `Reel #${rNum}: Shoot`, mode: 'insensitive' },
                 status: { not: WorkStatus.CANCELLED },
               },
@@ -4127,7 +4073,7 @@ status: ${item.status}`);
 
             const postWork = await tx.work.findFirst({
               where: {
-                
+
                 title: { contains: `Reel #${rNum}: Post`, mode: 'insensitive' },
                 status: { not: WorkStatus.CANCELLED },
               },
@@ -4149,7 +4095,7 @@ status: ${item.status}`);
           const sNum = storyMatch[1];
           const postWork = await tx.work.findFirst({
             where: {
-              
+
               title: { contains: `Story #${sNum}: Post`, mode: 'insensitive' },
               status: { not: WorkStatus.CANCELLED },
             },
@@ -4170,7 +4116,7 @@ status: ${item.status}`);
           const pNum = postMatch[1];
           const pubWork = await tx.work.findFirst({
             where: {
-              
+
               title: { contains: `Post #${pNum}: Publish`, mode: 'insensitive' },
               status: { not: WorkStatus.CANCELLED },
             },
@@ -4198,7 +4144,7 @@ status: ${item.status}`);
     for (const uid of staffUserIds) {
       await this.prisma.notification.create({
         data: {
-          
+
           userId: uid,
           title: 'Schedule Updated by Customer',
           message: `Customer rescheduled "${result.title}" to ${newDate.toLocaleDateString()} at ${result.scheduledTime}.`,
@@ -4213,7 +4159,7 @@ status: ${item.status}`);
       const customerName = null;
       this.notificationService
         .sendTaskRescheduledNotification({
-          
+
           employeeId: result.assignedToId,
           workId: result.id,
           taskName: result.title || 'Task',
@@ -4244,12 +4190,10 @@ status: ${item.status}`);
   ) {
     const numCustomerId = Number(scopedCustomerId);
     const numId = Number(id);
-    
+
 
     const existing = await this.findOne(numCustomerId, numId);
-    if (undefined !== numCustomerId) {
-      throw new ForbiddenException('You do not have permission to request rework for this item.');
-    }
+
 
     const statusStr = (existing.status || '').toString().toUpperCase();
     if (statusStr !== 'COMPLETED' && statusStr !== 'APPROVED' && statusStr !== 'DONE') {
@@ -4278,8 +4222,8 @@ status: ${item.status}`);
       // 2. Create new linked rework activity
       const newWork = await tx.work.create({
         data: {
-          
-          
+
+
           planId: existing.planId,
           entitlementId: existing.entitlementId,
           assignedToId: existing.assignedToId,
@@ -4296,7 +4240,7 @@ status: ${item.status}`);
           revisionCount: revisionNumber,
         },
         include: {
-          
+
           assignedTo: true,
           editor: true,
           entitlement: true,
@@ -4320,7 +4264,7 @@ status: ${item.status}`);
     for (const uid of staffUserIds) {
       await this.prisma.notification.create({
         data: {
-          
+
           userId: uid,
           title: 'Rework Requested by Customer',
           message: `Customer requested rework for "${existing.title}": ${reason || 'See details in task.'}`,
@@ -4357,7 +4301,7 @@ status: ${item.status}`);
 
     const whereClause: any = { id: numWorkId };
     if (customerId && !isNaN(Number(customerId))) {
-      
+
     }
 
     const existing = await this.prisma.work.findFirst({
@@ -4376,7 +4320,7 @@ status: ${item.status}`);
         completedAt: new Date(),
       },
       include: {
-        
+
         assignedTo: true,
       },
     });

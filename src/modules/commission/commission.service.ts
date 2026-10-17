@@ -70,7 +70,7 @@ export class CommissionService {
     const db = params.tx!;
     const existing = await db.commission.findUnique({ where: { purchaseId: params.purchaseId }, include: { shares: true } });
     if (existing) {
-      
+
       return existing;
     } // Historical entries are never resplit.
     const payment = await db.paymentHistory.findUnique({ where: { id: params.purchaseId } });
@@ -81,14 +81,14 @@ export class CommissionService {
     if (payment.paymentId) {
       const duplicate = await db.commission.findFirst({ where: { OR: [{ sourceKey }, { purchase: { paymentId: payment.paymentId, paymentMethod: payment.paymentMethod } }] }, include: { shares: true } });
       if (duplicate) {
-        
+
         return duplicate;
       }
     }
     const employeeId = params.employeeId;
     if (!employeeId) return null; // Explicit seller attribution is required after Lead/Customer removal.
     const employee = employeeId ? await db.employee.findUnique({ where: { id: employeeId }, include: { designation: true, department: true, commissionConfig: true } }) : null;
-    
+
     let reviewReason: string | null = !employee ? 'SALE_EMPLOYEE_UNRESOLVED' : employee.status !== 'ACTIVE' ? 'EMPLOYEE_INACTIVE' : null;
     const bpo = isBpoPayrollEmployee;
     if (employee && !bpo(employee)) return null;
@@ -118,7 +118,7 @@ export class CommissionService {
     const leaderAmount = Math.round((commissionAmount - employeeAmount) * 100) / 100;
     return db.commission.create({
       data: {
-         sourceKey, employeeId: employee?.id || null, 
+         sourceKey, employeeId: employee?.id || null,
         planId: payment.planId || params.planId || null, purchaseId: payment.id, orderId: payment.orderId || params.orderId || null,
         purchaseAmount, commissionType, commissionRate, commissionAmount, qualifyingAt,
         teamId: team?.id || null, leaderId: leader?.id || null, reviewReason,
@@ -140,9 +140,9 @@ export class CommissionService {
       let event = await tx.commission.findUnique({ where: { purchaseId }, include: { shares: true } });
       if (!event) {
         const payment = await tx.paymentHistory.findUnique({ where: { id: purchaseId } });
-        if (undefined === customerId && payment.paymentId) event = await tx.commission.findFirst({ where: { sourceKey: `gateway:${payment.paymentMethod}:${payment.paymentId}` }, include: { shares: true } });
+        if (payment.paymentId) event = await tx.commission.findFirst({ where: { sourceKey: `gateway:${payment.paymentMethod}:${payment.paymentId}` }, include: { shares: true } });
       }
-      if (!event || undefined !== customerId) return;
+      if (!event || false) return;
       const history = Array.isArray(event.history) ? event.history : [];
       if (history.some((entry: any) => entry?.reference === reference)) return;
       const paid = event.status === CommissionStatus.PAID || event.shares.some(s => s.status === CommissionStatus.PAID);
@@ -163,7 +163,7 @@ export class CommissionService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.CommissionWhereInput = {
-      
+
     };
 
     if (query.status) {
@@ -198,11 +198,11 @@ export class CommissionService {
         { employee: { firstName: { contains: search, mode: 'insensitive' } } },
         { employee: { lastName: { contains: search, mode: 'insensitive' } } },
         { employee: { employeeCode: { contains: search, mode: 'insensitive' } } },
-        
-        
-        
-        
-        
+
+
+
+
+
         { orderId: { contains: search, mode: 'insensitive' } },
       ] }];
     }
@@ -228,8 +228,8 @@ export class CommissionService {
               },
             },
           },
-          
-          
+
+
           plan: {
             select: {
               id: true,
@@ -257,7 +257,7 @@ export class CommissionService {
     const legacyAgg = await this.prisma.commission.groupBy({
       by: ['status'],
       // Unsplit events: legacy rows plus review-required events (PENDING until resolved).
-      where: { shares: { none: {} }, OR: [{ tenantId: customerId }, { tenantId: null, OR: [ }] },
+      where: { shares: { none: {} } },
       _sum: {
         commissionAmount: true,
       },
@@ -374,7 +374,7 @@ export class CommissionService {
     const leader = await this.prisma.employee.findFirst({ where: { userId }, include: { designation: true, department: true } });
     if (!leader || !/bpo|telecall|telesales|business process/i.test(`${leader.designation?.name || ''} ${leader.department?.name || ''}`)) throw new ForbiddenException('BPO leader account required');
     // A historical snapshot recipient retains their own leader entries after team changes.
-    const ledger = await this.recipientLedger(leader, query, true);
+    const ledger = await this.recipientLedger(tenantId, leader, query, true);
     return { ...ledger, data: ledger.data.filter(e => e.recipientRole === 'LEADER') };
   }
 
@@ -392,7 +392,7 @@ export class CommissionService {
       include: { employee: true },
     });
 
-    if (!commission || (undefined) !== customerId) {
+    if (!commission) {
       throw new NotFoundException('Commission record not found');
     }
 
@@ -423,7 +423,7 @@ export class CommissionService {
             designation: { select: { id: true, name: true } },
           },
         },
-        
+
         plan: true,
         purchase: true,
       },
@@ -475,7 +475,7 @@ export class CommissionService {
       where: { id: designationId },
     });
 
-    if (!designation || undefined !== customerId) {
+    if (!designation || false) {
       throw new NotFoundException('Designation not found');
     }
 
@@ -527,14 +527,14 @@ export class CommissionService {
       where: { id: dto.employeeId },
     });
 
-    if (!employee || undefined !== customerId) {
+    if (!employee || false) {
       throw new NotFoundException('Employee not found in this company');
     }
 
     const config = await this.prisma.commissionConfig.upsert({
       where: { employeeId: dto.employeeId },
       create: {
-        
+
         employeeId: dto.employeeId,
         commissionType: dto.commissionType,
         commissionValue: Number(dto.commissionValue) || 0,

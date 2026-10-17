@@ -633,7 +633,7 @@ export class InfluencerService {
   // =========================================================================
 
   async createBooking(customerId: number, dto: CreateInfluencerBookingDto) {
-    
+
 
     // 1. Verify influencer existence and active state
     const influencer = await this.prisma.influencer.findFirst({
@@ -707,7 +707,6 @@ export class InfluencerService {
     });
     if (conflictingBooking) {
       if (
-        undefined === customerId &&
         conflictingBooking.bookingStatus === 'PENDING' &&
         conflictingBooking.paymentStatus !== 'PAID'
       ) {
@@ -753,7 +752,7 @@ export class InfluencerService {
           receipt: bookingId,
           notes: {
             bookingId,
-            
+
             influencerId: String(dto.influencerId),
             packageId: String(resolvedPackage?.id ?? dto.packageId ?? ''),
           },
@@ -770,7 +769,7 @@ export class InfluencerService {
     const booking = await this.prisma.influencerBooking.create({
       data: {
         bookingId,
-        
+
         influencerId: dto.influencerId,
         packageId: resolvedPackage ? resolvedPackage.id : null,
         campaignDate: dayStart,
@@ -829,7 +828,7 @@ export class InfluencerService {
           { bookingId: String(dto.bookingId) },
           { id: typeof dto.bookingId === 'number' ? dto.bookingId : parseInt(dto.bookingId, 10) || -1 },
         ],
-        
+
         deletedAt: null,
       },
     });
@@ -919,7 +918,7 @@ export class InfluencerService {
     await this.prisma.influencerBookingPayment.create({
       data: {
         bookingId: booking.id,
-        
+
         amount: booking.totalAmount,
         currency: 'INR',
         paymentMethod: 'RAZORPAY',
@@ -940,10 +939,10 @@ export class InfluencerService {
   }
 
   async getMyBookings(customerId: number, statusFilter?: string) {
-    
+
 
     const where: any = {
-      
+
       deletedAt: null,
     };
 
@@ -994,7 +993,7 @@ export class InfluencerService {
     };
 
     if (!isAdmin) {
-      
+
     }
 
     const booking = await this.prisma.influencerBooking.findFirst({
@@ -1002,7 +1001,7 @@ export class InfluencerService {
       include: {
         influencer: true,
         package: true,
-        
+
         payments: true,
       },
     });
@@ -1055,7 +1054,7 @@ export class InfluencerService {
         { email: { contains: s, mode: 'insensitive' } },
         { businessName: { contains: s, mode: 'insensitive' } },
         { influencer: { name: { contains: s, mode: 'insensitive' } } },
-        
+
       ];
     }
 
@@ -1067,7 +1066,7 @@ export class InfluencerService {
             select: { id: true, name: true, profileImage: true, avatarUrl: true, categoryName: true },
           },
           package: true,
-          
+
         },
         orderBy: { id: 'desc' },
         take: query?.limit ? parseInt(query.limit, 10) : 50,

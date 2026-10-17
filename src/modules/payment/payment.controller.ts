@@ -118,7 +118,9 @@ export class PaymentController {
   @Get('orders')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get authenticated customer purchase and payment transaction history' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'PAYMENTS', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get organization payment transaction history' })
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
     const customerId = undefined;
     return this.paymentService.getPaymentHistory(user, customerId);

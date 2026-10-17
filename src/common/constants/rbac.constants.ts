@@ -1,3 +1,5 @@
+export { RoleType } from '../enums/role-type.enum';
+
 export interface PermissionItem {
   module: string;
   action: string;

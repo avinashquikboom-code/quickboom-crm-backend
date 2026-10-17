@@ -23,6 +23,7 @@
       "couponRedemptions CouponRedemption[]"
     ],
     "Coupon": [
+      "perCustomerLimit      Int                    @default(1)",
       "subscriptions         CustomerSubscription[]",
       "redemptions           CouponRedemption[]"
     ],
@@ -334,502 +335,923 @@
       "lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)"
     ]
   },
-  "constraints": [
+  "removedRelations": [
+    {
+      "model": "Plan",
+      "field": "subscriptions    CustomerSubscription[]"
+    },
+    {
+      "model": "Plan",
+      "field": "couponRedemptions CouponRedemption[]"
+    },
+    {
+      "model": "Coupon",
+      "field": "subscriptions         CustomerSubscription[]"
+    },
+    {
+      "model": "Coupon",
+      "field": "redemptions           CouponRedemption[]"
+    },
     {
       "model": "PaymentHistory",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "couponRedemption CouponRedemption?"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "installments   SubscriptionInstallment[]"
     },
     {
       "model": "User",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "assignedLeads           Lead[]            @relation(\"AssignedLeads\")"
+    },
+    {
+      "model": "User",
+      "field": "createdLeads            Lead[]            @relation(\"CreatedLeads\")"
+    },
+    {
+      "model": "User",
+      "field": "leadNotes               LeadNote[]"
+    },
+    {
+      "model": "User",
+      "field": "customer                Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Role",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Permission",
+      "field": "customerOverrides CustomerModuleOverride[]"
     },
     {
       "model": "Company",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Contact",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Pipeline",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Deal",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Task",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "Task",
-      "before": "@@index([customerId, deletedAt, createdAt])",
-      "after": "@@index([deletedAt, createdAt])"
+      "field": "customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Product",
-      "before": "@@unique([customerId, sku])",
-      "after": "@@unique([sku])"
-    },
-    {
-      "model": "Product",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Quotation",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Quotation",
-      "before": "@@index([leadId])",
-      "after": null
+      "field": "lead        Lead?           @relation(fields: [leadId], references: [id])"
     },
     {
       "model": "Invoice",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Invoice",
+      "field": "installments SubscriptionInstallment[]"
     },
     {
       "model": "SupportTicket",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Notification",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "Notification",
-      "before": "@@index([customerId, createdAt])",
-      "after": "@@index([createdAt])"
+      "field": "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "AuditLog",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "FeatureToggle",
-      "before": "@@unique([customerId, feature])",
-      "after": "@@unique([feature])"
+      "field": "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmployeeLocation",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "BranchGeofence",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "LocationTrackingSetting",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer         Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Department",
-      "before": "@@unique([customerId, code])",
-      "after": "@@unique([code])"
-    },
-    {
-      "model": "Department",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Designation",
-      "before": "@@unique([customerId, code])",
-      "after": "@@unique([code])"
+      "field": "customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Designation",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "mobileCustomers Customer[] @relation(\"CustomerMobileRole\")"
     },
     {
       "model": "Employee",
-      "before": "@@unique([customerId, employeeCode])",
-      "after": "@@unique([employeeCode])"
+      "field": "customer                 Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Employee",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "leadLimit                EmployeeLeadLimit?"
     },
     {
-      "model": "Attendance",
-      "before": "@@index([customerId])",
-      "after": null
+      "model": "Employee",
+      "field": "leads                    Lead[]                   @relation(\"EmployeeLeads\")"
     },
     {
-      "model": "Attendance",
-      "before": "@@index([customerId, employeeId, date])",
-      "after": "@@index([employeeId, date])"
+      "model": "Employee",
+      "field": "assignedCustomers        Customer[]               @relation(\"CustomerAssignedStaff\")"
     },
     {
-      "model": "LeaveType",
-      "before": "@@unique([customerId, code])",
-      "after": "@@unique([code])"
-    },
-    {
-      "model": "LeaveType",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "LeaveRequest",
-      "before": "@@index([customerId])",
-      "after": null
+      "model": "Employee",
+      "field": "createdCustomers         Customer[]               @relation(\"CustomerCreatedStaff\")"
     },
     {
       "model": "PublicHoliday",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmployeeLeaveBalance",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer      Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "LeaveAdjustmentHistory",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "AttendancePolicy",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "LeavePolicy",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "SalaryPolicy",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "ClaimPolicy",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "RemoteRequest",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Shift",
-      "before": "@@unique([customerId, code])",
-      "after": "@@unique([code])"
-    },
-    {
-      "model": "Shift",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "ShiftGuidance",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Visit",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "Visit",
-      "before": "@@index([leadId])",
-      "after": null
-    },
-    {
-      "model": "SalaryStructure",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "lead             Lead?       @relation(fields: [leadId], references: [id])"
     },
     {
       "model": "Payroll",
-      "before": "@@unique([customerId, month, year, departmentId])",
-      "after": "@@unique([month, year, departmentId])"
-    },
-    {
-      "model": "Payroll",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "PayrollItem",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "SalarySlip",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "PayrollPolicy",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "PayrollPolicy",
-      "before": "customerId Int @unique",
-      "after": "singletonKey String @unique @default(\"GLOBAL\")"
+      "field": "customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Team",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Team",
+      "field": "assignedCustomers Customer[]   @relation(\"CustomerAssignedTeam\")"
     },
     {
       "model": "PlanEntitlement",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Work",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Work",
-      "before": "@@index([subscriptionId])",
-      "after": null
-    },
-    {
-      "model": "Work",
-      "before": "@@index([customerId, scheduledDate])",
-      "after": "@@index([scheduledDate])"
-    },
-    {
-      "model": "Work",
-      "before": "@@index([customerId, status])",
-      "after": "@@index([status])"
+      "field": "subscription   CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
     },
     {
       "model": "DataCaptureJob",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "DataCapturePlace",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "DataCapturePlace",
-      "before": "@@index([customerId, deletedAt, createdAt])",
-      "after": "@@index([deletedAt, createdAt])"
+      "field": "customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "DataCaptureSearch",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "DataCaptureSearch",
-      "before": "@@index([customerId, employeeId])",
-      "after": "@@index([employeeId])"
-    },
-    {
-      "model": "DataCaptureSearch",
-      "before": "@@index([customerId, employeeId, searchedAt])",
-      "after": "@@index([employeeId, searchedAt])"
+      "field": "customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmployeeLoan",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmployeeClaim",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "MonthlySchedule",
-      "before": "@@unique([customerId, subscriptionId, month, year])",
-      "after": null
+      "field": "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "MonthlySchedule",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "MonthlySchedule",
-      "before": "@@index([subscriptionId])",
-      "after": null
+      "field": "subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
     },
     {
       "model": "TrendingContent",
-      "before": "@@index([customerId, isActive, isPublished])",
-      "after": "@@index([isActive, isPublished])"
+      "field": "customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "MarketingBanner",
-      "before": "@@index([customerId, isActive, isPublished])",
-      "after": "@@index([isActive, isPublished])"
+      "field": "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "MarketingVideo",
-      "before": "@@index([customerId, isActive, status])",
-      "after": "@@index([isActive, status])"
+      "field": "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MarketingVideo",
+      "field": "views              CustomerMarketingVideoView[]"
     },
     {
       "model": "SocialMediaHandler",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "RoleWorkPermission",
-      "before": "@@unique([customerId, roleName, workModule])",
-      "after": "@@unique([roleName, workModule])"
-    },
-    {
-      "model": "RoleWorkPermission",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "WorkAccessRequest",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmployeeModuleOverride",
-      "before": "@@unique([customerId, employeeId, moduleKey])",
-      "after": "@@unique([employeeId, moduleKey])"
-    },
-    {
-      "model": "EmployeeModuleOverride",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "InfluencerBooking",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "InfluencerBookingPayment",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerReview",
+      "field": "customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)"
     },
     {
       "model": "AiCreditWallet",
-      "before": "@@index([customerId])",
-      "after": null
-    },
-    {
-      "model": "AiCreditWallet",
-      "before": "customerId Int @unique",
-      "after": "singletonKey String @unique @default(\"GLOBAL\")"
+      "field": "customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "AiCreditTransaction",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "AiGeneration",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "SocialAccount",
-      "before": "@@unique([customerId, platform, externalAccountId])",
-      "after": "@@unique([platform, externalAccountId])"
-    },
-    {
-      "model": "SocialAccount",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "SocialPublish",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "MasterItem",
-      "before": "@@unique([type, code, customerId])",
-      "after": "@@unique([type, code])"
-    },
-    {
-      "model": "MasterItem",
-      "before": "@@index([type, customerId])",
-      "after": "@@index([type])"
+      "field": "customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmailTemplate",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmailTemplate",
+      "field": "leadStages         LeadStage[]"
     },
     {
       "model": "EmailLog",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer          Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "EmailLog",
-      "before": "@@index([leadId])",
-      "after": null
+      "field": "lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)"
     },
     {
       "model": "MetaTemplate",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MetaTemplate",
+      "field": "leadStages         LeadStage[]"
     },
     {
       "model": "CommissionConfig",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Commission",
-      "before": "@@index([customerId])",
-      "after": null
+      "field": "customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
     },
     {
       "model": "Commission",
-      "before": "@@index([leadId])",
-      "after": null
+      "field": "lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)"
+    }
+  ],
+  "constraints": [
+    {
+      "model": "PaymentHistory",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "User",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Role",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Company",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Contact",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Pipeline",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Deal",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Task",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([customerId, deletedAt, createdAt])"
+      ],
+      "added": [
+        "@@index([deletedAt, createdAt])"
+      ]
+    },
+    {
+      "model": "Product",
+      "removed": [
+        "@@unique([customerId, sku])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([sku])"
+      ]
+    },
+    {
+      "model": "Quotation",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([leadId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Invoice",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "SupportTicket",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Notification",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([customerId, createdAt])"
+      ],
+      "added": [
+        "@@index([createdAt])"
+      ]
+    },
+    {
+      "model": "AuditLog",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "FeatureToggle",
+      "removed": [
+        "@@unique([customerId, feature])"
+      ],
+      "added": [
+        "@@unique([feature])"
+      ]
+    },
+    {
+      "model": "EmployeeLocation",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "BranchGeofence",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "LocationTrackingSetting",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Department",
+      "removed": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([code])"
+      ]
+    },
+    {
+      "model": "Designation",
+      "removed": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([code])"
+      ]
+    },
+    {
+      "model": "Employee",
+      "removed": [
+        "@@unique([customerId, employeeCode])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([employeeCode])"
+      ]
+    },
+    {
+      "model": "Attendance",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([customerId, employeeId, date])"
+      ],
+      "added": [
+        "@@index([employeeId, date])"
+      ]
+    },
+    {
+      "model": "LeaveType",
+      "removed": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([code])"
+      ]
+    },
+    {
+      "model": "LeaveRequest",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "PublicHoliday",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "AttendancePolicy",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "LeavePolicy",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "SalaryPolicy",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "ClaimPolicy",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "RemoteRequest",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Shift",
+      "removed": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([code])"
+      ]
+    },
+    {
+      "model": "ShiftGuidance",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Visit",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([leadId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "SalaryStructure",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Payroll",
+      "removed": [
+        "@@unique([customerId, month, year, departmentId])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([month, year, departmentId])"
+      ]
+    },
+    {
+      "model": "PayrollItem",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "SalarySlip",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "PayrollPolicy",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Team",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "PlanEntitlement",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "Work",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([subscriptionId])",
+        "@@index([customerId, scheduledDate])",
+        "@@index([customerId, status])"
+      ],
+      "added": []
+    },
+    {
+      "model": "DataCaptureJob",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "DataCapturePlace",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([customerId, deletedAt, createdAt])"
+      ],
+      "added": [
+        "@@index([deletedAt, createdAt])"
+      ]
+    },
+    {
+      "model": "DataCaptureSearch",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([customerId, employeeId])",
+        "@@index([customerId, employeeId, searchedAt])"
+      ],
+      "added": [
+        "@@index([employeeId, searchedAt])"
+      ]
+    },
+    {
+      "model": "EmployeeLoan",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "EmployeeClaim",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "MonthlySchedule",
+      "removed": [
+        "@@unique([customerId, subscriptionId, month, year])",
+        "@@index([customerId])",
+        "@@index([subscriptionId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "TrendingContent",
+      "removed": [
+        "@@index([customerId, isActive, isPublished])"
+      ],
+      "added": [
+        "@@index([isActive, isPublished])"
+      ]
+    },
+    {
+      "model": "MarketingBanner",
+      "removed": [
+        "@@index([customerId, isActive, isPublished])"
+      ],
+      "added": [
+        "@@index([isActive, isPublished])"
+      ]
+    },
+    {
+      "model": "MarketingVideo",
+      "removed": [
+        "@@index([customerId, isActive, status])"
+      ],
+      "added": [
+        "@@index([isActive, status])"
+      ]
+    },
+    {
+      "model": "SocialMediaHandler",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "RoleWorkPermission",
+      "removed": [
+        "@@unique([customerId, roleName, workModule])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([roleName, workModule])"
+      ]
+    },
+    {
+      "model": "WorkAccessRequest",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "EmployeeModuleOverride",
+      "removed": [
+        "@@unique([customerId, employeeId, moduleKey])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([employeeId, moduleKey])"
+      ]
+    },
+    {
+      "model": "InfluencerBooking",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "InfluencerBookingPayment",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "AiCreditWallet",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "AiCreditTransaction",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "AiGeneration",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "SocialAccount",
+      "removed": [
+        "@@unique([customerId, platform, externalAccountId])",
+        "@@index([customerId])"
+      ],
+      "added": [
+        "@@unique([platform, externalAccountId])"
+      ]
+    },
+    {
+      "model": "SocialPublish",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "MasterItem",
+      "removed": [
+        "@@unique([type, code, customerId])",
+        "@@index([type, customerId])"
+      ],
+      "added": [
+        "@@unique([type, code])",
+        "@@index([type])"
+      ]
+    },
+    {
+      "model": "EmailTemplate",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "EmailLog",
+      "removed": [
+        "@@index([customerId])",
+        "@@index([leadId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "MetaTemplate",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
+    },
+    {
+      "model": "CommissionConfig",
+      "removed": [
+        "@@index([customerId])"
+      ],
+      "added": []
     },
     {
       "model": "Commission",
-      "before": "@@index([tenantId, qualifyingAt])",
-      "after": "@@index([qualifyingAt])"
+      "removed": [
+        "@@index([customerId])",
+        "@@index([leadId])",
+        "@@index([tenantId, qualifyingAt])"
+      ],
+      "added": [
+        "@@index([qualifyingAt])"
+      ]
     }
   ],
   "removedEnums": [
     "InstallmentStatus",
-    "SubscriptionStatus",
+    "LeadPriority",
     "LeadStatus",
-    "LeadPriority"
+    "SubscriptionStatus"
   ]
 }

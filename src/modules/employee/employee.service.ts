@@ -97,13 +97,7 @@ export class EmployeeService {
     const skip = (page - 1) * limit;
     const where: any = {};
 
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      
-      
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for employee access');
-    }
+
 
     if (status && status !== 'ALL') {
       where.status = status;
@@ -303,7 +297,7 @@ export class EmployeeService {
 
       return {
         id: e.id,
-        
+
         userId: e.userId,
         employeeId: e.employeeCode,
         employeeCode: e.employeeCode,
@@ -434,12 +428,7 @@ export class EmployeeService {
     const isNumeric = !isNaN(numId) && String(numId) === idStr && numId > 0;
 
     let numCustomerId: number | undefined;
-    if (customerId !== undefined && customerId !== null) {
-      numCustomerId = Number(customerId);
-      
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for employee access');
-    }
+
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -547,7 +536,7 @@ export class EmployeeService {
 
     return {
       id: employee.id,
-      
+
       userId: employee.userId,
       employeeId: employee.employeeCode,
       employeeCode: employee.employeeCode,
@@ -644,12 +633,7 @@ export class EmployeeService {
 
   async getOffices(customerId?: number | string, isSuperAdmin = false) {
     const whereCust: any = {};
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        
-      }
-    }
+
 
     const branches = await this.prisma.branchGeofence.findMany({
       where: { ...whereCust, isActive: true },
@@ -808,14 +792,7 @@ export class EmployeeService {
       ],
     };
     const whereCust: any = {};
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      
-      
-      
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for live attendance access');
-    }
+
 
     // Run auto check-out for any open attendances
     await this.autoCheckOutOpenAttendances(undefined);
@@ -1014,7 +991,7 @@ export class EmployeeService {
 
       return {
         id: emp.id,
-        
+
         employeeCode: emp.employeeCode,
         name: `${emp.firstName} ${emp.lastName}`,
         role: emp.designation?.name || 'Staff',
@@ -1079,19 +1056,13 @@ export class EmployeeService {
     txClient?: any,
   ): Promise<{ nextEmployeeId: string; prefix: string }> {
     const client = txClient || this.prisma;
-    let numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCust = await client.customer.findFirst({ select: { id: true } });
-      numCustomerId = defaultCust?.id || 1;
-    }
-
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     const cleanPrefix = (prefix || defaultPrefix).toUpperCase().replace(/-+$/, '');
 
     // Query existing employee codes for this customer that match the prefix
     const existingEmployees = await client.employee.findMany({
       where: {
-        
+
         employeeCode: {
           startsWith: cleanPrefix,
         },
@@ -1105,7 +1076,7 @@ export class EmployeeService {
       try {
         auditLogs = await this.prisma.auditLog.findMany({
           where: {
-            
+
             module: 'EMPLOYEE',
           },
           select: { details: true },
@@ -1168,7 +1139,7 @@ return undefined;
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
-    
+
 
 
 
@@ -1206,7 +1177,7 @@ return undefined;
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-                  
+
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -1230,7 +1201,7 @@ return undefined;
         if (!department) {
           department = await tx.department.create({
             data: {
-              
+
               name: dto.departmentName,
               code: (dto.departmentName || 'DEPT').substring(0, 5).toUpperCase(),
               isActive: true,
@@ -1245,7 +1216,7 @@ return undefined;
         if (!department) {
           department = await tx.department.create({
             data: {
-              
+
               name: 'General',
               code: 'GEN',
               isActive: true,
@@ -1283,7 +1254,7 @@ return undefined;
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-                  
+
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: department?.id || null,
@@ -1304,7 +1275,7 @@ return undefined;
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-              
+
               name: dto.designationName,
               code: `${(dto.designationName || 'STF').substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1320,7 +1291,7 @@ return undefined;
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-              
+
               name: 'Staff',
               code: `STF-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1366,7 +1337,7 @@ return undefined;
 
         user = await tx.user.create({
           data: {
-            
+
             email: normalizedEmail,
             phone: cleanPhone,
             firstName: dto.firstName,
@@ -1399,8 +1370,8 @@ return undefined;
           deletedAt: null,
           ...(hasExplicitPassword || !user.passwordHash ? { passwordHash } : {}),
         };
-        
-        
+
+
 
         user = await tx.user.update({
           where: { id: user.id },
@@ -1511,7 +1482,7 @@ return undefined;
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-                  
+
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -1536,7 +1507,7 @@ return undefined;
         const targetName = (dto.branch || dto.officeName || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-            
+
             name: { equals: targetName, mode: 'insensitive' },
           },
         });
@@ -1557,7 +1528,7 @@ return undefined;
         } else {
           const createdDefault = await tx.branchGeofence.create({
             data: {
-              
+
               name: 'Head Office',
               city: 'Mumbai',
               latitude: 19.0760,
@@ -1587,7 +1558,7 @@ return undefined;
             if (!localShift) {
               localShift = await tx.shift.create({
                 data: {
-                  
+
                   name: crossShift.name,
                   code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                   startTime: crossShift.startTime,
@@ -1610,7 +1581,7 @@ return undefined;
       }
 
       const empData: any = {
-        
+
         userId: user.id,
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -1661,7 +1632,7 @@ return undefined;
         if (this.prisma?.auditLog) {
           this.prisma.auditLog.create({
             data: {
-              
+
               userId: user.id,
               action: 'EMPLOYEE_CREATED',
               module: 'EMPLOYEE',
@@ -1811,7 +1782,7 @@ return undefined;
           }
 
           {
-            
+
           }
 
           if (Object.keys(userUpdate).length > 0) {
@@ -1846,7 +1817,7 @@ return undefined;
 
             user = await tx.user.create({
               data: {
-                
+
                 email: normalizedEmail,
                 phone: cleanPhone,
                 firstName: dto.firstName || existing?.firstName || 'Employee',
@@ -1873,7 +1844,7 @@ return undefined;
             await tx.user.update({
               where: { id: user.id },
               data: {
-                
+
                 isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
                 deletedAt: null,
                 phone: cleanPhone || user.phone,
@@ -1927,7 +1898,7 @@ return undefined;
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-                  
+
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -1959,7 +1930,7 @@ return undefined;
         if (!dept) {
           dept = await tx.department.create({
             data: {
-              
+
               name: dto.departmentName,
               code: dto.departmentName.substring(0, 5).toUpperCase(),
               isActive: true,
@@ -1995,7 +1966,7 @@ return undefined;
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-                  
+
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -2024,7 +1995,7 @@ return undefined;
         if (!desig) {
           desig = await tx.designation.create({
             data: {
-              
+
               name: dto.designationName,
               code: `${dto.designationName.substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -2056,7 +2027,7 @@ return undefined;
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-                  
+
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -2081,7 +2052,7 @@ return undefined;
         const officeNameTarget = (dto.officeName || dto.branch || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-            
+
             name: { equals: officeNameTarget, mode: 'insensitive' },
           },
         });
@@ -2108,7 +2079,7 @@ return undefined;
               if (!localShift) {
                 localShift = await tx.shift.create({
                   data: {
-                    
+
                     name: crossShift.name,
                     code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                     startTime: crossShift.startTime,
@@ -2178,7 +2149,7 @@ return undefined;
               name: desigName,
               description: `${desigName} role`,
               type: RoleType.CUSTOM,
-              
+
               designationId: updatedEmployee.designationId,
             },
           });
@@ -2285,7 +2256,7 @@ return undefined;
       if (tx.employeeModuleOverride?.deleteMany) {
         await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
       }
-      
+
       if (tx.locationTrackingSetting?.deleteMany) {
         await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } });
       }
@@ -2307,8 +2278,8 @@ return undefined;
           data: { headId: null },
         });
       }
-      
-      
+
+
 
       if (tx.visit?.deleteMany) {
         await tx.visit.deleteMany({ where: { employeeId: numId } });
@@ -2375,7 +2346,7 @@ return undefined;
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            
+
             userId: userId,
             action: 'EMPLOYEE_DELETED',
             module: 'EMPLOYEE',
@@ -2401,8 +2372,8 @@ return undefined;
             id: userId,
             OR: [
               { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
-              
-              
+
+
               { assignedDeals: { some: {} } },
               { assignedContacts: { some: {} } },
               { assignedTickets: { some: {} } },
@@ -2447,13 +2418,7 @@ return undefined;
 
   async getLeaves(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      
-      
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for leaves access');
-    }
+
 
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
@@ -2478,7 +2443,7 @@ return undefined;
 
     return leaves.map((l) => ({
       id: String(l.id),
-      
+
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Employee',
       employeeId: l.employee?.employeeCode || 'EMP-001',
       leaveType: l.leaveType?.name || 'Casual Leave',
@@ -2493,13 +2458,7 @@ return undefined;
 
   async getRemoteRequests(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      
-      
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for remote requests access');
-    }
+
 
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
@@ -2524,7 +2483,7 @@ return undefined;
 
     return requests.map((r) => ({
       id: String(r.id),
-      
+
       employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName || ''}`.trim() : 'Employee',
       employeeId: r.employee?.employeeCode || 'EMP-001',
       requestType: 'WORK_FROM_HOME',
@@ -2553,13 +2512,7 @@ return undefined;
 
     const andConditions: any[] = [];
 
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      
-      andConditions.push({  });
-    } else if (!isSuperAdmin) {
-      throw new ForbiddenException('customerId is required for attendance access');
-    }
+
 
     const isEmpUser = user && !isUserAdmin(user) && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
@@ -2582,7 +2535,7 @@ return undefined;
     }
 
     if (options?.branch && options.branch !== 'ALL') {
-      const targetCustomerFilter = customerId !== undefined && customerId !== null ? {  } : {};
+      const targetCustomerFilter = {};
       const activeBranches = await this.prisma.branchGeofence.findMany({
         where: { ...targetCustomerFilter, isActive: true },
         select: { id: true, name: true },
@@ -2637,7 +2590,7 @@ return undefined;
     const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
 
     // Auto-checkout any open attendances before listing
-    const customerFilter = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+    const customerFilter = undefined;
     await this.autoCheckOutOpenAttendances(customerFilter);
 
     const [rawRecords, total] = await Promise.all([
@@ -2762,7 +2715,7 @@ return undefined;
 
       return {
         id: String(a.id),
-        
+
         employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
         employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
         branch: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
@@ -2838,7 +2791,7 @@ return undefined;
         office: true,
         shift: true,
         user: { select: { avatar: true } },
-        
+
       },
     });
 
@@ -2854,7 +2807,7 @@ return undefined;
             office: true,
             shift: true,
             user: { select: { avatar: true } },
-            
+
           },
         });
       }
@@ -2877,7 +2830,7 @@ return undefined;
 
     return {
       id: employee.id,
-      
+
       employeeCode: employee.employeeCode,
       firstName: employee.firstName,
       lastName: employee.lastName,
@@ -2965,7 +2918,7 @@ return undefined;
       try {
         const matchedDesig = await this.prisma.designation.findFirst({
           where: {
-            
+
             name: { equals: desigName, mode: 'insensitive' },
             isActive: true,
           },
@@ -2991,7 +2944,7 @@ return undefined;
           if (!linkedRole) {
             const existingUnlinked = await this.prisma.role.findFirst({
               where: {
-                
+
                 OR: [
                   { name: { equals: employee.designation?.name || desigName, mode: 'insensitive' } },
                   { name: { equals: upperName, mode: 'insensitive' } },
@@ -3012,7 +2965,7 @@ return undefined;
                   name: employee.designation?.name || desigName,
                   description: `${employee.designation?.name || desigName} role`,
                   type: RoleType.CUSTOM,
-                  
+
                   designationId: effectiveDesigId,
                 },
                 include: { rolePermissions: { include: { permission: true } } },
@@ -3374,7 +3327,7 @@ return undefined;
 
     const empPerms = await this.getEmployeePermissions({
       employeeId: user.employee.id,
-      
+
       isSuperAdmin: false,
     });
 

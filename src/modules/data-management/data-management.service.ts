@@ -71,7 +71,7 @@ return undefined;
     }
 
     const numCustomerId = Number(customerId);
-    if (!isNaN(numCustomerId) && numCustomerId > 0 && undefined !== numCustomerId) {
+    if (!isNaN(numCustomerId) && numCustomerId > 0 && false) {
       throw new ForbiddenException('You do not have permission to access records for this employee.');
     }
 
@@ -146,7 +146,7 @@ return undefined;
         transactional: {
           crm: {
             total: contactsCount + companiesCount + dealsCount + tasksCount,
-            
+
             contacts: contactsCount,
             companies: companiesCount,
             deals: dealsCount,
@@ -288,10 +288,10 @@ return undefined;
       switch (normModule) {
         case 'crm': {
           // Leaf children
-          
-          
-          
-          
+
+
+
+
           if (tx.taskHistory?.deleteMany) await tx.taskHistory.deleteMany({ where: { task: {  } } });
           if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: {  } } });
           if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: {  } } });
@@ -304,7 +304,7 @@ return undefined;
           const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: {  } }) : { count: 0 };
           const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: {  } }) : { count: 0 };
           const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: {  } }) : { count: 0 };
-          const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: {  } }) : { count: 0 };
+
           const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: {  } }) : { count: 0 };
 
           deletedCount =
@@ -313,7 +313,6 @@ return undefined;
             cnt(tasks) +
             cnt(deals) +
             cnt(contacts) +
-            cnt(leads) +
             cnt(companies);
           break;
         }
@@ -416,7 +415,7 @@ return undefined;
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            
+
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: normModule.toUpperCase(),
@@ -459,15 +458,10 @@ return undefined;
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numUserId = Number(userId) || 1;
 
-    const customerRecord = await this.prisma.customer.findUnique({
-      where: { id: numCustomerId },
-      select: { id: true, name: true, companyName: true },
-    });
-
     const conf = dto.confirmation.trim().toUpperCase();
     const validConfirms = ['RESET ALL DATA'];
-    if (customerRecord?.name) validConfirms.push(customerRecord.name.trim().toUpperCase());
-    if (customerRecord?.companyName) validConfirms.push(customerRecord.companyName.trim().toUpperCase());
+
+
 
     if (!validConfirms.includes(conf)) {
       throw new BadRequestException(
@@ -480,10 +474,10 @@ return undefined;
 
     await this.prisma.$transaction(async (tx) => {
       // ── Step 1: Deep leaf children across all transactional areas ─────────────
-      
-      
-      
-      
+
+
+
+
       if (tx.communicationHistory?.deleteMany) await tx.communicationHistory.deleteMany({ where: { contact: {  } } });
       if (tx.taskReview?.deleteMany) await tx.taskReview.deleteMany({ where: { task: {  } } });
       if (tx.taskProof?.deleteMany) await tx.taskProof.deleteMany({ where: { task: {  } } });
@@ -495,7 +489,7 @@ return undefined;
       if (tx.aiGenerationAsset?.deleteMany) await tx.aiGenerationAsset.deleteMany({ where: { generation: {  } } });
 
       // ── Step 2: Marketing & Social Media ──────────────────────────────────────
-      const videoViews = tx.customerMarketingVideoView?.deleteMany ? await tx.customerMarketingVideoView.deleteMany({ where: {  } }) : { count: 0 };
+
       const videos = tx.marketingVideo?.deleteMany ? await tx.marketingVideo.deleteMany({ where: {  } }) : { count: 0 };
       const banners = tx.marketingBanner?.deleteMany ? await tx.marketingBanner.deleteMany({ where: {  } }) : { count: 0 };
       const trending = tx.trendingContent?.deleteMany ? await tx.trendingContent.deleteMany({ where: {  } }) : { count: 0 };
@@ -517,16 +511,16 @@ return undefined;
       const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: {  } }) : { count: 0 };
       if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: {  } });
       if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: {  } });
-      
-      
+
+
       const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 6: Billing & Invoices (Purge transactional invoices/payments) ────
       if (tx.invoiceItem?.deleteMany) await tx.invoiceItem.deleteMany({ where: { invoice: {  } } });
       const invRes = tx.invoice?.deleteMany ? await tx.invoice.deleteMany({ where: {  } }) : { count: 0 };
       const payRes = tx.paymentHistory?.deleteMany ? await tx.paymentHistory.deleteMany({ where: {  } }) : { count: 0 };
-      const instRes = tx.subscriptionInstallment?.deleteMany ? await tx.subscriptionInstallment.deleteMany({ where: {  } }) : { count: 0 };
-      
+
+
 
       // ── Step 7: CRM Parent Records ────────────────────────────────────────────
       const quotations = tx.quotation?.deleteMany ? await tx.quotation.deleteMany({ where: {  } }) : { count: 0 };
@@ -534,7 +528,7 @@ return undefined;
       const tasks = tx.task?.deleteMany ? await tx.task.deleteMany({ where: {  } }) : { count: 0 };
       const deals = tx.deal?.deleteMany ? await tx.deal.deleteMany({ where: {  } }) : { count: 0 };
       const contacts = tx.contact?.deleteMany ? await tx.contact.deleteMany({ where: {  } }) : { count: 0 };
-      const leads = tx.lead?.deleteMany ? await tx.lead.deleteMany({ where: {  } }) : { count: 0 };
+
       const companies = tx.company?.deleteMany ? await tx.company.deleteMany({ where: {  } }) : { count: 0 };
 
       // ── Step 8: Data Capture ──────────────────────────────────────────────────
@@ -563,7 +557,6 @@ return undefined;
         cnt(tasks) +
         cnt(deals) +
         cnt(contacts) +
-        cnt(leads) +
         cnt(companies) +
         cnt(works) +
         cnt(schedules) +
@@ -580,7 +573,6 @@ return undefined;
         cnt(tickets) +
         cnt(dcPlaces) +
         cnt(dcJobs) +
-        cnt(videoViews) +
         cnt(videos) +
         cnt(banners) +
         cnt(trending) +
@@ -594,17 +586,16 @@ return undefined;
         cnt(bookings) +
         cnt(workAccess) +
         cnt(invRes) +
-        cnt(payRes) +
-        cnt(instRes);
+        cnt(payRes) ;
 
       // Reset storage usage
-      
+
 
       // Audit Log
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            
+
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: 'ALL_TRANSACTIONAL',
@@ -620,7 +611,7 @@ return undefined;
       }
 
       // ── Step 10: Pre-commit Verification ──────────────────────────────────────
-      
+
     });
 
     this.logger.log(
@@ -930,7 +921,7 @@ return undefined;
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            
+
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: `EMPLOYEE_${normModule.toUpperCase()}`,
@@ -1126,10 +1117,10 @@ return undefined;
           where: {  employeeId: numEmployeeId },
         });
       }
-      
+
 
       // 11. Unlink shared assignments
-      
+
       if (tx.monthlySchedule?.updateMany) {
         await tx.monthlySchedule.updateMany({
           where: {  assignedEmployeeId: numEmployeeId },
@@ -1148,7 +1139,7 @@ return undefined;
           data: { headId: null },
         });
       }
-      
+
 
       // 12. User notifications & tokens if linked user
       let notifsCount = 0;
@@ -1183,7 +1174,7 @@ return undefined;
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-            
+
             userId: !isNaN(numUserId) ? numUserId : null,
             action: 'DATA_RESET',
             module: 'EMPLOYEE_ALL_TRANSACTIONAL',
@@ -1324,7 +1315,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       ],
     };
 
-    
+
 
     if (query.search && query.search.trim().length > 0) {
       const s = query.search.trim();
@@ -1455,60 +1446,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
    * Returns empty array if no records are deleted
    */
   async getBinItems() {
-    // Soft-deleted customers: deletedAt is not null, excluding Super Admin / Admin accounts
-    const deletedCustomers = await this.prisma.customer.findMany({
-      where: {
-        deletedAt: { not: null },
-        NOT: [
-          {
-            users: {
-              some: {
-                userRoles: {
-                  some: {
-                    role: {
-                      OR: [
-                        { type: RoleType.SUPER_ADMIN },
-                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
-                      ],
-                    },
-                  },
-                },
-              },
-            },
-          },
-          { customerType: { in: ['SYSTEM', 'INTERNAL', 'SUPER_ADMIN', 'ADMIN'] } },
-          { name: { in: ['Super Admin', 'SUPER_ADMIN', 'Super Administrator', 'Admin'] } },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        companyName: true,
-        email: true,
-        isActive: true,
-        deletedAt: true,
-        _count: {
-          select: {
-            leads: true,
-            contacts: true,
-            deals: true,
-            tasks: true,
-            employees: true,
-          },
-        },
-        auditLogs: {
-          where: { action: 'MOVE_TO_BIN' },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            createdAt: true,
-            user: { select: { firstName: true, lastName: true, email: true } },
-          },
-        },
-      },
-      orderBy: { deletedAt: 'desc' },
-    });
-
+    const customers: any[] = [];
     // Soft-deleted employees: status = 'DELETED', excluding Super Admin / Admin
     const deletedEmployees = await this.prisma.employee.findMany({
       where: {
@@ -1538,7 +1476,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
         lastName: true,
         email: true,
         employeeCode: true,
-        
+
         updatedAt: true,
         department: { select: { name: true } },
         designation: { select: { name: true } },
@@ -1551,29 +1489,10 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
             payrollItems: true,
           },
         },
-        
+
       },
       orderBy: { updatedAt: 'desc' },
     });
-
-    const customers = deletedCustomers.map((c) => ({
-      id: String(c.id),
-      type: 'CUSTOMER' as const,
-      name: c.name || c.companyName || `Customer #${c.id}`,
-      email: c.email || '',
-      deletedAt: c.deletedAt ? c.deletedAt.toISOString() : null,
-      deletedBy: c.auditLogs?.[0]?.user
-        ? `${c.auditLogs[0].user.firstName || ''} ${c.auditLogs[0].user.lastName || ''}`.trim() || c.auditLogs[0].user.email
-        : 'Admin',
-      dataCounts: {
-        leads: c._count.leads,
-        contacts: c._count.contacts,
-        deals: c._count.deals,
-        tasks: c._count.tasks,
-        employees: c._count.employees,
-        total: c._count.leads + c._count.contacts + c._count.deals + c._count.tasks + c._count.employees,
-      },
-    }));
 
     const employees = deletedEmployees.map((e) => ({
       id: String(e.id),
@@ -1651,13 +1570,13 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     await tx.workTask?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
     await tx.workAccessRequest?.deleteMany?.({ where: { employeeId: numId } });
     await tx.employeeModuleOverride?.deleteMany?.({ where: { employeeId: numId } });
-    await tx.employeeLeadLimit?.deleteMany?.({ where: { employeeId: numId } });
+
     await tx.locationTrackingSetting?.deleteMany?.({ where: { employeeId: numId } });
     await tx.teamMember?.deleteMany?.({ where: { employeeId: numId } });
     await tx.team?.updateMany?.({ where: { leaderId: numId }, data: { leaderId: null } });
     await tx.department?.updateMany?.({ where: { headId: numId }, data: { headId: null } });
-    await tx.customer?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
-    await tx.lead?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
+
+
     await tx.visit?.deleteMany?.({ where: { employeeId: numId } });
     await tx.monthlySchedule?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
     await tx.employeeLocation?.deleteMany?.({ where: { employeeId: numId } });
@@ -1815,16 +1734,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     const employeeIds = itemsToDelete.filter((it) => it.type === 'EMPLOYEE').map((it) => it.id);
 
     // Verify existing records
-    if (customerIds.length > 0) {
-      const foundCustomers = await this.prisma.customer.findMany({
-        where: { id: { in: customerIds } },
-        select: { id: true },
-      });
-      const foundCustomerIds = new Set(foundCustomers.map((c) => c.id));
-      for (const cid of customerIds) {
-        
-      }
-    }
+    if (customerIds.length > 0) throw new GoneException('Customer records have been removed');
 
     if (employeeIds.length > 0) {
       const foundEmployees = await this.prisma.employee.findMany({
@@ -1850,17 +1760,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     });
 
     // Post-commit verification
-    if (customerIds.length > 0) {
-      const stillCust = await this.prisma.customer.findMany({
-        where: { id: { in: customerIds } },
-        select: { id: true },
-      });
-      if (stillCust.length > 0) {
-        throw new InternalServerErrorException(
-          `Bulk permanent deletion verification failed: Customers [${stillCust.map((c) => c.id).join(', ')}] still exist.`,
-        );
-      }
-    }
+    if (customerIds.length > 0) throw new GoneException('Customer records have been removed');
 
     if (employeeIds.length > 0) {
       const stillEmp = await this.prisma.employee.findMany({

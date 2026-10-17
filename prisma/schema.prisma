@@ -41,7 +41,6 @@ model Coupon {
   startsAt              DateTime?
   maxRedemptions        Int              @default(100)
   timesRedeemed         Int              @default(0)
-  perCustomerLimit      Int              @default(1)
   appliesToAllPlans     Boolean          @default(true)
   expiresAt             DateTime?
   isActive              Boolean          @default(true)
@@ -126,7 +125,6 @@ model User {
   assignedTasks           Task[]            @relation("AssignedTasks")
   createdTasks            Task[]            @relation("CreatedTasks")
   ticketComments          TicketComment[]
-  userRoles               UserRole[]
   deviceTokens            UserDeviceToken[]
   createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
   createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
@@ -136,54 +134,6 @@ model User {
   @@index([email])
   @@index([phone])
   @@index([deletedAt])
-}
-
-model Role {
-  id                   Int              @id @default(autoincrement())
-  designationId        Int?             @unique
-  name                 String
-  type                 RoleType         @default(CUSTOM)
-  description          String?
-  permissionsUpdatedAt DateTime         @default(now())
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
-  deletedAt            DateTime?
-  designation          Designation?     @relation(fields: [designationId], references: [id], onDelete: Cascade)
-  rolePermissions      RolePermission[]
-  userRoles            UserRole[]
-
-  @@index([deletedAt])
-}
-
-model Permission {
-  id                Int                      @id @default(autoincrement())
-  module            String
-  action            String
-  description       String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  rolePermissions   RolePermission[]
-  employeeOverrides EmployeeModuleOverride[]
-
-  @@unique([module, action])
-}
-
-model UserRole {
-  userId Int
-  roleId Int
-  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@id([userId, roleId])
-}
-
-model RolePermission {
-  roleId       Int
-  permissionId Int
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
 }
 
 model RefreshToken {
@@ -597,7 +547,7 @@ model NotificationCampaign {
   title            String
   message          String
   notificationType String    @default("OFFER")
-  targetType       String // "CUSTOMERS" | "EMPLOYEES"
+  targetType       String // "EMPLOYEES"
   audience         String // "ALL" | "SPECIFIC"
   targetIds        Json? // Array of target IDs when audience is SPECIFIC
   imageUrl         String?
@@ -765,7 +715,6 @@ model Designation {
   department        Department?         @relation(fields: [departmentId], references: [id])
   employees         Employee[]
   tasks             Task[]
-  role              Role?
 
   @@unique([code])
 }
@@ -824,7 +773,6 @@ model Employee {
   workTasks                WorkTask[]
   assignedMonthlySchedules MonthlySchedule[]
   workAccessRequests       WorkAccessRequest[]
-  employeeModuleOverrides  EmployeeModuleOverride[]
   ledTeams                 Team[]                   @relation("TeamLeader")
   commissionConfig         CommissionConfig?
   commissions              Commission[]
@@ -1590,16 +1538,6 @@ enum EmployeeType {
   FREELANCER
 }
 
-enum RoleType {
-  SUPER_ADMIN
-  CUSTOMER_ADMIN
-  TENANT_ADMIN
-  SALES_MANAGER
-  SALES_EXECUTIVE
-  SUPPORT_AGENT
-  CUSTOM
-}
-
 enum SubscriptionBillingCycle {
   MONTHLY
   YEARLY
@@ -2031,19 +1969,6 @@ enum WorkAccessRequestStatus {
   REJECTED
 }
 
-model RoleWorkPermission {
-  id         Int      @id @default(autoincrement())
-  roleName   String
-  workModule String
-  isEnabled  Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@unique([roleName, workModule])
-  @@index([roleName])
-  @@map("role_work_permissions")
-}
-
 model WorkAccessRequest {
   id              Int                     @id @default(autoincrement())
   employeeId      Int
@@ -2065,30 +1990,6 @@ model WorkAccessRequest {
 enum DesignationAudience {
   EMPLOYEE
   CUSTOMER
-}
-
-enum AccessOverrideType {
-  DEFAULT
-  INHERIT
-  ALLOW
-  DENY
-}
-
-model EmployeeModuleOverride {
-  id           Int                @id @default(autoincrement())
-  employeeId   Int
-  moduleKey    String
-  override     AccessOverrideType @default(DEFAULT)
-  permissionId Int?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  permission   Permission?        @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@unique([employeeId, moduleKey])
-  @@index([employeeId])
-  @@index([permissionId])
-  @@map("employee_module_overrides")
 }
 
 model MarketplaceTool {
@@ -2489,7 +2390,7 @@ model SocialPublish {
 
 model MasterItem {
   id          Int      @id @default(autoincrement())
-  type        String // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "LEAD_SOURCE", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
+  type        String // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
   code        String
   name        String
   category    String?

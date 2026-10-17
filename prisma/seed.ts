@@ -3,55 +3,6 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-const DEFAULT_LEAD_STAGES = [
-  { key: 'NEW',              name: 'New',              sortOrder: 1,  color: '#0284C7', bgColor: '#E0F2FE', borderColor: '#BAE6FD' },
-  { key: 'CONTACTED',       name: 'Contacted',        sortOrder: 2,  color: '#D97706', bgColor: '#FEF3C7', borderColor: '#FDE68A' },
-  { key: 'CALL_BACK',       name: 'Call Back',        sortOrder: 3,  color: '#8B5CF6', bgColor: '#F3E8FF', borderColor: '#E9D5FF' },
-  { key: 'DETAILS_SENT',    name: 'Details Sent',     sortOrder: 4,  color: '#4F46E5', bgColor: '#EEF2FF', borderColor: '#E0E7FF' },
-  { key: 'FOLLOW_UP',       name: 'Follow-Up',        sortOrder: 5,  color: '#06B6D4', bgColor: '#CFFAFE', borderColor: '#A5F3FC' },
-  { key: 'VISIT_SCHEDULED', name: 'Visit Scheduled',  sortOrder: 6,  color: '#EA580C', bgColor: '#FFEDD5', borderColor: '#FED7AA' },
-  { key: 'VISIT_DONE',      name: 'Visit Done',       sortOrder: 7,  color: '#0891B2', bgColor: '#E0F7FA', borderColor: '#B2EBF2' },
-  { key: 'PROPOSAL_SENT',   name: 'Proposal Sent',    sortOrder: 8,  color: '#7C3AED', bgColor: '#EDE9FE', borderColor: '#DDD6FE' },
-  { key: 'NEGOTIATION',     name: 'Negotiation',      sortOrder: 9,  color: '#B45309', bgColor: '#FFFBEB', borderColor: '#FDE68A' },
-  { key: 'FINAL_CALL',      name: 'Final Call',       sortOrder: 10, color: '#C2410C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
-  { key: 'WON',             name: 'Won',              sortOrder: 11, color: '#15803D', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
-  { key: 'LOST',            name: 'Lost',             sortOrder: 12, color: '#DC2626', bgColor: '#FFF1F2', borderColor: '#FECDD3' },
-];
-
-async function seedDefaultLeadStages(customerId: number | null) {
-  let created = 0;
-  for (const stage of DEFAULT_LEAD_STAGES) {
-    try {
-      await prisma.leadStage.upsert({
-        where: {
-          customerId_key: { customerId: customerId as any, key: stage.key },
-        },
-        update: {}, // Never overwrite existing data
-        create: {
-          customerId,
-          name: stage.name,
-          key: stage.key,
-          sortOrder: stage.sortOrder,
-          color: stage.color,
-          bgColor: stage.bgColor,
-          borderColor: stage.borderColor,
-          isActive: true,
-          isSystem: true,
-        },
-      });
-      created++;
-    } catch (err: any) {
-      // Skip if already exists with different unique key structure
-      if (!err.message?.includes('Unique constraint')) throw err;
-    }
-  }
-  if (created > 0) {
-    console.log(`✅ Seeded ${created} default lead stages for customer ${customerId ?? 'global'}`);
-  } else {
-    console.log(`✓  Lead stages already exist for customer ${customerId ?? 'global'} — skipped`);
-  }
-}
-
 async function main() {
   const email = 'admin@quickboom.com';
   const legacyEmail = 'admin@quikboom.com';
@@ -89,15 +40,6 @@ async function main() {
   }
 
   // Ensure Customer, Employee, Company Admin roles exist
-  let customerRole = await prisma.role.findFirst({
-    where: { OR: [{ id: 3 }, { name: 'CUSTOMER' }] },
-  });
-  if (!customerRole) {
-    await prisma.role.create({
-      data: { name: 'CUSTOMER', type: RoleType.CUSTOM, description: 'Customer role' },
-    });
-  }
-
   let employeeRole = await prisma.role.findFirst({
     where: { OR: [{ id: 4 }, { name: 'EMPLOYEE' }] },
   });
@@ -170,28 +112,6 @@ async function main() {
     },
   });
 
-  // 4. Ensure default customer exists and is active
-  let customer = await prisma.customer.findFirst();
-
-  if (!customer) {
-    customer = await prisma.customer.create({
-      data: {
-        name: 'QuikBoom Enterprise',
-        email: 'info@quikboom.com',
-        isActive: true,
-        customerType: 'ENTERPRISE',
-      },
-    });
-  } else if (!customer.isActive) {
-    customer = await prisma.customer.update({
-      where: { id: customer.id },
-      data: { isActive: true },
-    });
-  }
-
-  // 4.1 Seed default lead stages for the default customer (idempotent)
-  await seedDefaultLeadStages(customer.id);
-
   // 5. Create or update Demo Mobile Employee User (demo@gmail.com / 123456)
   const demoEmail = 'demo@gmail.com';
   let demoUser = await prisma.user.findUnique({
@@ -201,7 +121,7 @@ async function main() {
   if (!demoUser) {
     demoUser = await prisma.user.create({
       data: {
-        customerId: customer.id,
+
         email: demoEmail,
         phone: '+91-9876543210',
         firstName: 'Demo',
@@ -216,7 +136,7 @@ async function main() {
     demoUser = await prisma.user.update({
       where: { id: demoUser.id },
       data: {
-        customerId: customer.id,
+
         passwordHash: hashedPassword,
         isActive: true,
       },
@@ -232,7 +152,7 @@ async function main() {
   if (!headOffice) {
     headOffice = await prisma.branchGeofence.create({
       data: {
-        customerId: customer.id,
+
         name: 'Head Office',
         city: 'Mumbai',
         latitude: 19.0760,
@@ -241,7 +161,7 @@ async function main() {
         isActive: true,
       },
     });
-    console.log(`✅ Created Head Office geofence for customer ${customer.id}`);
+    console.log(`✅ Created Head Office geofence for the organization`);
   }
 
   // 6. Ensure Employee record exists for demoUser
@@ -252,7 +172,7 @@ async function main() {
   if (!employee) {
     employee = await prisma.employee.create({
       data: {
-        customerId: customer.id,
+
         userId: demoUser.id,
         employeeCode: 'EMP-002',
         firstName: 'Demo',
@@ -270,7 +190,7 @@ async function main() {
     await prisma.employee.update({
       where: { id: employee.id },
       data: {
-        customerId: customer.id,
+
         officeId: headOffice.id,
         branch: headOffice.name,
         status: 'ACTIVE',
@@ -288,7 +208,7 @@ async function main() {
       monthlyPrice: 9999,
       yearlyPrice: 95990,
       userLimit: 5,
-      leadLimit: 500,
+
       storageLimit: BigInt(5368709120),
       features: [
         '4 Reels',
@@ -312,7 +232,7 @@ async function main() {
       monthlyPrice: 14999,
       yearlyPrice: 143990,
       userLimit: 25,
-      leadLimit: 5000,
+
       storageLimit: BigInt(26843545600),
       features: [
         '6 Reels',
@@ -335,7 +255,7 @@ async function main() {
       monthlyPrice: 25999,
       yearlyPrice: 249590,
       userLimit: 100,
-      leadLimit: 50000,
+
       storageLimit: BigInt(107374182400),
       features: [
         '2 Product Reels',
@@ -656,7 +576,7 @@ QUIKBOOM Digital Marketing Agency`,
     const existing = await prisma.emailTemplate.findFirst({
       where: {
         key: t.key,
-        customerId: null,
+
         deletedAt: null,
       },
     });
@@ -664,7 +584,7 @@ QUIKBOOM Digital Marketing Agency`,
     if (!existing) {
       await prisma.emailTemplate.create({
         data: {
-          customerId: null,
+
           key: t.key,
           name: t.name,
           category: t.category,

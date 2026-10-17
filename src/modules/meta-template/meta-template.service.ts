@@ -68,7 +68,7 @@ export class MetaTemplateService {
         const vars = this.extractVariables(tpl.body);
         await this.prisma.metaTemplate.create({
           data: {
-            
+
             name: `${tpl.name} WhatsApp`,
             templateName: tpl.templateName,
             key: stageKey,
@@ -95,13 +95,13 @@ export class MetaTemplateService {
    * Retrieves all Meta templates with multi-tenant filtering, search, and pagination.
    */
   async findAll(customerId: number | string | undefined, query: QueryMetaTemplateDto) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     await this.ensureDefaultTemplates(parsedCustId);
 
     const where: any = {
       deletedAt: null,
       OR: [
-        
+
         ...(parsedCustId ? [] : []),
       ],
     };
@@ -161,7 +161,7 @@ export class MetaTemplateService {
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        
+
         ...(parsedCustId ? [] : []),
       ],
     };
@@ -205,13 +205,13 @@ export class MetaTemplateService {
    * Retrieves aggregated statistics for Meta templates for the tenant/company.
    */
   async getStats(customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     await this.ensureDefaultTemplates(parsedCustId);
 
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        
+
         ...(parsedCustId ? [] : []),
       ],
     };
@@ -245,13 +245,13 @@ export class MetaTemplateService {
    * Retrieves single Meta template by ID.
    */
   async findOne(id: number, customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     const item = await this.prisma.metaTemplate.findFirst({
       where: {
         id,
         deletedAt: null,
         OR: [
-          
+
           ...(parsedCustId ? [] : []),
         ],
       },
@@ -275,7 +275,7 @@ export class MetaTemplateService {
    * Creates a new Meta template.
    */
   async create(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     const effectiveName = dto.name.trim();
     if (!effectiveName) {
       throw new BadRequestException('Template display name is required.');
@@ -307,7 +307,7 @@ export class MetaTemplateService {
         language: dto.language || 'en_US',
         deletedAt: null,
         OR: [
-          
+
           ...(parsedCustId ? [] : []),
         ],
       },
@@ -324,7 +324,7 @@ export class MetaTemplateService {
 
     return this.prisma.metaTemplate.create({
       data: {
-        
+
         name: effectiveName,
         templateName: rawTemplateName,
         key: dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null,
@@ -487,7 +487,7 @@ export class MetaTemplateService {
       });
     }
 
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     let syncedCount = 0;
 
     for (const mt of metaTemplates) {
@@ -525,7 +525,7 @@ export class MetaTemplateService {
           templateName,
           deletedAt: null,
           OR: [
-            
+
             ...(parsedCustId ? [] : []),
           ],
         },
@@ -550,7 +550,7 @@ export class MetaTemplateService {
       } else {
         await this.prisma.metaTemplate.create({
           data: {
-            
+
             name: (mt.name || templateName).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
             templateName,
             language,

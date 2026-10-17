@@ -46,7 +46,7 @@ return undefined;
 
     const openRecords = await this.prisma.attendance.findMany({
       where: {
-        
+
         punchIn: { not: null },
         punchOut: null,
         OR: [
@@ -163,7 +163,7 @@ return undefined;
     try {
       await this.prisma.auditLog.create({
         data: {
-          
+
           userId: input.user?.id ? Number(input.user.id) : undefined,
           userName: input.user?.name || input.user?.email || undefined,
           userRole: input.user?.role || undefined,
@@ -215,14 +215,14 @@ return undefined;
     const joining = input.employee.joiningDate ? businessDayKey(input.employee.joiningDate) : null;
     const attendances = await tx.attendance.findMany({
       where: {
-        
+
         employeeId: input.employee.id,
         date: { gte: queryStart, lte: queryEnd },
       },
     });
     const leaves = await tx.leaveRequest.findMany({
       where: {
-        
+
         employeeId: input.employee.id,
         status: 'APPROVED',
         fromDate: { lte: queryEnd },
@@ -233,7 +233,7 @@ return undefined;
     const remoteRequests = tx.remoteRequest?.findMany
       ? await tx.remoteRequest.findMany({
           where: {
-            
+
             employeeId: input.employee.id,
             fromDate: { lte: queryEnd },
             toDate: { gte: queryStart },
@@ -314,7 +314,7 @@ return undefined;
 
     const claims = await tx.employeeClaim.findMany({
       where: {
-        
+
         employeeId: input.employee.id,
         status: 'APPROVED',
         paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -325,7 +325,7 @@ return undefined;
 
     const loans = await tx.employeeLoan.findMany({
       where: {
-        
+
         employeeId: input.employee.id,
         status: { in: ['ACTIVE', 'APPROVED'] },
         remainingBalance: { gt: 0 },
@@ -737,7 +737,7 @@ return undefined;
       if (!payroll) {
         payroll = await tx.payroll.create({
           data: {
-            
+
             month,
             year,
             departmentId: numDeptId || null,
@@ -751,7 +751,7 @@ return undefined;
 
       const holidays = await tx.publicHoliday.findMany({
         where: {
-          
+
           isActive: true,
           date: {
             gte: new Date(periodStart.getTime() - 24 * 60 * 60 * 1000),
@@ -779,7 +779,7 @@ return undefined;
       for (const emp of employees) {
         if (lockedEmployeeIds.has(emp.id)) continue;
         const computed = await this.buildEmployeePayroll(tx, {
-          
+
           employee: emp,
           year,
           month,
@@ -812,7 +812,7 @@ return undefined;
         totalNet += computed.netSalary;
         itemsData.push({
           payrollId: payroll.id,
-          
+
           employeeId: emp.id,
           ...computed,
           paidLeaveDays: Math.round(computed.paidLeaveDays),
@@ -1044,7 +1044,7 @@ return undefined;
         if (!existing) {
           await tx.salarySlip.create({
             data: {
-              
+
               payrollItemId: item.id,
               employeeId: item.employeeId,
               slipNumber: slipNum,
@@ -1100,7 +1100,7 @@ return undefined;
           const slip = item.salarySlips?.[0];
           this.notificationService
             .sendSalaryGeneratedNotification({
-              
+
               employeeId: item.employeeId,
               payPeriod,
               month: payroll.month,
@@ -1164,7 +1164,7 @@ return undefined;
         if (item.reimbursement && item.reimbursement > 0) {
           await tx.employeeClaim.updateMany({
             where: {
-              
+
               employeeId: item.employeeId,
               status: 'APPROVED',
               paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -1182,7 +1182,7 @@ return undefined;
         if (item.loanDeduction && item.loanDeduction > 0) {
           const activeLoans = await tx.employeeLoan.findMany({
             where: {
-              
+
               employeeId: item.employeeId,
               status: { in: ['ACTIVE', 'APPROVED'] },
               remainingBalance: { gt: 0 },
@@ -1284,7 +1284,7 @@ return undefined;
       if (item.reimbursement > 0) {
         await tx.employeeClaim.updateMany({
           where: {
-            
+
             employeeId: item.employeeId,
             status: 'APPROVED',
             paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -1314,7 +1314,7 @@ return undefined;
       if (!existing) {
         await tx.salarySlip.create({
           data: {
-            
+
             payrollItemId: item.id,
             employeeId: item.employeeId,
             slipNumber: slipNum,
@@ -1338,7 +1338,7 @@ return undefined;
 
     await this.deliverSalarySlips(numCustomerId, [item.id], user);
     await this.writePayrollAudit({
-      
+
       user,
       action: 'PAY',
       description: `Payroll marked paid for employee ${item.employeeId} ${payPeriod}`,
@@ -1377,7 +1377,7 @@ return undefined;
         data: { emailStatus, whatsappStatus },
       });
       await this.writePayrollAudit({
-        
+
         user,
         action: 'DELIVER',
         description: `Salary slip delivery ${emailStatus} ${whatsappStatus}`,
@@ -1480,7 +1480,7 @@ return undefined;
       {
         currentEmployee = await this.prisma.employee.findFirst({
           where: {
-            
+
             OR: [
               { userId: query.user.id },
               { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -1751,7 +1751,7 @@ return undefined;
       });
     }
 
-    if (!slip && !isNaN(numId) && numId > 0 && customerId === undefined) {
+    if (!slip && !isNaN(numId) && numId > 0 && true) {
       slip = await this.prisma.salarySlip.findFirst({
         where: { id: numId },
         include: {
@@ -1789,7 +1789,7 @@ return undefined;
       });
     }
 
-    if (!slip && typeof id === 'string' && id.trim() && customerId === undefined) {
+    if (!slip && typeof id === 'string' && id.trim() && true) {
       slip = await this.prisma.salarySlip.findFirst({
         where: { slipNumber: id.trim() },
         include: {
@@ -1812,7 +1812,7 @@ return undefined;
       const pi = await this.prisma.payrollItem.findFirst({
         where: {
           id: numId,
-          
+
         },
         include: {
           payroll: true,
@@ -1828,7 +1828,7 @@ return undefined;
         const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         slip = {
           id: pi.id,
-          
+
           payrollItemId: pi.id,
           employeeId: pi.employeeId,
           slipNumber: `SLIP-${pi.payroll?.year || 2026}${String(pi.payroll?.month || 1).padStart(2, '0')}-${String(pi.employeeId).padStart(4, '0')}`,
@@ -2311,7 +2311,7 @@ return undefined;
 
       policy = await this.prisma.payrollPolicy.create({
         data: {
-          
+
           workingDaysPerMonth: salaryPol?.workingDaysPerMonth || 30,
           overtimeMultiplier: salaryPol?.overtimeMultiplier || 1.5,
           pfPercent: salaryPol?.pfPercent || 12.0,
@@ -2335,7 +2335,7 @@ return undefined;
     const policy = await this.prisma.payrollPolicy.upsert({
       where: { singletonKey: "GLOBAL" },
       create: {
-        
+
         workingDaysPerMonth,
         overtimeMultiplier,
         pfPercent,

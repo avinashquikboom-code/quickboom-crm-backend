@@ -624,7 +624,7 @@ try {
               source: 'GOOGLE_PLACES',
               status: 'CAPTURED',
               capturedAt: new Date(),
-              
+
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
               rawData: p || {},
@@ -706,7 +706,7 @@ try {
     const placesToCreate = allPlaces.map((p) => {
       const isDuplicate = Boolean(p.googlePlaceId && existingPlaceIds.has(p.googlePlaceId));
       return {
-        
+
         googlePlaceId: p.googlePlaceId,
         sourceRecordId: p.googlePlaceId || undefined,
         businessName: p.businessName,
@@ -739,7 +739,7 @@ try {
     const createdJob = await this.prisma.dataCaptureJob.create({
       data: {
         jobId,
-        
+
         userId: effectiveUserId,
         createdFrom: resolvedCreatedFrom,
         keyword,
@@ -768,7 +768,7 @@ try {
         const emp = await this.prisma.employee.findFirst({
           where: {
             userId: effectiveUserId,
-            
+
             status: 'ACTIVE',
           },
           select: { id: true },
@@ -785,7 +785,7 @@ try {
         if (clientRequestId) {
           const existingSearch = await this.prisma.dataCaptureSearch.findFirst({
             where: {
-              
+
               employeeId,
               requestId: clientRequestId,
             },
@@ -800,7 +800,7 @@ try {
           const searchQuery = `${keyword} in ${location}`;
           await this.prisma.dataCaptureSearch.create({
             data: {
-              
+
               employeeId,
               userId: effectiveUserId,
               searchQuery,
@@ -841,7 +841,7 @@ try {
         status: p.status || 'CAPTURED',
         isImported: p.isImported,
         capturedAt: p.createdAt,
-        
+
         capturedBy: String(effectiveUserId),
         extractionJobId: p.jobId || undefined,
         notes: p.notes || undefined,
@@ -934,13 +934,13 @@ try {
 
       if (isSuperAdmin) {
         if (hasExplicitCustomer) {
-          andConditions.push({  });
+          andConditions.push();
         }
         // else: SUPER_ADMIN — no customerId filter, full platform view
       } else {
         const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
-        
-        andConditions.push({  });
+
+        andConditions.push();
       }
 
       if (query.search && query.search.trim()) {
@@ -1052,10 +1052,10 @@ try {
           notes: p.notes || undefined,
           rawData: p.rawData || undefined,
           isImported: p.isImported,
-          
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          
+
           extractionJobId: p.jobId || undefined,
           googlePhotos: normGP.length > 0 ? normGP : [],
           photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
@@ -1102,7 +1102,7 @@ try {
       deletedAt: null,
     };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const place = await this.prisma.dataCapturePlace.findFirst({
@@ -1154,10 +1154,10 @@ try {
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
       isImported: place.isImported,
-      
+
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
-      
+
       extractionJobId: place.jobId || undefined,
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : [],
@@ -1176,7 +1176,7 @@ try {
     req?: any,
   ): Promise<CapturedPlace> {
     let numCustomerId = Number(customerId);
-    
+
 
     const resolvedCreatedFrom = resolveCreatedFrom(req, { id: userId }, (dto as any)?.createdFrom);
 
@@ -1206,7 +1206,7 @@ try {
 
     const place = await this.prisma.dataCapturePlace.create({
       data: {
-        
+
         businessName: dto.businessName.trim(),
         category: dto.category?.trim(),
         address: dto.address?.trim(),
@@ -1254,10 +1254,10 @@ try {
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
       isImported: place.isImported,
-      
+
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
-      
+
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : [],
       photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
@@ -1278,7 +1278,7 @@ try {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1346,10 +1346,10 @@ try {
       notes: updated.notes || undefined,
       rawData: updated.rawData || undefined,
       isImported: updated.isImported,
-      
+
       capturedAt: updated.createdAt,
       updatedAt: updated.updatedAt,
-      
+
       extractionJobId: updated.jobId || undefined,
       duplicateMatches,
       googlePhotos: updatedGP.length > 0 ? updatedGP : [],
@@ -1367,7 +1367,7 @@ try {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1409,7 +1409,7 @@ try {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1438,7 +1438,7 @@ try {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const place = await this.prisma.dataCapturePlace.findFirst({
@@ -1716,7 +1716,7 @@ try {
     const numCustomerId = Number(customerId);
     const where: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const jobs = await this.prisma.dataCaptureJob.findMany({
@@ -1731,7 +1731,7 @@ try {
 
     return jobs.map((j) => ({
       jobId: j.jobId,
-      
+
       userId: String(j.userId),
       keyword: j.keyword,
       location: j.location,
@@ -1760,10 +1760,10 @@ try {
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
           isImported: p.isImported,
-          
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          
+
           capturedBy: String(j.userId),
           extractionJobId: j.jobId,
           googlePhotos: normGP.length > 0 ? normGP : [],
@@ -1781,7 +1781,7 @@ try {
     const numCustomerId = Number(customerId);
     const where: any = { jobId: jobId.trim() };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     const job = await this.prisma.dataCaptureJob.findFirst({
@@ -1799,7 +1799,7 @@ try {
 
     return {
       jobId: job.jobId,
-      
+
       userId: String(job.userId),
       keyword: job.keyword,
       location: job.location,
@@ -1828,10 +1828,10 @@ try {
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
           isImported: p.isImported,
-          
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          
+
           capturedBy: String(job.userId),
           extractionJobId: job.jobId,
           googlePhotos: normGP.length > 0 ? normGP : [],
@@ -1849,7 +1849,7 @@ try {
     const numCustomerId = Number(customerId);
     const customerWhere: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      
+
     }
 
     // Resolve employee for employee-specific search count
@@ -1904,7 +1904,7 @@ try {
     const quotaLimit = 1000;
 
     return {
-      
+
       totalExtractions,
       totalLeadsCaptured,
       totalGoogleApiCalls,
@@ -2024,7 +2024,7 @@ try {
         source: 'GOOGLE_PLACES',
         status: 'CAPTURED',
         capturedAt: new Date(),
-        
+
         capturedBy: userId,
         extractionJobId: jobId,
         googlePhotos: [],

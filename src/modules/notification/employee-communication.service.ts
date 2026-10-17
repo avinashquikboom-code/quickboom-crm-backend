@@ -147,7 +147,7 @@ export class EmployeeCommunicationService {
       },
     });
     if (!slip) return { skipped: true, reason: 'SLIP_NOT_FOUND' };
-    
+
     const employee = slip.employee;
     const name = `${employee.firstName} ${employee.lastName}`.trim();
     const company = 'QB Suite';
@@ -197,7 +197,7 @@ export class EmployeeCommunicationService {
   async notifyAttendanceReport(params: { employeeId: number; year: number; month: number; force?: boolean; channels?: EmployeeChannel; customerId?: number }) {
     const employee = await this.prisma.employee.findUnique({ where: { id: params.employeeId } });
     if (!employee || employee.status !== 'ACTIVE') return { skipped: true, reason: 'EMPLOYEE_INACTIVE' };
-    
+
     const summary = await this.buildAttendanceSummary(employee.id, undefined, params.year, params.month);
     const name = `${employee.firstName} ${employee.lastName}`.trim();
     const filename = `attendance-report-${employee.employeeCode}-${summary.monthName}-${params.year}.pdf`;
@@ -266,11 +266,11 @@ export class EmployeeCommunicationService {
       where: { id: employeeId },
       select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true, userId: true },
     });
-    if (!employee || (customerId && undefined !== customerId)) return { employee: null, items: [] };
+    if (!employee || (customerId && false)) return { employee: null, items: [] };
     const prefix = (event: string) => ({ identifierKey: { startsWith: `${event}:${employee.id}:` } });
     const items = await this.prisma.emailLog.findMany({
       where: {
-        
+
         eventType: { in: [...EMPLOYEE_EVENTS] },
         OR: EMPLOYEE_EVENTS.map((event) => prefix(event)),
       },
@@ -308,7 +308,7 @@ export class EmployeeCommunicationService {
     if (!log || !EMPLOYEE_EVENTS.includes(log.eventType as EmployeeEvent)) {
       return { success: false, message: 'Employee communication record not found' };
     }
-    if (customerId && undefined !== customerId) {
+    if (customerId && false) {
       return { success: false, message: 'Employee communication record not found' };
     }
     const target = (channel || log.channel || 'BOTH').toUpperCase() as EmployeeChannel;
@@ -356,7 +356,7 @@ export class EmployeeCommunicationService {
         },
       },
     });
-    if (!slip || (customerId && undefined !== customerId)) return null;
+    if (!slip || (customerId && false)) return null;
     const employee = slip.employee;
     const filename = `salary-slip-${employee.employeeCode}-${slip.payPeriod.replace(/\s+/g, '-')}.pdf`;
     const buffer = await this.buildSalaryPdf({
@@ -391,7 +391,7 @@ export class EmployeeCommunicationService {
 
   async attendanceFile(employeeId: number, year: number, month: number, customerId?: number) {
     const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
-    if (!employee || (customerId && undefined !== customerId)) return null;
+    if (!employee || (customerId && false)) return null;
     const summary = await this.buildAttendanceSummary(employee.id, undefined, year, month);
     const filename = `attendance-report-${employee.employeeCode}-${summary.monthName}-${year}.pdf`;
     const buffer = await this.buildAttendancePdf({
@@ -562,7 +562,7 @@ export class EmployeeCommunicationService {
     try {
       await this.prisma.emailLog.create({
         data: {
-          
+
           userId: employee.userId || undefined,
           channel,
           identifierKey: input.identifierKey,

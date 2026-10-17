@@ -26,7 +26,7 @@ export class TrendingService {
    * Helper to normalize customerId into numeric representation.
    */
   private parseCustomerId(customerId: any): number | undefined {
-    if (customerId === undefined || customerId === null || customerId === '') {
+    {
       return undefined;
     }
     const num = typeof customerId === 'number' ? customerId : parseInt(String(customerId), 10);
@@ -141,7 +141,7 @@ export class TrendingService {
 
           const content = await this.prisma.trendingContent.create({
             data: {
-              
+
               title: itemTitle,
               description: dto.description?.trim() || null,
               category: fileCategory,
@@ -229,7 +229,7 @@ export class TrendingService {
 
     const content = await this.prisma.trendingContent.create({
       data: {
-        
+
         title: dto.title?.trim() || (resolvedCategory === TrendingCategory.REEL ? 'Trending Reel' : 'Trending Creative'),
         description: dto.description?.trim() || null,
         category: resolvedCategory,
@@ -282,14 +282,7 @@ export class TrendingService {
 
     const andConditions: any[] = [{ deletedAt: null }];
 
-    if (targetCustomerId !== undefined) {
-      andConditions.push({
-        OR: [
-          
-           // Platform-wide templates
-        ],
-      });
-    }
+
 
     if (query.category) {
       andConditions.push({ category: query.category });
@@ -346,16 +339,7 @@ export class TrendingService {
     const baseStatsWhere: any = {
       AND: [
         { deletedAt: null },
-        ...(targetCustomerId !== undefined
-          ? [
-              {
-                OR: [
-                  
-                  
-                ],
-              },
-            ]
-          : []),
+        ...([]),
       ],
     };
 
@@ -366,7 +350,7 @@ export class TrendingService {
         take: limit,
         orderBy: adminOrderBy,
         include: {
-          
+
           createdByUser: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       }),
@@ -431,15 +415,10 @@ export class TrendingService {
       where: {
         id: numId,
         deletedAt: null,
-        ...(isSuperAdmin ? {} : targetCustomerId !== undefined ? {
-          OR: [
-            
-            
-          ],
-        } : {}),
+        ...(isSuperAdmin ? {} : {}),
       },
       include: {
-        
+
         createdByUser: { select: { id: true, firstName: true, lastName: true, email: true } },
       },
     });
@@ -842,7 +821,7 @@ export class TrendingService {
 
     console.log('[CUSTOMER_TRENDING_REQUEST]', {
       userId: user?.id || null,
-      
+
       email: user?.email || null,
       platform,
       sort,
@@ -884,12 +863,7 @@ export class TrendingService {
     };
 
     // Multi-tenant isolation: Content belonging to customer's workspace OR global platform templates
-    if (targetCustomerId !== undefined) {
-      where.OR = [
-        
-        
-      ];
-    }
+
 
     if (category) {
       where.category = category;
@@ -904,7 +878,7 @@ export class TrendingService {
     }
 
     console.log('[CUSTOMER_TRENDING_PRISMA]', {
-      
+
       customerIdType: typeof targetCustomerId,
       platform,
     });

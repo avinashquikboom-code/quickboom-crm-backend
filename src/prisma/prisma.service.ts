@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import { PrismaClient, RoleType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -13,61 +13,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     await this.$connect();
-    await this.ensureSuperAdminRole();
+    await this.ensureSuperAdminUser();
   }
 
-  private async ensureSuperAdminRole() {
+  private async ensureSuperAdminUser() {
     try {
-      // 1. Ensure SUPER_ADMIN role exists in database
-      let superAdminRole = await this.role.findFirst({
-        where: { type: RoleType.SUPER_ADMIN },
-      });
-
-      if (!superAdminRole) {
-        superAdminRole = await this.role.create({
-          data: {
-            name: 'Super Administrator',
-            type: RoleType.SUPER_ADMIN,
-            description: 'Platform Super Administrator with full system control',
-          },
-        });
-        this.logger.log('Created SUPER_ADMIN role record');
-      }
-
-      // 2. If admin@quikboom.com exists in DB, ensure its role link is SUPER_ADMIN
+      // If admin@quikboom.com exists in DB, ensure name is 'Super Admin'
       const adminUser = await this.user.findUnique({
         where: { email: 'admin@quikboom.com' },
-        include: { userRoles: { include: { role: true } } },
       });
 
       if (adminUser) {
-        const hasSuperAdminRole = adminUser.userRoles.some(
-          (ur) => ur.role?.type === RoleType.SUPER_ADMIN
-        );
-
-        if (!hasSuperAdminRole && superAdminRole) {
-          // Remove old role links and assign SUPER_ADMIN
-          await this.userRole.deleteMany({
-            where: { userId: adminUser.id },
-          });
-
-          await this.userRole.create({
-            data: {
-              userId: adminUser.id,
-              roleId: superAdminRole.id,
-            },
-          });
-
-          // Also update role table records named 'Customer Administrator' if they were the primary role
-          await this.role.updateMany({
-            where: { name: 'Customer Administrator' },
-            data: { type: RoleType.SUPER_ADMIN },
-          });
-
-          this.logger.log(`Synced role for ${adminUser.email} to SUPER_ADMIN`);
-        }
-
-        // Ensure name is 'Super Admin'
         if (adminUser.firstName !== 'Super' || adminUser.lastName !== 'Admin') {
           await this.user.update({
             where: { id: adminUser.id },
@@ -77,7 +33,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         }
       }
     } catch (err) {
-      this.logger.warn(`ensureSuperAdminRole caught non-fatal warning: ${err?.message || err}`);
+      this.logger.warn(`ensureSuperAdminUser caught non-fatal warning: ${err?.message || err}`);
     }
   }
 
