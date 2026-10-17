@@ -20,7 +20,10 @@ import {
   IsArray,
   ArrayNotEmpty,
   ArrayMaxSize,
+  IsBoolean,
+  IsOptional,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CustomerService } from './customer.service';
@@ -28,9 +31,14 @@ export class BulkDeleteCustomersDto {
   @IsArray()
   @ArrayNotEmpty()
   @ArrayMaxSize(100)
+  @Type(() => Number)
   @IsInt({ each: true })
   @Min(1, { each: true })
   ids: number[];
+
+  @IsOptional()
+  @IsBoolean()
+  cancelSubscriptions?: boolean;
 }
 class CustomerAccountDto {
   @IsString() @MinLength(10) @MaxLength(128) password: string;
@@ -54,17 +62,24 @@ export class CustomerController {
       .authorize(user)
       .then((c) => this.customers.detail(user, c.id));
   }
-  @Post('customers/bulk-delete') bulkDelete(
+  @Post(['customers/bulk-delete', 'customers/bulk'])
+  @Delete(['customers/bulk-delete', 'customers/bulk'])
+  bulkDelete(
     @CurrentUser() user: any,
     @Body() dto: BulkDeleteCustomersDto,
+    @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    return this.customers.bulkRemove(dto.ids, user);
+    const cancel = dto?.cancelSubscriptions ?? (cancelQuery === 'true' || cancelQuery === '1');
+    const ids = Array.isArray(dto) ? dto : (dto?.ids || []);
+    return this.customers.bulkRemove(ids, user, cancel);
   }
   @Delete('customers/:id') remove(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
+    @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    return this.customers.remove(id, user);
+    const cancel = cancelQuery === 'true' || cancelQuery === '1';
+    return this.customers.remove(id, user, cancel);
   }
   @Get('customers/:id') detail(
     @CurrentUser() user: any,

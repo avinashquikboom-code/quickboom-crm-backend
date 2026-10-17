@@ -8,9 +8,9 @@ import { CustomerService } from './customer.service';
 import { BulkDeleteCustomersDto } from './customer.controller';
 const admin = { id: 1, accountType: 'ADMIN' };
 function setup(
-  records = [
-    { id: 2, deletedAt: null },
-    { id: 3, deletedAt: null },
+  records: Array<{ id: number; userId?: number | null; deletedAt: any }> = [
+    { id: 2, userId: null, deletedAt: null },
+    { id: 3, userId: null, deletedAt: null },
   ],
 ) {
   const tx: any = {
@@ -19,8 +19,17 @@ function setup(
       findMany: jest.fn().mockResolvedValue(records),
       updateMany: jest.fn().mockResolvedValue({ count: records.length }),
     },
-    customerSubscription: { findFirst: jest.fn().mockResolvedValue(null) },
-    customerCheckout: { findFirst: jest.fn().mockResolvedValue(null) },
+    customerSubscription: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    customerCheckout: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    user: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
   const prisma: any = { $transaction: jest.fn((fn) => fn(tx)) };
   return { service: new CustomerService(prisma), prisma, tx };
@@ -97,6 +106,33 @@ describe('single and bulk customer soft deletion', () => {
       }),
     );
     expect(tx.customer.updateMany).not.toHaveBeenCalled();
+  });
+  it('cascades subscription and checkout cancellation when cancelSubscriptions is true', async () => {
+    const { service, tx } = setup([{ id: 2, userId: 10, deletedAt: null }]);
+    tx.customerSubscription.findFirst.mockResolvedValue({ customerId: 2 });
+    await expect(service.bulkRemove([2], admin, true)).resolves.toEqual({
+      deletedCount: 1,
+      ids: [2],
+    });
+    expect(tx.customerSubscription.updateMany).toHaveBeenCalledWith({
+      where: {
+        customerId: { in: [2] },
+        status: { in: ['ACTIVE', 'PENDING_ACTIVATION'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    expect(tx.customerCheckout.updateMany).toHaveBeenCalledWith({
+      where: {
+        customerId: { in: [2] },
+        status: { notIn: ['PAID', 'CANCELLED'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [10] } },
+      data: { isActive: false },
+    });
+    expect(tx.customer.updateMany).toHaveBeenCalledTimes(1);
   });
   it('blocks unresolved checkouts and does not partially delete the batch', async () => {
     const { service, tx } = setup();

@@ -207,11 +207,11 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async remove(id: number, actor: any) {
-    return this.bulkRemove([id], actor);
+  async remove(id: number, actor: any, cancelSubscriptions = false) {
+    return this.bulkRemove([id], actor, cancelSubscriptions);
   }
 
-  async bulkRemove(rawIds: number[], actor: any) {
+  async bulkRemove(rawIds: number[], actor: any, cancelSubscriptions = false) {
     if (!isUserAdmin(actor))
       throw new ForbiddenException("Administrator required");
     if (
@@ -232,7 +232,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       );
       const customers = await tx.customer.findMany({
         where: { id: { in: ids } },
-        select: { id: true, deletedAt: true },
+        select: { id: true, userId: true, deletedAt: true },
       });
       if (customers.length !== ids.length)
         throw new NotFoundException("One or more customers were not found");
@@ -240,29 +240,61 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         .filter((customer) => !customer.deletedAt)
         .map((customer) => customer.id);
       if (!liveIds.length) return { deletedCount: 0, ids: [] };
-      const liveSubscription = await tx.customerSubscription.findFirst({
-        where: {
-          customerId: { in: liveIds },
-          status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
-          endDate: { gt: new Date() },
-        },
-        select: { customerId: true },
-      });
-      if (liveSubscription)
-        throw new BadRequestException(
-          `Customer #${liveSubscription.customerId} has an active or pending subscription. Cancel it before deleting.`,
-        );
-      const unsettledCheckout = await tx.customerCheckout.findFirst({
-        where: {
-          customerId: { in: liveIds },
-          status: { notIn: ["PAID", "CANCELLED"] },
-        },
-        select: { customerId: true },
-      });
-      if (unsettledCheckout)
-        throw new BadRequestException(
-          `Customer #${unsettledCheckout.customerId} has an unresolved checkout. Resolve it before deleting.`,
-        );
+
+      if (cancelSubscriptions) {
+        if (tx.customerSubscription?.updateMany) {
+          await tx.customerSubscription.updateMany({
+            where: {
+              customerId: { in: liveIds },
+              status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
+            },
+            data: { status: "CANCELLED" },
+          });
+        }
+        if (tx.customerCheckout?.updateMany) {
+          await tx.customerCheckout.updateMany({
+            where: {
+              customerId: { in: liveIds },
+              status: { notIn: ["PAID", "CANCELLED"] },
+            },
+            data: { status: "CANCELLED" },
+          });
+        }
+        const userIds = customers
+          .map((c) => c.userId)
+          .filter((uid): uid is number => typeof uid === "number" && uid > 0);
+        if (userIds.length > 0 && tx.user?.updateMany) {
+          await tx.user.updateMany({
+            where: { id: { in: userIds } },
+            data: { isActive: false },
+          });
+        }
+      } else {
+        const liveSubscription = await tx.customerSubscription.findFirst({
+          where: {
+            customerId: { in: liveIds },
+            status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
+            endDate: { gt: new Date() },
+          },
+          select: { customerId: true },
+        });
+        if (liveSubscription)
+          throw new BadRequestException(
+            `Customer #${liveSubscription.customerId} has an active or pending subscription. Cancel it before deleting.`,
+          );
+        const unsettledCheckout = await tx.customerCheckout.findFirst({
+          where: {
+            customerId: { in: liveIds },
+            status: { notIn: ["PAID", "CANCELLED"] },
+          },
+          select: { customerId: true },
+        });
+        if (unsettledCheckout)
+          throw new BadRequestException(
+            `Customer #${unsettledCheckout.customerId} has an unresolved checkout. Resolve it before deleting.`,
+          );
+      }
+
       const result = await tx.customer.updateMany({
         where: { id: { in: liveIds }, deletedAt: null },
         data: { deletedAt: new Date() },
