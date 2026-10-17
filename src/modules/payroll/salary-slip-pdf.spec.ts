@@ -1,7 +1,7 @@
 import { PayrollService } from './payroll.service';
 import { PayrollController } from './payroll.controller';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { WorkspaceAccessGuard as PermissionsGuard } from '../../common/guards/workspace-access.guard';
 import { Reflector } from '@nestjs/core';
 import { PATH_METADATA, GUARDS_METADATA } from '@nestjs/common/constants';
 

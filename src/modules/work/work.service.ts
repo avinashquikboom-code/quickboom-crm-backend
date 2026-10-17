@@ -300,6 +300,7 @@ return undefined;
   async findAll(
     scopedCustomerId?: number | string,
     query: {
+      viewerEmployeeId?: number;
       status?: WorkStatus;
       workType?: WorkType;
       employeeId?: number | string;
@@ -338,6 +339,15 @@ return undefined;
         { notes: { contains: s, mode: 'insensitive' } },
 
       ];
+    }
+
+    if (query.viewerEmployeeId) {
+      const employeeId = query.viewerEmployeeId;
+      where.AND = [{ OR: [
+        { assignedToId: employeeId }, { editorId: employeeId },
+        { tasks: { some: { assignedToId: employeeId } } },
+        { team: { isActive: true, OR: [{ leaderId: employeeId }, { members: { some: { employeeId } } }] } },
+      ] }];
     }
 
     const [items, total] = await Promise.all([
@@ -1792,7 +1802,7 @@ status: ${item.status}`);
     }>,
     leaderId?: number | null,
     roundRobinIndex: number = 0,
-    options?: { roleMatchOnly?: boolean },
+    options?: { designationMatchOnly?: boolean },
   ): number | null {
     if (!members || members.length === 0) {
       return leaderId || null;
@@ -1805,7 +1815,7 @@ status: ${item.status}`);
       return chosen.employeeId;
     }
 
-    if (options?.roleMatchOnly) return null;
+    if (options?.designationMatchOnly) return null;
 
     // Fallback: Round-robin among all team members or leader
     if (members.length > 0) {

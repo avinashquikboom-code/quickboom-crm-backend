@@ -12,7 +12,7 @@ export class WorkRecordGuard implements CanActivate {
     if (!employeeId || req.user.employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
     const workId = req.params?.id ?? req.body?.activityScheduleId;
     if (workId) {
-      if (['assignTeam', 'reviewWork', 'remove'].includes(context.getHandler().name)) throw new ForbiddenException('Administrator account required');
+      if (['assignTeam', 'reviewWork', 'approveWork', 'requestRework', 'cancelWork', 'remove'].includes(context.getHandler().name)) throw new ForbiddenException('Administrator account required');
       const work = await this.prisma.work.findFirst({ where: { id: Number(workId), OR: [
         { assignedToId: employeeId }, { editorId: employeeId }, { tasks: { some: { assignedToId: employeeId } } },
         { team: { isActive: true, OR: [{ leaderId: employeeId }, { members: { some: { employeeId } } }] } },

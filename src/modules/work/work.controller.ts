@@ -12,16 +12,6 @@ import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
 
 import { parseCalendarMonthYear } from './calendar-query.util';
 
-function mapWorkTypeToModule(workType?: WorkType | string): string {
-  if (!workType) return 'video_edit';
-  const wt = String(workType).toUpperCase();
-  if (wt.includes('VIDEO') || wt.includes('EDIT')) return 'video_edit';
-  if (wt.includes('POST') || wt.includes('GRAPHIC')) return 'post_design';
-  if (wt.includes('STORY')) return 'story_design';
-  if (wt.includes('REEL') || wt.includes('SHOOT')) return 'reel_shoot';
-  return 'video_edit';
-}
-
 @ApiTags('Work & SSM Management')
 @UseGuards(JwtAuthGuard, WorkRecordGuard)
 @Controller('works')
@@ -48,6 +38,7 @@ export class WorkController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
+    @CurrentUser() user: any,
     @CurrentCustomer() customerId: string,
     @Query('employeeId') employeeId?: string,
     @Query('editorId') editorId?: string,
@@ -58,6 +49,7 @@ export class WorkController {
     @Query('limit') limit?: string,
   ) {
     return this.workService.findAll(customerId, {
+      viewerEmployeeId: isUserAdmin(user) ? undefined : user.employee.id,
       status,
       workType,
       employeeId,

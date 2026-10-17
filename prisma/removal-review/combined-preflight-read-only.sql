@@ -39,3 +39,12 @@ SELECT "type", "code", COUNT(*) AS duplicate_count FROM "master_items" WHERE "ty
 
 SELECT conrelid::regclass AS child_table, confrelid::regclass AS parent_table, conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE contype = 'f' ORDER BY parent_table::text, child_table::text, conname;
 SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at;
+
+-- Review administrator identity before removing Role/UserRole.
+SELECT u.id, u.email, r.name, r.type::text
+FROM "User" u JOIN "UserRole" ur ON ur."userId" = u.id
+JOIN "Role" r ON r.id = ur."roleId"
+WHERE u."deletedAt" IS NULL AND r."deletedAt" IS NULL
+AND (r.type::text IN ('SUPER_ADMIN', 'TENANT_ADMIN') OR
+  regexp_replace(upper(r.name), '[^A-Z]', '', 'g') IN
+  ('SUPERADMIN','SUPERADMINISTRATOR','ADMIN','COMPANYADMIN','TENANTADMIN'));
