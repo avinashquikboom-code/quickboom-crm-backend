@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ConflictException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
 import { isUserSuperAdmin } from '../../common/utils/account.util';
@@ -1031,7 +1031,8 @@ try {
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
           rawData: p.rawData || undefined,
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
 
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
@@ -1133,7 +1134,8 @@ try {
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
-      isImported: place.isImported,
+      isImported: Boolean(place.importedLeadId) || place.isImported,
+      importedLeadId: place.importedLeadId || undefined,
 
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
@@ -1155,6 +1157,9 @@ try {
     dto: CreateDataCaptureDto,
     req?: any,
   ): Promise<CapturedPlace> {
+    if (String(dto.status || '').trim().toUpperCase() === 'LEAD_CREATED') {
+      throw new BadRequestException('Use Lead import to create and link a Lead');
+    }
     let numCustomerId = Number(customerId);
 
 
@@ -1233,7 +1238,8 @@ try {
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
-      isImported: place.isImported,
+      isImported: Boolean(place.importedLeadId) || place.isImported,
+      importedLeadId: place.importedLeadId || undefined,
 
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
@@ -1269,14 +1275,25 @@ try {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
+    const currentStatus = String(existing.status || 'CAPTURED').trim().toUpperCase();
+    const nextStatus = dto.status?.trim().toUpperCase();
+    if ((dto.isImported !== undefined && dto.isImported !== existing.isImported) ||
+        (nextStatus === 'LEAD_CREATED' && !existing.importedLeadId)) {
+      throw new BadRequestException('Use Lead import to create and link a Lead');
+    }
+    if (nextStatus && nextStatus !== currentStatus &&
+        (existing.importedLeadId || ['VALIDATED', 'REJECTED', 'LEAD_CREATED'].includes(currentStatus))) {
+      throw new BadRequestException('This record already has a final decision');
+    }
+
     let updatedPhotosField: any = undefined;
     if (dto.photos !== undefined || dto.googlePhotos !== undefined) {
       const { googlePhotos: inGP, photos: inUrls } = this.normalizeStoredPhotos(dto.photos || dto.googlePhotos);
       updatedPhotosField = inGP.length > 0 ? inGP : (inUrls.length > 0 ? inUrls : null);
     }
 
-    const updated = await this.prisma.dataCapturePlace.update({
-      where: { id: numId },
+    const changed = await this.prisma.dataCapturePlace.updateMany({
+      where: { id: numId, deletedAt: null, importedLeadId: existing.importedLeadId, status: existing.status },
       data: {
         businessName: dto.businessName !== undefined ? dto.businessName.trim() : undefined,
         category: dto.category !== undefined ? dto.category?.trim() : undefined,
@@ -1292,14 +1309,16 @@ try {
         googleMapsUrl: dto.googleMapsUrl !== undefined ? dto.googleMapsUrl : undefined,
         businessStatus: dto.businessStatus !== undefined ? dto.businessStatus : undefined,
         source: dto.source !== undefined ? dto.source : undefined,
-        status: dto.status !== undefined ? dto.status.toUpperCase() : undefined,
+        status: nextStatus,
         notes: dto.notes !== undefined ? dto.notes : undefined,
-        isImported: dto.isImported !== undefined ? dto.isImported : undefined,
         rawData: dto.rawData !== undefined ? dto.rawData : undefined,
         photos: updatedPhotosField as any,
         socialMedia: (dto.socialMedia !== undefined ? dto.socialMedia : undefined) as any,
       },
     });
+
+    if (changed.count !== 1) throw new ConflictException('Record changed; refresh its details before saving');
+    const updated = await this.prisma.dataCapturePlace.findUniqueOrThrow({ where: { id: numId } });
 
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || undefined, updated);
     const { googlePhotos: updatedGP, photos: updatedPhotoUrls } = this.normalizeStoredPhotos(updated.photos);
@@ -1325,7 +1344,8 @@ try {
       status: updated.status || 'CAPTURED',
       notes: updated.notes || undefined,
       rawData: updated.rawData || undefined,
-      isImported: updated.isImported,
+      isImported: Boolean(updated.importedLeadId) || updated.isImported,
+      importedLeadId: updated.importedLeadId || undefined,
 
       capturedAt: updated.createdAt,
       updatedAt: updated.updatedAt,
@@ -1648,7 +1668,7 @@ try {
     switch (dto.action) {
       case 'validate': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids },  deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'VALIDATED' },
         });
         affectedCount = res.count;
@@ -1656,7 +1676,7 @@ try {
       }
       case 'reject': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids },  deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'REJECTED' },
         });
         affectedCount = res.count;
@@ -1664,7 +1684,7 @@ try {
       }
       case 'mark_duplicate': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids },  deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'DUPLICATE' },
         });
         affectedCount = res.count;
@@ -1739,7 +1759,8 @@ try {
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
 
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
@@ -1807,7 +1828,8 @@ try {
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
+          importedLeadId: p.importedLeadId || undefined,
 
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,

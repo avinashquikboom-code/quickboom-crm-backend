@@ -1,3 +1,4 @@
+import { LeadModule } from './modules/lead/lead.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
@@ -91,6 +92,7 @@ import { AppController } from './app.controller';
     PayrollModule,
     DashboardModule,
     DataCaptureModule,
+    LeadModule,
     DataManagementModule,
     ShiftModule,
     LoanModule,

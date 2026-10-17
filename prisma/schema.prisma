@@ -94,6 +94,7 @@ model PaymentHistory {
 }
 
 model User {
+  createdLeads            Lead[]            @relation("LeadCreator")
   accountType             String            @default("EMPLOYEE")
   id                      Int               @id @default(autoincrement())
   email                   String            @unique
@@ -721,6 +722,7 @@ model Designation {
 }
 
 model Employee {
+  assignedLeads            Lead[]                   @relation("LeadAssignee")
   id                       Int                      @id @default(autoincrement())
   userId                   Int?                     @unique
   employeeCode             String
@@ -1426,6 +1428,8 @@ model DataCaptureJob {
 }
 
 model DataCapturePlace {
+  importedLeadId   Int?
+  importedLead     Lead?              @relation(fields: [importedLeadId], references: [id], onDelete: SetNull)
   id               Int                @id @default(autoincrement())
   jobId            String?
   googlePlaceId    String?
@@ -1456,6 +1460,7 @@ model DataCapturePlace {
   deletedAt        DateTime?
   job              DataCaptureJob?    @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
 
+  @@index([importedLeadId])
   @@index([jobId])
   @@index([googlePlaceId])
   @@index([status])
@@ -2587,4 +2592,50 @@ model CommissionShare {
   @@index([employeeId, status])
   @@index([payrollItemId])
   @@map("commission_shares")
+}
+
+// Independent single-organization Lead workflow; no Customer or RBAC dependencies.
+model Lead {
+  id                 Int                @id @default(autoincrement())
+  companyName        String
+  firstName          String?
+  lastName           String?
+  phone              String?
+  email              String?
+  website            String?
+  address            String?
+  city               String?
+  state              String?
+  country            String?
+  pincode            String?
+  category           String?
+  googlePlaceId      String?            @unique
+  latitude           Float?
+  longitude          Float?
+  source             String             @default("MANUAL")
+  createdFrom        RecordCreatedFrom  @default(ADMIN_PANEL)
+  status             CrmLeadStatus      @default(NEW)
+  notes              String?
+  assignedToId       Int?
+  createdById        Int
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  deletedAt          DateTime?
+  assignedTo         Employee?          @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy          User               @relation("LeadCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  dataCaptureRecords DataCapturePlace[]
+
+  @@index([deletedAt, createdAt])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@map("crm_leads")
+}
+
+enum CrmLeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  FOLLOW_UP
+  WON
+  LOST
 }

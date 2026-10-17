@@ -1,3 +1,5 @@
+import { LeadService } from '../lead/lead.service';
+import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import {
   Controller,
   Post,
@@ -6,6 +8,7 @@ import {
   Delete,
   Body,
   Param,
+  ParseIntPipe,
   Query,
   UseGuards,
   ValidationPipe,
@@ -39,7 +42,7 @@ import {
 @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
-  constructor(private readonly dataCaptureService: DataCaptureService) {}
+  constructor(private readonly dataCaptureService: DataCaptureService, private readonly leads: LeadService) {}
 
   /**
    * GET /api/v1/data-capture
@@ -143,6 +146,15 @@ export class DataCaptureController {
     @Req() req: any,
   ) {
     return this.dataCaptureService.createPlace(customerId, userId, dto, req);
+  }
+
+  @Post(':id/import-lead')
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Atomically convert a validated Data Capture record into a Lead' })
+  async importLead(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any, @Req() req: any) {
+    const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user));
+    const record = await this.dataCaptureService.getPlaceById(undefined, id);
+    return { lead: result.lead, record, alreadyImported: result.alreadyImported };
   }
 
   /**
