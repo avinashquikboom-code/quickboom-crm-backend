@@ -106,7 +106,7 @@ describe('independent Lead creation and Data Capture conversion', () => {
   });
 
   it('creates manual Leads with MANUAL/NEW and no soft deletion or tenant fields', async () => {
-    const prisma = { lead: { create: jest.fn(async ({ data }) => ({ id: 44, ...data })) } };
+    const prisma = { lead: { create: jest.fn(async ({ data }) => ({ id: 44, ...data })) }, $transaction: jest.fn(async (fn) => fn(prisma)) };
     const result = await new LeadService(prisma as any).create({ companyName: ' Manual business ' }, admin, platform);
     expect(result).toMatchObject({ id: 44, companyName: 'Manual business', source: 'MANUAL', status: 'NEW', createdFrom: 'ADMIN_PANEL', deletedAt: null, createdById: 2 });
     expect(result).not.toHaveProperty('customerId');
@@ -135,6 +135,7 @@ describe('independent Lead creation and Data Capture conversion', () => {
     const existingLead = { id: 50, createdById: 2, assignedToId: null, status: 'NEW', deletedAt: null, notes: 'Original note' };
     const updatedLead = { ...existingLead, status: 'DETAILS_SEND', notes: 'Original note\nSent catalog' };
     const prisma = {
+      $transaction: jest.fn(async (fn) => fn(prisma)),
       lead: {
         findFirst: jest.fn().mockResolvedValue(existingLead),
         update: jest.fn().mockResolvedValue(updatedLead),
@@ -203,7 +204,7 @@ describe('shared BPO and Admin pipeline stage synchronization', () => {
   const bpo = { id: 4, accountType: 'EMPLOYEE', employee: { id: 7, status: 'ACTIVE', designation: { name: 'BPO' } } };
   function fixture(assignedToId: number | null = 7) {
     let record = { id: 943, createdById: 2, assignedToId, status: 'NEW', notes: 'Existing history', deletedAt: null };
-    const prisma = { lead: {
+    const prisma = { $transaction: jest.fn(async (fn) => fn(prisma)), lead: {
       findFirst: jest.fn(async () => record),
       update: jest.fn(async ({ data }) => (record = { ...record, ...data })),
     } };

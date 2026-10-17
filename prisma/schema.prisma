@@ -21,6 +21,12 @@ model Plan {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   deletedAt        DateTime?
+  taxRateBps       Int @default(1800)
+  yearlyDiscountBps Int @default(2000)
+  billingIntervals String[] @default(["MONTHLY", "YEARLY"])
+  isRecommended Boolean @default(false)
+  customerSubscriptions CustomerSubscription[]
+  checkouts CustomerCheckout[]
   monthlySchedules MonthlySchedule[]
   commissions      Commission[]
   couponPlans      CouponPlan[]
@@ -94,6 +100,7 @@ model PaymentHistory {
 }
 
 model User {
+  customerAccount Customer?
   createdLeads            Lead[]            @relation("LeadCreator")
   accountType             String            @default("EMPLOYEE")
   id                      Int               @id @default(autoincrement())
@@ -2596,6 +2603,7 @@ model CommissionShare {
 
 // Independent single-organization Lead workflow; no Customer or RBAC dependencies.
 model Lead {
+  customer Customer?
   id                 Int                @id @default(autoincrement())
   companyName        String
   firstName          String?
@@ -2643,4 +2651,73 @@ enum CrmLeadStatus {
   FINAL_CALL
   WON
   LOST
+}
+
+// Customer billing for the current single organization. Legacy billing rows remain untouched.
+model Customer {
+  id Int @id @default(autoincrement())
+  originLeadId Int @unique
+  userId Int? @unique
+  companyName String
+  firstName String?
+  lastName String?
+  email String?
+  phone String?
+  status CustomerLifecycleStatus @default(INACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lead Lead @relation(fields: [originLeadId], references: [id], onDelete: Restrict)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscriptions CustomerSubscription[]
+  checkouts CustomerCheckout[]
+  @@map("customer_accounts")
+}
+
+enum CustomerLifecycleStatus {
+  INACTIVE
+  ACTIVE
+}
+
+model CustomerSubscription {
+  id Int @id @default(autoincrement())
+  customerId Int
+  planId Int
+  checkoutId String @unique
+  status String @default("PENDING_ACTIVATION")
+  startDate DateTime
+  endDate DateTime
+  activationDate DateTime?
+  createdAt DateTime @default(now())
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  checkout CustomerCheckout @relation(fields: [checkoutId], references: [id], onDelete: Restrict)
+  @@index([customerId, status, endDate])
+  @@index([status, activationDate])
+  @@map("customer_subscriptions")
+}
+
+model CustomerCheckout {
+  id String @id @default(uuid())
+  customerId Int
+  planId Int
+  idempotencyKey String
+  billingCycle SubscriptionBillingCycle
+  basePaise Int
+  discountPaise Int
+  taxablePaise Int
+  gstPaise Int
+  totalPaise Int
+  taxRateBps Int
+  yearlyDiscountBps Int
+  status String @default("PENDING")
+  orderId String? @unique
+  paymentId String? @unique
+  paymentHistoryId Int? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  subscription CustomerSubscription?
+  @@unique([customerId, idempotencyKey])
+  @@map("customer_checkouts")
 }

@@ -1,4 +1,4 @@
-import { Injectable, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, ExecutionContext, UnauthorizedException, ForbiddenException, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'crypto';
@@ -146,6 +146,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       }
     }
 
+    if (user.accountType === 'CUSTOMER' && (!context || !this.reflector.getAllAndOverride<boolean>('customerBillingAccess', [context.getHandler(), context.getClass()]))) throw new ForbiddenException('Customer billing access only');
     return user;
   }
 

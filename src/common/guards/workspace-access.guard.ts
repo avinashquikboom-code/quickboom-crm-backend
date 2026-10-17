@@ -12,6 +12,7 @@ export class WorkspaceAccessGuard implements CanActivate {
     if (!user?.id) throw new ForbiddenException('Authentication required');
     if (isUserAdmin(user)) return true;
     const actions = this.reflector.getAllAndOverride<{module: string; action: string}[]>(WORKSPACE_ACTION_KEY, [context.getHandler(), context.getClass()]) || [];
+    if (user.accountType === 'CUSTOMER' && actions.length > 0 && actions.every(a => (a.module === 'CUSTOMER_PLANS' && a.action === 'CREATE') || (a.module === 'PAYMENTS' && a.action === 'VIEW'))) return true;
     const ownModules = new Set(['ATTENDANCE', 'LEAVE', 'TASKS', 'VISITS', 'DATA_CAPTURE']);
     if (user.employee?.status === 'ACTIVE' && actions.every(a => ownModules.has(a.module) || (a.module === 'SALARY' && a.action === 'VIEW'))) return true;
     throw new ForbiddenException('Administrator account required');

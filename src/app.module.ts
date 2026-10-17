@@ -1,3 +1,4 @@
+import { CustomerModule } from './modules/customer/customer.module';
 import { LeadModule } from './modules/lead/lead.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -66,6 +67,7 @@ import { AppController } from './app.controller';
     AuthModule,
     // Register before CustomerModule so /customer/influencers is not captured by GET /customer/:id
     InfluencerModule,
+    CustomerModule,
     SubscriptionModule,
     PaymentModule,
     ScheduleModule,

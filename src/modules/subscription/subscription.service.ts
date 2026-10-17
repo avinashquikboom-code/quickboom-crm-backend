@@ -1,3 +1,5 @@
+import { subscriptionPrice } from '../customer/billing-price.util';
+import { CustomerService } from '../customer/customer.service';
 import { GoneException } from '@nestjs/common';
 import {
   Injectable,
@@ -9,7 +11,7 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { PaymentMethod, InvoiceStatus,  } from '@prisma/client';
+import { Prisma, PaymentMethod, InvoiceStatus,  } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 import {
@@ -48,6 +50,37 @@ import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.uti
 
 @Injectable()
 export class SubscriptionService {
+  private validatePlanPricing(dto: any) {
+    for (const key of ["monthlyPrice"])
+      if (
+        dto[key] !== undefined &&
+        (!Number.isFinite(Number(dto[key])) ||
+          Number(dto[key]) < 0 ||
+          !new Prisma.Decimal(String(dto[key])).mul(100).isInteger())
+      )
+        throw new BadRequestException(
+          "Price must be non-negative rupees with at most two decimals",
+        );
+    for (const key of ["taxRateBps", "yearlyDiscountBps"])
+      if (
+        dto[key] !== undefined &&
+        (!Number.isInteger(dto[key]) || dto[key] < 0 || dto[key] > 10000)
+      )
+        throw new BadRequestException(
+          "Rates must be integer basis points from 0 to 10000",
+        );
+    if (
+      dto.billingIntervals !== undefined &&
+      (!Array.isArray(dto.billingIntervals) ||
+        !dto.billingIntervals.length ||
+        dto.billingIntervals.some((c) => !["MONTHLY", "YEARLY"].includes(c)))
+    )
+      throw new BadRequestException("Invalid billing intervals");
+    for (const key of ["isActive", "isRecommended"])
+      if (dto[key] !== undefined && typeof dto[key] !== "boolean")
+        throw new BadRequestException("Expected boolean");
+  }
+
   private readonly logger = new Logger(SubscriptionService.name);
 
   constructor(
@@ -61,6 +94,7 @@ export class SubscriptionService {
     @Optional() private invoiceService?: InvoiceService,
     @Optional() private commissionService?: CommissionService,
     @Optional() private couponService?: CouponService,
+    @Optional() private customers?: CustomerService,
   ) {}
 
   static calculateExpiryDate(startDate: Date, cycle: SubscriptionBillingCycle, durationMonths?: number): Date {
@@ -69,90 +103,9 @@ export class SubscriptionService {
   }
 
   async getPlans(includeInactive = false) {
-    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /plans\nincludeInactive: ${includeInactive}`);
-
-    const totalCount = await this.prisma.plan.count();
-    if (totalCount === 0) {
-      // Seed standard QuikBoom subscription packages on initial empty database
-      const standardPlans = [
-        {
-          name: 'Basic Package',
-          code: 'BASIC',
-          description: 'Starter Plan for emerging businesses',
-          monthlyPrice: 9999,
-          yearlyPrice: 95990,
-          userLimit: 5,
-          
-          storageLimit: BigInt(5368709120),
-          features: [
-            '4 Reels',
-            '3 Creative Posts',
-            '1 Influencer Promotion',
-            '3 Stories',
-            'Social Media Account Management',
-            'Content Writing & Captions',
-            'Trending Hashtags',
-            'Meta Ads Campaign Setup & Management',
-            'Google Ads Campaign Setup & Management',
-            'Monthly Performance Report',
-            'Ads will run only during the content execution period.',
-            'Meta & Google Ads Budget will be paid by the client.',
-          ],
-        },
-        {
-          name: 'Standard Package',
-          code: 'STANDARD',
-          description: 'Growth Plan for expanding companies',
-          monthlyPrice: 14999,
-          yearlyPrice: 143990,
-          userLimit: 25,
-          
-          storageLimit: BigInt(26843545600),
-          features: [
-            '6 Reels',
-            '4 Creative Posts',
-            '2 Influencer Promotions',
-            '5 Stories',
-            'Social Media Account Management',
-            'Trending Hashtags',
-            'Meta Ads Campaign Setup & Management',
-            'Google Ads Campaign Setup & Management',
-            'Monthly Performance Report',
-            'Ads will run only during the content execution period.',
-            'Meta & Google Ads Budget will be paid by the client.',
-          ],
-        },
-        {
-          name: 'Premium Package',
-          code: 'PREMIUM',
-          description: 'Scale Plan for enterprise-level growth',
-          monthlyPrice: 25999,
-          yearlyPrice: 249590,
-          userLimit: 100,
-          
-          storageLimit: BigInt(107374182400),
-          features: [
-            '2 Product Reels',
-            '8 Influencer Reels (Total 10 Reels)',
-            '8 Creative Posts',
-            '30 Stories',
-            'Complete Social Media Management',
-            'Premium Content Strategy & Caption Writing',
-            'Advanced Hashtag Research',
-            'Meta Ads Campaign Setup & Management',
-            'Google Ads Campaign Setup & Management',
-            'Detailed Monthly Analytics Report',
-            'Priority Graphic Designing',
-            'Ads will run throughout the campaign/content execution period.',
-            'Meta & Google Ads Budget will be paid by the client.',
-          ],
-        },
-      ];
-
-      for (const p of standardPlans) {
-        await this.prisma.plan.create({ data: p });
-      }
-    }
+    this.logger.log(
+      `[PLAN_API_DEBUG]\nendpoint: /plans\nincludeInactive: ${includeInactive}`,
+    );
 
     const where: any = { deletedAt: null };
     if (!includeInactive) {
@@ -161,7 +114,7 @@ export class SubscriptionService {
 
     const plans = await this.prisma.plan.findMany({
       where,
-      orderBy: { monthlyPrice: 'asc' },
+      orderBy: { monthlyPrice: "asc" },
     });
 
     this.logger.log(`[PLAN_API_DEBUG]\ndatabaseResult count: ${plans.length}`);
@@ -169,10 +122,10 @@ export class SubscriptionService {
     const paymentMethods = await this.resolvePaymentMethodsConfig();
 
     const mapped = plans.map((p) => {
-      let subtitle = 'Custom Plan';
-      if (p.code === 'BASIC') subtitle = 'Starter Plan';
-      else if (p.code === 'STANDARD') subtitle = 'Growth Plan';
-      else if (p.code === 'PREMIUM') subtitle = 'Scale Plan';
+      let subtitle = "Custom Plan";
+      if (p.code === "BASIC") subtitle = "Starter Plan";
+      else if (p.code === "STANDARD") subtitle = "Growth Plan";
+      else if (p.code === "PREMIUM") subtitle = "Scale Plan";
       else if (p.description) subtitle = p.description;
 
       return {
@@ -184,11 +137,20 @@ export class SubscriptionService {
         monthlyPrice: Number(p.monthlyPrice),
         yearlyPrice: Number(p.yearlyPrice),
         userLimit: p.userLimit,
-        
+
         storageLimitBytes: Number(p.storageLimit),
         features: p.features,
         isActive: p.isActive,
-        isRecommended: p.code === 'STANDARD',
+        isRecommended: p.isRecommended,
+        taxRateBps: p.taxRateBps,
+        yearlyDiscountBps: p.yearlyDiscountBps,
+        billingIntervals: p.billingIntervals,
+        pricing: Object.fromEntries(
+          p.billingIntervals.map((cycle) => [
+            cycle,
+            subscriptionPrice(p, cycle),
+          ]),
+        ),
         paymentMethods,
         onlinePaymentEnabled: paymentMethods.online,
         offlinePaymentEnabled: paymentMethods.offline,
@@ -202,7 +164,7 @@ export class SubscriptionService {
   async getPlanById(id: number | string, includeInactive = false) {
     const numId = Number(id);
     if (!numId || isNaN(numId)) {
-      throw new BadRequestException('Valid Plan ID is required');
+      throw new BadRequestException("Valid Plan ID is required");
     }
 
     const where: any = { id: numId, deletedAt: null };
@@ -215,13 +177,15 @@ export class SubscriptionService {
     });
 
     if (!plan) {
-      throw new NotFoundException('This subscription plan is no longer available.');
+      throw new NotFoundException(
+        "This subscription plan is no longer available.",
+      );
     }
 
-    let subtitle = 'Custom Plan';
-    if (plan.code === 'BASIC') subtitle = 'Starter Plan';
-    else if (plan.code === 'STANDARD') subtitle = 'Growth Plan';
-    else if (plan.code === 'PREMIUM') subtitle = 'Scale Plan';
+    let subtitle = "Custom Plan";
+    if (plan.code === "BASIC") subtitle = "Starter Plan";
+    else if (plan.code === "STANDARD") subtitle = "Growth Plan";
+    else if (plan.code === "PREMIUM") subtitle = "Scale Plan";
     else if (plan.description) subtitle = plan.description;
 
     const paymentMethods = await this.resolvePaymentMethodsConfig();
@@ -235,11 +199,20 @@ export class SubscriptionService {
       monthlyPrice: Number(plan.monthlyPrice),
       yearlyPrice: Number(plan.yearlyPrice),
       userLimit: plan.userLimit,
-      
+
       storageLimitBytes: Number(plan.storageLimit),
       features: plan.features,
       isActive: plan.isActive,
-      isRecommended: plan.code === 'STANDARD',
+      isRecommended: plan.isRecommended,
+      taxRateBps: plan.taxRateBps,
+      yearlyDiscountBps: plan.yearlyDiscountBps,
+      billingIntervals: plan.billingIntervals,
+      pricing: Object.fromEntries(
+        plan.billingIntervals.map((cycle) => [
+          cycle,
+          subscriptionPrice(plan, cycle),
+        ]),
+      ),
       paymentMethods,
       onlinePaymentEnabled: paymentMethods.online,
       offlinePaymentEnabled: paymentMethods.offline,
@@ -308,27 +281,47 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     leadLimit?: number;
     storageLimitBytes?: number;
     features?: string[];
+    taxRateBps?: number;
+    yearlyDiscountBps?: number;
+    billingIntervals?: string[];
+    isRecommended?: boolean;
+    isActive?: boolean;
   }) {
-    const code = dto.code || dto.name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    this.validatePlanPricing(dto);
+    const code = dto.code || dto.name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
     const monthlyPrice = Number(dto.monthlyPrice) || 0;
-    const yearlyPrice = dto.yearlyPrice ? Number(dto.yearlyPrice) : monthlyPrice * 10;
+    const yearlyPrice = Number(
+      (
+        monthlyPrice *
+        12 *
+        (1 - (dto.yearlyDiscountBps ?? 2000) / 10000)
+      ).toFixed(2),
+    );
     const userLimit = Number(dto.userLimit) || 20;
     const leadLimit = Number(dto.leadLimit) || 1000;
-    const storageLimit = dto.storageLimitBytes ? BigInt(dto.storageLimitBytes) : BigInt(10737418240);
-    const features = Array.isArray(dto.features) ? dto.features : ['CRM', 'HRM', 'Payroll Automation'];
+    const storageLimit = dto.storageLimitBytes
+      ? BigInt(dto.storageLimitBytes)
+      : BigInt(10737418240);
+    const features = Array.isArray(dto.features)
+      ? dto.features
+      : ["CRM", "HRM", "Payroll Automation"];
 
     const plan = await this.prisma.plan.create({
       data: {
         name: dto.name,
         code,
-        description: dto.description || '',
+        description: dto.description || "",
         monthlyPrice,
         yearlyPrice,
         userLimit,
-        
+
         storageLimit,
         features,
-        isActive: true,
+        isActive: dto.isActive ?? true,
+        taxRateBps: dto.taxRateBps ?? 1800,
+        yearlyDiscountBps: dto.yearlyDiscountBps ?? 2000,
+        billingIntervals: dto.billingIntervals ?? ["MONTHLY", "YEARLY"],
+        isRecommended: dto.isRecommended ?? false,
       },
     });
 
@@ -340,7 +333,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       monthlyPrice: Number(plan.monthlyPrice),
       yearlyPrice: Number(plan.yearlyPrice),
       userLimit: plan.userLimit,
-      
+
       features: plan.features,
     };
   }
@@ -348,7 +341,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async updatePlan(id: number | string, dto: any) {
     const planId = Number(id);
     if (!planId || isNaN(planId)) {
-      throw new BadRequestException('Valid Plan ID is required');
+      throw new BadRequestException("Valid Plan ID is required");
     }
 
     const existing = await this.prisma.plan.findUnique({
@@ -358,15 +351,32 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       throw new NotFoundException(`Plan with ID ${planId} not found`);
     }
 
+    this.validatePlanPricing(dto);
     const updateData: any = {};
-    if (dto.name !== undefined && typeof dto.name === 'string' && dto.name.trim().length > 0) {
+    for (const key of [
+      "taxRateBps",
+      "yearlyDiscountBps",
+      "billingIntervals",
+      "isRecommended",
+    ])
+      if (dto[key] !== undefined) updateData[key] = dto[key];
+    if (
+      dto.name !== undefined &&
+      typeof dto.name === "string" &&
+      dto.name.trim().length > 0
+    ) {
       updateData.name = dto.name.trim();
     }
-    if (dto.code !== undefined && typeof dto.code === 'string' && dto.code.trim().length > 0) {
+    if (
+      dto.code !== undefined &&
+      typeof dto.code === "string" &&
+      dto.code.trim().length > 0
+    ) {
       updateData.code = dto.code.trim().toUpperCase();
     }
     if (dto.description !== undefined) {
-      updateData.description = typeof dto.description === 'string' ? dto.description.trim() : '';
+      updateData.description =
+        typeof dto.description === "string" ? dto.description.trim() : "";
     }
     if (dto.monthlyPrice !== undefined && !isNaN(Number(dto.monthlyPrice))) {
       updateData.monthlyPrice = Number(dto.monthlyPrice);
@@ -381,7 +391,10 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       updateData.leadLimit = Number(dto.leadLimit);
     }
     if (dto.storageLimit !== undefined || dto.storageLimitBytes !== undefined) {
-      const storage = dto.storageLimit !== undefined ? dto.storageLimit : dto.storageLimitBytes;
+      const storage =
+        dto.storageLimit !== undefined
+          ? dto.storageLimit
+          : dto.storageLimitBytes;
       if (!isNaN(Number(storage))) {
         updateData.storageLimit = BigInt(storage);
       }
@@ -389,7 +402,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     if (dto.features !== undefined) {
       if (Array.isArray(dto.features)) {
         updateData.features = dto.features;
-      } else if (typeof dto.features === 'string') {
+      } else if (typeof dto.features === "string") {
         try {
           const parsed = JSON.parse(dto.features);
           updateData.features = Array.isArray(parsed) ? parsed : [dto.features];
@@ -402,6 +415,14 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       updateData.isActive = Boolean(dto.isActive);
     }
 
+    updateData.yearlyPrice = Number(
+      (
+        (updateData.monthlyPrice ?? existing.monthlyPrice) *
+        12 *
+        (1 -
+          (updateData.yearlyDiscountBps ?? existing.yearlyDiscountBps) / 10000)
+      ).toFixed(2),
+    );
     const plan = await this.prisma.plan.update({
       where: { id: planId },
       data: updateData,
@@ -415,7 +436,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
       monthlyPrice: Number(plan.monthlyPrice),
       yearlyPrice: Number(plan.yearlyPrice),
       userLimit: plan.userLimit,
-      
+
       storageLimitBytes: Number(plan.storageLimit),
       features: plan.features,
       isActive: plan.isActive,
@@ -545,7 +566,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
    * Daily expiry runner: checks days remaining, dispatches multi-stage notifications with idempotency, and updates statuses.
    */
   async runDailyExpiryCheck() {
-return;
+    return this.customers!.expire();
   }
 
   /**

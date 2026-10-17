@@ -1,3 +1,4 @@
+import { CustomerModule } from '../customer/customer.module';
 import { Module } from '@nestjs/common';
 import { SubscriptionController } from './subscription.controller';
 import { SubscriptionService } from './subscription.service';
@@ -15,7 +16,7 @@ import { CommissionModule } from '../commission/commission.module';
 import { CouponModule } from './coupon.module';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule, CommissionModule, CouponModule],
+  imports: [CustomerModule, PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule, CommissionModule, CouponModule],
   controllers: [SubscriptionController, CustomPlanController],
   providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
   exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],

@@ -1,3 +1,4 @@
+import { PlanAdminGuard } from './plan-admin.guard';
 import { GoneException } from '@nestjs/common';
 import {
   Controller,
@@ -190,7 +191,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   // ==========================================
 
   @Get('admin/plans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans including inactive (Admin)' })
   async getAdminPlans() {
@@ -198,7 +199,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/subscription-plans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans for Admin (Alias)' })
   async getAdminSubscriptionPlans() {
@@ -206,7 +207,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get plan by ID (Admin)' })
   async getAdminPlanById(@Param('id') id: string) {
@@ -214,7 +215,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get plan by ID (Admin Alias)' })
   async getAdminSubscriptionPlanById(@Param('id') id: string) {
@@ -222,7 +223,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('admin/plans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan (Admin)' })
   async createPlanAdmin(@Body() dto: any) {
@@ -230,7 +231,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('admin/subscription-plans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan (Admin Alias)' })
   async createSubscriptionPlanAdmin(@Body() dto: any) {
@@ -239,7 +240,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/plans/:id')
   @Patch('admin/plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan (Admin)' })
   async updatePlanAdmin(@Param('id') id: string, @Body() dto: any) {
@@ -248,7 +249,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/subscription-plans/:id')
   @Patch('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan (Admin Alias)' })
   async updateSubscriptionPlanAdmin(@Param('id') id: string, @Body() dto: any) {
@@ -257,7 +258,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Patch('admin/plans/:id/status')
   @Patch('admin/subscription-plans/:id/status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Toggle plan active status (Admin)' })
   async updatePlanStatusAdmin(@Param('id') id: string, @Body() body: { isActive: boolean }) {
@@ -265,7 +266,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('admin/plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan (Admin)' })
   async deletePlanAdmin(@Param('id') id: string) {
@@ -273,7 +274,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan (Admin Alias)' })
   async deleteSubscriptionPlanAdmin(@Param('id') id: string) {
@@ -283,7 +284,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   // Feature endpoints
   @Get('admin/plans/:id/features')
   @Get('admin/subscription-plans/:id/features')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get features for a plan (Admin)' })
   async getPlanFeatures(@Param('id') id: string) {
@@ -292,7 +293,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Post('admin/plans/:id/features')
   @Post('admin/subscription-plans/:id/features')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add feature to plan (Admin)' })
   async addPlanFeature(@Param('id') id: string, @Body() body: { feature: string }) {
@@ -301,7 +302,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/plans/:id/features/:featureId')
   @Put('admin/subscription-plans/:id/features/:featureId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update feature in plan (Admin)' })
   async updatePlanFeature(
@@ -314,7 +315,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Delete('admin/plans/:id/features/:featureId')
   @Delete('admin/subscription-plans/:id/features/:featureId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete feature from plan (Admin)' })
   async deletePlanFeature(
@@ -325,7 +326,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('plans')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan' })
   async createPlan(@Body() dto: any) {
@@ -334,7 +335,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('plans/:id')
   @Patch('plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan' })
   async updatePlan(@Param('id') id: string, @Body() dto: any) {
@@ -342,7 +343,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('plans/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan' })
   async deletePlan(@Param('id') id: string) {
@@ -381,7 +382,8 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Run idempotent daily plan expiry check & notification dispatcher (Admin / Cron)' })
-  async runExpiryCheck() {
+  async runExpiryCheck(@CurrentUser() user: any) {
+    if (!isUserSuperAdmin(user)) throw new ForbiddenException('Administrator required');
     return this.subscriptionService.runDailyExpiryCheck();
   }
 

@@ -1,3 +1,4 @@
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import {
   Controller,
   Post,
@@ -24,6 +25,7 @@ import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard
 import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Payments & Razorpay')
+@CustomerBillingAccess()
 @Controller('payments')
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
@@ -85,7 +87,7 @@ export class PaymentController {
     @Headers('x-razorpay-signature') signature: string,
     @Body() body: any,
   ) {
-    const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
+    const rawBody = req.rawBody?.toString('utf8') || (typeof body === 'string' ? body : '');
     return this.paymentService.handleWebhook(rawBody, signature);
   }
 

@@ -1,0 +1,411 @@
+import * as bcrypt from "bcrypt";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
+import { isUserAdmin } from "../../common/utils/account.util";
+import { subscriptionPrice } from "./billing-price.util";
+import { recalculateCustomer } from "./customer-lifecycle.util";
+import {
+  calculateActivationDate,
+  calculatePlanExpiry,
+} from "../../common/utils/subscription-date.util";
+import { BUSINESS_TIMEZONE } from "../../common/utils/timezone.util";
+
+@Injectable()
+export class CustomerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(CustomerService.name);
+  private expiryTimer?: ReturnType<typeof setInterval>;
+  private expiryRunning = false;
+  onModuleInit() {
+    // Run an initial check after 2 seconds of startup
+    setTimeout(() => {
+      this.activatePendingSubscriptions().catch((err) => {
+        this.logger.error(`Initial pending subscription activation check failed: ${err?.message}`);
+      });
+    }, 2000);
+
+    this.expiryTimer = setInterval(async () => {
+      if (this.expiryRunning) return;
+      this.expiryRunning = true;
+      try {
+        await this.expire();
+      } catch {
+        this.logger.error("Customer subscription expiry and activation reconciliation failed");
+      } finally {
+        this.expiryRunning = false;
+      }
+    }, 60000);
+    this.expiryTimer.unref();
+  }
+  onModuleDestroy() {
+    if (this.expiryTimer) clearInterval(this.expiryTimer);
+  }
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async authorize(user: any, customerId?: number) {
+    const customer = await this.prisma.customer.findFirst({
+      where: customerId ? { id: customerId } : { userId: Number(user.id) },
+    });
+    if (!customer) throw new NotFoundException("Customer account not found");
+    if (!isUserAdmin(user) && customer.userId !== Number(user.id))
+      throw new ForbiddenException("Customer access denied");
+    return customer;
+  }
+
+  async list(user: any, search = "") {
+    const where: any = isUserAdmin(user)
+      ? {}
+      : user.employee?.id
+        ? {
+            lead: {
+              OR: [
+                { createdById: Number(user.id) },
+                { assignedToId: Number(user.employee.id) },
+              ],
+            },
+          }
+        : { userId: Number(user.id) };
+    if (search.trim())
+      where.companyName = { contains: search.trim(), mode: "insensitive" };
+    const customers = await this.prisma.customer.findMany({
+      where,
+      orderBy: { id: "desc" },
+    });
+    const data = [];
+    for (const customer of customers)
+      data.push(await this.detail(user, customer.id, true));
+    return {
+      data,
+      total: data.length,
+      counts: {
+        all: data.length,
+        active: data.filter((c) => c.status === "ACTIVE").length,
+        pendingActivation: data.filter((c) => c.subscriptionStatus === "PENDING_ACTIVATION").length,
+        inactive: data.filter((c) => c.status === "INACTIVE").length,
+      },
+    };
+  }
+
+  async detail(user: any, id: number, scopedList = false) {
+    if (!scopedList) await this.authorize(user, id);
+    return this.prisma.$transaction(async (tx) => {
+      const customer = await recalculateCustomer(tx, id);
+      const subscriptions = await tx.customerSubscription.findMany({
+        where: { customerId: id },
+        include: { plan: { select: { name: true } }, checkout: true },
+        orderBy: { id: "desc" },
+      });
+      const now = new Date();
+      const active = subscriptions.find(
+        (s) =>
+          s.status === "ACTIVE" &&
+          s.startDate <= now &&
+          s.endDate > now &&
+          s.checkout?.status === "PAID",
+      );
+      const pendingActivation = subscriptions.find(
+        (s) =>
+          s.status === "PENDING_ACTIVATION" &&
+          ((s.activationDate && s.activationDate > now) || s.startDate > now) &&
+          s.checkout?.status === "PAID",
+      );
+      const currentSub = active || pendingActivation;
+      const subStatus = active
+        ? "ACTIVE"
+        : pendingActivation
+          ? "PENDING_ACTIVATION"
+          : "INACTIVE";
+
+      return {
+        ...customer,
+        customerStatus: customer.status,
+        name: customer.companyName,
+        originLeadId: customer.originLeadId,
+        subscriptionStatus: subStatus,
+        hasUpcomingCall: false,
+        planName: currentSub?.plan.name,
+        subscriptionStartDate: currentSub?.startDate,
+        subscriptionEndDate: currentSub?.endDate,
+        activationDate: currentSub?.activationDate || currentSub?.startDate,
+        purchaseDate: currentSub?.createdAt,
+        subscriptions,
+      };
+    });
+  }
+
+  async linkUser(id: number, userId: number, actor: any) {
+    if (!isUserAdmin(actor))
+      throw new ForbiddenException("Administrator required");
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isActive: true, deletedAt: null },
+    });
+    if (!user) throw new BadRequestException("Active user not found");
+    return this.prisma.customer.update({ where: { id }, data: { userId } });
+  }
+
+  async createAccount(id: number, password: string, actor: any) {
+    if (!isUserAdmin(actor))
+      throw new ForbiddenException("Administrator required");
+    const passwordHash = await bcrypt.hash(password, 12);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${id} FOR UPDATE`;
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id } });
+      if (customer.userId || !customer.email)
+        throw new BadRequestException(
+          "Customer needs an email and must not already have a login",
+        );
+      const user = await tx.user.create({
+        data: {
+          email: customer.email,
+          firstName: customer.firstName || customer.companyName,
+          lastName: customer.lastName || "",
+          passwordHash,
+          accountType: "CUSTOMER",
+          isActive: true,
+        },
+      });
+      return tx.customer.update({ where: { id }, data: { userId: user.id } });
+    });
+  }
+
+  async quote(planId: number, cycle = "MONTHLY") {
+    const plan = await this.prisma.plan.findFirst({
+      where: { id: planId, isActive: true, deletedAt: null },
+    });
+    if (!plan) throw new BadRequestException("Plan unavailable");
+    return {
+      planId: plan.id,
+      planName: plan.name,
+      currency: "INR",
+      ...subscriptionPrice(plan, cycle),
+    };
+  }
+
+  async prepare(
+    user: any,
+    dto: {
+      customerId?: number;
+      planId: number | string;
+      billingCycle?: string;
+      idempotencyKey: string;
+    },
+  ) {
+    const customer = await this.authorize(user, dto.customerId);
+    const existing = await this.prisma.customerCheckout.findUnique({
+      where: {
+        customerId_idempotencyKey: {
+          customerId: customer.id,
+          idempotencyKey: dto.idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      if (
+        existing.planId !== Number(dto.planId) ||
+        existing.billingCycle !== (dto.billingCycle || "MONTHLY")
+      )
+        throw new BadRequestException(
+          "Idempotency key already used for another purchase",
+        );
+      return existing;
+    }
+    const { planId, planName, currency, ...price } = await this.quote(
+      Number(dto.planId),
+      dto.billingCycle,
+    );
+    const prepared = await this.prisma.customerCheckout.upsert({
+      where: {
+        customerId_idempotencyKey: {
+          customerId: customer.id,
+          idempotencyKey: dto.idempotencyKey,
+        },
+      },
+      update: {},
+      create: {
+        customerId: customer.id,
+        planId,
+        idempotencyKey: dto.idempotencyKey,
+        ...price,
+      },
+    });
+    if (
+      prepared.planId !== planId ||
+      prepared.billingCycle !== price.billingCycle
+    )
+      throw new BadRequestException(
+        "Idempotency key already used for another purchase",
+      );
+    return prepared;
+  }
+
+  async settle(
+    orderId: string,
+    payment: {
+      id: string;
+      order_id: string;
+      status: string;
+      amount: number;
+      currency: string;
+    },
+  ) {
+    const checkout = await this.prisma.customerCheckout.findUnique({
+      where: { orderId },
+    });
+    if (!checkout) throw new NotFoundException("Checkout not found");
+    if (
+      payment.order_id !== orderId ||
+      payment.status !== "captured" ||
+      payment.currency !== "INR" ||
+      Number(payment.amount) !== checkout.totalPaise
+    )
+      throw new BadRequestException(
+        "Payment is not a matching captured payment",
+      );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${checkout.customerId} FOR UPDATE`;
+      const current = await tx.customerCheckout.findUniqueOrThrow({
+        where: { id: checkout.id },
+      });
+      if (current.status === "PAID")
+        return tx.customerSubscription.findUnique({
+          where: { checkoutId: current.id },
+        });
+      const purchaseDate = new Date();
+      const activationDate = calculateActivationDate(
+        purchaseDate,
+        BUSINESS_TIMEZONE,
+      );
+      const startDate = activationDate;
+      const endDate = calculatePlanExpiry(
+        startDate,
+        current.billingCycle === "YEARLY" ? 12 : 1,
+      );
+      const plan = await tx.plan.findUniqueOrThrow({
+        where: { id: current.planId },
+      });
+      const history = await tx.paymentHistory.create({
+        data: {
+          amount: current.taxablePaise / 100,
+          currency: "INR",
+          paymentMethod: "RAZORPAY",
+          paymentId: payment.id,
+          orderId,
+          status: "SUCCESS",
+          planId: current.planId,
+          planName: plan.name,
+          billingCycle: current.billingCycle,
+          originalAmount: current.basePaise / 100,
+          discountAmount: current.discountPaise / 100,
+          taxAmount: current.gstPaise / 100,
+          totalAmount: current.totalPaise / 100,
+        },
+      });
+      await tx.customerCheckout.update({
+        where: { id: current.id },
+        data: {
+          status: "PAID",
+          paymentId: payment.id,
+          paymentHistoryId: history.id,
+        },
+      });
+      const sub = await tx.customerSubscription.create({
+        data: {
+          customerId: current.customerId,
+          planId: current.planId,
+          checkoutId: current.id,
+          startDate,
+          endDate,
+          activationDate,
+          status: "PENDING_ACTIVATION",
+          createdAt: purchaseDate,
+        },
+      });
+      await recalculateCustomer(tx, current.customerId, purchaseDate);
+      return sub;
+    });
+  }
+
+  async activatePendingSubscriptions(now = new Date()) {
+    const pendingSubs = await this.prisma.customerSubscription.findMany({
+      where: {
+        status: "PENDING_ACTIVATION",
+        OR: [
+          { activationDate: { lte: now } },
+          { activationDate: null, startDate: { lte: now } },
+        ],
+        checkout: { status: "PAID" },
+      },
+      include: { checkout: true },
+      orderBy: { id: "asc" },
+    });
+
+    let activatedCount = 0;
+    for (const sub of pendingSubs) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${sub.customerId} FOR UPDATE`;
+          const currentSub = await tx.customerSubscription.findUnique({
+            where: { id: sub.id },
+          });
+          const currentCheckout = await tx.customerCheckout.findUnique({
+            where: { id: sub.checkoutId },
+          });
+
+          if (!currentSub || currentSub.status !== "PENDING_ACTIVATION") return;
+          if (!currentCheckout || currentCheckout.status !== "PAID") return;
+          const actDate = currentSub.activationDate ?? currentSub.startDate;
+          if (actDate > now) return;
+
+          await tx.customerSubscription.update({
+            where: { id: sub.id },
+            data: { status: "ACTIVE" },
+          });
+          await recalculateCustomer(tx, sub.customerId, now);
+          activatedCount++;
+        });
+      } catch (err: any) {
+        this.logger.error(
+          `Failed to activate subscription #${sub.id}: ${err?.message}`,
+        );
+      }
+    }
+    return { activatedCount, totalChecked: pendingSubs.length };
+  }
+
+  async cancel(id: number, user: any) {
+    const sub = await this.prisma.customerSubscription.findUnique({
+      where: { id },
+    });
+    if (!sub) throw new NotFoundException("Subscription not found");
+    await this.authorize(user, sub.customerId);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${sub.customerId} FOR UPDATE`;
+      const updated = await tx.customerSubscription.update({
+        where: { id },
+        data: { status: "CANCELLED" },
+      });
+      await recalculateCustomer(tx, sub.customerId);
+      return updated;
+    });
+  }
+
+  async expire() {
+    await this.activatePendingSubscriptions();
+    const customers = await this.prisma.customer.findMany({
+      select: { id: true },
+    });
+    for (const customer of customers)
+      await this.prisma.$transaction((tx) =>
+        recalculateCustomer(tx, customer.id),
+      );
+    return { checked: customers.length };
+  }
+}

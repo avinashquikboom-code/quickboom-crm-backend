@@ -17,7 +17,7 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app =
-    await NestFactory.create<NestExpressApplication>(AppModule);
+    await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // ============================================================
   // STATIC FILES

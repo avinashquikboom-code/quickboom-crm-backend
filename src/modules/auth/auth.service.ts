@@ -208,6 +208,11 @@ const dto = typeof emailOrDto === 'object' ? emailOrDto : { email: emailOrDto, p
    * if a user does not have one attached.
    */
   private async ensureEmployee(user: any): Promise<any> {
+    if (user.accountType === 'CUSTOMER') {
+      const customer = await this.prisma.customer.findUnique({ where: { userId: user.id } });
+      if (!customer) throw new ForbiddenException('Linked customer account required');
+      return null;
+    }
 const employee = user.employee || await this.prisma.employee.findUnique({ where: { userId: user.id }, include: { designation: true, department: true } });
     if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false) throw new ForbiddenException('Active employee profile required');
     return employee;

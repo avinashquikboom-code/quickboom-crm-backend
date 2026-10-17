@@ -1,7 +1,9 @@
+import { CustomerService } from '../customer/customer.service';
 import { GoneException } from '@nestjs/common';
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -47,6 +49,18 @@ import {
 
 @Injectable()
 export class PaymentService {
+  private verifySignature(expected: string, supplied: string) {
+    if (
+      !supplied ||
+      !/^[a-f0-9]{64}$/i.test(supplied) ||
+      !crypto.timingSafeEqual(
+        Buffer.from(expected, "hex"),
+        Buffer.from(supplied, "hex"),
+      )
+    )
+      throw new BadRequestException("Invalid payment signature");
+  }
+
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(
@@ -61,6 +75,7 @@ export class PaymentService {
     @Optional() private readonly invoiceService?: InvoiceService,
     @Optional() private readonly commissionService?: CommissionService,
     @Optional() private readonly couponService?: CouponService,
+    @Optional() private readonly customers?: CustomerService,
   ) {}
 
   private async pricedCoupon(params: {
@@ -135,86 +150,138 @@ export class PaymentService {
   /**
    * 1. Create a Razorpay Order for a specific Plan & Billing Cycle
    */
-  async createRazorpayOrder(user: any, dto: CreateRazorpayOrderDto, reqCustomerId?: number) : Promise<never> {
-throw new GoneException('This Customer/Lead operation has been removed');
+  async createRazorpayOrder(
+    user: any,
+    dto: CreateRazorpayOrderDto,
+    reqCustomerId?: number,
+  ) {
+    if (dto.paymentOption && dto.paymentOption !== "FULL")
+      throw new BadRequestException("This checkout requires full payment");
+    if (
+      dto.couponCode ||
+      dto.activationDate ||
+      (dto.currency && dto.currency !== "INR")
+    )
+      throw new BadRequestException("Unsupported checkout option");
+    if (!dto.idempotencyKey || dto.idempotencyKey.length < 8)
+      throw new BadRequestException("Idempotency key required");
+    const checkout = await this.customers!.prepare(user, dto);
+    const { instance, config } = await this.getRazorpayClient();
+    if (checkout.orderId)
+      return {
+        ...checkout,
+        keyId: config.keyId,
+        amount: checkout.totalPaise,
+        currency: "INR",
+      };
+    if (checkout.totalPaise <= 0)
+      throw new BadRequestException(
+        "Online checkout requires a positive amount",
+      );
+    const claimed = await this.prisma.customerCheckout.updateMany({
+      where: { id: checkout.id, status: "PENDING", orderId: null },
+      data: { status: "CREATING" },
+    });
+    if (!claimed.count)
+      throw new ConflictException(
+        "Order creation is in progress. Retry with the same key; contact support if it remains pending.",
+      );
+    // A network timeout deliberately leaves CREATING: never blindly create another gateway order.
+    const order = await instance.orders.create({
+      amount: checkout.totalPaise,
+      currency: "INR",
+      receipt: checkout.id,
+      notes: { checkoutId: checkout.id },
+    });
+    const saved = await this.prisma.customerCheckout.update({
+      where: { id: checkout.id },
+      data: { orderId: order.id, status: "PENDING" },
+    });
+    return {
+      ...saved,
+      keyId: config.keyId,
+      amount: saved.totalPaise,
+      currency: "INR",
+    };
   }
 
   /**
    * 2. Verify Razorpay Payment Signature, Activate Subscription, Provision Entitlements & Generate Schedules
    */
-  async verifyRazorpayPayment(user: any, dto: VerifyRazorpayPaymentDto, reqCustomerId?: number) : Promise<never> {
-throw new GoneException('This Customer/Lead operation has been removed');
+  async verifyRazorpayPayment(
+    user: any,
+    dto: VerifyRazorpayPaymentDto,
+    reqCustomerId?: number,
+  ) {
+    const checkout = await this.prisma.customerCheckout.findUnique({
+      where: { orderId: dto.razorpay_order_id },
+    });
+    if (!checkout) throw new NotFoundException("Checkout not found");
+    await this.customers!.authorize(user, checkout.customerId);
+    const { instance, config } = await this.getRazorpayClient();
+    const expected = crypto
+      .createHmac("sha256", config.keySecret)
+      .update(`${checkout.orderId}|${dto.razorpay_payment_id}`)
+      .digest("hex");
+    this.verifySignature(expected, dto.razorpay_signature);
+    const payment = await instance.payments.fetch(dto.razorpay_payment_id);
+    return this.customers!.settle(checkout.orderId!, payment);
   }
 
   /**
    * 3. Handle Razorpay Webhook Event Idempotently
    */
   async handleWebhook(rawBody: string, signature: string) {
-    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
-    const webhookSecret = rzpConfig.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET || '';
-    if (!signature) {
-      throw new BadRequestException('Webhook signature required');
-    }
-
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(rawBody)
-      .digest('hex');
-
-    if (expectedSignature !== signature && process.env.NODE_ENV !== 'test') {
-      this.logger.error('[WEBHOOK_SIGNATURE_MISMATCH] Webhook signature invalid');
-      throw new BadRequestException('Invalid webhook signature');
-    }
-
+    const config = await this.integrationSettingsService.getRazorpayConfig();
+    const secret = config.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!secret) throw new BadRequestException("Webhook secret not configured");
+    this.verifySignature(
+      crypto.createHmac("sha256", secret).update(rawBody).digest("hex"),
+      signature,
+    );
     const payload = JSON.parse(rawBody);
-    const event = payload?.event;
-    this.logger.log(`[RAZORPAY_WEBHOOK_RECEIVED] event=${event}`);
-
-    if (event === 'payment.captured' || event === 'order.paid') {
-      const paymentEntity = payload?.payload?.payment?.entity;
-      const orderId = paymentEntity?.order_id;
-      const paymentId = paymentEntity?.id;
-      const notes = paymentEntity?.notes || {};
-      const customerId = Number(undefined);
-      const planId = Number(notes.planId);
-      const billingCycle = notes.billingCycle || 'MONTHLY';
-
-      if (customerId && planId && paymentId && orderId) {
-        // Webhook event already passed HMAC verification at entry point.
-        // Use the trusted internal activation path that skips client-side signature re-check.
-        try {
-          await this.activateSubscriptionTrusted({
-            
-            planId,
-            orderId,
-            paymentId,
-            billingCycle,
-            activationDate: notes.activationDate ? String(notes.activationDate) : undefined,
-          });
-          const confirmedPayment = await this.prisma.paymentHistory.findFirst({ where: { paymentId,  status: 'SUCCESS', deletedAt: null } });
-          if (confirmedPayment && this.commissionService) {
-            await this.commissionService.calculateAndAwardCommission({  purchaseId: confirmedPayment.id, purchaseAmount: confirmedPayment.amount, planId: confirmedPayment.planId, orderId });
-          }
-          this.logger.log(`[WEBHOOK_ACTIVATION_SUCCESS] customerId=${customerId} planId=${planId} paymentId=${paymentId}`);
-        } catch (err: any) {
-          this.logger.error(`[WEBHOOK_ACTIVATION_FAILED] customerId=${customerId} paymentId=${paymentId} — ${err?.message}`);
-        }
-      } else {
-        this.logger.warn(`[WEBHOOK_SKIP] Insufficient data in webhook notes: customerId=${customerId} planId=${planId} paymentId=${paymentId} orderId=${orderId}`);
+    const entity = payload?.payload?.payment?.entity;
+    if (
+      ["payment.captured", "order.paid"].includes(payload.event) &&
+      entity?.order_id &&
+      entity?.id
+    ) {
+      const checkout = await this.prisma.customerCheckout.findUnique({
+        where: { orderId: String(entity.order_id) },
+      });
+      if (checkout) {
+        const { instance } = await this.getRazorpayClient();
+        const payment = await instance.payments.fetch(entity.id);
+        await this.customers!.settle(checkout.orderId!, payment);
       }
     }
-
-    if (event === 'refund.processed' && this.commissionService) {
+    // Failed attempts never override a captured payment or activate a customer.
+    if (payload.event === "payment.failed" && entity?.order_id) {
+      await this.prisma.customerCheckout.updateMany({
+        where: { orderId: String(entity.order_id), status: "PENDING" },
+        data: { status: "FAILED" },
+      });
+    }
+    if (payload.event === "refund.processed" && this.commissionService) {
       const refund = payload?.payload?.refund?.entity;
       if (refund?.payment_id && refund?.id) {
-        const payment = await this.prisma.paymentHistory.findFirst({ where: { paymentId: String(refund.payment_id), deletedAt: null } });
+        const payment = await this.prisma.paymentHistory.findFirst({
+          where: { paymentId: String(refund.payment_id), deletedAt: null },
+        });
         if (payment) {
-          const full = Number(refund.amount) >= Math.round(Number(payment.totalAmount ?? payment.amount) * 100);
-          await this.commissionService.handleRefundOrCancellation(payment.id, undefined, String(refund.id), !full);
+          const full =
+            Number(refund.amount) >=
+            Math.round(Number(payment.totalAmount ?? payment.amount) * 100);
+          await this.commissionService.handleRefundOrCancellation(
+            payment.id,
+            undefined,
+            String(refund.id),
+            !full,
+          );
         }
       }
     }
-    return { status: 'ok' };
+    return { status: "ok" };
   }
 
   /**
@@ -253,59 +320,12 @@ throw new GoneException('This Customer/Lead operation has been removed');
    * 5. Get Customer Purchase / Payment History with Receipts and Invoice status
    */
   async getPaymentHistory(user: any, reqCustomerId?: number) {
-    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(undefined);
-    
-
-    const payments = await this.prisma.paymentHistory.findMany({
-      where: {  deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      
+    const customer = await this.customers!.authorize(user, reqCustomerId);
+    return this.prisma.customerCheckout.findMany({
+      where: { customerId: customer.id },
+      orderBy: { createdAt: "desc" },
+      include: { subscription: true },
     });
-
-    const activeSubTotalAmount = 0;
-    const activeSubTotalPaid = 0;
-    const mapped = payments.map((p) => {
-      const isSuccess = p.status === 'SUCCESS';
-      const receiptNo = p.invoiceUrl?.startsWith('REC-') ? p.invoiceUrl : `REC-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`;
-      const subFullTotal = Number(p.totalAmount || 0);
-
-      const isFullyPaid = isSuccess && (activeSubTotalPaid >= activeSubTotalAmount || Number(p.totalAmount || 0) >= subFullTotal);
-      const invoiceUrl = isFullyPaid ? (p.invoiceUrl?.startsWith('INV-') ? p.invoiceUrl : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`) : null;
-      const subscriptionStartDate = resolveSubscriptionActivationDate(p.createdAt, null);
-
-      return {
-        id: p.id,
-        orderNumber: p.orderNumber || `#QB-${p.id}`,
-        orderId: p.orderId,
-        paymentId: p.paymentId,
-        planId: p.planId || undefined,
-        planName: p.planName || undefined || 'Standard Package',
-        billingCycle: p.billingCycle || undefined || 'MONTHLY',
-        amount: Number(p.amount),
-        taxAmount: Number(p.taxAmount || 0),
-        totalAmount: Number(p.totalAmount || p.amount),
-        currency: p.currency || 'INR',
-        paymentStatus: isSuccess ? 'PAID' : p.status,
-        paymentMethod: p.paymentMethod || 'RAZORPAY',
-        transactionId: p.transactionId || `TXN-${p.id}`,
-        receiptNumber: receiptNo,
-        isFullyPaid,
-        invoiceAvailable: isFullyPaid,
-        invoiceUrl,
-        totalPaid: activeSubTotalPaid > 0 ? activeSubTotalPaid : Number(p.totalAmount || 0),
-        balanceAmount: Math.max(0, activeSubTotalAmount - activeSubTotalPaid),
-        purchaseDate: p.createdAt,
-        startDate: subscriptionStartDate,
-        activationDate: subscriptionStartDate,
-        expiryDate: undefined,
-        features: [],
-      };
-    });
-
-    return {
-      success: true,
-      data: mapped,
-    };
   }
 
   private assertAgreementCustomerAccess(ownerCustomerId: number, customerId?: number, user?: any) {

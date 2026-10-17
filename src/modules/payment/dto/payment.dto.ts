@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsEnum, IsInt, Min, Length } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum SubscriptionBillingCycle {
@@ -13,6 +13,8 @@ export enum PaymentOption {
 }
 
 export class CreateRazorpayOrderDto {
+  @IsOptional() @IsInt() @Min(1) customerId?: number;
+  @IsString() @Length(8, 100) idempotencyKey: string;
   @ApiProperty({ example: 1, description: 'Plan ID from database' })
   @IsNotEmpty()
   planId: number | string;

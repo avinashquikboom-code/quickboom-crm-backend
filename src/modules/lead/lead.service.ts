@@ -1,3 +1,4 @@
+import { convertWonLead } from '../customer/customer-lifecycle.util';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -98,25 +99,66 @@ export class LeadService {
   async create(dto: CreateLeadDto, user: any, createdFrom: RecordCreatedFrom) {
     this.scope(user);
     const companyName = dto.companyName.trim();
-    if (!companyName) throw new BadRequestException('Company name is required');
-    if (!isUserAdmin(user) && dto.assignedToId && dto.assignedToId !== user?.employee?.id) throw new ForbiddenException('Cannot assign a Lead to another employee');
-    const assignedToId = isUserAdmin(user) ? dto.assignedToId : user?.employee?.id;
-    if (assignedToId && !await this.prisma.employee.findFirst({ where: { id: assignedToId, status: 'ACTIVE' }, select: { id: true } })) {
-      throw new BadRequestException('Active assigned employee not found');
+    if (!companyName) throw new BadRequestException("Company name is required");
+    if (
+      !isUserAdmin(user) &&
+      dto.assignedToId &&
+      dto.assignedToId !== user?.employee?.id
+    )
+      throw new ForbiddenException("Cannot assign a Lead to another employee");
+    const assignedToId = isUserAdmin(user)
+      ? dto.assignedToId
+      : user?.employee?.id;
+    if (
+      assignedToId &&
+      !(await this.prisma.employee.findFirst({
+        where: { id: assignedToId, status: "ACTIVE" },
+        select: { id: true },
+      }))
+    ) {
+      throw new BadRequestException("Active assigned employee not found");
     }
     try {
-      const lead = await this.prisma.lead.create({ data: {
-        companyName, firstName: dto.firstName?.trim(), lastName: dto.lastName?.trim(),
-        phone: dto.phone?.trim(), email: dto.email?.trim().toLowerCase(), website: dto.website?.trim(),
-        address: dto.address?.trim(), city: dto.city?.trim(), state: dto.state?.trim(), country: dto.country?.trim(),
-        pincode: dto.pincode?.trim(), category: dto.category?.trim(), googlePlaceId: dto.googlePlaceId?.trim() || null,
-        source: dto.source?.trim() || 'MANUAL', createdFrom, status: dto.status || CrmLeadStatus.NEW,
-        notes: dto.notes?.trim(), assignedToId, createdById: Number(user.id), deletedAt: null,
-      } });
-      this.logger.debug(`[MANUAL_LEAD_CREATE_DEBUG] ${JSON.stringify({ createdLeadId: lead.id, assignedToId: lead.assignedToId, createdById: lead.createdById, status: lead.status, source: lead.source, createdFrom: lead.createdFrom, deletedAt: lead.deletedAt, createdAt: lead.createdAt })}`);
+      const lead = await this.prisma.$transaction(async (tx) => {
+        const lead = await tx.lead.create({
+          data: {
+            companyName,
+            firstName: dto.firstName?.trim(),
+            lastName: dto.lastName?.trim(),
+            phone: dto.phone?.trim(),
+            email: dto.email?.trim().toLowerCase(),
+            website: dto.website?.trim(),
+            address: dto.address?.trim(),
+            city: dto.city?.trim(),
+            state: dto.state?.trim(),
+            country: dto.country?.trim(),
+            pincode: dto.pincode?.trim(),
+            category: dto.category?.trim(),
+            googlePlaceId: dto.googlePlaceId?.trim() || null,
+            source: dto.source?.trim() || "MANUAL",
+            createdFrom,
+            status: dto.status || CrmLeadStatus.NEW,
+            notes: dto.notes?.trim(),
+            assignedToId,
+            createdById: Number(user.id),
+            deletedAt: null,
+          },
+        });
+        await convertWonLead(tx, lead);
+        return lead;
+      });
+      this.logger.debug(
+        `[MANUAL_LEAD_CREATE_DEBUG] ${JSON.stringify({ createdLeadId: lead.id, assignedToId: lead.assignedToId, createdById: lead.createdById, status: lead.status, source: lead.source, createdFrom: lead.createdFrom, deletedAt: lead.deletedAt, createdAt: lead.createdAt })}`,
+      );
       return this.mapLeadWithStage(lead);
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('A Lead already exists for this Google Place');
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      )
+        throw new ConflictException(
+          "A Lead already exists for this Google Place",
+        );
       throw error;
     }
   }
@@ -192,32 +234,55 @@ export class LeadService {
     if (!existing) throw new NotFoundException(`Lead with ID ${id} not found`);
     this.assertCanRead(existing, user);
 
-    const identifiers = [dto.stageId, dto.status, dto.stage].filter(value => value !== undefined && value !== null);
-    const matches = identifiers.map(value => CRM_LEAD_STAGES.find(stage =>
-      typeof value === 'number' ? stage.id === value : stage.key === String(value).trim().toUpperCase()));
-    if (!matches.length || matches.some(stage => !stage || !stage.isActive) || matches.some(stage => stage.key !== matches[0].key)) {
-      throw new BadRequestException('Provide a valid, active pipeline stage with matching stageId and status key');
+    const identifiers = [dto.stageId, dto.status, dto.stage].filter(
+      (value) => value !== undefined && value !== null,
+    );
+    const matches = identifiers.map((value) =>
+      CRM_LEAD_STAGES.find((stage) =>
+        typeof value === "number"
+          ? stage.id === value
+          : stage.key === String(value).trim().toUpperCase(),
+      ),
+    );
+    if (
+      !matches.length ||
+      matches.some((stage) => !stage || !stage.isActive) ||
+      matches.some((stage) => stage.key !== matches[0].key)
+    ) {
+      throw new BadRequestException(
+        "Provide a valid, active pipeline stage with matching stageId and status key",
+      );
     }
     const targetStage = matches[0];
-    const updated = await this.prisma.lead.update({
-      where: { id },
-      data: {
-        status: targetStage.key as CrmLeadStatus,
-        notes: dto.notes ? (existing.notes ? `${existing.notes}\n${dto.notes.trim()}` : dto.notes.trim()) : existing.notes,
-      },
-      include: {
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.lead.update({
+        where: { id },
+        data: {
+          status: targetStage.key as CrmLeadStatus,
+          notes: dto.notes
+            ? existing.notes
+              ? `${existing.notes}\n${dto.notes.trim()}`
+              : dto.notes.trim()
+            : existing.notes,
+        },
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+            },
           },
         },
-      },
+      });
+      await convertWonLead(tx, updated);
+      return updated;
     });
 
-    this.logger.debug(`[LEAD_STAGE_UPDATE] leadId=${id} oldStatus=${existing.status} newStatus=${updated.status} stageId=${targetStage.id}`);
+    this.logger.debug(
+      `[LEAD_STAGE_UPDATE] leadId=${id} oldStatus=${existing.status} newStatus=${updated.status} stageId=${targetStage.id}`,
+    );
     return this.mapLeadWithStage(updated);
   }
 
@@ -229,49 +294,71 @@ export class LeadService {
     this.assertCanRead(existing, user);
 
     const data: Prisma.LeadUpdateInput = {};
-    if (dto.companyName !== undefined) data.companyName = dto.companyName.trim();
-    if (dto.firstName !== undefined) data.firstName = dto.firstName?.trim() || null;
-    if (dto.lastName !== undefined) data.lastName = dto.lastName?.trim() || null;
+    if (dto.companyName !== undefined)
+      data.companyName = dto.companyName.trim();
+    if (dto.firstName !== undefined)
+      data.firstName = dto.firstName?.trim() || null;
+    if (dto.lastName !== undefined)
+      data.lastName = dto.lastName?.trim() || null;
     if (dto.phone !== undefined) data.phone = dto.phone?.trim() || null;
-    if (dto.email !== undefined) data.email = dto.email?.trim().toLowerCase() || null;
+    if (dto.email !== undefined)
+      data.email = dto.email?.trim().toLowerCase() || null;
     if (dto.website !== undefined) data.website = dto.website?.trim() || null;
     if (dto.address !== undefined) data.address = dto.address?.trim() || null;
     if (dto.city !== undefined) data.city = dto.city?.trim() || null;
     if (dto.state !== undefined) data.state = dto.state?.trim() || null;
     if (dto.country !== undefined) data.country = dto.country?.trim() || null;
     if (dto.pincode !== undefined) data.pincode = dto.pincode?.trim() || null;
-    if (dto.category !== undefined) data.category = dto.category?.trim() || null;
-    if (dto.source !== undefined) data.source = dto.source?.trim() || existing.source;
+    if (dto.category !== undefined)
+      data.category = dto.category?.trim() || null;
+    if (dto.source !== undefined)
+      data.source = dto.source?.trim() || existing.source;
     if (dto.notes !== undefined) data.notes = dto.notes?.trim() || null;
 
     if (dto.status || dto.stageId || dto.stage) {
-      const targetStage = this.resolveStage(dto.stageId ?? dto.status ?? dto.stage);
+      const targetStage = this.resolveStage(
+        dto.stageId ?? dto.status ?? dto.stage,
+      );
       data.status = targetStage.key as CrmLeadStatus;
     }
 
     if (dto.assignedToId !== undefined) {
       if (!isUserAdmin(user) && dto.assignedToId !== user.employee?.id) {
-        throw new ForbiddenException('Cannot assign a Lead to another employee');
+        throw new ForbiddenException(
+          "Cannot assign a Lead to another employee",
+        );
       }
-      if (dto.assignedToId && !(await this.prisma.employee.findFirst({ where: { id: dto.assignedToId, status: 'ACTIVE' }, select: { id: true } }))) {
-        throw new BadRequestException('Active assigned employee not found');
+      if (
+        dto.assignedToId &&
+        !(await this.prisma.employee.findFirst({
+          where: { id: dto.assignedToId, status: "ACTIVE" },
+          select: { id: true },
+        }))
+      ) {
+        throw new BadRequestException("Active assigned employee not found");
       }
-      data.assignedTo = dto.assignedToId ? { connect: { id: dto.assignedToId } } : { disconnect: true };
+      data.assignedTo = dto.assignedToId
+        ? { connect: { id: dto.assignedToId } }
+        : { disconnect: true };
     }
 
-    const updated = await this.prisma.lead.update({
-      where: { id },
-      data,
-      include: {
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.lead.update({
+        where: { id },
+        data,
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+            },
           },
         },
-      },
+      });
+      await convertWonLead(tx, updated);
+      return updated;
     });
 
     return this.mapLeadWithStage(updated);
