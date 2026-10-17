@@ -49,7 +49,7 @@ export class LeadService {
 
   private assertCanRead(lead: { createdById: number; assignedToId: number | null }, user: any) {
     this.scope(user);
-    if (!isUserAdmin(user) && lead.createdById !== Number(user.id) && lead.assignedToId !== Number(user.employee.id) && lead.assignedToId !== null) {
+    if (!isUserAdmin(user) && lead.createdById !== Number(user.id) && lead.assignedToId !== Number(user?.employee?.id) && lead.assignedToId !== null) {
       throw new ForbiddenException('Lead must be created by, assigned to you, or unassigned');
     }
   }
@@ -81,7 +81,8 @@ export class LeadService {
     return CRM_LEAD_STAGES[0]; // Default: NEW
   }
 
-  getStages(): LeadStageConfig[] {
+  getStages(user?: any): LeadStageConfig[] {
+    if (user !== undefined) this.scope(user);
     return CRM_LEAD_STAGES;
   }
 
@@ -98,8 +99,8 @@ export class LeadService {
     this.scope(user);
     const companyName = dto.companyName.trim();
     if (!companyName) throw new BadRequestException('Company name is required');
-    if (!isUserAdmin(user) && dto.assignedToId && dto.assignedToId !== user.employee.id) throw new ForbiddenException('Cannot assign a Lead to another employee');
-    const assignedToId = isUserAdmin(user) ? dto.assignedToId : user.employee.id;
+    if (!isUserAdmin(user) && dto.assignedToId && dto.assignedToId !== user?.employee?.id) throw new ForbiddenException('Cannot assign a Lead to another employee');
+    const assignedToId = isUserAdmin(user) ? dto.assignedToId : user?.employee?.id;
     if (assignedToId && !await this.prisma.employee.findFirst({ where: { id: assignedToId, status: 'ACTIVE' }, select: { id: true } })) {
       throw new BadRequestException('Active assigned employee not found');
     }
@@ -191,7 +192,13 @@ export class LeadService {
     if (!existing) throw new NotFoundException(`Lead with ID ${id} not found`);
     this.assertCanRead(existing, user);
 
-    const targetStage = this.resolveStage(dto.stageId ?? dto.status ?? dto.stage);
+    const identifiers = [dto.stageId, dto.status, dto.stage].filter(value => value !== undefined && value !== null);
+    const matches = identifiers.map(value => CRM_LEAD_STAGES.find(stage =>
+      typeof value === 'number' ? stage.id === value : stage.key === String(value).trim().toUpperCase()));
+    if (!matches.length || matches.some(stage => !stage || !stage.isActive) || matches.some(stage => stage.key !== matches[0].key)) {
+      throw new BadRequestException('Provide a valid, active pipeline stage with matching stageId and status key');
+    }
+    const targetStage = matches[0];
     const updated = await this.prisma.lead.update({
       where: { id },
       data: {
@@ -349,7 +356,7 @@ export class LeadService {
       // Determine assignment
       let assignedToId: number | null = null;
       const explicitEmpId = Number(dto?.assignedToId || dto?.employeeId);
-      if (!isUserAdmin(user) && explicitEmpId > 0 && explicitEmpId !== Number(user.employee.id)) {
+      if (!isUserAdmin(user) && explicitEmpId > 0 && explicitEmpId !== Number(user?.employee?.id)) {
         throw new ForbiddenException('Cannot assign a Lead to another employee');
       }
       if (!isNaN(explicitEmpId) && explicitEmpId > 0) {

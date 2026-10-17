@@ -18,7 +18,7 @@ export class LeadController {
     return this.leads.create(dto, user, resolveCreatedFrom(req, user, dto.createdFrom));
   }
   @Get('stages')
-  stages() { return this.leads.getStages(); }
+  stages(@CurrentUser() user: any) { return this.leads.getStages(user); }
   @Get()
   list(@Query() query: LeadQueryDto, @CurrentUser() user: any) { return this.leads.findAll(query, user); }
   @Get(':id')
