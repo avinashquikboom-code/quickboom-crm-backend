@@ -1488,11 +1488,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
-              select: {
-                userRoles: {
-                  select: { role: { select: { type: true, name: true } } },
-                },
-              },
+              
             },
           },
         },
@@ -1505,11 +1501,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
-              select: {
-                userRoles: {
-                  select: { role: { select: { type: true, name: true } } },
-                },
-              },
+              
             },
           },
         },
@@ -1524,11 +1516,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
                 user: {
-                  select: {
-                    userRoles: {
-                      select: { role: { select: { type: true, name: true } } },
-                    },
-                  },
+                  
                 },
               },
             },
@@ -2276,7 +2264,7 @@ return null; // Team must now be selected explicitly on each work item.
                 lastName: true,
                 designation: { select: { name: true } },
                 department: { select: { name: true } },
-                user: { select: { userRoles: { select: { role: { select: { name: true, type: true } } } } } },
+                user: {  },
               },
             },
           },
@@ -2303,7 +2291,7 @@ return null; // Team must now be selected explicitly on each work item.
         ],
       },
       orderBy: { id: 'asc' },
-      include: { ...(options?.onlyMissing ? { tasks: true } : {}), assignedTo: { select: { department: true, designation: true, user: { select: { userRoles: { select: { role: { select: { name: true } } } } } } } } },
+      include: { ...(options?.onlyMissing ? { tasks: true } : {}), assignedTo: { select: { department: true, designation: true, user: {  } } } },
     });
 
     if (unassignedWorks.length === 0) {
@@ -2921,11 +2909,7 @@ return null; // Team must now be selected explicitly on each work item.
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
-              select: {
-                userRoles: {
-                  select: { role: { select: { type: true, name: true } } },
-                },
-              },
+              
             },
           },
         },
@@ -2938,11 +2922,7 @@ return null; // Team must now be selected explicitly on each work item.
             department: { select: { name: true } },
             designation: { select: { name: true } },
             user: {
-              select: {
-                userRoles: {
-                  select: { role: { select: { type: true, name: true } } },
-                },
-              },
+              
             },
           },
         },
@@ -2965,11 +2945,7 @@ return null; // Team must now be selected explicitly on each work item.
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
                 user: {
-                  select: {
-                    userRoles: {
-                      select: { role: { select: { type: true, name: true } } },
-                    },
-                  },
+                  
                 },
               },
             },

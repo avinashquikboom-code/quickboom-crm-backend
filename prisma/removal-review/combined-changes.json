@@ -1,0 +1,58 @@
+{
+  "customerLeadModelsDeleted": [
+    "CouponRedemption",
+    "CustomPlanOrder",
+    "Customer",
+    "CustomerMarketingVideoView",
+    "CustomerModuleOverride",
+    "CustomerSubscription",
+    "EmployeeLeadLimit",
+    "Lead",
+    "LeadActivityTimeline",
+    "LeadNote",
+    "LeadReminder",
+    "LeadStage",
+    "LeadStatusHistory",
+    "RoleLeadLimit",
+    "SubscriptionInstallment"
+  ],
+  "separateRbacModelsDeleted": [
+    "Role",
+    "Permission",
+    "UserRole",
+    "RolePermission",
+    "RoleWorkPermission",
+    "EmployeeModuleOverride"
+  ],
+  "allDeletedModels": [
+    "CouponRedemption",
+    "CustomPlanOrder",
+    "Customer",
+    "CustomerMarketingVideoView",
+    "CustomerModuleOverride",
+    "CustomerSubscription",
+    "EmployeeLeadLimit",
+    "EmployeeModuleOverride",
+    "Lead",
+    "LeadActivityTimeline",
+    "LeadNote",
+    "LeadReminder",
+    "LeadStage",
+    "LeadStatusHistory",
+    "Permission",
+    "Role",
+    "RoleLeadLimit",
+    "RolePermission",
+    "RoleWorkPermission",
+    "SubscriptionInstallment",
+    "UserRole"
+  ],
+  "removedEnums": [
+    "AccessOverrideType",
+    "InstallmentStatus",
+    "LeadPriority",
+    "LeadStatus",
+    "RoleType",
+    "SubscriptionStatus"
+  ]
+}

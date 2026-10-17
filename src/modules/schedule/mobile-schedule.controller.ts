@@ -89,15 +89,7 @@ export class MobileScheduleController {
       },
       include: {
         designation: true,
-        user: {
-          include: {
-            userRoles: {
-              include: {
-                role: true,
-              },
-            },
-          },
-        },
+        user: true,
       },
     });
 

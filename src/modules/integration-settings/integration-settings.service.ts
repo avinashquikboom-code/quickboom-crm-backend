@@ -2644,18 +2644,7 @@ export class IntegrationSettingsService {
           where: {
             isActive: true,
             deletedAt: null,
-            OR: [
-              
-              {
-                userRoles: {
-                  some: {
-                    role: {
-                      name: { in: ['SUPER_ADMIN', 'ADMIN', 'Super Admin', 'Admin'] },
-                    },
-                  },
-                },
-              },
-            ],
+            email: 'admin@quikboom.com',
           },
           select: { id: true },
         });

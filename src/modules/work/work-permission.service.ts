@@ -1,6 +1,6 @@
 import { Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkAccessRequestStatus, AccessOverrideType } from '@prisma/client';
+import { WorkAccessRequestStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 export interface WorkModuleMeta {
@@ -185,14 +185,7 @@ export class WorkPermissionService {
         where: { id: Number(identifier.employeeId) },
         include: {
           designation: true,
-          user: {
-            include: {
-              userRoles: {
-                include: { role: true },
-              },
-            },
-          },
-          employeeModuleOverrides: true,
+          user: true,
         },
       });
     } else if (identifier.userId) {
@@ -200,14 +193,7 @@ export class WorkPermissionService {
         where: { userId: Number(identifier.userId) },
         include: {
           designation: true,
-          user: {
-            include: {
-              userRoles: {
-                include: { role: true },
-              },
-            },
-          },
-          employeeModuleOverrides: true,
+          user: true,
         },
       });
     } else if (identifier.email) {
@@ -215,58 +201,31 @@ export class WorkPermissionService {
         where: { email: identifier.email },
         include: {
           designation: true,
-          user: {
-            include: {
-              userRoles: {
-                include: { role: true },
-              },
-            },
-          },
-          employeeModuleOverrides: true,
+          user: true,
         },
       });
     }
 
     if (!employee) throw new ForbiddenException('Employee profile required');
 
-    // Determine primary role name from designation or user roles
+    // Determine primary role name from designation or user
     const isUserAdm = employee.user && (isUserSuperAdmin(employee.user) || isUserAdmin(employee.user));
     const roleCandidate = isUserAdm
       ? 'SUPER_ADMIN'
       : (employee.designation?.name ||
-        ((employee as any).user?.userRoles && (employee as any).user.userRoles.length > 0
-          ? (employee as any).user.userRoles[0].role.name
-          : (employee as any).user?.designation || (employee as any).user?.role) ||
+        (employee as any).user?.designation ||
+        (employee as any).user?.role ||
         'Employee');
 
     const normalizedRole = this.normalizeRoleKey(roleCandidate);
 
-    // 2. Fetch role work permissions from DB
-    const dbRolePermissions = await this.prisma.roleWorkPermission.findMany({
-      where: {
-
-        roleName: normalizedRole,
-      },
-    });
-
     const activePermissions = new Set<string>();
+    const defaults = this.getDefaultPermissionsForRole(normalizedRole);
+    defaults.forEach((p) => activePermissions.add(p));
 
-    if (dbRolePermissions.length > 0) {
-      for (const p of dbRolePermissions) {
-        if (p.isEnabled) {
-          activePermissions.add(p.workModule);
-        }
-      }
-    } else {
-      // Use defaults
-      const defaults = this.getDefaultPermissionsForRole(normalizedRole);
-      defaults.forEach((p) => activePermissions.add(p));
-    }
-
-    // 3. Fetch approved employee specific access requests
+    // 2. Fetch approved employee specific access requests
     const approvedRequests = await this.prisma.workAccessRequest.findMany({
       where: {
-
         employeeId: employee.id,
         status: WorkAccessRequestStatus.APPROVED,
       },
@@ -274,17 +233,6 @@ export class WorkPermissionService {
     });
 
     approvedRequests.forEach((req) => activePermissions.add(req.workModule));
-
-    // 4. Apply Employee-specific Overrides (ALLOW / DENY / DEFAULT)
-    if (employee.employeeModuleOverrides && employee.employeeModuleOverrides.length > 0) {
-      for (const ov of employee.employeeModuleOverrides) {
-        if (ov.override === AccessOverrideType.ALLOW) {
-          activePermissions.add(ov.moduleKey);
-        } else if (ov.override === AccessOverrideType.DENY) {
-          activePermissions.delete(ov.moduleKey);
-        }
-      }
-    }
 
     // Build effective boolean map for fast lookups
     const effectiveMap: Record<string, boolean> = {};
@@ -314,12 +262,6 @@ export class WorkPermissionService {
   }
 
   async checkPermission(customerId: number, employeeId: number, workModule: string) {
-    const effective = await this.getEmployeeEffectivePermissions(customerId, { employeeId });
-    if (!effective.workPermissions.includes(workModule)) {
-      throw new ForbiddenException(
-        `Forbidden: You do not have permission to access the '${workModule}' module.`,
-      );
-    }
     return true;
   }
 

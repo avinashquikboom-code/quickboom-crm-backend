@@ -11,7 +11,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
-import { RoleType, Prisma, AttendanceStatus } from '@prisma/client';
+import { RoleType } from '../../common/enums/role-type.enum';
+import { Prisma, AttendanceStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 import {
@@ -110,23 +111,7 @@ export class EmployeeService {
       where.NOT = [
         {
           user: {
-            OR: [
-              {
-                userRoles: {
-                  some: {
-                    role: {
-                      OR: [
-                        { type: RoleType.SUPER_ADMIN },
-                        { type: RoleType.CUSTOMER_ADMIN },
-                        { type: RoleType.TENANT_ADMIN },
-                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'System Admin'] } },
-                      ],
-                    },
-                  },
-                },
-              },
-              { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
-            ],
+            email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] },
           },
         },
         {
@@ -770,16 +755,7 @@ export class EmployeeService {
       NOT: [
         {
           user: {
-            userRoles: {
-              some: {
-                role: {
-                  OR: [
-                    { type: RoleType.SUPER_ADMIN },
-                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
-                  ],
-                },
-              },
-            },
+            email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] },
           },
         },
         {
@@ -1410,60 +1386,6 @@ return undefined;
         });
       }
 
-      // Assign functional designation-specific role if one exists, otherwise default to TELECALLER
-      let assignedRole: any = null;
-      if (designation?.id) {
-        assignedRole = await tx.role.findFirst({
-          where: { designationId: designation.id, deletedAt: null },
-        });
-      }
-      if (!assignedRole) {
-        const targetRoleName =
-          designation?.name && designation.name.toUpperCase() !== 'STAFF'
-            ? designation.name.trim()
-            : 'TELECALLER';
-
-        assignedRole = await tx.role.findFirst({
-          where: {
-            OR: [
-              {  name: { equals: targetRoleName, mode: 'insensitive' } },
-              {  name: { equals: targetRoleName, mode: 'insensitive' } },
-            ],
-            deletedAt: null,
-            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-          },
-        });
-        if (assignedRole && designation?.id && !assignedRole.designationId) {
-          await tx.role.update({
-            where: { id: assignedRole.id },
-            data: { designationId: designation.id },
-          }).catch(() => null);
-        }
-      }
-
-      if (!assignedRole) {
-        assignedRole = await tx.role.findFirst({
-          where: {
-            OR: [
-              {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
-              {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
-            ],
-            deletedAt: null,
-          },
-        });
-      }
-
-      if (assignedRole) {
-        const existingUr = await tx.userRole.findFirst({
-          where: { userId: user.id, roleId: assignedRole.id },
-        });
-        if (!existingUr) {
-          await tx.userRole.create({
-            data: { userId: user.id, roleId: assignedRole.id },
-          });
-        }
-      }
-
       // Office / Branch resolution with geo-fence linkage
       let officeId: number | null = null;
       let branchName = dto.branch || dto.officeName || 'Head Office';
@@ -1854,28 +1776,6 @@ return undefined;
           }
 
           updateData.userId = user.id;
-
-          // Assign functional role matching designation or default to TELECALLER
-          const targetRole = await tx.role.findFirst({
-            where: {
-              OR: [
-                {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
-                {  name: { equals: 'TELECALLER', mode: 'insensitive' } },
-              ],
-              deletedAt: null,
-              name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
-            },
-          });
-          if (targetRole) {
-            const hasUserRole = await tx.userRole.findFirst({
-              where: { userId: user.id, roleId: targetRole.id },
-            });
-            if (!hasUserRole) {
-              await tx.userRole.create({
-                data: { userId: user.id, roleId: targetRole.id },
-              });
-            }
-          }
         }
       }
 

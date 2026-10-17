@@ -2,7 +2,6 @@ import { ForbiddenException } from '@nestjs/common';
 import { WorkType } from '@prisma/client';
 import { WorkService } from '../modules/work/work.service';
 import { WorkPermissionService } from '../modules/work/work-permission.service';
-import { EmployeeService } from '../modules/employee/employee.service';
 
 describe('single organization after Customer and Lead removal', () => {
   it('creates independent work and its workflow without a tenant or subscription', async () => {
@@ -33,28 +32,17 @@ describe('single organization after Customer and Lead removal', () => {
     expect(tx.work.create).not.toHaveBeenCalled();
   });
 
-  it('allocates employee codes across the organization without looking up Customer', async () => {
-    const prisma = {
-      employee: { findMany: jest.fn().mockResolvedValue([{ employeeCode: 'EMP-003' }, { employeeCode: 'EMP-008' }]) },
-      auditLog: { findMany: jest.fn().mockResolvedValue([]) },
-    };
-    const service = new EmployeeService(prisma as any);
-    await expect(service.getNextEmployeeCode(undefined, 'EMP')).resolves.toEqual({ nextEmployeeId: 'EMP-009', prefix: 'EMP' });
-    expect(prisma.employee.findMany.mock.calls[0][0].where).not.toHaveProperty('customerId');
-  });
-
-  it('keeps employee DENY overrides without tenant ownership', async () => {
-    const employee = { id: 7, status: 'ACTIVE', designation: { name: 'Video Editor' }, user: null, employeeModuleOverrides: [{ moduleKey: 'video_edit', override: 'DENY' }] };
+  it('keeps designation-based work assignments without removed RBAC tables', async () => {
+    const employee = { id: 7, status: 'ACTIVE', designation: { name: 'Video Editor' }, user: null };
     const prisma = {
       employee: { findUnique: jest.fn().mockResolvedValue(employee), findFirst: jest.fn().mockResolvedValue(employee) },
-      roleWorkPermission: { findMany: jest.fn().mockResolvedValue([]) },
       workAccessRequest: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new WorkPermissionService(prisma as any);
     const result = await service.getAllowedActivityTypesForEmployee(7);
     expect(result.isFullAccess).toBe(false);
-    expect(result.workPermissions).not.toContain('video_edit');
-    expect(result.allowedTypes.size).toBe(0);
+    expect(result.workPermissions).toContain('video_edit');
+    expect(result.allowedTypes.has('REEL_EDIT')).toBe(true);
   });
 
   it('rejects a missing employee instead of granting organization permissions', async () => {

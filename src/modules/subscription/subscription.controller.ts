@@ -27,7 +27,6 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { RoleType,  } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';

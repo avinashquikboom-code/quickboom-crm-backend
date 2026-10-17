@@ -2229,12 +2229,12 @@ return undefined;
   async saveSalaryStructure(customerId: number | string | undefined, data: any, transaction?: any) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const save = async (tx: any) => {
-      // Serialize compensation edits for the same tenant employee without a schema change.
+      // Serialize compensation edits for the same employee without a schema change.
       const target = data.id
         ? await tx.salaryStructure.findFirst({ where: { id: Number(data.id) } })
         : null;
       const lockEmployeeId = target?.employeeId ?? Number(data.employeeId);
-      await tx.$queryRaw(Prisma.sql`SELECT id FROM "Employee" WHERE id = ${lockEmployeeId} AND "customerId" = ${numCustomerId} FOR UPDATE`);
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM "Employee" WHERE id = ${lockEmployeeId} FOR UPDATE`);
       const existing = await tx.salaryStructure.findFirst({
         where: data.id
           ? { id: Number(data.id) }

@@ -10,8 +10,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDesignationDto, UpdateDesignationDto } from './dto/designation.dto';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
-import { ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
-import { RoleType } from '@prisma/client';
 
 @Injectable()
 export class DesignationService {
@@ -231,22 +229,6 @@ return undefined;
       },
     });
 
-    // Auto-create / link the matching Role via ensureRoleForDesignation so that:
-    // 1. The Role.designationId FK is properly set (the critical fix)
-    // 2. Duplicate prevention is handled consistently
-    // 3. GET /designations/roles and GET /designations/:id/permissions work immediately
-    try {
-      await this.ensureRoleForDesignation({
-        id: created.id,
-        name: created.name,
-        
-        description: created.description,
-        audience: dto.audience === 'CUSTOMER' ? 'CUSTOMER' : 'EMPLOYEE',
-      });
-    } catch (roleErr) {
-      this.logger.warn(`[DESIGNATION_CREATE] Could not auto-link Role for Designation #${created.id}: ${roleErr}`);
-    }
-
     return {
       id: created.id,
       name: created.name,
@@ -327,16 +309,6 @@ return undefined;
         },
       },
     });
-
-    if (dto.isActive !== undefined || dto.name) {
-      await this.prisma.role.updateMany({
-        where: { designationId: id },
-        data: {
-          name: dto.name ? dto.name.trim() : undefined,
-          deletedAt: dto.isActive !== undefined ? (dto.isActive ? null : new Date()) : undefined,
-        },
-      }).catch(() => null);
-    }
 
     return {
       id: updated.id,
@@ -439,31 +411,6 @@ return undefined;
             },
           });
         }
-
-        // Link to existing DB role if one matches this designation by name
-        if (desig) {
-          const upperName = item.name.toUpperCase().replace(/\s+/g, '_');
-          const matchedRole = await this.prisma.role.findFirst({
-            where: {
-              OR: [
-                { name: { equals: item.name, mode: 'insensitive' } },
-                { name: { equals: upperName, mode: 'insensitive' } },
-              ],
-              designationId: null,
-              name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-            },
-          });
-
-          if (matchedRole) {
-            await this.prisma.role.update({
-              where: { id: matchedRole.id },
-              data: { designationId: desig.id },
-            });
-            this.logger.log(`[DESIGNATIONS] Linked Role #${matchedRole.id} (${matchedRole.name}) to Designation #${desig.id} (${desig.name})`);
-          } else {
-            await this.ensureRoleForDesignation(desig);
-          }
-        }
       }
 
       // Link any existing unassigned employee in this customer to Telecaller
@@ -481,121 +428,10 @@ return undefined;
     }
   }
 
-  /**
-   * Ensure a Role entity exists and is linked 1:1 with this Designation.
-   */
   async ensureRoleForDesignation(designation: { id: number; name: string; customerId?: number; description?: string | null; audience?: string | null }) {
-    let role = await this.prisma.role.findUnique({
-      where: { designationId: designation.id },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
-
-    if (role && role.rolePermissions && role.rolePermissions.length > 0) return role;
-
-    if (!role) {
-      // Check if a role exists with matching name that has no designation attached
-      const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
-      const existingUnlinked = await this.prisma.role.findFirst({
-        where: {
-          OR: [
-            { name: { equals: designation.name, mode: 'insensitive' } },
-            { name: { equals: upperName, mode: 'insensitive' } },
-          ],
-          designationId: null,
-          name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-        },
-        include: {
-          rolePermissions: { include: { permission: true } },
-        },
-      });
-
-      if (existingUnlinked) {
-        role = await this.prisma.role.update({
-          where: { id: existingUnlinked.id },
-          data: { designationId: designation.id },
-          include: {
-            rolePermissions: { include: { permission: true } },
-          },
-        });
-      } else {
-        // Otherwise create a new Role for this designation
-        role = await this.prisma.role.create({
-          data: {
-            name: designation.name,
-            description: designation.description || `${designation.name} role`,
-            type: RoleType.CUSTOM,
-            
-            designationId: designation.id,
-          },
-          include: {
-            rolePermissions: { include: { permission: true } },
-          },
-        });
-      }
-    }
-
-    if (role.rolePermissions && role.rolePermissions.length > 0) {
-      return role;
-    }
-
-    // Seed default permissions for this role
-    const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
-    let defaultKeys: { module: string; action: string }[] = [];
-    if (ROLE_PERMISSION_DEFAULTS[upperName]) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
-    } else if (upperName.includes('PRODUCTION')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.PRODUCTION_TEAM_MEMBER || [];
-    } else if (upperName.includes('DESIGNER')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
-    } else if (upperName.includes('EDITOR')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
-    } else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
-    } else if (upperName.includes('PHOTO')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
-    } else if (designation.audience === 'CUSTOMER') {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.CUSTOMER || [];
-    } else {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
-    }
-
-    for (const p of defaultKeys) {
-      let permRecord = await this.prisma.permission.findUnique({
-        where: { module_action: { module: p.module, action: p.action } },
-      });
-      if (!permRecord) {
-        permRecord = await this.prisma.permission.create({
-          data: {
-            module: p.module,
-            action: p.action,
-            description: `${p.action} permission for ${p.module}`,
-          },
-        });
-      }
-      if (permRecord) {
-        await this.prisma.rolePermission.create({
-          data: { roleId: role.id, permissionId: permRecord.id },
-        }).catch(() => null);
-      }
-    }
-
-    return this.prisma.role.findUnique({
-      where: { id: role.id },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
+    return null;
   }
 
-  /**
-   * Fetch all roles directly derived from Employee Designations (single source of truth).
-   */
-  /**
-   * Customer mobile role, stored as a designation so the existing
-   * Roles & Permissions screen can edit it. Does not replace employee roles.
-   */
   async ensureCustomerAppDesignation(customerId: number) {
     let designation = await this.prisma.designation.findFirst({
       where: {  code: 'CUSTOMER' },
@@ -604,7 +440,6 @@ return undefined;
     if (!designation) {
       designation = await this.prisma.designation.create({
         data: {
-          
           name: 'Customer',
           code: 'CUSTOMER',
           level: 0,
@@ -619,40 +454,6 @@ return undefined;
         where: { id: designation.id },
         data: { audience: 'CUSTOMER' },
       });
-    }
-
-    const existingRole = await this.prisma.role.findUnique({
-      where: { designationId: designation.id },
-      include: { rolePermissions: true },
-    });
-    if (existingRole) return designation;
-
-    const role = await this.prisma.role.create({
-      data: {
-        name: 'Customer',
-        description: designation.description || 'Customer mobile app access',
-        type: RoleType.CUSTOM,
-        
-        designationId: designation.id,
-      },
-    });
-
-    for (const p of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
-      let permRecord = await this.prisma.permission.findUnique({
-        where: { module_action: { module: p.module, action: p.action } },
-      });
-      if (!permRecord) {
-        permRecord = await this.prisma.permission.create({
-          data: {
-            module: p.module,
-            action: p.action,
-            description: `${p.action} permission for ${p.module}`,
-          },
-        });
-      }
-      await this.prisma.rolePermission.create({
-        data: { roleId: role.id, permissionId: permRecord.id },
-      }).catch(() => null);
     }
 
     return designation;

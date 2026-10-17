@@ -7,7 +7,8 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { RoleType, Prisma } from '@prisma/client';
+import { RoleType } from '../../common/enums/role-type.enum';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ModuleResetDto,
@@ -54,17 +55,9 @@ return undefined;
 
     // Super Admin must NOT appear or be operated on as an employee
     if (employee.user) {
-      const isSuperAdminUser = await this.prisma.userRole.findFirst({
-        where: {
-          userId: employee.user.id,
-          role: {
-            OR: [
-              { type: RoleType.SUPER_ADMIN },
-              { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
-            ],
-          },
-        },
-      });
+      const isSuperAdminUser =
+        employee.user.email === 'admin@quikboom.com' ||
+        (employee.user as any).role === 'SUPER_ADMIN';
       if (isSuperAdminUser) {
         throw new ForbiddenException('Super Admin cannot be modified as an employee.');
       }
@@ -509,9 +502,6 @@ return undefined;
       // ── Step 5: Calendar / Schedules & Works ───────────────────────────────────
       const schedules = tx.monthlySchedule?.deleteMany ? await tx.monthlySchedule.deleteMany({ where: {  } }) : { count: 0 };
       const workAccess = tx.workAccessRequest?.deleteMany ? await tx.workAccessRequest.deleteMany({ where: {  } }) : { count: 0 };
-      if (tx.roleWorkPermission?.deleteMany) await tx.roleWorkPermission.deleteMany({ where: {  } });
-      if (tx.employeeModuleOverride?.deleteMany) await tx.employeeModuleOverride.deleteMany({ where: {  } });
-
 
       const works = tx.work?.deleteMany ? await tx.work.deleteMany({ where: {  } }) : { count: 0 };
 
@@ -1111,14 +1101,6 @@ return undefined;
           })
         : { count: 0 };
 
-      // 10. Overrides & Limits
-      if (tx.employeeModuleOverride?.deleteMany) {
-        await tx.employeeModuleOverride.deleteMany({
-          where: {  employeeId: numEmployeeId },
-        });
-      }
-
-
       // 11. Unlink shared assignments
 
       if (tx.monthlySchedule?.updateMany) {
@@ -1288,18 +1270,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
         // Exclude employees with user role SUPER_ADMIN, CUSTOMER_ADMIN, TENANT_ADMIN or ADMIN
         {
           user: {
-            userRoles: {
-              some: {
-                role: {
-                  OR: [
-                    { type: RoleType.SUPER_ADMIN },
-                    { type: RoleType.CUSTOMER_ADMIN },
-                    { type: RoleType.TENANT_ADMIN },
-                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN'] } },
-                  ],
-                },
-              },
-            },
+            email: 'admin@quikboom.com',
           },
         },
         // Exclude employees explicitly named Super Admin or Admin
@@ -1350,9 +1321,6 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
               id: true,
               email: true,
               phone: true,
-              userRoles: {
-                include: { role: true },
-              },
             },
           },
         },
@@ -1454,17 +1422,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
         NOT: [
           {
             user: {
-              userRoles: {
-                some: {
-                  role: {
-                    OR: [
-                      { type: RoleType.SUPER_ADMIN },
-                      { type: RoleType.CUSTOMER_ADMIN },
-                      { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
-                    ],
-                  },
-                },
-              },
+              email: 'admin@quikboom.com',
             },
           },
           { firstName: { in: ['Super', 'Super Admin', 'Admin'] } },

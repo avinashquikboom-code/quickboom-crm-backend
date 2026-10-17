@@ -916,32 +916,12 @@ try {
     user?: any,
   ) {
     try {
-      const isSuperAdmin = isUserSuperAdmin(user);
-      // SUPER_ADMIN may optionally pass an explicit target customerId via query param / header
-      // (CustomerGuard resolves that into request.customerId; stays undefined for platform-wide view)
-      const numCustomerId = Number(customerId);
-      const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
-
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       const skip = (page - 1) * limit;
 
-      // Build tenant-scoped where clause with isolated AND conditions:
-      // - SUPER_ADMIN, no explicit customerId => see ALL records (no customer filter)
-      // - SUPER_ADMIN, explicit customerId   => scoped to that customer
-      // - Normal user                        => strictly scoped to their customerId
+      // Records are shared within the single organization. Employee search counts stay separate.
       const andConditions: any[] = [{ deletedAt: null }];
-
-      if (isSuperAdmin) {
-        if (hasExplicitCustomer) {
-          andConditions.push();
-        }
-        // else: SUPER_ADMIN — no customerId filter, full platform view
-      } else {
-        const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(undefined);
-
-        andConditions.push();
-      }
 
       if (query.search && query.search.trim()) {
         const search = query.search.trim();
