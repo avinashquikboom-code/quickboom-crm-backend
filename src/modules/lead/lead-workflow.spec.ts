@@ -239,3 +239,50 @@ describe('shared BPO and Admin pipeline stage synchronization', () => {
     expect(prisma.lead.update).not.toHaveBeenCalled();
   });
 });
+
+describe('Lead single and multiple deletion', () => {
+  it('soft deletes a single lead with deletedAt timestamp', async () => {
+    let lead = { id: 101, createdById: 2, assignedToId: null, deletedAt: null };
+    const prisma = {
+      lead: {
+        findFirst: jest.fn(async () => lead),
+        update: jest.fn(async ({ data }) => (lead = { ...lead, ...data })),
+      },
+    };
+    const service = new LeadService(prisma as any);
+    const res = await service.remove(101, admin);
+    expect(res).toEqual({ success: true, message: 'Lead deleted successfully', id: 101 });
+    expect(lead.deletedAt).toBeInstanceOf(Date);
+    expect(prisma.lead.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 101 },
+      data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+    }));
+  });
+
+  it('soft deletes multiple leads in bulk', async () => {
+    const prisma = {
+      lead: {
+        updateMany: jest.fn().mockResolvedValue({ count: 3 }),
+      },
+    };
+    const service = new LeadService(prisma as any);
+    const res = await service.removeMany([101, 102, 103], admin);
+    expect(res).toEqual({ success: true, message: 'Successfully deleted 3 leads', count: 3 });
+    expect(prisma.lead.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        AND: expect.arrayContaining([
+          { id: { in: [101, 102, 103] } },
+          { deletedAt: null },
+        ]),
+      }),
+      data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+    }));
+  });
+
+  it('rejects bulk delete when no valid IDs are supplied', async () => {
+    const prisma = { lead: { updateMany: jest.fn() } };
+    const service = new LeadService(prisma as any);
+    await expect(service.removeMany([], admin)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
+  });
+});

@@ -277,6 +277,68 @@ export class LeadService {
     return this.mapLeadWithStage(updated);
   }
 
+  async remove(id: number, user: any) {
+    this.scope(user);
+    const existing = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!existing) throw new NotFoundException(`Lead with ID ${id} not found`);
+    this.assertCanRead(existing, user);
+
+    const now = new Date();
+    await this.prisma.lead.update({
+      where: { id },
+      data: { deletedAt: now },
+    });
+
+    this.logger.debug(`[LEAD_DELETE] leadId=${id} deletedBy=${user.id}`);
+    return { success: true, message: 'Lead deleted successfully', id };
+  }
+
+  async removeMany(ids: number[], user: any) {
+    this.scope(user);
+    if (!Array.isArray(ids) || !ids.length) {
+      throw new BadRequestException('At least one Lead ID must be provided');
+    }
+    const validIds = ids.map(id => Number(id)).filter(id => !isNaN(id) && id > 0);
+    if (!validIds.length) {
+      throw new BadRequestException('Invalid Lead IDs');
+    }
+
+    const where: Prisma.LeadWhereInput = {
+      AND: [
+        { id: { in: validIds } },
+        { deletedAt: null },
+        this.scope(user),
+      ],
+    };
+
+    if (!isUserAdmin(user)) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : [where.AND]),
+        {
+          OR: [
+            { createdById: Number(user.id) },
+            ...(user?.employee?.id ? [{ assignedToId: Number(user.employee.id) }] : []),
+            { assignedToId: null },
+          ],
+        },
+      ];
+    }
+
+    const result = await this.prisma.lead.updateMany({
+      where,
+      data: { deletedAt: new Date() },
+    });
+
+    this.logger.debug(`[LEAD_BULK_DELETE] requested=${validIds.length} deleted=${result.count} deletedBy=${user.id}`);
+    return {
+      success: true,
+      message: `Successfully deleted ${result.count} lead${result.count === 1 ? '' : 's'}`,
+      count: result.count,
+    };
+  }
+
   async importCapture(
     id: number,
     user: any,

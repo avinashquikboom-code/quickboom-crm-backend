@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { LeadService } from './lead.service';
-import { CreateLeadDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
+import { BulkDeleteLeadsDto, CreateLeadDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
@@ -34,6 +34,18 @@ export class LeadController {
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLeadDto, @CurrentUser() user: any) {
     return this.leads.update(id, dto, user);
+  }
+  @Delete(':id')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.leads.remove(id, user);
+  }
+  @Post('bulk-delete')
+  bulkDelete(@Body() dto: BulkDeleteLeadsDto, @CurrentUser() user: any) {
+    return this.leads.removeMany(dto.ids, user);
+  }
+  @Delete()
+  bulkDeleteDelete(@Body() dto: BulkDeleteLeadsDto, @CurrentUser() user: any) {
+    return this.leads.removeMany(dto.ids, user);
   }
   @Post('import-capture/:id')
   async importCapture(

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 
 export class CreateLeadDto {
@@ -58,5 +58,12 @@ export class UpdateLeadDto {
   @IsOptional() @Type(() => Number) @IsInt() stageId?: number;
   @IsOptional() @IsString() stage?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) assignedToId?: number;
+}
+
+export class BulkDeleteLeadsDto {
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
 }
 
