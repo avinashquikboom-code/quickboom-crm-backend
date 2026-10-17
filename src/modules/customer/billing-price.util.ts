@@ -32,7 +32,7 @@ export function subscriptionPrice(
     .div(10000)
     .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
   const total = taxable.add(gst);
-  if (total.gt(2147483647) || total.isNegative())
+  if (base.gt(2147483647) || total.gt(2147483647) || total.isNegative())
     throw new BadRequestException('Plan total exceeds supported amount');
   return {
     billingCycle: cycle as 'MONTHLY' | 'YEARLY',

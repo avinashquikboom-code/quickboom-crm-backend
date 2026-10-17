@@ -125,3 +125,14 @@ describe('payment verification lifecycle', () => {
     expect(customers.settle).not.toHaveBeenCalled();
   });
 });
+
+describe('checkout request validation', () => {
+  it('rejects client supplied price and GST fields', async () => {
+    const { plainToInstance } = await import('class-transformer');
+    const { validate } = await import('class-validator');
+    const { CreateRazorpayOrderDto } = await import('./dto/payment.dto');
+    const dto = plainToInstance(CreateRazorpayOrderDto, { planId: 1, billingCycle: 'YEARLY', idempotencyKey: 'request-123', totalPaise: 1, gstPaise: 0 });
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    expect(errors.map(e => e.property)).toEqual(expect.arrayContaining(['totalPaise', 'gstPaise']));
+  });
+});

@@ -1,3 +1,28 @@
+-- The current independent Lead model predates its migration history.
+-- Preserve an existing crm_leads table; create the current schema only if absent.
+DO $$ BEGIN
+  CREATE TYPE "CrmLeadStatus" AS ENUM ('NEW', 'CONTACTED', 'DETAILS_SEND', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE TABLE IF NOT EXISTS "crm_leads" (
+  "id" SERIAL PRIMARY KEY,
+  "companyName" TEXT NOT NULL,
+  "firstName" TEXT, "lastName" TEXT, "phone" TEXT, "email" TEXT,
+  "website" TEXT, "address" TEXT, "city" TEXT, "state" TEXT, "country" TEXT,
+  "pincode" TEXT, "category" TEXT, "googlePlaceId" TEXT UNIQUE,
+  "latitude" DOUBLE PRECISION, "longitude" DOUBLE PRECISION,
+  "source" TEXT NOT NULL DEFAULT 'MANUAL',
+  "createdFrom" "RecordCreatedFrom" NOT NULL DEFAULT 'ADMIN_PANEL',
+  "status" "CrmLeadStatus" NOT NULL DEFAULT 'NEW', "notes" TEXT,
+  "assignedToId" INTEGER REFERENCES "Employee"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  "createdById" INTEGER NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL, "deletedAt" TIMESTAMP(3)
+);
+CREATE INDEX IF NOT EXISTS "crm_leads_deletedAt_createdAt_idx" ON "crm_leads"("deletedAt", "createdAt");
+CREATE INDEX IF NOT EXISTS "crm_leads_assignedToId_idx" ON "crm_leads"("assignedToId");
+CREATE INDEX IF NOT EXISTS "crm_leads_createdById_idx" ON "crm_leads"("createdById");
+
 -- CreateEnum
 CREATE TYPE "CustomerLifecycleStatus" AS ENUM ('INACTIVE', 'ACTIVE');
 

@@ -1,4 +1,5 @@
 import { CustomerService } from '../customer/customer.service';
+import { recalculateCustomer } from '../customer/customer-lifecycle.util';
 import { GoneException } from '@nestjs/common';
 import {
   Injectable,
@@ -246,11 +247,21 @@ export class PaymentService {
       entity?.order_id &&
       entity?.id
     ) {
-      const checkout = await this.prisma.customerCheckout.findUnique({
+      let checkout = await this.prisma.customerCheckout.findUnique({
         where: { orderId: String(entity.order_id) },
       });
+      const { instance } = await this.getRazorpayClient();
+      if (!checkout) {
+        // Recover a gateway order whose creation response was lost in transit.
+        // Receipt and amount come from the authenticated gateway API, never callback notes.
+        const order = await instance.orders.fetch(String(entity.order_id));
+        const candidate = typeof order.receipt === 'string' ? await this.prisma.customerCheckout.findUnique({ where: { id: order.receipt } }) : null;
+        if (candidate && candidate.status === 'CREATING' && !candidate.orderId && Number(order.amount) === candidate.totalPaise && order.currency === 'INR') {
+          await this.prisma.customerCheckout.updateMany({ where: { id: candidate.id, status: 'CREATING', orderId: null }, data: { orderId: String(order.id), status: 'PENDING' } });
+          checkout = await this.prisma.customerCheckout.findUnique({ where: { orderId: String(entity.order_id) } });
+        }
+      }
       if (checkout) {
-        const { instance } = await this.getRazorpayClient();
         const payment = await instance.payments.fetch(entity.id);
         await this.customers!.settle(checkout.orderId!, payment);
       }
@@ -262,7 +273,7 @@ export class PaymentService {
         data: { status: "FAILED" },
       });
     }
-    if (payload.event === "refund.processed" && this.commissionService) {
+    if (payload.event === "refund.processed") {
       const refund = payload?.payload?.refund?.entity;
       if (refund?.payment_id && refund?.id) {
         const payment = await this.prisma.paymentHistory.findFirst({
@@ -272,12 +283,31 @@ export class PaymentService {
           const full =
             Number(refund.amount) >=
             Math.round(Number(payment.totalAmount ?? payment.amount) * 100);
-          await this.commissionService.handleRefundOrCancellation(
-            payment.id,
-            undefined,
-            String(refund.id),
-            !full,
-          );
+          if (this.commissionService) {
+            await this.commissionService.handleRefundOrCancellation(
+              payment.id,
+              undefined,
+              String(refund.id),
+              !full,
+            );
+          }
+          if (full) {
+            const checkout = await this.prisma.customerCheckout.findFirst({
+              where: { paymentHistoryId: payment.id },
+            });
+            if (checkout) {
+              await this.prisma.$transaction(async (tx) => {
+                await tx.customerSubscription.updateMany({
+                  where: {
+                    checkoutId: checkout.id,
+                    status: { in: ["PENDING_ACTIVATION", "ACTIVE"] },
+                  },
+                  data: { status: "CANCELLED" },
+                });
+                await recalculateCustomer(tx, checkout.customerId);
+              });
+            }
+          }
         }
       }
     }
