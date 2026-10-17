@@ -28,22 +28,44 @@ export class ScheduleService {
 throw new GoneException('This Customer/Lead operation has been removed');
   }
 
+  /** Generate retained calendar entries directly from a plan, without subscriptions. */
+  async generateSchedulesForPlan(planId: number, options: {
+    startDate?: string; duration?: number; assignedEmployeeId?: number;
+  } = {}) {
+    if (!Number.isInteger(planId) || planId < 1) throw new BadRequestException('Invalid plan ID');
+    const duration = options.duration ?? 1;
+    const startDate = options.startDate ? new Date(options.startDate) : new Date();
+    if (!Number.isInteger(duration) || duration < 1 || duration > 120 || Number.isNaN(startDate.getTime())) {
+      throw new BadRequestException('Provide a valid start date and duration of 1–120 months');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize generation for a plan so retries cannot duplicate its calendar entries.
+      await tx.$queryRaw`SELECT id FROM "Plan" WHERE id = ${planId} FOR UPDATE`;
+      const plan = await tx.plan.findUnique({ where: { id: planId } });
+      if (!plan || !plan.isActive || plan.deletedAt) throw new NotFoundException('Active plan not found');
+      if (options.assignedEmployeeId) {
+        const employee = await tx.employee.findUnique({ where: { id: options.assignedEmployeeId } });
+        if (!employee || employee.status !== 'ACTIVE') throw new BadRequestException('Active employee not found');
+      }
+      const schedules = [];
+      for (const interval of generateMonthlyScheduleIntervals(startDate, duration, plan.name)) {
+        const where = { planId, assignedEmployeeId: options.assignedEmployeeId ?? null,
+          startDate: interval.startDate, endDate: interval.endDate, deletedAt: null };
+        const existing = await tx.monthlySchedule.findFirst({ where });
+        schedules.push(existing ?? await tx.monthlySchedule.create({ data: {
+          ...interval, planId, assignedEmployeeId: options.assignedEmployeeId,
+          status: ScheduleStatus.PLANNED,
+        } }));
+      }
+      return schedules;
+    });
+  }
+
   /**
    * Handle plan cancellation: keep completed history, mark future planned as CANCELLED.
    */
   async handleSubscriptionCancellation(subscriptionId: number) {
-    const now = new Date();
-    await this.prisma.monthlySchedule.updateMany({
-      where: {
-        
-        startDate: { gte: now },
-        status: ScheduleStatus.PLANNED,
-      },
-      data: {
-        status: ScheduleStatus.CANCELLED,
-        notes: 'Cancelled due to plan termination',
-      },
-    });
+    throw new GoneException('Subscription cancellation is retired; update the specific schedule instead');
   }
 
   /**
@@ -215,7 +237,7 @@ throw new GoneException('This Customer/Lead operation has been removed');
 
     return items.map((item) => ({
       id: item.id,
-      title: item.title || `${undefined} - ${item.plan?.name}`,
+      title: item.title || item.plan?.name || 'Schedule',
       
       customerName: 'Customer',
       planName: item.plan?.name || 'Plan',

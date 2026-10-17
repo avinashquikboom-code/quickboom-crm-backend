@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus, WorkType } from '@prisma/client';
-import { WorkPermissionService } from './work-permission.service';
+import { WorkAssignmentService } from './work-assignment.service';
 
 describe('Employee Calendar Isolation & Mapping Tests', () => {
   let workService: WorkService;
@@ -276,9 +276,9 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
         WorkService,
         { provide: PrismaService, useValue: prisma },
         {
-          provide: WorkPermissionService,
+          provide: WorkAssignmentService,
           useValue: {
-            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+            getEmployeeActivityTypes: jest.fn().mockResolvedValue({
               role: 'STAFF',
               allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT', 'POST_DESIGN']),
               isFullAccess: true,

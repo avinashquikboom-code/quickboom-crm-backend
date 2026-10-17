@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Optional } from '@nestjs/common';
 import { Response } from 'express';
 import { Prisma } from '@prisma/client';
-import { isUserAdmin } from '../../common/utils/role.util';
+import { isUserAdmin } from '../../common/utils/account.util';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaService } from '../../prisma/prisma.service';

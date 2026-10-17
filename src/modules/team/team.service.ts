@@ -11,8 +11,8 @@ import {
   TeamQueryDto,
   UpdateTeamDto,
 } from './dto/team.dto';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
-import { normalizeActivityType } from '../work/work-permission.service';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { normalizeActivityType } from '../work/work-assignment.service';
 
 @Injectable()
 export class TeamService {

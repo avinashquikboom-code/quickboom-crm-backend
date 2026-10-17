@@ -1,15 +1,14 @@
+import { WorkRecordGuard } from './work-record.guard';
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, Logger, UseGuards, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
-import { WorkPermissionService } from './work-permission.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
 import { WorkStatus, WorkType, TaskStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
-import { userHasModulePermission } from '../../common/guards/permissions.guard';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
 
 import { parseCalendarMonthYear } from './calendar-query.util';
 
@@ -24,34 +23,14 @@ function mapWorkTypeToModule(workType?: WorkType | string): string {
 }
 
 @ApiTags('Work & SSM Management')
+@UseGuards(JwtAuthGuard, WorkRecordGuard)
 @Controller('works')
 export class WorkController {
   private readonly logger = new Logger(WorkController.name);
 
   constructor(
     private readonly workService: WorkService,
-    private readonly workPermissionService: WorkPermissionService,
   ) {}
-
-  @Get('my-permissions')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get effective work module permissions for authenticated employee' })
-  async getMyPermissions(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-  ) {
-    const custId = customerId || undefined || undefined || undefined;
-    const employeeId = user?.employeeId || user?.employee?.id;
-    const userId = user?.id || user?.sub;
-
-    return this.workPermissionService.getEmployeeEffectivePermissions(Number(custId), {
-      employeeId: employeeId ? Number(employeeId) : undefined,
-      userId: userId ? Number(userId) : undefined,
-      email: user?.email,
-    });
-  }
 
   // ==========================================
   // STANDARD WORK ENDPOINTS
@@ -148,9 +127,7 @@ export class WorkController {
       );
       throw new NotFoundException('No employee profile is linked to this account');
     }
-    const canViewCalendar =
-      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
-      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
+    const canViewCalendar = ['SUPER_ADMIN', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(String(user?.accountType || user?.role || '').toUpperCase());
     const period = parseCalendarMonthYear(month, year);
     this.logger.log(
       `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
@@ -167,7 +144,7 @@ export class WorkController {
     const lookingAtAnotherEmployee = !isTargetSameAsAuth;
     if (lookingAtAnotherEmployee && !canViewCalendar) {
       throw new ForbiddenException(
-        'Access denied: Missing required permission [CALENDAR:VIEW]',
+        'Access denied: another employee calendar requires an administrator account',
       );
     }
 
@@ -211,9 +188,7 @@ export class WorkController {
     if (!authEmpId) {
       return { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0, today: 0, overdue: 0 };
     }
-    const canViewCalendar =
-      userHasModulePermission(user, 'CALENDAR', 'VIEW') ||
-      userHasModulePermission(user, 'CALENDAR', 'VIEW_ASSIGNED');
+    const canViewCalendar = ['SUPER_ADMIN', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(String(user?.accountType || user?.role || '').toUpperCase());
     const period = parseCalendarMonthYear(month, year);
     return this.workService.getProductionMetrics(authEmpId, {
       
@@ -265,29 +240,9 @@ export class WorkController {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
     const isAdmin = isUserAdmin(user) || isUserSuperAdmin(user);
 
-    if (employeeId && !isAdmin) {
-      if (!userHasModulePermission(user, 'CALENDAR', 'CREATE')) {
-        throw new ForbiddenException(
-          'Access denied: Missing required permission [CALENDAR:CREATE]',
-        );
-      }
-
-      const targetCustomerId = customerId;
-      const parsedTarget = Number(targetCustomerId);
-      if (!Number.isInteger(parsedTarget) || parsedTarget <= 0) {
-        throw new BadRequestException(
-          'A valid customer is required to schedule this calendar event.',
-        );
-      }
-      await this.workService.assertEmployeeCanScheduleForCustomer(
-        employeeId,
-        parsedTarget,
-        { allowTenantCustomers: true },
-      );
-      return this.workService.create(parsedTarget, {
-        ...dto,
-        assignedToId: employeeId,
-      });
+    if (!isAdmin) {
+      if (!employeeId) throw new ForbiddenException('Active employee profile required');
+      return this.workService.create(undefined, { ...dto, teamId: undefined, assignedToId: employeeId, editorId: undefined });
     }
 
     return this.workService.create(customerId, dto);
@@ -320,13 +275,9 @@ export class WorkController {
     @Req() req: any,
   ) {
     const custId = customerIdQuery || undefined || undefined;
-    const work = await this.workService.findOne(custId, id);
-    if (work) {
-      const moduleKey = mapWorkTypeToModule(work.workType);
-      const employeeId = user?.employeeId || user?.employee?.id;
-      if (employeeId) {
-        await this.workPermissionService.checkPermission(Number(custId), Number(employeeId), moduleKey);
-      }
+    if (!isUserAdmin(user)) {
+      const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+      await this.workService.assertEmployeeAssignedToWork(employeeId, Number(id));
     }
     return this.workService.submitWork(customerIdQuery, id, dto, user?.id);
   }

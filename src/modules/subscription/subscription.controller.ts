@@ -29,9 +29,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 
 import { InstallmentService } from './installment.service';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @ApiTags('Subscriptions & Plans')
@@ -105,8 +105,8 @@ export class SubscriptionController {
 
   @Post('subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
+  @UseGuards(JwtAuthGuard, WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Start a completely new plan (full price) when prior renewal has failed' })
   async startNewPlanCustomer(
@@ -150,8 +150,8 @@ export class SubscriptionController {
   }
 
   @Get('subscriptions/effective-plan')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'VIEW' })
+  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active effective plan and usage for authenticated customer' })
   async getEffectivePlan(
@@ -161,8 +161,8 @@ export class SubscriptionController {
   ) { throw new GoneException('Customer subscriptions have been removed'); }
 
   @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_ORDERS', action: 'VIEW' })
+  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_ORDERS', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get purchase and order history for authenticated customer' })
   async getCustomerOrders(

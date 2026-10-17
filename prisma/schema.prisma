@@ -94,6 +94,7 @@ model PaymentHistory {
 }
 
 model User {
+  accountType             String            @default("EMPLOYEE")
   id                      Int               @id @default(autoincrement())
   email                   String            @unique
   phone                   String?           @unique
@@ -745,7 +746,6 @@ model Employee {
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
   mobileLoginEnabled       Boolean                  @default(true)
-  permissionsUpdatedAt     DateTime                 @default(now())
   officeId                 Int?
   shiftId                  Int?
   attendances              Attendance[]

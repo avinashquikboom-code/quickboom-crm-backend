@@ -1,6 +1,20 @@
--- REVIEW ONLY: combined Customer/Lead cleanup AND separately authorized RBAC removal.
--- Destructive SQL, outside automatic migrations. No database changes have been executed.
--- Review both removal families, foreign keys, duplicate keys and singleton consolidation first.
+-- REVIEW ONLY. Destructive Customer/Lead/RBAC removal; do not auto-apply.
+-- Run the read-only preflight, back up data, resolve global unique/singleton collisions,
+-- and verify administrator classification before approving execution.
+-- No database changes have been executed by this task.
+
+-- Preserve existing administrator identity BEFORE dropping the Role/UserRole tables.
+ALTER TABLE "User" ADD COLUMN "accountType" TEXT NOT NULL DEFAULT 'EMPLOYEE';
+UPDATE "User" u SET "accountType" = CASE
+  WHEN EXISTS (SELECT 1 FROM "UserRole" ur JOIN "Role" r ON r.id = ur."roleId"
+    WHERE ur."userId" = u.id AND r."deletedAt" IS NULL AND
+      (r.type::text = 'SUPER_ADMIN' OR regexp_replace(upper(r.name), '[^A-Z]', '', 'g') IN ('SUPERADMIN', 'SUPERADMINISTRATOR')))
+  THEN 'SUPER_ADMIN' ELSE 'ADMIN' END
+WHERE EXISTS (SELECT 1 FROM "UserRole" ur JOIN "Role" r ON r.id = ur."roleId"
+  WHERE ur."userId" = u.id AND r."deletedAt" IS NULL AND
+    (r.type::text IN ('SUPER_ADMIN', 'TENANT_ADMIN') OR
+     regexp_replace(upper(r.name), '[^A-Z]', '', 'g') IN ('SUPERADMIN', 'SUPERADMINISTRATOR', 'ADMIN', 'COMPANYADMIN', 'TENANTADMIN')));
+
 -- DropForeignKey
 ALTER TABLE "customers" DROP CONSTRAINT "customers_mobileRoleId_fkey";
 
@@ -692,7 +706,8 @@ ALTER TABLE "Department" DROP COLUMN "customerId";
 ALTER TABLE "Designation" DROP COLUMN "customerId";
 
 -- AlterTable
-ALTER TABLE "Employee" DROP COLUMN "customerId";
+ALTER TABLE "Employee" DROP COLUMN "customerId",
+DROP COLUMN "permissionsUpdatedAt";
 
 -- AlterTable
 ALTER TABLE "Attendance" DROP COLUMN "customerId";

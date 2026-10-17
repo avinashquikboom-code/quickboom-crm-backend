@@ -1,5 +1,5 @@
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import {
   Controller,
   Get,
@@ -18,8 +18,8 @@ import { Response } from 'express';
 
 @ApiTags('Receipts')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-@RequirePermissions({ module: 'PAYMENTS', action: 'VIEW' })
+@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+@WorkspaceAction({ module: 'PAYMENTS', action: 'VIEW' })
 @Controller('receipts')
 export class ReceiptController {
   constructor(private readonly receiptService: ReceiptService) {}

@@ -26,9 +26,9 @@ import {
   AdminAdjustCreditsDto,
 } from './dto/ai-studio.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { AccountGuard } from '../../common/guards/account.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('AI Studio')
 @Controller()
@@ -50,7 +50,7 @@ export class AiStudioController {
 
   @Get('admin/ai/services')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get all AI service configurations (Admin)' })
   async getAdminServices() {
     const data = await this.aiCreditService.getServiceConfigs();
@@ -59,7 +59,7 @@ export class AiStudioController {
 
   @Patch('admin/ai/services/:code')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update credit cost, price or status for an AI service (Admin)' })
   async updateServiceConfig(
     @Param('code') code: string,
@@ -76,7 +76,7 @@ export class AiStudioController {
 
   @Get('admin/ai/generations')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'List all customer generations with filters and pagination (Admin)' })
   async getAllGenerationsAdmin(@Query() query: any) {
     const data = await this.aiGenerationService.getAllGenerationsAdmin(query);
@@ -85,7 +85,7 @@ export class AiStudioController {
 
   @Get('admin/ai/transactions')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Audit ledger of all customer credit transactions (Admin)' })
   async getAllTransactionsAdmin(@Query() query: any) {
     const data = await this.aiCreditService.getAllTransactionsAdmin(query);

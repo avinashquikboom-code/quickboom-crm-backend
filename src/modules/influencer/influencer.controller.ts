@@ -38,9 +38,9 @@ import {
   ResubmitInfluencerDto,
 } from './dto/influencer.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { AccountGuard } from '../../common/guards/account.guard';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Influencer Hub')
 @Controller()
@@ -61,7 +61,7 @@ return undefined;
   // Categories
   @Get('admin/influencer-categories')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get all influencer categories (Admin)' })
   async getAllCategoriesAdmin() {
     const data = await this.influencerService.getAllCategoriesAdmin();
@@ -70,7 +70,7 @@ return undefined;
 
   @Post('admin/influencer-categories')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Create new influencer category (Admin)' })
   async createCategory(@Body() dto: CreateInfluencerCategoryDto) {
     const data = await this.influencerService.createCategory(dto);
@@ -84,7 +84,7 @@ return undefined;
 
   @Patch('admin/influencer-categories/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update influencer category (Admin)' })
   async updateCategory(
     @Param('id', ParseIntPipe) id: number,
@@ -101,7 +101,7 @@ return undefined;
 
   @Delete('admin/influencer-categories/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Delete influencer category (Admin)' })
   async deleteCategory(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.deleteCategory(id);
@@ -116,7 +116,7 @@ return undefined;
   // Influencers
   @Get('admin/influencers')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get all influencers including inactive (Admin)' })
   async getAllInfluencersAdmin(@Query() query: any) {
     const data = await this.influencerService.getAllInfluencersAdmin(query);
@@ -125,7 +125,7 @@ return undefined;
 
   @Post('admin/influencers/upload-image')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Upload influencer profile image to S3 (Admin)' })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('image'))
@@ -147,7 +147,7 @@ return undefined;
 
   @Post('admin/influencers')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Create new influencer (Admin)' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(FileInterceptor('image'))
@@ -175,7 +175,7 @@ return undefined;
 
   @Get('admin/influencers/applications')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get influencer applications filtered by status (Admin)' })
   async getInfluencerApplicationsAdmin(@Query() query: FilterInfluencerApplicationsQueryDto) {
     const result = await this.influencerService.getInfluencerApplicationsAdmin(query);
@@ -189,7 +189,7 @@ return undefined;
 
   @Get('admin/influencers/applications/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get full influencer application profile for review (Admin)' })
   async getApplicationByIdAdmin(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getInfluencerById(id, true);
@@ -198,7 +198,7 @@ return undefined;
 
   @Get('admin/influencers/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get single influencer details (Admin)' })
   async getInfluencerAdmin(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getInfluencerById(id);
@@ -207,7 +207,7 @@ return undefined;
 
   @Patch('admin/influencers/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update influencer details/status (Admin)' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(FileInterceptor('image'))
@@ -232,7 +232,7 @@ return undefined;
 
   @Delete('admin/influencers/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Delete or deactivate influencer (Admin)' })
   async deleteInfluencer(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.deleteInfluencer(id);
@@ -246,7 +246,7 @@ return undefined;
 
   @Patch('admin/influencers/:id/approve')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Approve influencer application to make them live in mobile hub (Admin)' })
   async approveInfluencerAdmin(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const adminId = req.user?.id;
@@ -262,7 +262,7 @@ return undefined;
 
   @Patch('admin/influencers/:id/reject')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Reject influencer application with a reason (Admin)' })
   async rejectInfluencerAdmin(
     @Param('id', ParseIntPipe) id: number,
@@ -283,7 +283,7 @@ return undefined;
 
   @Patch('admin/influencers/:id/suspend')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Suspend an approved influencer (removes from mobile hub) (Admin)' })
   async suspendInfluencerAdmin(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const adminId = req.user?.id;
@@ -300,7 +300,7 @@ return undefined;
   // Packages
   @Get('admin/influencers/:id/packages')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get all packages for an influencer (Admin)' })
   async getAllPackagesAdmin(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.getAllPackagesAdmin(id);
@@ -309,7 +309,7 @@ return undefined;
 
   @Post('admin/influencers/:id/packages')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Create package for influencer (Admin)' })
   async createPackage(
     @Param('id', ParseIntPipe) id: number,
@@ -326,7 +326,7 @@ return undefined;
 
   @Patch('admin/influencer-packages/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update influencer package (Admin)' })
   async updatePackage(
     @Param('id', ParseIntPipe) id: number,
@@ -343,7 +343,7 @@ return undefined;
 
   @Delete('admin/influencer-packages/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Delete influencer package (Admin)' })
   async deletePackage(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.deletePackage(id);
@@ -358,7 +358,7 @@ return undefined;
   // Availability
   @Get('admin/influencers/:id/availability')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get influencer availability (Admin)' })
   async getAvailabilityAdmin(
     @Param('id', ParseIntPipe) id: number,
@@ -371,7 +371,7 @@ return undefined;
 
   @Post('admin/influencers/:id/availability')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Set or toggle date availability for influencer (Admin)' })
   async setAvailability(
     @Param('id', ParseIntPipe) id: number,
@@ -388,7 +388,7 @@ return undefined;
 
   @Delete('admin/influencer-availability/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Remove availability slot (Admin)' })
   async deleteAvailability(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.deleteAvailability(id);
@@ -403,7 +403,7 @@ return undefined;
   // Bookings Management
   @Get('admin/influencer-bookings')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'List all bookings with search, filters and pagination (Admin)' })
   async getAllBookingsAdmin(@Query() query: any) {
     const data = await this.influencerService.getAllBookingsAdmin(query);
@@ -412,7 +412,7 @@ return undefined;
 
   @Get('admin/influencer-bookings/stats')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get booking KPIs: totalBookings, pendingApproval, totalRevenue (Admin)' })
   async getBookingStatsAdmin() {
     const data = await this.influencerService.getBookingStatsAdmin();
@@ -421,7 +421,7 @@ return undefined;
 
   @Get('admin/influencer-bookings/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get single booking details with payments (Admin)' })
   async getBookingDetailsAdmin(@Param('id') id: string) {
     const data = await this.influencerService.getBookingById(0, id, true);
@@ -430,7 +430,7 @@ return undefined;
 
   @Patch('admin/influencer-bookings/:id/status')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update booking status (Admin)' })
   async updateBookingStatus(
     @Param('id', ParseIntPipe) id: number,
@@ -447,7 +447,7 @@ return undefined;
 
   @Patch('admin/influencer-bookings/:id/payment-status')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update payment status (Admin)' })
   async updatePaymentStatus(
     @Param('id', ParseIntPipe) id: number,
@@ -464,7 +464,7 @@ return undefined;
 
   @Post('admin/influencer-bookings/:id/approve')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Approve pending booking (Admin)' })
   async approveBooking(@Param('id', ParseIntPipe) id: number) {
     const data = await this.influencerService.approveBookingAdmin(id);
@@ -478,7 +478,7 @@ return undefined;
 
   @Post('admin/influencer-bookings/:id/reject')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Reject booking (Admin)' })
   async rejectBooking(
     @Param('id', ParseIntPipe) id: number,
@@ -495,7 +495,7 @@ return undefined;
 
   @Post('admin/influencer-bookings/:id/cancel')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Cancel booking (Admin)' })
   async cancelBookingAdmin(
     @Param('id', ParseIntPipe) id: number,

@@ -35,7 +35,7 @@ const Razorpay = require('razorpay');
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
-import { isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/account.util';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InvoiceService } from '../invoice/invoice.service';
 import { CommissionService } from '../commission/commission.service';

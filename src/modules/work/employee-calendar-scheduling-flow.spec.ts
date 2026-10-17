@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkPermissionService } from './work-permission.service';
+import { WorkAssignmentService } from './work-assignment.service';
 import { WorkStatus, WorkType, TaskStatus } from '@prisma/client';
 
 describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
@@ -296,7 +296,7 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
     };
 
     workPermissionService = {
-      getAllowedActivityTypesForEmployee: jest.fn().mockImplementation(async (empId: number) => {
+      getEmployeeActivityTypes: jest.fn().mockImplementation(async (empId: number) => {
         if (empId === 1) {
           return {
             role: 'Telecaller',
@@ -342,7 +342,7 @@ describe('Employee Calendar Scheduling Flow and Task Visibility Tests', () => {
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
-        { provide: WorkPermissionService, useValue: workPermissionService },
+        { provide: WorkAssignmentService, useValue: workPermissionService },
       ],
     }).compile();
 

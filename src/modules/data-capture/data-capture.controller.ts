@@ -19,8 +19,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
@@ -36,7 +36,7 @@ import {
 @ApiTags('Data Capture (Google Places Extraction)')
 @ApiBearerAuth()
 @Controller('data-capture')
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
   constructor(private readonly dataCaptureService: DataCaptureService) {}
@@ -46,7 +46,7 @@ export class DataCaptureController {
    * List captured places with pagination, search, status, and source filters
    */
   @Get()
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'List captured places with pagination and filtering' })
   async listPlaces(
     @CurrentCustomer() customerId: string,
@@ -61,7 +61,7 @@ export class DataCaptureController {
    * Retrieves extraction quota and Google Places API consumption metrics
    */
   @Get('usage')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get customer extraction usage and remaining quota' })
   async getUsageSummary(
     @CurrentCustomer() customerId: string,
@@ -71,7 +71,7 @@ export class DataCaptureController {
   }
 
   @Post('usage')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for get usage summary (POST)' })
   async postUsageSummary(
     @CurrentCustomer() customerId: string,
@@ -85,7 +85,7 @@ export class DataCaptureController {
    * Searches & captures verified business records via Google Places API (New) - Text Search
    */
   @Post('extract')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'CREATE' })
   @ApiOperation({ summary: 'Extract places from Google Places API' })
   async extractPlaces(
     @CurrentCustomer() customerId: string,
@@ -101,7 +101,7 @@ export class DataCaptureController {
    * Executes bulk action (validate, reject, delete, mark duplicate)
    */
   @Post('bulk')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Execute bulk operations on Data Capture records' })
   async handleBulkAction(
     @CurrentCustomer() customerId: string,
@@ -134,7 +134,7 @@ export class DataCaptureController {
    * Manually create a Data Capture record
    */
   @Post()
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'CREATE' })
   @ApiOperation({ summary: 'Manually create a new Data Capture record' })
   async createPlace(
     @CurrentCustomer() customerId: string,
@@ -150,7 +150,7 @@ export class DataCaptureController {
    * Mark record as VALIDATED
    */
   @Post(':id/validate')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Mark captured record as VALIDATED' })
   async validatePlace(
     @CurrentCustomer() customerId: string,
@@ -164,7 +164,7 @@ export class DataCaptureController {
    * Mark record as REJECTED
    */
   @Post(':id/reject')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Mark captured record as REJECTED with optional reason' })
   async rejectPlace(
     @CurrentCustomer() customerId: string,
@@ -179,7 +179,7 @@ export class DataCaptureController {
    * Check duplicate matches for record
    */
   @Post(':id/duplicate-check')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Scan CRM database for possible duplicates' })
   async checkDuplicates(
     @CurrentCustomer() customerId: string,
@@ -193,7 +193,7 @@ export class DataCaptureController {
    * Update Data Capture record fields
    */
   @Patch(':id')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Update Data Capture record details' })
   async updatePlace(
     @CurrentCustomer() customerId: string,
@@ -208,7 +208,7 @@ export class DataCaptureController {
    * Soft delete Data Capture record
    */
   @Delete(':id')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'DELETE' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete Data Capture record' })
   async deletePlace(
     @CurrentCustomer() customerId: string,
@@ -254,7 +254,7 @@ export class DataCaptureController {
    * Retrieves single Data Capture place
    */
   @Get(':id')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single Data Capture record' })
   async getPlaceOrJobById(
     @CurrentCustomer() customerId: string,

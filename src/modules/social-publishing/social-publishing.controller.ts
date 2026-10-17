@@ -19,7 +19,7 @@ import { SocialAccountService } from './social-account.service';
 import { SocialPublishService } from './social-publish.service';
 import { ConnectSocialAccountDto, PublishContentDto } from './dto/social-publishing.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { AccountGuard } from '../../common/guards/account.guard';
 import {
   InstagramProvider,
   FacebookProvider,
@@ -158,7 +158,7 @@ return undefined;
 
   @Get('admin/social/accounts')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'View all customer connected social accounts (Admin)' })
   async getAllAccountsAdmin(@Query() query: any) {
     const data = await this.socialAccountService.getAllAccountsAdmin(query);
@@ -167,7 +167,7 @@ return undefined;
 
   @Get('admin/social/publishes')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'View all published and scheduled posts across customers (Admin)' })
   async getAllPublishesAdmin(@Query() query: any) {
     const data = await this.socialPublishService.getAllPublishesAdmin(query);

@@ -13,9 +13,8 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { RoleType } from '../../common/enums/role-type.enum';
+import { AccountGuard } from '../../common/guards/account.guard';
+import { AccountTypes } from '../../common/decorators/account-types.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
@@ -31,8 +30,8 @@ import {
 
 @ApiTags('Admin Data Management')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, RolesGuard)
-@Roles(RoleType.SUPER_ADMIN)
+@UseGuards(JwtAuthGuard, CustomerGuard, AccountGuard)
+@AccountTypes('SUPER_ADMIN')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
 export class DataManagementController {

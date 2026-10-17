@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';

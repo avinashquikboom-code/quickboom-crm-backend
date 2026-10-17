@@ -74,7 +74,7 @@ export class AuditLogInterceptor implements NestInterceptor {
       const cleanUrl = (url || '').split('?')[0];
 
       // Resolve user role
-      let userRole = user?.role || user?.userRoles?.[0]?.role?.name || null;
+      let userRole = user?.accountType || null;
       if (userRole) {
         userRole = String(userRole).toUpperCase().replace(/\s+/g, '_');
       } else if (cleanUrl.includes('/customer/')) {

@@ -1,4 +1,4 @@
-import { PrismaClient, RoleType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -8,55 +8,6 @@ async function main() {
   const legacyEmail = 'admin@quikboom.com';
   const password = '123456';
   const hashedPassword = await bcrypt.hash(password, 10);
-
-  // 1. Ensure standard roles exist (SUPER_ADMIN, CUSTOMER, EMPLOYEE, COMPANY_ADMIN)
-  let superAdminRole = await prisma.role.findFirst({
-    where: {
-      OR: [
-        { id: 2 },
-        { type: RoleType.SUPER_ADMIN },
-        { name: 'SUPER_ADMIN' },
-        { name: 'Super Administrator' },
-      ],
-    },
-  });
-
-  if (!superAdminRole) {
-    superAdminRole = await prisma.role.create({
-      data: {
-        name: 'SUPER_ADMIN',
-        type: RoleType.SUPER_ADMIN,
-        description: 'Full administrative platform access',
-      },
-    });
-  } else {
-    superAdminRole = await prisma.role.update({
-      where: { id: superAdminRole.id },
-      data: {
-        name: 'SUPER_ADMIN',
-        type: RoleType.SUPER_ADMIN,
-      },
-    });
-  }
-
-  // Ensure Customer, Employee, Company Admin roles exist
-  let employeeRole = await prisma.role.findFirst({
-    where: { OR: [{ id: 4 }, { name: 'EMPLOYEE' }] },
-  });
-  if (!employeeRole) {
-    await prisma.role.create({
-      data: { name: 'EMPLOYEE', type: RoleType.CUSTOM, description: 'Employee role' },
-    });
-  }
-
-  let companyAdminRole = await prisma.role.findFirst({
-    where: { OR: [{ id: 5 }, { type: RoleType.CUSTOMER_ADMIN }, { name: 'COMPANY_ADMIN' }] },
-  });
-  if (!companyAdminRole) {
-    await prisma.role.create({
-      data: { name: 'COMPANY_ADMIN', type: RoleType.CUSTOMER_ADMIN, description: 'Company Admin role' },
-    });
-  }
 
   // 2. Find or Create User ID = 1 (Do not create another Super Admin if ID 1 exists)
   let user = await prisma.user.findUnique({
@@ -76,6 +27,7 @@ async function main() {
       data: {
         email,
         phone: '+1-555-0100',
+        accountType: 'SUPER_ADMIN',
         firstName: 'Super',
         lastName: 'Admin',
         passwordHash: hashedPassword,
@@ -89,6 +41,7 @@ async function main() {
       where: { id: user.id },
       data: {
         email,
+        accountType: 'SUPER_ADMIN',
         firstName: 'Super',
         lastName: 'Admin',
         passwordHash: hashedPassword,
@@ -99,18 +52,6 @@ async function main() {
     });
     console.log(`✅ Updated Super Admin user ID: ${user.id} (${user.email})`);
   }
-
-  // 3. Ensure UserRole: userId = user.id, roleId = superAdminRole.id
-  await prisma.userRole.deleteMany({
-    where: { userId: user.id },
-  });
-
-  await prisma.userRole.create({
-    data: {
-      userId: user.id,
-      roleId: superAdminRole.id,
-    },
-  });
 
   // 5. Create or update Demo Mobile Employee User (demo@gmail.com / 123456)
   const demoEmail = 'demo@gmail.com';

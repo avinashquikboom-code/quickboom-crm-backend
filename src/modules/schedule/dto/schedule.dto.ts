@@ -86,9 +86,17 @@ export class UpdateScheduleDto {
 }
 
 export class GenerateScheduleDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  assignedEmployeeId?: number;
+
   @ApiPropertyOptional({ example: 12, description: 'Duration in months' })
   @IsInt()
   @IsOptional()
+  @Min(1)
+  @Max(120)
   duration?: number;
 
   @ApiPropertyOptional({ example: '2026-08-20T00:00:00.000Z' })

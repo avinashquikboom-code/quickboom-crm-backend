@@ -1,7 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { WorkType } from '@prisma/client';
 import { WorkService } from '../modules/work/work.service';
-import { WorkPermissionService } from '../modules/work/work-permission.service';
+import { WorkAssignmentService } from '../modules/work/work-assignment.service';
 
 describe('single organization after Customer and Lead removal', () => {
   it('creates independent work and its workflow without a tenant or subscription', async () => {
@@ -32,21 +32,20 @@ describe('single organization after Customer and Lead removal', () => {
     expect(tx.work.create).not.toHaveBeenCalled();
   });
 
-  it('keeps designation-based work assignments without removed RBAC tables', async () => {
+  it('allows active assignment targets without removed RBAC tables', async () => {
     const employee = { id: 7, status: 'ACTIVE', designation: { name: 'Video Editor' }, user: null };
     const prisma = {
       employee: { findUnique: jest.fn().mockResolvedValue(employee), findFirst: jest.fn().mockResolvedValue(employee) },
       workAccessRequest: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new WorkPermissionService(prisma as any);
-    const result = await service.getAllowedActivityTypesForEmployee(7);
-    expect(result.isFullAccess).toBe(false);
-    expect(result.workPermissions).toContain('video_edit');
+    const service = new WorkAssignmentService(prisma as any);
+    const result = await service.getEmployeeActivityTypes(7);
+    expect(result.isFullAccess).toBe(true);
     expect(result.allowedTypes.has('REEL_EDIT')).toBe(true);
   });
 
   it('rejects a missing employee instead of granting organization permissions', async () => {
-    const service = new WorkPermissionService({ employee: { findUnique: jest.fn().mockResolvedValue(null) } } as any);
-    await expect(service.getAllowedActivityTypesForEmployee(7)).rejects.toBeInstanceOf(ForbiddenException);
+    const service = new WorkAssignmentService({ employee: { findUnique: jest.fn().mockResolvedValue(null) } } as any);
+    await expect(service.getEmployeeActivityTypes(7)).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

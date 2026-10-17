@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkStatus, WorkType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkPermissionService } from './work-permission.service';
+import { WorkAssignmentService } from './work-assignment.service';
 import { WorkService } from './work.service';
 import { WorkController } from './work.controller';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -148,9 +148,9 @@ describe('Employee calendar team and assignment regressions', () => {
         WorkService,
         { provide: PrismaService, useValue: prisma },
         {
-          provide: WorkPermissionService,
+          provide: WorkAssignmentService,
           useValue: {
-            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+            getEmployeeActivityTypes: jest.fn().mockResolvedValue({
               role: 'STAFF',
               allowedTypes: new Set(['REEL_SHOOT']),
               isFullAccess: true,
@@ -205,8 +205,8 @@ describe('Employee calendar team and assignment regressions', () => {
       return [];
     });
 
-    const workPermService = module.get(WorkPermissionService);
-    jest.spyOn(workPermService, 'getAllowedActivityTypesForEmployee').mockImplementation(async (empId: any) => {
+    const workPermService = module.get(WorkAssignmentService);
+    jest.spyOn(workPermService, 'getEmployeeActivityTypes').mockImplementation(async (empId: any) => {
       if (empId === 5) {
         return {
           role: 'VIDEO EDITOR',
@@ -319,12 +319,12 @@ describe('Employee calendar team and assignment regressions', () => {
 
   it('shows Senior Photographer all reel shoots for team-allotted customers, including other assignees', async () => {
     const prisma = testingModule.get(PrismaService) as any;
-    const permissions = testingModule.get(WorkPermissionService) as any;
+    const permissions = testingModule.get(WorkAssignmentService) as any;
     prisma.employee.findUnique.mockResolvedValue({
       id: 1, userId: 2, customerId: 1, status: 'ACTIVE',
       designation: { name: 'Senior Photographer' },
     });
-    permissions.getAllowedActivityTypesForEmployee.mockResolvedValue({
+    permissions.getEmployeeActivityTypes.mockResolvedValue({
       role: 'SENIOR PHOTOGRAPHER',
       allowedTypes: new Set(['REEL_SHOOT']),
       isFullAccess: false,
@@ -400,8 +400,8 @@ describe('Employee calendar team and assignment regressions', () => {
   });
 
   it("does not expose a manager's unrelated general tasks in My Calendar", async () => {
-    const permissions = testingModule.get(WorkPermissionService) as any;
-    permissions.getAllowedActivityTypesForEmployee.mockResolvedValue({
+    const permissions = testingModule.get(WorkAssignmentService) as any;
+    permissions.getEmployeeActivityTypes.mockResolvedValue({
       role: 'PRODUCTION_MANAGER', allowedTypes: new Set(), isFullAccess: true, isProductionManager: true,
     });
     const prisma = testingModule.get(PrismaService) as any;
@@ -534,7 +534,7 @@ describe('Employee calendar team and assignment regressions', () => {
 
     const prisma = testingModule.get(PrismaService) as any;
     prisma.employee.findUnique.mockResolvedValue({ id: 1, userId: 2, customerId: 1, status: 'ACTIVE', designation: { name: 'Video Editor' } });
-    testingModule.get(WorkPermissionService).getAllowedActivityTypesForEmployee = jest.fn().mockResolvedValue({ allowedTypes: new Set(['REEL_EDIT']), isFullAccess: false, isProductionManager: false });
+    testingModule.get(WorkAssignmentService).getEmployeeActivityTypes = jest.fn().mockResolvedValue({ allowedTypes: new Set(['REEL_EDIT']), isFullAccess: false, isProductionManager: false });
     prisma.customer.findMany.mockResolvedValue([
       { id: 101, assignedTeamId: 7 },
       { id: 102, assignedTeamId: 7 },

@@ -20,8 +20,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Payments & Razorpay')
 @Controller('payments')
@@ -37,8 +37,8 @@ export class PaymentController {
 
   @Post('razorpay/order')
   @Post('create-order')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
+  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create Razorpay Order for customer plan purchase' })
   async createRazorpayOrder(
@@ -118,8 +118,8 @@ export class PaymentController {
   @Get('orders')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions({ module: 'PAYMENTS', action: 'VIEW' })
+  @UseGuards(WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'PAYMENTS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get organization payment transaction history' })
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
     const customerId = undefined;

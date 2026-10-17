@@ -1,3 +1,4 @@
+import { ScheduleAccessGuard } from './schedule-access.guard';
 import {
   Body,
   Controller,
@@ -11,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ScheduleService } from './schedule.service';
-import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
+import { CreateScheduleDto, UpdateScheduleDto, GenerateScheduleDto } from './dto/schedule.dto';
 import { ScheduleStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -19,7 +20,7 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 
 @ApiTags('Schedules & Delivery Calendar')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, ScheduleAccessGuard)
 @Controller('schedules')
 export class ScheduleController {
   constructor(private readonly scheduleService: ScheduleService) {}
@@ -121,6 +122,12 @@ export class ScheduleController {
     @Param('id') id: string,
   ) {
     return this.scheduleService.remove(customerId, id);
+  }
+
+  @Post('generate-plan/:planId')
+  @ApiOperation({ summary: 'Generate monthly calendar schedules directly from an active plan' })
+  async generateForPlan(@Param('planId') planId: string, @Body() dto: GenerateScheduleDto) {
+    return this.scheduleService.generateSchedulesForPlan(Number(planId), dto);
   }
 
   @Post('generate-subscription/:subscriptionId')

@@ -13,7 +13,6 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 
-import { WorkPermissionService } from '../work/work-permission.service';
 
 /**
  * Mobile-specific schedule endpoint.
@@ -28,7 +27,6 @@ export class MobileScheduleController {
   constructor(
     private readonly scheduleService: ScheduleService,
     private readonly prisma: PrismaService,
-    private readonly workPermissionService: WorkPermissionService,
   ) {}
 
   /**
@@ -99,20 +97,6 @@ export class MobileScheduleController {
 
     const tenantCustomerId = numCustomerId || undefined;
 
-    // Step 2: Resolve effective permissions and normalized role using the unified WorkPermissionService
-    const permResult = await this.workPermissionService.getEmployeeEffectivePermissions(
-      tenantCustomerId,
-      { employeeId: employee.id },
-    );
-
-    const grantedModules = permResult.workPermissions || [];
-    const effectivePermissions = permResult.effectivePermissions || {};
-    const roleName = permResult.role;
-    const isFullAccess =
-      roleName.toUpperCase() === 'ADMIN' ||
-      roleName.toUpperCase() === 'SUPER_ADMIN' ||
-      roleName.toUpperCase().includes('ADMIN');
-
     // Step 3: Fetch schedules directly assigned to this employee
     const where: any = {
       deletedAt: null,
@@ -143,22 +127,7 @@ export class MobileScheduleController {
       },
     });
 
-    // Step 4: Permission-based filtering using real role & work module permissions
-    const filtered = allAssignedSchedules.filter((schedule) => {
-      if (isFullAccess) return true; // Admins / full access users see all
-      if (grantedModules.length === 0) return true; // Safe fallback if no restrictions configured
-
-      const planName = schedule.plan?.name || schedule.title || '';
-      const scheduleModules = this.mapPlanToWorkModuleKeys(planName);
-
-      // If schedule maps to 'all' (generic plan), show to all employees
-      if (scheduleModules.includes('all')) return true;
-
-      // Check if employee has at least one matching active permission
-      return scheduleModules.some(
-        (mod) => effectivePermissions[mod] === true || grantedModules.includes(mod),
-      );
-    });
+    const filtered = allAssignedSchedules;
 
     const mapped = filtered.map((item) => ({
       id: item.id,
@@ -183,8 +152,6 @@ export class MobileScheduleController {
       data: mapped,
       total: mapped.length,
       employeeId: employee.id,
-      role: roleName,
-      grantedModules,
     };
   }
 

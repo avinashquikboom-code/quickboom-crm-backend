@@ -4,7 +4,7 @@ import { MasterService } from './master.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Master Data Management')
 @ApiBearerAuth()

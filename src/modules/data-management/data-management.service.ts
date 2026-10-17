@@ -7,7 +7,6 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { RoleType } from '../../common/enums/role-type.enum';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -1527,7 +1526,6 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     await tx.work?.updateMany?.({ where: { editorId: numId }, data: { editorId: null } });
     await tx.workTask?.updateMany?.({ where: { assignedToId: numId }, data: { assignedToId: null } });
     await tx.workAccessRequest?.deleteMany?.({ where: { employeeId: numId } });
-    await tx.employeeModuleOverride?.deleteMany?.({ where: { employeeId: numId } });
 
     await tx.locationTrackingSetting?.deleteMany?.({ where: { employeeId: numId } });
     await tx.teamMember?.deleteMany?.({ where: { employeeId: numId } });

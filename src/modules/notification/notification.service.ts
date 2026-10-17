@@ -2673,41 +2673,11 @@ throw new GoneException('This Customer/Lead operation has been removed');
     const numCustomerId = customerId ? Number(customerId) : undefined;
 
     try {
-      // 1. Find all active Admin / Super Admin users (and company admins if customerId is specified)
-      const orConditions: any[] = [
-        {
-          userRoles: {
-            some: {
-              role: {
-                OR: [
-                  { type: 'SUPER_ADMIN' as any },
-                  { name: { in: ['SUPER_ADMIN', 'Super Admin', 'Super Administrator', 'ADMIN', 'Admin'] } },
-                ],
-              },
-            },
-          },
-        },
-
-      ];
-
-      if (numCustomerId) {
-        orConditions.push({
-
-          userRoles: {
-            some: {
-              role: {
-                name: { in: ['ADMIN', 'Admin', 'COMPANY_ADMIN', 'Company Admin', 'SUPER_ADMIN', 'Super Admin'] },
-              },
-            },
-          },
-        });
-      }
-
       const adminUsers = await this.prisma.user.findMany({
         where: {
           deletedAt: null,
           isActive: true,
-          OR: orConditions,
+          accountType: { in: ['SUPER_ADMIN', 'ADMIN'] },
         },
         select: { id: true },
       });

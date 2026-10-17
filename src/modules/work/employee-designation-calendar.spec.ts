@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkStatus, WorkType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkPermissionService } from './work-permission.service';
+import { WorkAssignmentService } from './work-assignment.service';
 import { WorkService } from './work.service';
 
 describe('Employee designation calendar visibility', () => {
@@ -190,9 +190,9 @@ describe('Employee designation calendar visibility', () => {
         WorkService,
         { provide: PrismaService, useValue: prisma },
         {
-          provide: WorkPermissionService,
+          provide: WorkAssignmentService,
           useValue: {
-            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+            getEmployeeActivityTypes: jest.fn().mockResolvedValue({
               role: 'EMPLOYEE',
               allowedTypes: new Set<string>(options?.allowedTypes || []),
               isFullAccess: false,

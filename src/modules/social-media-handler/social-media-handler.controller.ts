@@ -20,14 +20,14 @@ import {
 } from './dto/social-media-handler.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Social Media Handlers')
 @Controller()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
 @ApiBearerAuth()
 export class SocialMediaHandlerController {
   constructor(private readonly handlerService: SocialMediaHandlerService) {}

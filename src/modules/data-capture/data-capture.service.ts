@@ -1,7 +1,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';

@@ -6,8 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
-import { userHasModulePermission } from '../../common/guards/permissions.guard';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -99,26 +98,6 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
     return this.employeeService.getMyProfile(user, customerId);
-  }
-
-  @Get('me/permissions')
-  @ApiOperation({ summary: 'Get current authenticated employee canonical effective permissions' })
-  async getMyPermissions(@CurrentUser() user: any) {
-    const userId = user?.id || user?.userId;
-    if (!userId) {
-      throw new ForbiddenException('User session invalid');
-    }
-    return this.employeeService.getMyEffectivePermissions(userId);
-  }
-
-  @Get('permissions/me')
-  @ApiOperation({ summary: 'Alias to get current authenticated employee canonical effective permissions' })
-  async getMyPermissionsAlias(@CurrentUser() user: any) {
-    const userId = user?.id || user?.userId;
-    if (!userId) {
-      throw new ForbiddenException('User session invalid');
-    }
-    return this.employeeService.getMyEffectivePermissions(userId);
   }
 
   @Get('hrm/offices')
@@ -267,7 +246,7 @@ export class EmployeeController {
       try { salaryBank = JSON.parse(salaryBank); } catch { salaryBank = {}; }
     }
     if ((dto.salaryStructure || salaryBank?.salaryStructure || salaryBank?.basicSalary !== undefined || salaryBank?.monthlySalary !== undefined || salaryBank?.salary !== undefined)
-      && !isUserAdmin(user) && !userHasModulePermission(user, 'PAYROLL', 'MANAGE')) {
+      && !isUserAdmin(user)) {
       throw new ForbiddenException('Access denied: salary changes require payroll management permission');
     }
     const isSuperAdmin = isUserSuperAdmin(user);
@@ -304,23 +283,4 @@ export class EmployeeController {
     });
   }
 }
-
-@ApiTags('Permissions')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('permissions')
-export class PermissionsController {
-  constructor(private readonly employeeService: EmployeeService) {}
-
-  @Get('me')
-  @ApiOperation({ summary: 'Get current authenticated employee canonical effective permissions' })
-  async getMyPermissions(@CurrentUser() user: any) {
-    const userId = user?.id || user?.userId;
-    if (!userId) {
-      throw new ForbiddenException('User session invalid');
-    }
-    return this.employeeService.getMyEffectivePermissions(userId);
-  }
-}
-
 

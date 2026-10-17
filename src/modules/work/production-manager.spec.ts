@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
-import { WorkPermissionService } from './work-permission.service';
+import { WorkAssignmentService } from './work-assignment.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus } from '@prisma/client';
 
 describe('Production Manager Functionality & Cross-Role Visibility', () => {
   let workService: WorkService;
-  let workPermissionService: WorkPermissionService;
+  let workPermissionService: WorkAssignmentService;
   let prisma: any;
 
   const mockTenantCustomerId = 1;
@@ -41,9 +41,9 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
       providers: [
         WorkService,
         {
-          provide: WorkPermissionService,
+          provide: WorkAssignmentService,
           useValue: {
-            getAllowedActivityTypesForEmployee: jest.fn(),
+            getEmployeeActivityTypes: jest.fn(),
           },
         },
         {
@@ -54,7 +54,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
     }).compile();
 
     workService = module.get<WorkService>(WorkService);
-    workPermissionService = module.get<WorkPermissionService>(WorkPermissionService);
+    workPermissionService = module.get<WorkAssignmentService>(WorkAssignmentService);
   });
 
   describe('1. Production Manager vs Normal Employee Scoping', () => {
@@ -68,7 +68,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT', 'REEL_POST']),
         isFullAccess: true,
@@ -139,7 +139,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
         role: 'Video Editor',
         allowedTypes: new Set(['REEL_EDIT', 'VIDEO_EDITING']),
         isFullAccess: false,
@@ -173,7 +173,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT']),
         isFullAccess: true,
@@ -259,7 +259,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT']),
         isFullAccess: true,

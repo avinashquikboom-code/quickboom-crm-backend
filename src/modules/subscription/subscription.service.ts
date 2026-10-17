@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { PaymentMethod, InvoiceStatus,  } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 import {
   SubscriptionBillingCycle,
   

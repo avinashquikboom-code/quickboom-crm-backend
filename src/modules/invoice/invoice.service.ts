@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, UnauthorizedException, ForbiddenExceptio
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
 import { InvoiceStatus, WorkStatus } from '@prisma/client';
-import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';

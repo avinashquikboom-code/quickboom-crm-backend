@@ -29,9 +29,9 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TrendingCategory } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Trending Content')
 @ApiBearerAuth()

@@ -6,13 +6,13 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('HRM - Payroll')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
 @Controller('admin/payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
@@ -70,7 +70,7 @@ export class PayrollController {
   }
 
   @Post('items/:itemId/pay')
-  @RequirePermissions({ module: 'SALARY', action: 'MANAGE' })
+  @WorkspaceAction({ module: 'SALARY', action: 'MANAGE' })
   @ApiOperation({ summary: 'Mark one employee payroll as paid and send the salary slip' })
   async payItem(
     @CurrentUser() user: any,
@@ -117,7 +117,7 @@ export class PayrollController {
   }
 
   @Get('slips')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slips list' })
   async findSlips(
     @CurrentUser() user: any,
@@ -142,7 +142,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slip by ID' })
   async findSlipById(
     @CurrentUser() user: any,
@@ -156,7 +156,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id/download')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Download salary slip PDF' })
   async downloadSlip(
     @CurrentUser() user: any,
@@ -171,7 +171,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id/pdf')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Download salary slip PDF' })
   async downloadSlipPdf(
     @CurrentUser() user: any,
@@ -211,7 +211,7 @@ export class PayrollController {
   }
 
   @Post('structures')
-  @RequirePermissions({ module: 'PAYROLL', action: 'MANAGE' })
+  @WorkspaceAction({ module: 'PAYROLL', action: 'MANAGE' })
   @ApiOperation({ summary: 'Save or update employee salary structure' })
   async saveStructure(
     @CurrentUser() user: any,

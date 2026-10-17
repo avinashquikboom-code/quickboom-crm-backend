@@ -20,7 +20,7 @@ import {
 } from '../../common/utils/plan-deliverable.util';
 import { calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
 import { PlanScheduleGateway } from './plan-schedule.gateway';
-import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
+import { WorkAssignmentService, normalizeActivityType } from './work-assignment.service';
 import { workMatchesDesignation, workTypesForDesignation } from './calendar-query.util';
 import { NotificationService } from '../notification/notification.service';
 
@@ -80,7 +80,7 @@ export class WorkService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Optional() private readonly workPermissionService?: WorkPermissionService,
+    @Optional() private readonly workPermissionService?: WorkAssignmentService,
     @Optional() private readonly planScheduleGateway?: PlanScheduleGateway,
     @Optional() private readonly notificationService?: NotificationService,
   ) {}
@@ -539,7 +539,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       }
 
       if (resolvedAssignedToId) {
-        const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
+        const perm = await this.workPermissionService.getEmployeeActivityTypes(
           resolvedAssignedToId,
           numCustomerId,
         );
@@ -550,20 +550,20 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         });
         if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
           throw new BadRequestException(
-            `Cannot assign activity '${dto.title || normalizedType}' to employee #${resolvedAssignedToId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+            `Cannot assign activity '${dto.title || normalizedType}' to employee #${resolvedAssignedToId}. Their role '${perm.designation}' does not support '${normalizedType}'.`,
           );
         }
       }
 
       if (resolvedEditorId) {
         const edId = Number(resolvedEditorId);
-        const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
+        const perm = await this.workPermissionService.getEmployeeActivityTypes(
           edId,
           numCustomerId,
         );
         if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
           throw new BadRequestException(
-            `Cannot assign editor role to employee #${edId}. Their role '${perm.role}' does not support Video Editing.`,
+            `Cannot assign editor role to employee #${edId}. Their role '${perm.designation}' does not support Video Editing.`,
           );
         }
       }
@@ -711,20 +711,20 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     }
     if (dto.assignedToId) {
       const targetEmpId = Number(dto.assignedToId);
-      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEmpId, undefined);
+      const perm = await this.workPermissionService.getEmployeeActivityTypes(targetEmpId, undefined);
       const normalizedType = normalizeActivityType(existing);
       if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
         throw new BadRequestException(
-          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.designation}' does not support '${normalizedType}'.`,
         );
       }
     }
     if (dto.editorId) {
       const targetEditorId = Number(dto.editorId);
-      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEditorId, undefined);
+      const perm = await this.workPermissionService.getEmployeeActivityTypes(targetEditorId, undefined);
       if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
         throw new BadRequestException(
-          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.role}' does not support Video Editing.`,
+          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.designation}' does not support Video Editing.`,
         );
       }
     }
@@ -1203,20 +1203,20 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
 
     if (dto.assignedToId) {
       const targetEmpId = Number(dto.assignedToId);
-      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEmpId, undefined);
+      const perm = await this.workPermissionService.getEmployeeActivityTypes(targetEmpId, undefined);
       const normalizedType = normalizeActivityType(existing);
       if (!perm.isFullAccess && !perm.allowedTypes.has(normalizedType)) {
         throw new BadRequestException(
-          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.role}' does not support '${normalizedType}'.`,
+          `Cannot assign activity '${existing.title || normalizedType}' to employee #${targetEmpId}. Their role '${perm.designation}' does not support '${normalizedType}'.`,
         );
       }
     }
     if (dto.editorId) {
       const targetEditorId = Number(dto.editorId);
-      const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEditorId, undefined);
+      const perm = await this.workPermissionService.getEmployeeActivityTypes(targetEditorId, undefined);
       if (!perm.isFullAccess && !perm.allowedTypes.has('REEL_EDIT')) {
         throw new BadRequestException(
-          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.role}' does not support Video Editing.`,
+          `Cannot assign editor role to employee #${targetEditorId}. Their role '${perm.designation}' does not support Video Editing.`,
         );
       }
     }
@@ -1487,9 +1487,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
-            user: {
-              
-            },
+            user: { select: { id: true, accountType: true } },
           },
         },
         editor: {
@@ -1500,9 +1498,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
             lastName: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
-            user: {
-              
-            },
+            user: { select: { id: true, accountType: true } },
           },
         },
         tasks: {
@@ -1515,9 +1511,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
                 lastName: true,
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
-                user: {
-                  
-                },
+                user: { select: { id: true, accountType: true } },
               },
             },
           },
@@ -1822,59 +1816,13 @@ status: ${item.status}`);
     return leaderId || null;
   }
 
-  private isPlatformAdmin(person?: {
-    firstName?: string | null;
-    lastName?: string | null;
-    department?: { name?: string | null } | null;
-    designation?: { name?: string | null } | null;
-    user?: {
-      userRoles?: Array<{
-        role?: { type?: string; name?: string } | null;
-      }> | null;
-    } | null;
-  } | null): boolean {
-    if (!person) return false;
-    const adminRoleTypes = new Set(['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'ADMIN']);
-    const first = String(person?.firstName || '').trim().toUpperCase();
-    const last = String(person?.lastName || '').trim().toUpperCase();
-    const fullName = `${first} ${last}`.trim().replace(/\s+/g, ' ');
-    if (
-      fullName === 'SUPER ADMIN' ||
-      fullName === 'COMPANY ADMIN' ||
-      fullName === 'SYSTEM ADMIN' ||
-      fullName === 'TENANT ADMIN' ||
-      fullName === 'ADMIN' ||
-      first === 'SUPER ADMIN' ||
-      last === 'SUPER ADMIN' ||
-      /\bSUPER[\s_]*ADMIN\b|\bCOMPANY[\s_]*ADMIN\b|\bTENANT[\s_]*ADMIN\b|\bSYSTEM[\s_]*ADMIN\b/i.test(fullName)
-    ) {
-      return true;
-    }
-    const desName = String(person?.designation?.name || '').toUpperCase();
-    const depName = String(person?.department?.name || '').toUpperCase();
-    const roleLabel = `${desName} ${depName}`.trim();
-    if (/SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN|\bADMIN\b/i.test(roleLabel)) {
-      return true;
-    }
-    const userRoles = person?.user?.userRoles || [];
-    if (
-      userRoles.some((ur: any) => {
-        const rType = String(ur?.role?.type || '').toUpperCase();
-        const rName = String(ur?.role?.name || '').toUpperCase();
-        return (
-          adminRoleTypes.has(rType) ||
-          /SUPER[\s_]*ADMIN|COMPANY[\s_]*ADMIN|TENANT[\s_]*ADMIN|\bADMIN\b/i.test(rName)
-        );
-      })
-    ) {
-      return true;
-    }
-    return false;
+  private isPlatformAdmin(person?: { user?: { accountType?: string } | null } | null): boolean {
+    return ['SUPER_ADMIN', 'ADMIN'].includes(person?.user?.accountType || '');
   }
 
   private isSalesOrBpoEmployee(employee: any): boolean {
     return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
-      `${employee?.department?.name || ''} ${employee?.designation?.name || ''} ${(employee?.user?.userRoles || []).map((entry: any) => entry.role?.name || '').join(' ')}`,
+      `${employee?.department?.name || ''} ${employee?.designation?.name || ''}`,
     );
   }
 
@@ -1888,7 +1836,7 @@ status: ${item.status}`);
         status?: string | null;
         designation?: { name?: string | null } | null;
         department?: { name?: string | null } | null;
-        user?: { userRoles?: Array<{ role?: { type?: string; name?: string } | null }> | null } | null;
+        user?: { accountType?: string } | null;
       } | null;
     }>,
     teamCustomerId?: number | null,
@@ -1928,28 +1876,8 @@ status: ${item.status}`);
         Number(member.employeeId || member.employee?.id),
       ),
     );
-    const eligible: number[] = [];
-
-    for (const member of activeMembers) {
-      const employeeId = Number(member.employeeId || member.employee?.id);
-      try {
-        const permission = this.workPermissionService?.getAllowedActivityTypesForEmployee
-          ? await this.workPermissionService.getAllowedActivityTypesForEmployee(
-              employeeId,
-              teamCustomerId || undefined,
-            )
-          : null;
-        if (permission?.isFullAccess || permission?.isProductionManager) continue;
-        if (designationMatchIds.has(employeeId) || permission?.allowedTypes?.has(normalizedType)) {
-          eligible.push(employeeId);
-        }
-      } catch (err: any) {
-        if (designationMatchIds.has(employeeId)) eligible.push(employeeId);
-        this.logger.warn(
-          `Unable to resolve work eligibility for employee ${employeeId}: ${err?.message}`,
-        );
-      }
-    }
+    const eligible = activeMembers.map((member) => Number(member.employeeId || member.employee?.id))
+      .filter((employeeId) => designationMatchIds.has(employeeId));
 
     return eligible;
   }
@@ -2264,7 +2192,7 @@ return null; // Team must now be selected explicitly on each work item.
                 lastName: true,
                 designation: { select: { name: true } },
                 department: { select: { name: true } },
-                user: {  },
+                user: { select: { id: true, accountType: true } },
               },
             },
           },
@@ -2291,7 +2219,7 @@ return null; // Team must now be selected explicitly on each work item.
         ],
       },
       orderBy: { id: 'asc' },
-      include: { ...(options?.onlyMissing ? { tasks: true } : {}), assignedTo: { select: { department: true, designation: true, user: {  } } } },
+      include: { ...(options?.onlyMissing ? { tasks: true } : {}), assignedTo: { select: { department: true, designation: true, user: { select: { id: true, accountType: true } } } } },
     });
 
     if (unassignedWorks.length === 0) {
@@ -2401,6 +2329,23 @@ return null; // Team must now be selected explicitly on each work item.
    * Timezone Normalization:
    * Evaluates date queries against UTC, local server, and IST (UTC+05:30) to prevent 1-day shifts.
    */
+  async assertEmployeeAssignedToWork(employeeId: number | null | undefined, workId: number): Promise<boolean> {
+    if (!employeeId) throw new ForbiddenException('Employee profile required');
+    const work = await this.prisma.work.findUnique({
+      where: { id: workId },
+      select: { id: true, assignedToId: true, teamId: true },
+    });
+    if (!work) throw new NotFoundException(`Work record #${workId} not found`);
+    if (work.assignedToId === employeeId) return true;
+    if (work.teamId) {
+      const isMember = await this.prisma.teamMember.findFirst({
+        where: { teamId: work.teamId, employeeId },
+      });
+      if (isMember) return true;
+    }
+    throw new ForbiddenException('Work must be assigned to you or your team');
+  }
+
   async getEmployeeCalendar(
     employeeId: number,
     query: {
@@ -2462,40 +2407,15 @@ return null; // Team must now be selected explicitly on each work item.
       return [];
     }
 
-    // Resolve employee role and allowed activity types for role-based visibility
-    let empRole = 'UNKNOWN';
-    let allowedTypes = new Set<string>();
-    let isFullAccess = true;
-    let isProductionManager = false;
-    try {
-      if (this.workPermissionService?.getAllowedActivityTypesForEmployee) {
-        const resolvedTypes = await this.workPermissionService.getAllowedActivityTypesForEmployee(
-          numEmployeeId,
-          undefined,
-        );
-        empRole = resolvedTypes.role;
-        allowedTypes = resolvedTypes.allowedTypes;
-        isFullAccess = resolvedTypes.isFullAccess;
-        isProductionManager = resolvedTypes.isProductionManager;
-      }
-    } catch (permErr: any) {
-      this.logger.warn(`getAllowedActivityTypesForEmployee warning: ${permErr?.message}`);
-    }
-
+    // Calendar access follows recorded employee/team assignments, independent of job title.
+    const empRole = 'EMPLOYEE';
+    const allowedTypes = new Set<string>();
+    const isFullAccess = true;
+    const isProductionManager = false;
     const tenantCustomerId = undefined;
-    const rawDesignation = (empRecord as any)?.designation?.name;
-    const nameInferred = `${(empRecord as any)?.firstName || ''} ${(empRecord as any)?.lastName || ''}`.trim();
-    const designationName = rawDesignation || (workTypesForDesignation(nameInferred).length > 0 ? nameInferred : undefined);
+    const designationName = empRecord?.designation?.name;
     const designationLabel = String(designationName || '').toUpperCase();
-    if (
-      designationLabel.includes('PRODUCTION MANAGER') ||
-      designationLabel.includes('PRODUCTION_MANAGER') ||
-      designationLabel.includes('PROD MGR') ||
-      designationLabel.includes('PRODUCTION LEAD') ||
-      designationLabel.includes('PRODUCTION_LEAD')
-    ) {
-      isProductionManager = true;
-    }
+    const nameInferred = `${empRecord?.firstName || ''} ${empRecord?.lastName || ''}`.trim();
     const viewerCandidateIds = [numEmployeeId];
     const allTenantCustomers = options?.allTenantCustomers === true;
     // Mobile calendar always passes allTenantCustomers. That flag used to set
@@ -2908,9 +2828,7 @@ return null; // Team must now be selected explicitly on each work item.
             employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
-            user: {
-              
-            },
+            user: { select: { id: true, accountType: true } },
           },
         },
         editor: {
@@ -2921,9 +2839,7 @@ return null; // Team must now be selected explicitly on each work item.
             employeeCode: true,
             department: { select: { name: true } },
             designation: { select: { name: true } },
-            user: {
-              
-            },
+            user: { select: { id: true, accountType: true } },
           },
         },
         entitlement: { select: { serviceName: true } },
@@ -2944,9 +2860,7 @@ return null; // Team must now be selected explicitly on each work item.
                 lastName: true,
                 department: { select: { name: true } },
                 designation: { select: { name: true } },
-                user: {
-                  
-                },
+                user: { select: { id: true, accountType: true } },
               },
             },
           },
@@ -2988,109 +2902,15 @@ return null; // Team must now be selected explicitly on each work item.
 
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
-    const matchesRole = (w: any) => {
-      const normalized = normalizeActivityType(w);
-      return (
-        visibleTypes.has(String(w.workType || '').toUpperCase()) ||
-        workMatchesDesignation(designationName, w.workType) ||
-        workMatchesDesignation(designationName, normalized) ||
-        (visibleTypes.size === 0 && allowedTypes.has(normalized))
-      );
-    };
-    const hasRoleRules = visibleTypes.size > 0 || allowedTypes.size > 0;
-    const isDirectWorkAssignee = (w: any) => {
-      if (viewerIds.has(Number(w.assignedToId))) return true;
-      if (viewerIds.has(Number(w.editorId))) {
-        // On a specific shoot date, the shoot event belongs to the assigned shooter
-        if (query.date && (w.workType === WorkType.REELS_SHOOT || w.workType === WorkType.SHOOT) && w.assignedToId && !viewerIds.has(Number(w.assignedToId))) {
-          return false;
-        }
-        return true;
-      }
-      return (w.tasks || []).some((task: any) => viewerIds.has(Number(task.assignedToId)));
-    };
-
-    const isCustomerOrLeadOwner = (w: any) => {
-      const custId = Number(0);
-      if (custId > 0 && directCustomerIds.includes(custId)) return true;
-      const ownerIds = [
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      ]
-        .filter((id) => id != null)
-        .map(Number);
-      const codeMatches = empRecord?.employeeCode && undefined === empRecord.employeeCode;
-      const nameMatches = nameInferred && undefined === nameInferred;
-      return ownerIds.some((id) => viewerIds.has(id)) || Boolean(codeMatches) || Boolean(nameMatches);
-    };
-
-    const isTelecallerOrBpo = ['TELECALLER', 'CALLER', 'SALES', 'BPO'].some((k) =>
-      designationLabel.includes(k) || String((empRecord as any)?.department?.name || '').toUpperCase().includes(k),
-    );
-
-    if (assignedOnly || !isProductionManager) {
-      filteredItems = filteredItems.filter((w) => {
-        if (isDirectWorkAssignee(w)) return true;
-
-        if (isCustomerOrLeadOwner(w)) return true;
-
-        const teamId = Number(w.teamId || w.team?.id || 0);
-        const customerTeamId = Number(0);
-        const memberOfTeam = [w.team, undefined].some((team) =>
-          (team?.members || []).some((member: any) => viewerIds.has(Number(member.employeeId))) ||
-          viewerIds.has(Number(team?.leaderId)));
-        const customerAssigned = viewerIds.has(Number(undefined));
-        const authorized = authorizedTeamIds.includes(teamId) ||
-          authorizedTeamIds.includes(customerTeamId) ||
-          allAuthorizedCustomerIds.includes(Number(undefined)) || memberOfTeam || customerAssigned;
-
-        if (isTelecallerOrBpo) {
-          return authorized;
-        }
-
-        const editing = ['VIDEO_EDITING', 'EDITING', 'VIDEO'].includes(w.workType);
-        const otherOwnerId = editing ? (w.editorId ?? w.assignedToId) : w.assignedToId;
-        const otherOwner = editing ? (w.editor ?? (w.editorId ? null : w.assignedTo)) : w.assignedTo;
-
-        // If explicitly assigned to another member:
-        if (otherOwnerId && !viewerIds.has(Number(otherOwnerId))) {
-          const isSalesOrBpo = otherOwner
-            ? ['BPO', 'SALES', 'CALL'].some((part) => String(otherOwner.department?.name || '').toUpperCase().includes(part))
-            : false;
-          if (!isSalesOrBpo) {
-            if (!authorized) return false;
-            if (assignedOnly && hasRoleRules && !matchesRole(w)) return false;
-            return true;
-          }
-        }
-
-        // If authorized on the team and on a team customer/work:
-        if (authorized && (authorizedTeamIds.includes(teamId) || authorizedTeamIds.includes(customerTeamId) || memberOfTeam || allAuthorizedCustomerIds.includes(Number(undefined)))) {
-          if (!otherOwnerId && allowedTypes.size > 0 && !allowedTypes.has(normalizeActivityType(w))) return false;
-          if (!otherOwnerId && hasRoleRules && !matchesRole(w)) {
-            const isMonthQuery = Boolean(!query.date && (query.month || (query as any).year));
-            if (!allTenantCustomers || !isMonthQuery) return false;
-          }
-          if (assignedOnly && !isDirectWorkAssignee(w) && hasRoleRules && !matchesRole(w)) return false;
-          return true;
-        }
-
-        if (assignedOnly && !authorized) return false;
-
-        // Unassigned tenant pool work:
-        const isTenantScope =
-          Number(undefined) === tenantCustomerId ||
-          Number(undefined) === tenantCustomerId ||
-          Number(undefined) === tenantCustomerId;
-        if (!isTenantScope && !authorized) return false;
-
-        if (hasRoleRules && !matchesRole(w)) return false;
-
-        return true;
-      });
-    }
+    filteredItems = filteredItems.filter((work: any) => {
+      const directlyAssigned = viewerIds.has(Number(work.assignedToId)) ||
+        viewerIds.has(Number(work.editorId)) ||
+        (work.tasks || []).some((task: any) => viewerIds.has(Number(task.assignedToId)));
+      const assignedTeam = authorizedTeamIds.includes(Number(work.teamId)) ||
+        viewerIds.has(Number(work.team?.leaderId)) ||
+        (work.team?.members || []).some((member: any) => viewerIds.has(Number(member.employeeId)));
+      return directlyAssigned || assignedTeam;
+    });
 
     const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
 
@@ -3914,6 +3734,8 @@ status: ${item.status}`);
 
     return null;
   }
+
+
 
   /**
    * Customer Reschedule existing schedule with workflow dependency recalculation.

@@ -13,7 +13,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MarketplaceService } from './marketplace.service';
 import { CreateMarketplaceToolDto, UpdateMarketplaceToolDto } from './dto/marketplace-tool.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { AccountGuard } from '../../common/guards/account.guard';
 
 @ApiTags('Marketplace Tools')
 @Controller()
@@ -41,7 +41,7 @@ export class MarketplaceController {
 
   @Get('admin/marketplace/tools')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Get all marketplace tools including inactive (Admin)' })
   async getAllMarketplaceToolsAdmin() {
     const data = await this.marketplaceService.getAllMarketplaceToolsAdmin();
@@ -54,7 +54,7 @@ export class MarketplaceController {
 
   @Post('admin/marketplace/tools')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Create new marketplace tool (Admin)' })
   async createMarketplaceTool(@Body() dto: CreateMarketplaceToolDto) {
     const data = await this.marketplaceService.createMarketplaceTool(dto);
@@ -68,7 +68,7 @@ export class MarketplaceController {
 
   @Patch('admin/marketplace/tools/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Update marketplace tool (Admin)' })
   async updateMarketplaceTool(
     @Param('id', ParseIntPipe) id: number,
@@ -85,7 +85,7 @@ export class MarketplaceController {
 
   @Delete('admin/marketplace/tools/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AccountGuard)
   @ApiOperation({ summary: 'Delete marketplace tool (Admin)' })
   async deleteMarketplaceTool(@Param('id', ParseIntPipe) id: number) {
     const data = await this.marketplaceService.deleteMarketplaceTool(id);

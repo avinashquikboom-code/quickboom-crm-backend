@@ -16,7 +16,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
 import { CouponService } from './coupon.service';
 
 @ApiTags('Coupons')
