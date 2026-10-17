@@ -134,4 +134,11 @@ describe('LeadService - Data Capture -> Import Lead Flow', () => {
     expect(result.lead.id).toBe(55);
     expect(mockPrisma.lead.create).not.toHaveBeenCalled();
   });
+  it('rejects an authenticated account without import access before any writes', async () => {
+    await expect(service.importSelectedCaptures([101], { id: 8, accountType: 'CUSTOMER' }, 'ADMIN_PANEL' as any))
+      .rejects.toMatchObject({ status: 403 });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.lead.create).not.toHaveBeenCalled();
+  });
+
 });
