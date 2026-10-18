@@ -1,8 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsInt, Min, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { WorkType, WorkStatus, WorkPriority } from '@prisma/client';
 
 export class CreateWorkDto {
+  @ApiPropertyOptional({ description: 'Actual customer account ID, not the originating lead ID' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  customerId?: number;
+
   @ApiPropertyOptional({ example: 12, description: 'CRM company associated with this calendar work item' })
   @IsOptional()
   companyId?: number | string;

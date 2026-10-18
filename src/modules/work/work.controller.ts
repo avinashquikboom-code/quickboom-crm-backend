@@ -294,10 +294,13 @@ export class WorkController {
       if (dto.companyId !== undefined)
         throw new ForbiddenException('Only administrators can link calendar work to CRM companies');
       if (!employeeId) throw new ForbiddenException('Active employee profile required');
-      return this.workService.create(undefined, { ...dto, teamId: undefined, assignedToId: employeeId, editorId: undefined });
+      if (dto.customerId !== undefined) {
+        await this.workService.assertEmployeeCanScheduleForCustomer(employeeId, dto.customerId);
+      }
+      return this.workService.create(dto.customerId, { ...dto, teamId: undefined, assignedToId: employeeId, editorId: undefined });
     }
 
-    return this.workService.create(customerId, dto);
+    return this.workService.create(dto.customerId ?? customerId, dto);
   }
 
   @Patch(':id')

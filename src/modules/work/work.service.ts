@@ -444,8 +444,27 @@ return undefined;
     targetCustomerId: number,
     options?: { allowTenantCustomers?: boolean },
   ): Promise<void> {
-const employee = await this.prisma.employee.findUnique({ where: { id: Number(employeeId) } });
-if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
+    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId } });
+    if (!employee || employee.status !== 'ACTIVE' || !employee.mobileLoginEnabled) {
+      throw new ForbiddenException('Active employee profile required');
+    }
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: targetCustomerId, deletedAt: null, lead: { deletedAt: null },
+        OR: [
+          { lead: { assignedToId: employeeId } },
+          { lead: { createdById: employee.userId } },
+          { assignedTeam: { isActive: true, OR: [
+            { leaderId: employeeId }, { members: { some: { employeeId } } },
+          ] } },
+          { works: { some: { OR: [
+            { assignedToId: employeeId }, { editorId: employeeId },
+            { tasks: { some: { assignedToId: employeeId } } },
+          ] } } },
+        ] },
+      select: { id: true },
+    });
+    if (!customer) throw new ForbiddenException('Customer is not assigned to you or your active team');
+
   }
 
   /**
@@ -453,7 +472,21 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
    */
   async create(scopedCustomerId: number | string, dto: CreateWorkDto) {
     const numCustomerId = Number(scopedCustomerId);
+    const hasCustomer = scopedCustomerId !== undefined && scopedCustomerId !== null;
+    if (hasCustomer && (!Number.isSafeInteger(numCustomerId) || numCustomerId < 1)) {
+      throw new BadRequestException('Invalid customer account ID');
+    }
+    const scopedCustomer = hasCustomer
+      ? await this.prisma.customer.findFirst({
+          where: { id: numCustomerId, deletedAt: null, lead: { deletedAt: null } },
+          select: { id: true, crmCompanyId: true },
+        })
+      : null;
+    if (hasCustomer && !scopedCustomer) throw new NotFoundException('Customer account not found');
     let companyId = dto.companyId == null ? null : Number(dto.companyId);
+    if (scopedCustomer && companyId !== null && scopedCustomer.crmCompanyId !== companyId) {
+      throw new BadRequestException('CRM company does not belong to the selected customer');
+    }
     if (companyId !== null) {
       if (!Number.isSafeInteger(companyId) || companyId < 1)
         throw new BadRequestException('Invalid CRM company ID');
@@ -615,11 +648,10 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         ? WorkStatus.ASSIGNED
         : WorkStatus.SCHEDULED;
 
-      // Create Work deliverable record
+      // Save the verified customer account ID even when it has no linked CRM company.
       const work = await tx.work.create({
         data: {
-
-
+          customerId: scopedCustomer?.id ?? null,
           companyId,
           planId: entitlement?.planId ?? null,
           entitlementId: entitlement?.id ?? null,
@@ -1554,14 +1586,23 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { include: { assignedTeam: { include: { members: true } } } },
+        customer: {
+          include: {
+            assignedTeam: {
+              select: {
+                id: true,
+                name: true,
+                leaderId: true,
+                isActive: true,
+                members: { select: { employeeId: true } },
+              },
+            },
+          },
+        },
         subscription: { include: { plan: true, checkout: true } },
-
-
         team: {
           select: {
             id: true,
-
             name: true,
             leaderId: true,
             isActive: true,
