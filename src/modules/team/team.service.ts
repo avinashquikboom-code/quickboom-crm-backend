@@ -406,12 +406,41 @@ export class TeamService {
         : 0,
     ]);
 
+    const relatedRecords = [
+      {
+        relation: 'TeamMember',
+        name: 'Assigned Employees',
+        count: memberCount,
+        blocking: memberCount > 0,
+        action: memberCount > 0 ? 'Reassign to another team or remove from team roster.' : 'None',
+      },
+      {
+        relation: 'Customer',
+        name: 'Assigned Customers',
+        count: customerCount,
+        blocking: customerCount > 0,
+        action: customerCount > 0 ? 'Reassign to another team or clear team assignment.' : 'None',
+      },
+      {
+        relation: 'Work',
+        name: 'Work Deliverables & Tasks',
+        count: workCount,
+        blocking: false,
+        action: workCount > 0 ? 'Reassigned to target team or preserved unassigned.' : 'None',
+      },
+    ];
+
     const hasDependencies = memberCount + workCount + customerCount > 0;
 
     return {
       teamId: numId,
       teamName: team.name,
       isActive: team.isActive,
+      assignedEmployees: memberCount,
+      memberCount,
+      workCount,
+      customerCount,
+      commissionCount,
       leader: team.leader
         ? {
             id: team.leader.id,
@@ -419,10 +448,7 @@ export class TeamService {
             employeeCode: team.leader.employeeCode,
           }
         : null,
-      memberCount,
-      workCount,
-      customerCount,
-      commissionCount,
+      relatedRecords,
       hasDependencies,
       canDelete: !hasDependencies,
       canDeleteAfterUnassign: true,

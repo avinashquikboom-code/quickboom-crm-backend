@@ -203,11 +203,26 @@ return undefined;
   ) {
     this.ensureTeamAdmin(user);
     const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
-    if (permanent !== undefined && permanent !== 'true' && permanent !== 'false') {
-      throw new BadRequestException('permanent must be true or false');
+    let isPermanent = false;
+    if (permanent !== undefined) {
+      const norm = String(permanent).toLowerCase().trim();
+      if (norm === 'true' || norm === '1' || norm === '') {
+        isPermanent = true;
+      } else if (norm === 'false' || norm === '0') {
+        isPermanent = false;
+      } else {
+        throw new BadRequestException('Query parameter "permanent" must be a boolean (true or false)');
+      }
     }
-    const isPermanent = permanent !== 'false';
-    const effectiveReassignId = reassignToTeamId ?? bodyReassignToTeamId;
+    const rawReassign = reassignToTeamId ?? bodyReassignToTeamId;
+    let effectiveReassignId: number | undefined;
+    if (rawReassign !== undefined && rawReassign !== null && String(rawReassign).trim() !== '') {
+      const numReassign = Number(rawReassign);
+      if (isNaN(numReassign) || !Number.isSafeInteger(numReassign) || numReassign <= 0) {
+        throw new BadRequestException(`Invalid reassignToTeamId: "${rawReassign}". Must be a positive integer.`);
+      }
+      effectiveReassignId = numReassign;
+    }
     return this.teamService.remove(targetCustomerId, id, isPermanent, effectiveReassignId);
   }
 

@@ -229,4 +229,87 @@ describe('Team Deletion & Dependency Safety', () => {
     expect(mockPrisma.work.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.team.delete).not.toHaveBeenCalled();
   });
+
+  // Test Case 8: getDependencies returns 200 with assignedEmployees and relatedRecords for existing team, and 404 for nonexistent team
+  it('8. getDependencies returns 200 with assignedEmployees & relatedRecords, and 404 for nonexistent team', async () => {
+    mockPrisma.team.findFirst.mockResolvedValue({
+      id: 4,
+      name: 'Team 4',
+      isActive: true,
+      leader: { id: 10, firstName: 'Alice', lastName: 'Smith', employeeCode: 'EMP-010' },
+      _count: { members: 2, works: 3, assignedCustomers: 1 },
+    });
+    mockPrisma.teamMember.count.mockResolvedValue(2);
+    mockPrisma.work.count.mockResolvedValue(3);
+    mockPrisma.customer.count.mockResolvedValue(1);
+    mockPrisma.commission.count.mockResolvedValue(0);
+
+    const deps = await service.getDependencies(undefined, 4);
+    expect(deps.teamId).toBe(4);
+    expect(deps.assignedEmployees).toBe(2);
+    expect(deps.memberCount).toBe(2);
+    expect(deps.relatedRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relation: 'TeamMember', count: 2 }),
+        expect.objectContaining({ relation: 'Customer', count: 1 }),
+        expect.objectContaining({ relation: 'Work', count: 3 }),
+      ]),
+    );
+
+    // Nonexistent team
+    mockPrisma.team.findFirst.mockResolvedValue(null);
+    await expect(service.getDependencies(undefined, 999)).rejects.toThrow(NotFoundException);
+  });
+
+  // Test Case 9: Team 4 deletion with reassignToTeamId=2
+  it('9. deletes Team 4 successfully when reassigning members and customers to Team 2', async () => {
+    mockPrisma.team.findFirst.mockImplementation(({ where }: any) => {
+      if (where.id === 4) return { id: 4, name: 'Team 4', isActive: true };
+      if (where.id === 2) return { id: 2, name: 'Team 2', isActive: true };
+      return null;
+    });
+
+    mockPrisma.teamMember.findMany.mockImplementation(({ where }: any) => {
+      if (where.teamId === 4) return [{ employeeId: 101, role: 'MEMBER' }, { employeeId: 102, role: 'MEMBER' }];
+      if (where.teamId === 2) return [{ employeeId: 103, role: 'MEMBER' }];
+      return [];
+    });
+
+    const result = await service.remove(undefined, 4, true, 2);
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('reassigned to "Team 2" successfully');
+    expect(mockPrisma.work.updateMany).toHaveBeenCalledWith({
+      where: { teamId: 4 },
+      data: { teamId: 2 },
+    });
+    expect(mockPrisma.customer.updateMany).toHaveBeenCalledWith({
+      where: { assignedTeamId: 4 },
+      data: { assignedTeamId: 2 },
+    });
+    expect(mockPrisma.team.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+  });
+
+  // Test Case 10: Team 5 deletion with permanent=true without reassignment
+  it('10. deletes Team 5 permanently without reassignment by unassigning related records', async () => {
+    mockPrisma.team.findFirst.mockResolvedValue({
+      id: 5,
+      name: 'Team 5',
+      isActive: true,
+      _count: { members: 3, works: 4, assignedCustomers: 2 },
+    });
+
+    const result = await service.remove(undefined, 5, true);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Team "Team 5" permanently deleted');
+    expect(mockPrisma.work.updateMany).toHaveBeenCalledWith({
+      where: { teamId: 5 },
+      data: { teamId: null },
+    });
+    expect(mockPrisma.customer.updateMany).toHaveBeenCalledWith({
+      where: { assignedTeamId: 5 },
+      data: { assignedTeamId: null },
+    });
+    expect(mockPrisma.teamMember.deleteMany).toHaveBeenCalledWith({ where: { teamId: 5 } });
+    expect(mockPrisma.team.delete).toHaveBeenCalledWith({ where: { id: 5 } });
+  });
 });
