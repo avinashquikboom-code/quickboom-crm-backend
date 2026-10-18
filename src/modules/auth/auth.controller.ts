@@ -102,6 +102,13 @@ export class AuthController {
   }
 
   @Public()
+  @Post('register')
+  @ApiOperation({ summary: 'Customer registration endpoint' })
+  async register(@Body() dto: RegisterCustomerDto) {
+    return this.authService.registerCustomer(dto);
+  }
+
+  @Public()
   @Post('register/employee')
   @ApiOperation({ summary: 'Register a new Employee (Company or Freelancer)' })
   @ApiResponse({ status: 201, description: 'Employee created successfully' })

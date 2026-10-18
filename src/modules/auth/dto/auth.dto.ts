@@ -218,14 +218,25 @@ export class RegisterCustomerDto {
   @MaxLength(254)
   email: string;
 
-  @ApiProperty({ description: '10 digit Indian mobile number, optionally prefixed by +91' })
+  @ApiPropertyOptional({ description: '10 digit Indian mobile number, optionally prefixed by +91' })
+  @IsOptional()
   @IsString()
   @Matches(/^(?:\+?91)?[6-9]\d{9}$/, { message: 'Enter a valid Indian mobile number' })
-  mobile: string;
+  mobile?: string;
+
+  @ApiPropertyOptional({ description: 'Phone number alias for mobile' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  city?: string;
 
   @ApiProperty()
   @IsString()
-  @MinLength(8)
+  @MinLength(6)
   @MaxLength(72)
   password: string;
 }

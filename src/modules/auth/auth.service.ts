@@ -45,7 +45,9 @@ export class AuthService {
   async registerCustomer(dto: RegisterCustomerDto) {
     if (Buffer.byteLength(dto.password, 'utf8') > 72) throw new BadRequestException('Password must not exceed 72 bytes');
     const email = dto.email.trim().toLowerCase();
-    const digits = dto.mobile.replace(/\D/g, '').slice(-10);
+    const rawMobile = (dto.mobile || dto.phone || '').trim();
+    if (!rawMobile) throw new BadRequestException('Mobile number is required');
+    const digits = rawMobile.replace(/\D/g, '').slice(-10);
     const phone = '+91' + digits;
     const phones = [digits, '91' + digits, phone];
     const companyName = dto.companyName.trim();
