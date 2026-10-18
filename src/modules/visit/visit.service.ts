@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -592,6 +592,24 @@ return undefined;
           }
         : null,
     };
+  }
+
+  async bulkRemove(customerId: number | string | undefined, ids: number[], user: any) {
+    if (!isUserAdmin(user)) throw new ForbiddenException('Administrator account required');
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 ||
+        new Set(ids).size !== ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 1)) {
+      throw new BadRequestException('Provide 1–100 unique valid visit IDs');
+    }
+    // Same single-organization scope as the existing remove/findOne endpoints.
+    await this.resolveCustomerId(customerId);
+    return this.prisma.$transaction(async tx => {
+      const rows = await tx.visit.findMany({ where: { id: { in: ids } }, select: { id: true } });
+      if (rows.length !== ids.length) throw new NotFoundException('Some visits no longer exist. Refresh and select again.');
+      const result = await tx.visit.deleteMany({ where: { id: { in: ids } } });
+      if (result.count !== ids.length) throw new BadRequestException('Visit records changed. Refresh and retry.');
+      // Only Visit rows are deleted; related CRM records are not deleted.
+      return { deletedCount: result.count, ids: rows.map(row => row.id) };
+    });
   }
 
   async remove(customerId: number | string | undefined, id: number | string) {

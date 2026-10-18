@@ -8,10 +8,12 @@ import {
   Post,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
-import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
+import { BulkDeleteVisitsDto, CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -97,6 +99,18 @@ export class VisitController {
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
     return this.visitService.update(customerId, id, dto);
+  }
+
+  @Post('bulk-delete')
+  @WorkspaceAction({ module: 'VISITS', action: 'DELETE' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({ summary: 'Delete selected visits' })
+  async bulkDelete(
+    @Body() dto: BulkDeleteVisitsDto,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    return this.visitService.bulkRemove(customerId, dto.ids, user);
   }
 
   @Delete(':id')
