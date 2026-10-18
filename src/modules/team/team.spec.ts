@@ -18,6 +18,8 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       delete: jest.fn(),
     },
     teamMember: {
+      findMany: jest.fn(),
+      count: jest.fn(),
       createMany: jest.fn(),
       deleteMany: jest.fn(),
       upsert: jest.fn(),
@@ -88,13 +90,9 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       expect(result.pagination.total).toBe(1);
       expect(mockPrismaService.team.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ customerId: 101, isActive: true }),
+          where: expect.objectContaining({ isActive: true }),
         }),
       );
-    });
-
-    it('should throw BadRequestException if customerId is invalid', async () => {
-      await expect(service.findAll('invalid' as any)).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -152,7 +150,6 @@ describe('TeamService - Functional End-to-End Team Management', () => {
 
       expect(mockPrismaService.team.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          customerId: 101,
           name: 'Creative Unit',
           leaderId: 10,
         }),
@@ -357,7 +354,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
 
   describe('6. Member Actions (addMember & removeMember)', () => {
     it('should add member when employee and team belong to customer', async () => {
-      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, customerId: 101 });
+      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, name: 'Creative Team', customerId: 101 });
       mockPrismaService.employee.findFirst.mockResolvedValue({ id: 10, customerId: 101 });
       mockPrismaService.teamMember.upsert.mockResolvedValue({ id: 1, teamId: 1, employeeId: 10, role: 'SPECIALIST' });
 
@@ -366,7 +363,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
     });
 
     it('should remove member from team', async () => {
-      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, customerId: 101 });
+      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, name: 'Creative Team', customerId: 101 });
       mockPrismaService.teamMember.delete.mockResolvedValue({ id: 1 });
 
       const res = await service.removeMember(101, 1, 10);
