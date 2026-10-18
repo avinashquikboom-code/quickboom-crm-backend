@@ -281,6 +281,10 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       });
       expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(mockPrismaService.employee.delete).toBeUndefined();
+      expect(mockPrismaService.commission.updateMany).toHaveBeenCalledWith({
+        where: { teamId: 1 },
+        data: { teamId: null },
+      });
       expect(mockPrismaService.$executeRaw).not.toHaveBeenCalled();
     });
 
@@ -304,6 +308,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
         return [];
       });
       mockPrismaService.team.delete.mockResolvedValue({ id: 1 });
+      mockPrismaService.employee.findMany.mockResolvedValue([{ id: 11 }]);
 
       const res = await service.remove(101, 1, true, 2);
 
@@ -325,6 +330,19 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     });
 
+    it('rejects malformed reassignment IDs before changing any records', async () => {
+      mockPrismaService.team.findFirst.mockResolvedValue({ id: 1, name: 'Existing team' });
+      await expect(service.remove(undefined, 1, true, 'not-an-id')).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('reports a missing team separately from invalid identifiers', async () => {
+      mockPrismaService.team.findFirst.mockResolvedValue(null);
+      await expect(service.getDependencies(undefined, 999)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.remove(undefined, 999, true)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.getDependencies(undefined, '4.5')).rejects.toBeInstanceOf(BadRequestException);
+    });
+
     it('should return dependency counts with getDependencies', async () => {
       mockPrismaService.team.findFirst.mockResolvedValue({
         id: 1,
@@ -339,7 +357,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       mockPrismaService.commission.count.mockResolvedValue(1);
 
       const deps = await service.getDependencies(101, 1);
-      expect(deps).toEqual({
+      expect(deps).toMatchObject({
         teamId: 1,
         teamName: 'Alpha Team',
         isActive: true,
@@ -349,7 +367,8 @@ describe('TeamService - Functional End-to-End Team Management', () => {
         customerCount: 2,
         commissionCount: 1,
         hasDependencies: true,
-        canDelete: true,
+        canDelete: false,
+        canDeleteAfterUnassign: true,
       });
     });
   });

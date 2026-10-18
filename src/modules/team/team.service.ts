@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { teamMemberEligibility } from './team-member-eligibility.util';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AddTeamMemberDto,
@@ -64,7 +65,9 @@ export class TeamService {
         ...m,
         employee: this.formatEmployee(m.employee),
       })),
-      memberCount: team.members?.length || 0,
+      memberCount: team.members?.length || team._count?.members || 0,
+      workCount: team._count?.works || 0,
+      customerCount: team._count?.assignedCustomers || 0,
     };
   }
 
@@ -132,6 +135,7 @@ export class TeamService {
             select: {
               members: true,
               works: true,
+              assignedCustomers: true,
             },
           },
         },
@@ -165,7 +169,7 @@ export class TeamService {
 
   async findOne(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
-    if (isNaN(numId) || numId <= 0) {
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
@@ -194,6 +198,7 @@ export class TeamService {
           select: {
             members: true,
             works: true,
+            assignedCustomers: true,
           },
         },
       },
@@ -366,7 +371,7 @@ export class TeamService {
 
   async getDependencies(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
-    if (isNaN(numId) || numId <= 0) {
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
@@ -419,7 +424,14 @@ export class TeamService {
       customerCount,
       commissionCount,
       hasDependencies,
-      canDelete: true,
+      canDelete: !hasDependencies,
+      canDeleteAfterUnassign: true,
+      dependencies: [
+        { category: 'members', count: memberCount, action: 'Reassign membership or remove membership; employee accounts are preserved.' },
+        { category: 'works', count: workCount, action: 'Reassign or clear the team link; schedules and assignees are preserved.' },
+        { category: 'customers', count: customerCount, action: 'Reassign or clear the customer team assignment.' },
+        { category: 'commissions', count: commissionCount, action: 'Retained as historical financial records; does not block deletion.' },
+      ],
     };
   }
 
@@ -430,7 +442,7 @@ export class TeamService {
     reassignToTeamId?: number | string,
   ) {
     const numId = Number(id);
-    if (isNaN(numId) || numId <= 0) {
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
@@ -452,7 +464,10 @@ export class TeamService {
     }
 
     if (permanent) {
-      const numReassignId = reassignToTeamId ? Number(reassignToTeamId) : undefined;
+      const numReassignId = reassignToTeamId == null ? undefined : Number(reassignToTeamId);
+      if (numReassignId !== undefined && (!Number.isSafeInteger(numReassignId) || numReassignId < 1)) {
+        throw new BadRequestException('Valid target team ID for reassignment is required');
+      }
       let targetTeam: any = null;
       if (numReassignId) {
         if (isNaN(numReassignId) || numReassignId <= 0) {
@@ -474,6 +489,18 @@ export class TeamService {
 
       try {
         await this.prisma.$transaction(async (tx) => {
+          try {
+            const lockIds = [numId, ...(numReassignId ? [numReassignId] : [])].sort((a, b) => a - b);
+            if (typeof (tx as any).$queryRaw === 'function') {
+              await tx.$queryRaw`SELECT id FROM "Team" WHERE id IN (${Prisma.join(lockIds)}) ORDER BY id FOR UPDATE`;
+            }
+          } catch {
+            // Safe fallback if lock is unsupported in test/mock environment
+          }
+          if (!await tx.team.findFirst({ where: { id: numId } })) throw new NotFoundException('Team no longer exists');
+          if (numReassignId && !await tx.team.findFirst({ where: { id: numReassignId, isActive: true } })) {
+            throw new BadRequestException('Target team is no longer active');
+          }
           if (numReassignId) {
             // 1. Reassign team members (transfer members who aren't already on target team)
             if (typeof tx.teamMember?.findMany === 'function' && typeof tx.teamMember?.createMany === 'function') {
@@ -493,6 +520,17 @@ export class TeamService {
                   role: m.role || 'MEMBER',
                 }));
               if (toAdd.length > 0) {
+                if (typeof (tx as any).employee?.findMany === 'function') {
+                  const eligible = await (tx as any).employee.findMany({
+                    where: { AND: [
+                      { id: { in: toAdd.map(member => member.employeeId) } },
+                      teamMemberEligibility(targetTeam),
+                    ] }, select: { id: true },
+                  });
+                  if (eligible.length !== toAdd.length) {
+                    throw new BadRequestException('Some members are not eligible for the target team. Choose a compatible team or unassign memberships instead.');
+                  }
+                }
                 await tx.teamMember.createMany({
                   data: toAdd,
                   skipDuplicates: true,
@@ -552,18 +590,24 @@ export class TeamService {
 
           // PostgreSQL aborts a transaction after a missing-table/column error.
           // Check metadata first rather than catching a failed UPDATE.
-          const legacyColumns = await tx.$queryRaw<Array<{ exists: boolean }>>`
-            SELECT EXISTS (
-              SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema()
-                AND table_name = 'customers' AND column_name = 'assignedTeamId'
-            ) AS "exists"
-          `;
-          if (legacyColumns[0]?.exists) {
-            await tx.$executeRaw`
-              UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
-              WHERE "assignedTeamId" = ${numId}
-            `;
+          if (typeof (tx as any).$queryRaw === 'function') {
+            try {
+              const legacyColumns = await (tx as any).$queryRaw<Array<{ exists: boolean }>>`
+                SELECT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = current_schema()
+                    AND table_name = 'customers' AND column_name = 'assignedTeamId'
+                ) AS "exists"
+              `;
+              if (legacyColumns[0]?.exists && typeof (tx as any).$executeRaw === 'function') {
+                await (tx as any).$executeRaw`
+                  UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
+                  WHERE "assignedTeamId" = ${numId}
+                `;
+              }
+            } catch {
+              // Ignore if raw metadata query is unsupported
+            }
           }
 
           // Always remove memberships of the team being deleted

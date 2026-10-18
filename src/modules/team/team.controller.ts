@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   ForbiddenException,
@@ -23,7 +24,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Teams')
 @ApiBearerAuth()
@@ -101,6 +102,37 @@ return undefined;
     return this.teamService.getTeamCalendar(id, query, user, targetCustomerId);
   }
 
+  private ensureTeamAdmin(user: any) {
+    if (!user) throw new ForbiddenException('Authentication required');
+    if (isUserAdmin(user)) return;
+    const acc = String(user.accountType || '').toUpperCase();
+    const role = String(user.role || '').toUpperCase();
+    const roles: string[] = Array.isArray(user.roles)
+      ? user.roles.map((r: any) => String(typeof r === 'string' ? r : r?.name || r?.role?.name || '').toUpperCase())
+      : [];
+    const isOwnerOrAdmin =
+      ['CUSTOMER', 'CUSTOMER_ADMIN', 'CUSTOMER_OWNER', 'COMPANY_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(acc) ||
+      ['CUSTOMER', 'CUSTOMER_ADMIN', 'CUSTOMER_OWNER', 'COMPANY_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(role) ||
+      roles.some((r) => ['CUSTOMER', 'CUSTOMER_ADMIN', 'CUSTOMER_OWNER', 'COMPANY_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(r));
+    if (!isOwnerOrAdmin) {
+      throw new ForbiddenException('Administrator or organization owner account required');
+    }
+  }
+
+  @Get(':id/dependencies')
+  @ApiOperation({ summary: 'Get dependencies of a team before deletion' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getDependencies(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    this.ensureTeamAdmin(user);
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
+    return this.teamService.getDependencies(targetCustomerId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single team details with members and leader' })
   @ApiQuery({ name: 'customerId', required: false })
@@ -155,19 +187,6 @@ return undefined;
     return this.teamService.update(targetCustomerId, id, dto);
   }
 
-  @Get(':id/dependencies')
-  @ApiOperation({ summary: 'Get dependencies of a team before deletion' })
-  @ApiQuery({ name: 'customerId', required: false })
-  async getDependencies(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: any,
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
-    return this.teamService.getDependencies(targetCustomerId, id);
-  }
-
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate or delete team' })
   @ApiQuery({ name: 'customerId', required: false })
@@ -182,9 +201,13 @@ return undefined;
     @Query('reassignToTeamId') reassignToTeamId?: string,
     @Body('reassignToTeamId') bodyReassignToTeamId?: string | number,
   ) {
+    this.ensureTeamAdmin(user);
     const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
+    if (permanent !== undefined && permanent !== 'true' && permanent !== 'false') {
+      throw new BadRequestException('permanent must be true or false');
+    }
     const isPermanent = permanent !== 'false';
-    const effectiveReassignId = reassignToTeamId || bodyReassignToTeamId;
+    const effectiveReassignId = reassignToTeamId ?? bodyReassignToTeamId;
     return this.teamService.remove(targetCustomerId, id, isPermanent, effectiveReassignId);
   }
 
