@@ -3,7 +3,8 @@ import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { WorkAssignmentService } from './work-assignment.service';
-import { WorkStatus, WorkType, TaskStatus, SubscriptionStatus } from '@prisma/client';
+import { WorkStatus, WorkType, TaskStatus } from '@prisma/client';
+import { SubscriptionStatus } from '../subscription/dto/subscription.dto';
 
 describe('Customer-Scheduled Tasks Visibility in Employee Calendar and My Work', () => {
   let service: WorkService;

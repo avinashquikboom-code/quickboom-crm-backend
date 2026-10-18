@@ -47,6 +47,10 @@ export class LinkCustomerCompanyDto {
   @Min(1)
   companyId: number | null;
 }
+export class AssignCustomerTeamDto {
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt() @Min(1) teamId: number | null;
+}
 class CustomerAccountDto {
   @IsString() @MinLength(10) @MaxLength(128) password: string;
 }
@@ -89,6 +93,11 @@ export class CustomerController {
     @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
     return this.bulkDelete(user, dto, cancelQuery);
+  }
+  @Patch('customers/:id/assign-team')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  assignTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: AssignCustomerTeamDto) {
+    return this.customers.assignTeam(id, dto.teamId, user);
   }
   @Patch('customers/:id/company')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))

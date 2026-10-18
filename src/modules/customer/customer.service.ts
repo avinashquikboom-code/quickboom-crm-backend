@@ -154,6 +154,10 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
       return {
         ...customer,
+        assignedTeam: (customer as any).assignedTeamId
+          ? await tx.team.findUnique({ where: { id: (customer as any).assignedTeamId },
+              select: { id: true, name: true, isActive: true, _count: { select: { members: true } } } })
+          : null,
         crmCompany: customer.crmCompanyId
           ? await tx.company.findUnique({
               where: { id: customer.crmCompanyId },
@@ -217,6 +221,24 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
   async remove(id: number, actor: any, cancelSubscriptions = true) {
     return this.bulkRemove([id], actor, cancelSubscriptions);
+  }
+
+  async assignTeam(customerId: number, teamId: number | null, actor: any) {
+    if (!isUserAdmin(actor)) throw new ForbiddenException("Administrator required");
+    return this.prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.findFirst({
+        where: { id: customerId, deletedAt: null, lead: { deletedAt: null } }, select: { id: true },
+      });
+      if (!customer) throw new NotFoundException("Customer account not found");
+      if (teamId !== null) {
+        const team = await tx.team.findFirst({ where: { id: teamId, isActive: true }, select: { id: true } });
+        if (!team) throw new NotFoundException("Active team not found");
+      }
+      // Assign customer access only. Existing Work and WorkTask assignees are untouched.
+      return (tx.customer as any).update({ where: { id: customerId }, data: { assignedTeamId: teamId },
+        select: { id: true, assignedTeamId: true, assignedTeam: { select: { id: true, name: true, isActive: true } } },
+      });
+    });
   }
 
   async linkCrmCompany(customerId: number, companyId: number | null, actor: any) {

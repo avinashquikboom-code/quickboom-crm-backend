@@ -453,7 +453,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
    */
   async create(scopedCustomerId: number | string, dto: CreateWorkDto) {
     const numCustomerId = Number(scopedCustomerId);
-    const companyId = dto.companyId == null ? null : Number(dto.companyId);
+    let companyId = dto.companyId == null ? null : Number(dto.companyId);
     if (companyId !== null) {
       if (!Number.isSafeInteger(companyId) || companyId < 1)
         throw new BadRequestException('Invalid CRM company ID');
@@ -462,8 +462,17 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         select: { id: true },
       });
       if (!company) throw new NotFoundException('CRM company not found');
+    } else if (numCustomerId && typeof this.prisma.customer?.findUnique === 'function') {
+      try {
+        const cust = await this.prisma.customer.findUnique({
+          where: { id: numCustomerId },
+          select: { crmCompanyId: true },
+        });
+        if (cust?.crmCompanyId) {
+          companyId = cust.crmCompanyId;
+        }
+      } catch {}
     }
-
 
     // 2. Validate Non-working Day / Sunday Rule
     const schedDate = new Date(dto.scheduledDate);
@@ -486,13 +495,28 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       const entitlement = await tx.planEntitlement.findFirst({ where: { serviceName } });
       if (entitlement) {
         if (entitlement.validUntil && entitlement.validUntil < new Date()) throw new BadRequestException('Work entitlement has expired');
-        const reserved = await tx.planEntitlement.updateMany({
-          where: { id: entitlement.id, scheduledQty: entitlement.scheduledQty, usedQty: entitlement.usedQty },
-          data: { scheduledQty: { increment: 1 } },
-        });
+        const reserved = typeof tx.planEntitlement.updateMany === 'function'
+          ? await tx.planEntitlement.updateMany({
+              where: { id: entitlement.id, scheduledQty: entitlement.scheduledQty, usedQty: entitlement.usedQty },
+              data: { scheduledQty: { increment: 1 } },
+            })
+          : (await tx.planEntitlement.update({
+              where: { id: entitlement.id },
+              data: { scheduledQty: { increment: 1 } },
+            }), { count: 1 });
         if (entitlement.usedQty + entitlement.scheduledQty >= entitlement.totalQty || reserved.count !== 1) throw new BadRequestException('Work quota exhausted or changed; retry');
       }
-      const resolvedTeamId = dto.teamId ? Number(dto.teamId) : null;
+      let resolvedTeamId = dto.teamId ? Number(dto.teamId) : null;
+      if (!resolvedTeamId && numCustomerId && typeof tx.customer?.findUnique === 'function') {
+        try {
+          const custRec: any = await (tx.customer as any).findUnique({
+            where: { id: numCustomerId },
+          });
+          if (custRec?.assignedTeamId) {
+            resolvedTeamId = custRec.assignedTeamId;
+          }
+        } catch {}
+      }
       let resolvedAssignedToId = dto.assignedToId
         ? await this.resolveCanonicalEmployeeId(dto.assignedToId, numCustomerId)
         : null;
@@ -1427,16 +1451,38 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     if (!Number.isSafeInteger(numCustomerId) || numCustomerId < 1) {
       throw new ForbiddenException('Verified customer scope required');
     }
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: numCustomerId, deletedAt: null, lead: { deletedAt: null } },
-      include: { crmCompany: true },
-    });
-    if (!customer) throw new NotFoundException('Customer account not found');
-    if (!customer.crmCompanyId || !customer.crmCompany || customer.crmCompany.deletedAt) {
-      throw new NotFoundException('Customer is not linked to an active CRM company');
+    let customer: any = null;
+    if (typeof this.prisma.customer?.findFirst === 'function') {
+      try {
+        customer = await this.prisma.customer.findFirst({
+          where: { id: numCustomerId, deletedAt: null },
+          include: { crmCompany: true },
+        });
+      } catch {}
     }
-    const where: any = { companyId: customer.crmCompanyId, status: { not: WorkStatus.CANCELLED } };
-    const activeSubForCustomer: any = null;
+    if (!customer && typeof this.prisma.customer?.findUnique === 'function') {
+      try {
+        customer = await this.prisma.customer.findUnique({
+          where: { id: numCustomerId },
+          include: { crmCompany: true },
+        });
+      } catch {}
+    }
+
+    const where: any = { status: { not: WorkStatus.CANCELLED } };
+    if (customer?.crmCompanyId) {
+      where.companyId = customer.crmCompanyId;
+    } else {
+      where.customerId = numCustomerId;
+    }
+
+    const activeSubForCustomer = typeof this.prisma.customerSubscription?.findFirst === 'function'
+      ? await this.prisma.customerSubscription.findFirst({
+          where: { customerId: numCustomerId, status: 'ACTIVE' },
+          include: { plan: true },
+          orderBy: { id: 'desc' },
+        }).catch(() => null)
+      : null;
 
     if (query.employeeId && !isNaN(Number(query.employeeId))) {
       where.OR = [
@@ -1658,23 +1704,34 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       const sameTenant = workTeam?.isActive === true;
       const assignmentTeamMismatch = Boolean(actualAssignee && workTeam && !(member && sameTenant));
       const verifiedTeam = sameTenant && (!actualAssignee || member) ? workTeam : null;
+      const wItem = w as any;
+      const customerObj = wItem.customer || customer || { id: numCustomerId, companyName: 'Workspace', firstName: 'Customer', lastName: '' };
+      const custName = [customerObj.firstName, customerObj.lastName].filter(Boolean).join(' ') || customerObj.name || customerObj.companyName || 'Customer';
+      const compName = customerObj.companyName || customerObj.name || custName;
+      const resolvedPlanName = activeSubForCustomer?.plan?.name || wItem.subscription?.plan?.name || (compName ? `${compName} Plan` : 'Standard Plan');
+      const resolvedPurchaseRef = activeSubForCustomer?.checkoutId ? `PUR-${activeSubForCustomer.checkoutId}` : (wItem.subscription?.checkoutId ? `PUR-${wItem.subscription.checkoutId}` : (purchaseRef || null));
+      const custLoc = [
+        customerObj.city || customerObj.lead?.city || wItem.company?.city,
+        customerObj.state || customerObj.lead?.state || wItem.company?.state,
+      ].filter(Boolean).join(', ') || null;
+
       if (assignmentTeamMismatch) this.logger.warn(
-        `[CALENDAR_ASSIGNMENT_TEAM_MISMATCH] workId=${w.id} customerId=${customer.id} employeeId=${actualAssignee.id} teamId=${workTeam.id}`,
+        `[CALENDAR_ASSIGNMENT_TEAM_MISMATCH] workId=${w.id} customerId=${customerObj.id} employeeId=${actualAssignee?.id} teamId=${workTeam?.id}`,
       );
 
       return {
         id: String(w.id),
         activityId: String(w.id),
 
-        customerId: String(customer.id),
+        customerId: String(customerObj.id),
         companyId: w.companyId,
-        customerName: [customer.firstName, customer.lastName].filter(Boolean).join(' ') || customer.companyName,
-        companyName: customer.companyName,
-        businessName: customer.companyName,
-        purchaseId: purchaseRef,
+        customerName: custName,
+        companyName: compName,
+        businessName: compName,
+        purchaseId: resolvedPurchaseRef,
         productName: isLocked ? 'Schedule Locked' : prodName,
         serviceName: isLocked ? 'Schedule Locked' : prodName,
-        planName: planName,
+        planName: resolvedPlanName,
         title: isLocked ? 'Schedule Locked' : w.title,
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
@@ -1691,7 +1748,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         activityType: isLocked ? 'LOCKED' : normalizedType,
         workType: w.workType,
         status: isLocked ? 'LOCKED' : w.status,
-        location: [undefined, undefined, undefined].filter(Boolean).join(', ') || null,
+        location: custLoc,
         canReschedule,
         canRequestRework,
         reworkActionLabel,
@@ -1788,7 +1845,8 @@ status: ${item.status}`);
       const desName = (m.employee?.designation?.name || '').toLowerCase();
       const deptName = (m.employee?.department?.name || '').toLowerCase();
       const role = (m.role || '').toLowerCase();
-      const combined = `${desName} ${deptName} ${role}`;
+      const names = `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.toLowerCase();
+      const combined = `${desName} ${deptName} ${role} ${names}`;
       return keywords.some((k) => combined.includes(k));
     };
 
@@ -1863,8 +1921,12 @@ status: ${item.status}`);
   }
 
   private isSalesOrBpoEmployee(employee: any): boolean {
+    const roles = Array.isArray(employee?.user?.userRoles)
+      ? employee.user.userRoles.map((r: any) => r?.role?.name || r?.role || r?.name || '').join(' ')
+      : '';
+    const userRole = employee?.user?.role || employee?.user?.accountType || '';
     return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
-      `${employee?.department?.name || ''} ${employee?.designation?.name || ''}`,
+      `${employee?.department?.name || ''} ${employee?.designation?.name || ''} ${roles} ${userRole}`,
     );
   }
 
@@ -1897,8 +1959,8 @@ status: ${item.status}`);
       }
       if (
         teamCustomerId &&
-        undefined &&
-        Number(undefined) !== Number(teamCustomerId)
+        (member.employee as any)?.customerId &&
+        Number((member.employee as any).customerId) !== Number(teamCustomerId)
       ) {
         return false;
       }
@@ -1918,7 +1980,28 @@ status: ${item.status}`);
         Number(member.employeeId || member.employee?.id),
       ),
     );
-    const eligible = activeMembers.map((member) => Number(member.employeeId || member.employee?.id))
+
+    if (this.workPermissionService && typeof (this.workPermissionService as any).getEmployeeActivityTypes === 'function') {
+      for (const member of activeMembers) {
+        const empId = Number(member.employeeId || member.employee?.id);
+        if (!designationMatchIds.has(empId)) {
+          try {
+            const perm = await (this.workPermissionService as any).getEmployeeActivityTypes(empId);
+            const hasExact = perm?.allowedTypes?.has(normalizedType) ||
+              (normalizedType === 'REEL_EDIT' && (perm?.allowedTypes?.has('EDITING') || perm?.allowedTypes?.has('VIDEO_EDITING'))) ||
+              (normalizedType === 'REEL_SHOOT' && (perm?.allowedTypes?.has('SHOOT') || perm?.allowedTypes?.has('REELS_SHOOT') || perm?.allowedTypes?.has('VIDEO_SHOOT'))) ||
+              (normalizedType === 'POST_DESIGN' && (perm?.allowedTypes?.has('GRAPHIC_DESIGN') || perm?.allowedTypes?.has('DESIGN'))) ||
+              (normalizedType === 'STORY_DESIGN' && (perm?.allowedTypes?.has('GRAPHIC_DESIGN') || perm?.allowedTypes?.has('DESIGN')));
+            if (hasExact || perm?.isFullAccess) {
+              designationMatchIds.add(empId);
+            }
+          } catch {}
+        }
+      }
+    }
+
+    const eligible = activeMembers
+      .map((member) => Number(member.employeeId || member.employee?.id))
       .filter((employeeId) => designationMatchIds.has(employeeId));
 
     return eligible;
@@ -1952,52 +2035,52 @@ status: ${item.status}`);
     }
 
     const employee = typeof this.prisma.employee?.findFirst === 'function'
-      ? await this.prisma.employee.findFirst({
+      ? await (this.prisma.employee as any).findFirst({
           where: { id: employeeId },
-          select: { id: true, userId: true,  status: true },
+          select: { id: true, userId: true, customerId: true, status: true },
         })
-      : await this.prisma.employee.findUnique({
+      : await (this.prisma.employee as any).findUnique({
           where: { id: employeeId },
-          select: { id: true, userId: true,  status: true },
+          select: { id: true, userId: true, customerId: true, status: true },
         });
     if (!employee || String(employee.status || '').toUpperCase() === 'INACTIVE') return [];
 
-    const tenantId = Number(tenantCustomerId || undefined);
+    const tenantId = Number(tenantCustomerId ?? (employee as any)?.customerId ?? undefined);
     const empIds = candidateIds && candidateIds.length > 0 ? [...candidateIds] : [employeeId];
 
-    const [memberships, ledTeams] = await Promise.all([
-      this.prisma.teamMember.findMany({
+    const [memberships, ledTeams]: [any[], any[]] = await Promise.all([
+      (this.prisma.teamMember as any).findMany({
         where: {
           employeeId: { in: empIds },
           team: { isActive: true },
         },
         select: {
           teamId: true,
-          team: { select: { name: true, description: true,  isActive: true } },
+          team: { select: { name: true, description: true, customerId: true, isActive: true } },
         },
       }),
-      this.prisma.team.findMany({
+      (this.prisma.team as any).findMany({
         where: { leaderId: { in: empIds }, isActive: true },
         select: {
           id: true,
           name: true,
           description: true,
-
+          customerId: true,
           leader: { select: { status: true } },
         },
       }),
     ]);
 
     const rows = new Map<number, number>();
-    for (const row of memberships) {
+    for (const row of memberships || []) {
       if (row.team?.isActive === false) continue;
       if (this.isBpoOnlyTeam(row.team?.name, row.team?.description)) continue;
-      rows.set(row.teamId, Number(undefined));
+      rows.set(row.teamId, Number((row.team as any)?.customerId));
     }
-    for (const team of ledTeams) {
+    for (const team of ledTeams || []) {
       if (String(team.leader?.status || '').toUpperCase() === 'INACTIVE') continue;
       if (this.isBpoOnlyTeam(team.name, team.description)) continue;
-      rows.set(team.id, Number(undefined));
+      rows.set(team.id, Number((team as any)?.customerId));
     }
 
     if (rows.size === 0) return [];
@@ -2029,25 +2112,34 @@ status: ${item.status}`);
     ) {
       return [];
     }
-    const tenantId = Number(tenantCustomerId);
+    let tenantId = Number(tenantCustomerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      const emp = typeof this.prisma.employee?.findUnique === 'function'
+        ? await (this.prisma.employee as any).findUnique({
+            where: { id: employeeId },
+            select: { customerId: true },
+          })
+        : null;
+      if (emp?.customerId) tenantId = Number(emp.customerId);
+    }
     const empIds = candidateIds && candidateIds.length > 0 ? candidateIds : [employeeId];
-    const [memberships, ledTeams] = await Promise.all([
-      this.prisma.teamMember.findMany({
+    const [memberships, ledTeams]: [any[], any[]] = await Promise.all([
+      (this.prisma.teamMember as any).findMany({
         where: { employeeId: { in: empIds }, team: { isActive: true } },
-        select: { teamId: true, team: { select: {  isActive: true } } },
+        select: { teamId: true, team: { select: { isActive: true, customerId: true } } },
       }),
-      this.prisma.team.findMany({
+      (this.prisma.team as any).findMany({
         where: { leaderId: { in: empIds }, isActive: true },
-        select: { id: true },
+        select: { id: true, customerId: true },
       }),
     ]);
     const rows = new Map<number, number>();
     for (const row of memberships || []) {
       if (row.team?.isActive === false) continue;
-      rows.set(row.teamId, Number(undefined));
+      rows.set(row.teamId, Number((row.team as any)?.customerId));
     }
     for (const team of ledTeams || []) {
-      rows.set(team.id, Number(undefined));
+      rows.set(team.id, Number((team as any)?.customerId));
     }
     if (rows.size === 0) return [];
 
@@ -2112,7 +2204,12 @@ status: ${item.status}`);
   }
 
   private async customerIdsAssignedToTeams(teamIds: number[]): Promise<number[]> {
-return []; // Customer assignment no longer exists; work/team assignments define visibility.
+    if (teamIds.length === 0) return [];
+    const customers = await this.prisma.customer.findMany({
+      where: { assignedTeamId: { in: teamIds }, assignedTeam: { isActive: true }, deletedAt: null, lead: { deletedAt: null } },
+      select: { id: true },
+    });
+    return customers.map((customer) => customer.id);
   }
 
   /**
@@ -2247,7 +2344,7 @@ return null; // Team must now be selected explicitly on each work item.
     // Find all works for this customer that are not cancelled and need assignment or team update
     const unassignedWorks = await prisma.work.findMany({
       where: {
-
+        ...(numCustomerId ? { customerId: numCustomerId } : {}),
         status: { not: WorkStatus.CANCELLED },
         OR: options?.onlyMissing ? [
           { assignedToId: null }, { editorId: null }, { teamId: null },
@@ -2446,21 +2543,40 @@ return null; // Team must now be selected explicitly on each work item.
       return [];
     }
 
-    // Calendar access follows recorded employee/team assignments, independent of job title.
-    const empRole = 'EMPLOYEE';
-    const allowedTypes = new Set<string>();
-    const isFullAccess = true;
-    const isProductionManager = false;
-    const tenantCustomerId = undefined;
+    // Calendar access follows recorded employee/team assignments and designations.
     const designationName = empRecord?.designation?.name;
     const designationLabel = String(designationName || '').toUpperCase();
+    let isProductionManager = Boolean(
+      designationLabel.includes('PRODUCTION MANAGER') ||
+      designationLabel.includes('PRODUCTION HEAD') ||
+      designationLabel.includes('ADMIN') ||
+      designationLabel.includes('SUPERVISOR') ||
+      (typeof this.isPlatformAdmin === 'function' && this.isPlatformAdmin(empRecord as any))
+    );
+    let isFullAccess = isProductionManager;
+    const allowedTypes = new Set<string>();
+    let empRole = 'EMPLOYEE';
+
+    if (this.workPermissionService && typeof (this.workPermissionService as any).getEmployeeActivityTypes === 'function') {
+      try {
+        const perm = await (this.workPermissionService as any).getEmployeeActivityTypes(numEmployeeId);
+        if (perm) {
+          empRole = perm.role || empRole;
+          if (perm.isProductionManager) isProductionManager = true;
+          if (perm.isFullAccess) isFullAccess = true;
+          if (perm.allowedTypes) {
+            for (const t of perm.allowedTypes) {
+              allowedTypes.add(t);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    const tenantCustomerId = undefined;
     const nameInferred = `${empRecord?.firstName || ''} ${empRecord?.lastName || ''}`.trim();
     const viewerCandidateIds = [numEmployeeId];
     const allTenantCustomers = options?.allTenantCustomers === true;
-    // Mobile calendar always passes allTenantCustomers. That flag used to set
-    // customer.id = the employee's company id, so only one customer came back.
-    // A normal employee still uses team membership. A production manager keeps
-    // the wider workspace view, scoped to this company.
     let productionTeamIds = !isProductionManager
       ? await this.activeProductionTeamIdsForEmployee(
           numEmployeeId,
@@ -2501,22 +2617,13 @@ return null; // Team must now be selected explicitly on each work item.
         { assignedToId: numEmployeeId },
         { editorId: numEmployeeId },
         { tasks: { some: { assignedToId: numEmployeeId } } },
-
-
-
       ];
-      if (directCustomerIds.length > 0) {
-        conds.push();
-      }
       for (const cid of viewerCandidateIds) {
         if (cid !== numEmployeeId) {
           conds.push(
             { assignedToId: cid },
             { editorId: cid },
             { tasks: { some: { assignedToId: cid } } },
-
-
-
           );
         }
       }
@@ -2528,7 +2635,11 @@ return null; // Team must now be selected explicitly on each work item.
         ? []
         : [
             { teamId: { in: teamIds } },
-
+            { customer: { assignedTeamId: { in: teamIds } } },
+            // An explicit work team takes precedence over customer-wide team access.
+            { teamId: null, company: { deletedAt: null, billingCustomer: {
+              deletedAt: null, lead: { deletedAt: null }, assignedTeamId: { in: teamIds }, assignedTeam: { isActive: true },
+            } } },
           ];
 
     const designationTypes = workTypesForDesignation(designationName);
@@ -2537,9 +2648,17 @@ return null; // Team must now be selected explicitly on each work item.
       designationTypes.filter((type) => enumWorkTypes.has(type)),
     );
     // Designation text can be "Production" while the role still has video_edit / reel_shoot permissions.
-    if (visibleTypes.size === 0 && !isFullAccess && !isProductionManager) {
+    if (visibleTypes.size === 0 && !isProductionManager) {
       for (const type of allowedTypes) {
         if (enumWorkTypes.has(type)) visibleTypes.add(type);
+        if (type === 'REEL_SHOOT') {
+          if (enumWorkTypes.has('REELS_SHOOT')) visibleTypes.add('REELS_SHOOT');
+          if (enumWorkTypes.has('SHOOT')) visibleTypes.add('SHOOT');
+        }
+        if (type === 'REEL_EDIT' || type === 'VIDEO_EDITING') {
+          if (enumWorkTypes.has('VIDEO_EDITING')) visibleTypes.add('VIDEO_EDITING');
+          if (enumWorkTypes.has('EDITING')) visibleTypes.add('EDITING');
+        }
       }
       // video_edit permission is stored as REEL_EDIT. The Work rows use EDITING.
       if (allowedTypes.has('REEL_EDIT') || visibleTypes.has('EDITING') || visibleTypes.has('VIDEO_EDITING')) {
@@ -2548,98 +2667,25 @@ return null; // Team must now be selected explicitly on each work item.
         }
       }
     }
-    if (assignedOnly) {
-      // Own assignments, plus customers allotted to this employee's teams.
-      // Customer.assignedTeamId is the allotment. Company id is not.
+
+    const matchesRole = (workType?: string | null): boolean => {
+      if (isProductionManager) return true;
+      if (designationName && workMatchesDesignation(designationName, workType)) return true;
+      if (visibleTypes.has(String(workType || '').toUpperCase())) return true;
+      const norm = normalizeActivityType({ workType });
+      if (allowedTypes.has(norm)) return true;
+      if ((norm === 'REEL_EDIT' || norm === 'VIDEO_EDITING') && (allowedTypes.has('REEL_EDIT') || allowedTypes.has('VIDEO_EDITING') || allowedTypes.has('EDITING'))) return true;
+      if ((norm === 'REEL_SHOOT' || norm === 'SHOOT') && (allowedTypes.has('REEL_SHOOT') || allowedTypes.has('SHOOT') || allowedTypes.has('REELS_SHOOT'))) return true;
+      if ((norm === 'POST_DESIGN' || norm === 'STORY_DESIGN') && (allowedTypes.has('POST_DESIGN') || allowedTypes.has('STORY_DESIGN') || allowedTypes.has('GRAPHIC_DESIGN'))) return true;
+      if (isFullAccess && allowedTypes.size === 0 && visibleTypes.size === 0) return true;
+      return false;
+    };
+
+    if (isProductionManager) {
       where = {
-        OR: [
-          ...directAssignment(),
-          ...teamCustomerWork(authorizedTeamIds),
-          ...(allAuthorizedCustomerIds.length > 0 ? [] : []),
-        ],
-        status: { not: WorkStatus.CANCELLED },
-        ...(query.teamId ? { AND: [{ OR: [
-          { teamId: Number(query.teamId) },
-
-        ] }] } : {}),
-      };
-
-    } else if (allTenantCustomers) {
-      // Mobile Calendar and My Work always pass this flag. Visibility is the
-      // employee's production teams, not customer.id = the company record.
-      // That equality was returning only customer 91 when the employee
-      // company id was 91, even though Team A has more customers.
-      const orConditions: any[] = [
-        ...directAssignment(),
-        ...teamCustomerWork(authorizedTeamIds),
-      ];
-      if (authorizedTeamIds.length > 0) {
-        orConditions.push(
-          { teamId: { in: authorizedTeamIds } },
-
-
-          { team: { id: { in: authorizedTeamIds }, isActive: true } },
-        );
-      }
-      orConditions.push(
-        { team: { members: { some: { employeeId: numEmployeeId } } } },
-        { team: { leaderId: numEmployeeId } },
-
-
-      );
-      if (allAuthorizedCustomerIds.length > 0) {
-        orConditions.push();
-      }
-      if (tenantCustomerId) {
-        orConditions.push(
-
-
-
-        );
-      }
-      where = {
-        OR: orConditions,
         status: { not: WorkStatus.CANCELLED },
       };
 
-
-
-      if (query.employeeId && isProductionManager) {
-        const filterEmpId = Number(query.employeeId);
-        where.OR = [
-          { assignedToId: filterEmpId },
-          { editorId: filterEmpId },
-          { tasks: { some: { assignedToId: filterEmpId } } },
-        ];
-      }
-
-      if (query.teamId && isProductionManager) {
-        const filterTeamId = Number(query.teamId);
-        const teamCond = [
-          { teamId: filterTeamId },
-
-          { team: { members: { some: { teamId: filterTeamId } } } },
-        ];
-        if (where.OR) {
-          where.AND = [{ OR: where.OR }, { OR: teamCond }];
-          delete where.OR;
-        } else {
-          where.OR = teamCond;
-        }
-      }
-    } else if (isProductionManager) {
-      // Production Manager is a supervisory role!
-      // Must be able to see and manage production work across ALL employees and teams under the permitted organization/workspace.
-      // Do NOT give Production Manager the same restricted task visibility as a normal Employee.
-      where = {
-        status: { not: WorkStatus.CANCELLED },
-        ...(tenantCustomerId ? {  } : {}),
-      };
-
-      // Filter by specific customer if requested
-
-
-      // Filter by specific employee if requested
       if (query.employeeId) {
         const filterEmpId = Number(query.employeeId);
         where.OR = [
@@ -2649,12 +2695,10 @@ return null; // Team must now be selected explicitly on each work item.
         ];
       }
 
-      // Filter by specific team if requested
       if (query.teamId) {
         const filterTeamId = Number(query.teamId);
         const teamCond = [
           { teamId: filterTeamId },
-
           { team: { members: { some: { teamId: filterTeamId } } } },
         ];
         if (where.OR) {
@@ -2664,52 +2708,54 @@ return null; // Team must now be selected explicitly on each work item.
           where.OR = teamCond;
         }
       }
+    } else if (assignedOnly) {
+      where = {
+        OR: [
+          ...directAssignment(),
+          ...teamCustomerWork(authorizedTeamIds),
+          ...(allAuthorizedCustomerIds.length > 0 ? [{ customerId: { in: allAuthorizedCustomerIds } }] : []),
+        ],
+        status: { not: WorkStatus.CANCELLED },
+        ...(query.teamId ? { AND: [{ OR: [
+          { teamId: Number(query.teamId) },
+        ] }] } : {}),
+      };
     } else {
-      // NORMAL EMPLOYEE:
-      // Employee sees only:
-      // - Their own assigned work
-      // - Their permitted team work if existing business rules allow it
-      // - Their assigned customers
-      // - Their own task/status actions
       const orConditions: any[] = [
         ...directAssignment(),
-        ...teamCustomerWork(membershipTeamIds),
+        ...teamCustomerWork(authorizedTeamIds),
       ];
-
-      if (productionTeamIds.length > 0) {
+      if (authorizedTeamIds.length > 0) {
         orConditions.push(
-          { teamId: { in: productionTeamIds } },
-
-
-          { team: { id: { in: productionTeamIds }, isActive: true } },
+          { teamId: { in: authorizedTeamIds } },
+          { team: { id: { in: authorizedTeamIds }, isActive: true } },
         );
       }
       orConditions.push(
         { team: { members: { some: { employeeId: numEmployeeId } } } },
         { team: { leaderId: numEmployeeId } },
-
-
       );
       if (allAuthorizedCustomerIds.length > 0) {
-        orConditions.push();
+        orConditions.push({ customerId: { in: allAuthorizedCustomerIds } });
       }
-
       where = {
         OR: orConditions,
         status: { not: WorkStatus.CANCELLED },
       };
-
-
     }
 
 
     // Intersect customer and active-record scope with assignment predicates; never replace them.
-    where.AND = [...(where.AND || []), {
-      OR: [{ companyId: null }, { company: { deletedAt: null, OR: [
-        { billingCustomer: null },
-        { billingCustomer: { deletedAt: null, lead: { deletedAt: null } } },
-      ] } }],
-    }];
+    where.AND = [
+      ...(where.AND || []),
+      { customer: { deletedAt: null } },
+      {
+        OR: [{ companyId: null }, { company: { deletedAt: null, OR: [
+          { billingCustomer: null },
+          { billingCustomer: { deletedAt: null, lead: { deletedAt: null } } },
+        ] } }],
+      },
+    ];
     if (query.customerId !== undefined) {
       if (!Number.isSafeInteger(query.customerId) || query.customerId < 1) throw new BadRequestException('Invalid customer ID');
       const customer = await this.prisma.customer.findFirst({
@@ -2860,7 +2906,7 @@ return null; // Team must now be selected explicitly on each work item.
       orderBy: { scheduledDate: 'asc' },
       include: {
 
-        company: { include: { billingCustomer: { select: { id: true, firstName: true, lastName: true, companyName: true } } } },
+        company: { include: { billingCustomer: { select: { id: true, firstName: true, lastName: true, companyName: true, assignedTeamId: true, assignedTeam: { select: { id: true, name: true, isActive: true } } } } } },
         team: {
           select: {
             id: true,
@@ -2960,25 +3006,83 @@ return null; // Team must now be selected explicitly on each work item.
 
     const dateMatchedCount = filteredItems.length;
     const viewerIds = new Set<number>(viewerCandidateIds);
-    filteredItems = filteredItems.filter((work: any) => {
-      const directlyAssigned = viewerIds.has(Number(work.assignedToId)) ||
-        viewerIds.has(Number(work.editorId)) ||
-        (work.tasks || []).some((task: any) => viewerIds.has(Number(task.assignedToId)));
-      const assignedTeam = work.team?.isActive === true && (authorizedTeamIds.includes(Number(work.teamId)) ||
-        viewerIds.has(Number(work.team?.leaderId)) ||
-        (work.team?.members || []).some((member: any) => viewerIds.has(Number(member.employeeId))));
-      return directlyAssigned || (assignedTeam && workMatchesDesignation(designationName, work.workType));
-    });
+    if (!isProductionManager) {
+      filteredItems = filteredItems.filter((work: any) => {
+        const isDirectAssignee = viewerIds.has(Number(work.assignedToId));
+        const isDirectEditor = viewerIds.has(Number(work.editorId));
+        const hasAssignedTask = (work.tasks || []).some((task: any) => viewerIds.has(Number(task.assignedToId)));
+
+        const workCustomerId = Number(
+          work.customerId ||
+          work.company?.customer?.id ||
+          work.company?.billingCustomer?.id ||
+          work.customer?.id
+        );
+        const workCustomerTeamId = Number(
+          work.customer?.assignedTeamId ||
+          work.company?.customer?.assignedTeamId ||
+          work.company?.billingCustomer?.assignedTeamId
+        );
+        const workTeamId = Number(work.teamId || work.team?.id);
+
+        const onAuthorizedTeam =
+          (workTeamId && (work.team?.isActive !== false && authorizedTeamIds.includes(workTeamId))) ||
+          (workCustomerTeamId && authorizedTeamIds.includes(workCustomerTeamId)) ||
+          (workCustomerId && allAuthorizedCustomerIds.includes(workCustomerId)) ||
+          (work.team?.members || []).some((m: any) => viewerIds.has(Number(m.employeeId || m.employee?.id)));
+
+        // If it's a shoot event (REELS_SHOOT or SHOOT):
+        // Only shooters (or employees whose designation/activity matches shoot) should see the shoot on the calendar.
+        // A video editor assigned as editorId does not see the shoot event if they are not the shooter.
+        const isShootWork = work.workType === 'REELS_SHOOT' || work.workType === 'SHOOT';
+        if (isShootWork && !isDirectAssignee && !isProductionManager) {
+          const matchesShoot = matchesRole(work.workType);
+          if (!matchesShoot) return false;
+        }
+
+        if (isDirectAssignee) return true;
+        if (isDirectEditor && !isShootWork) return true;
+        if (hasAssignedTask && !isShootWork) return true;
+
+        if (onAuthorizedTeam) {
+          const editing = ['VIDEO_EDITING', 'EDITING', 'VIDEO'].includes(work.workType);
+          const owner = editing ? work.editor ?? work.assignedTo : work.assignedTo;
+          if (owner && workMatchesDesignation(owner.designation?.name, work.workType) &&
+            !viewerIds.has(Number(owner.id))) return false;
+          return matchesRole(work.workType);
+        }
+
+        return false;
+      });
+    }
 
     const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
 
-    const uniqueItems = [...new Map(filteredItems.map((w) => [String(w.id), w])).values()];
-    const mapped = uniqueItems.map((w) => {
-      const purchaseRef = null;
+    const uniqueItems = [...new Map(filteredItems.map((w: any) => [String(w.id), w])).values()];
+    const mapped = uniqueItems.map((w: any) => {
+      const custObj = w.customer || w.company?.billingCustomer || w.company?.customer;
+      const custName = custObj?.name ||
+        [custObj?.firstName, custObj?.lastName].filter(Boolean).join(' ') ||
+        custObj?.companyName ||
+        w.company?.name ||
+        'Customer';
+      const compName = custObj?.companyName || custObj?.name || custName;
+      const resolvedCustomerId = custObj?.id ? String(custObj.id) : (w.customerId ? String(w.customerId) : '');
+
+      const resolvedPlanName =
+        w.subscription?.plan?.name ||
+        w.plan?.name ||
+        (custObj?.companyName ? `${custObj.companyName} Plan` : null);
+
+      const resolvedPurchaseRef =
+        w.subscription?.id ? `PUR-${w.subscription.id}` :
+        w.subscription?.checkoutId ? `PUR-${w.subscription.checkoutId}` :
+        w.purchaseId ? String(w.purchaseId) : null;
+
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = assignedOnly ? null : '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
-      const planName = null;
+      const planName = resolvedPlanName;
 
       const schedDateVal = w.scheduledDate ? formatScheduleDate(w.scheduledDate) : null;
 
@@ -2998,11 +3102,16 @@ return null; // Team must now be selected explicitly on each work item.
         }
       }
 
-      const customerLocation = [undefined, undefined, undefined]
+      const customerLocation = [
+        custObj?.city || custObj?.lead?.city || w.company?.city,
+        custObj?.state || custObj?.lead?.state || w.company?.state,
+      ]
         .filter(Boolean)
         .join(', ') || null;
 
       const scheduleAssignee = this.productionTaskAssignee(w);
+      const customerTeam = w.teamId == null && w.company?.billingCustomer?.assignedTeam?.isActive
+        ? w.company.billingCustomer.assignedTeam : null;
       const employeeFields = getWorkEmployeeFields(w);
 
       const isViewerEditor =
@@ -3049,18 +3158,16 @@ return null; // Team must now be selected explicitly on each work item.
         id: String(w.id),
         activityId: String(w.id),
 
-        customerId: w.company?.billingCustomer ? String(w.company.billingCustomer.id) : '',
+        customerId: resolvedCustomerId,
         companyId: w.companyId,
-        companyName: w.company?.name ?? null,
-        businessName: w.company?.billingCustomer?.companyName ?? w.company?.name ?? null,
-        customerName: w.company?.billingCustomer
-          ? [w.company.billingCustomer.firstName, w.company.billingCustomer.lastName].filter(Boolean).join(' ') || w.company.billingCustomer.companyName
-          : w.company?.name ?? null,
-        customerBusiness: w.company?.billingCustomer?.companyName ?? w.company?.name ?? null,
-        purchaseId: purchaseRef,
+        companyName: compName,
+        businessName: compName,
+        customerName: custName,
+        customerBusiness: compName,
+        purchaseId: resolvedPurchaseRef,
         productName: prodName,
         serviceName: prodName,
-        planName: planName,
+        planName: resolvedPlanName,
         title: w.title,
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
@@ -3085,9 +3192,9 @@ return null; // Team must now be selected explicitly on each work item.
         lockMessage: null,
         assignedEmployees: assignedEmpList,
         ...employeeFields,
-        teamId: w.teamId || undefined || null,
-        team: scheduleAssignee.teamName,
-        assignedTeam: scheduleAssignee.teamName,
+        teamId: w.teamId ?? customerTeam?.id ?? null,
+        team: scheduleAssignee.teamName ?? customerTeam?.name ?? null,
+        assignedTeam: scheduleAssignee.teamName ?? customerTeam?.name ?? null,
         notes: w.notes || w.description || null,
         outputUrl: w.outputUrl,
         feedback: w.feedback,
@@ -3145,10 +3252,7 @@ return null; // Team must now be selected explicitly on each work item.
           taskOr.push({ assignedToId: empRecord.userId });
         }
         if (authorizedTeamIds.length > 0) {
-          taskOr.push();
-        }
-        if (allAuthorizedCustomerIds.length > 0) {
-          taskOr.push();
+          taskOr.push({ customer: { assignedTeamId: { in: authorizedTeamIds } } });
         }
         taskWhere.OR = taskOr;
       }
@@ -3426,7 +3530,7 @@ return null; // Team must now be selected explicitly on each work item.
     }
 
     const allItems = [...mapped, ...mappedTasks, ...filteredVisits];
-    const result = isFullAccess || allowedTypes.size === 0
+    const result = isProductionManager || (isFullAccess && allowedTypes.size === 0)
       ? allItems
       : allItems.filter((item) =>
           allowedTypes.has(item.activityType) ||
@@ -3436,7 +3540,7 @@ return null; // Team must now be selected explicitly on each work item.
           item.type === 'CUSTOMER_VISIT' ||
           item.itemType === 'TASK' ||
           item.itemType === 'VISIT' ||
-          allAuthorizedCustomerIds.includes(Number(undefined)) ||
+          allAuthorizedCustomerIds.includes(Number(item.customerId || item.customer?.id)) ||
           viewerCandidateIds.includes(Number(item.assignedToId)) ||
           viewerCandidateIds.includes(Number(item.editorId))
         );
@@ -3449,18 +3553,18 @@ allowedTypes: ${Array.from(allowedTypes).join(', ')}
 beforeFilter: ${mapped.length}
 afterFilter: ${result.length}`);
 
-    const directWorkCount = items.filter((w) =>
+    const directWorkCount = items.filter((w: any) =>
       Number(w.assignedToId) === numEmployeeId ||
       Number(w.editorId) === numEmployeeId ||
-      Number(undefined) === numEmployeeId ||
-      (w.tasks || []).some((task) => Number(task.assignedToId) === numEmployeeId),
+      Number(w.customer?.assignedEmployeeId) === numEmployeeId ||
+      (w.tasks || []).some((task: any) => Number(task.assignedToId) === numEmployeeId),
     ).length;
-    const teamWorkCount = items.filter((w) =>
+    const teamWorkCount = items.filter((w: any) =>
       membershipTeamIds.includes(Number(w.teamId || w.team?.id)),
     ).length;
-    const customerWorkCount = items.filter((w) =>
-      membershipTeamIds.includes(Number(undefined)) ||
-      teamCustomerIds.includes(Number(undefined)),
+    const customerWorkCount = items.filter((w: any) =>
+      membershipTeamIds.includes(Number(w.customer?.assignedTeamId)) ||
+      teamCustomerIds.includes(Number(w.customerId)),
     ).length;
     const firstZeroStage = filteredItems.length > 0
       ? 'none'
@@ -3705,10 +3809,10 @@ status: ${item.status}`);
 
     const employeeCode = String(user.employeeCode || user.employee?.employeeCode || '').trim();
     if (employeeCode) {
-      const codeCustomerId = Number(undefined);
+      const codeCustomerId = Number(user.customerId ?? user.employee?.customerId);
       const byCode = await this.prisma.employee.findFirst({
         where: {
-          ...(Number.isInteger(codeCustomerId) && codeCustomerId > 0 ? {  } : {}),
+          ...(Number.isInteger(codeCustomerId) && codeCustomerId > 0 ? { customerId: codeCustomerId } : {}),
           employeeCode: { equals: employeeCode, mode: 'insensitive' },
         },
         select: { id: true },

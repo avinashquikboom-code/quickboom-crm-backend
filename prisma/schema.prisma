@@ -1333,6 +1333,7 @@ model Team {
   leader      Employee?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
   members     TeamMember[]
   works       Work[]
+  assignedCustomers Customer[] @relation("CustomerAssignedTeam")
 
   @@index([leaderId])
 }
@@ -2671,6 +2672,8 @@ model Customer {
   phone String?
   status CustomerLifecycleStatus @default(INACTIVE)
   crmCompanyId Int? @unique
+  assignedTeamId Int?
+  assignedTeam Team? @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   lead Lead @relation(fields: [originLeadId], references: [id], onDelete: Restrict)
@@ -2678,6 +2681,7 @@ model Customer {
   crmCompany Company? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
   subscriptions CustomerSubscription[]
   checkouts CustomerCheckout[]
+  @@index([assignedTeamId])
   @@index([deletedAt])
   @@map("customer_accounts")
 }

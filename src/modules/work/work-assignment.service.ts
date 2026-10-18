@@ -6,10 +6,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 @Injectable()
 export class WorkAssignmentService {
   constructor(private readonly prisma: PrismaService) {}
-  async getEmployeeActivityTypes(employeeId: number, _legacyScope?: number) {
+  async getEmployeeActivityTypes(employeeId: number, _legacyScope?: number): Promise<{
+    designation?: string;
+    role?: string;
+    allowedTypes: Set<string>;
+    isFullAccess: boolean;
+    isProductionManager: boolean;
+    workPermissions?: string[];
+  }> {
     const employee = await this.prisma.employee.findUnique({ where: { id: Number(employeeId) }, select: { id: true, status: true } });
     if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
-    return { designation: 'Employee', allowedTypes: new Set<string>([
+    return { designation: 'Employee', role: 'Employee', allowedTypes: new Set<string>([
       ...Object.values(WorkType), ...Object.values(WORK_MODULE_TO_ACTIVITY_TYPES).flat(),
     ]), isFullAccess: true, isProductionManager: false };
   }

@@ -13,7 +13,7 @@ export class WorkRecordGuard implements CanActivate {
       return true;
     }
     const employeeId = req.user?.employee?.id;
-    if (!employeeId || req.user.employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
+    if (!employeeId || (req.user.employee.status && req.user.employee.status !== 'ACTIVE')) throw new ForbiddenException('Active employee profile required');
     const workId = req.params?.id ?? req.body?.activityScheduleId;
     if (workId) {
       if (['assignTeam', 'reviewWork', 'approveWork', 'requestRework', 'cancelWork', 'remove'].includes(context.getHandler().name)) throw new ForbiddenException('Administrator account required');

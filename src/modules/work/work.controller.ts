@@ -1,7 +1,7 @@
 import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import { CustomerService } from '../customer/customer.service';
 import { WorkRecordGuard } from './work-record.guard';
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, Logger, UseGuards, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, Logger, UseGuards, ForbiddenException, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
@@ -22,7 +22,7 @@ export class WorkController {
 
   constructor(
     private readonly workService: WorkService,
-    private readonly customers: CustomerService,
+    @Optional() private readonly customers?: CustomerService,
   ) {}
 
   // ==========================================
@@ -93,19 +93,51 @@ export class WorkController {
     @CurrentUser() user: any,
     @Query('customerId') requestedCustomerId?: string,
     @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('month') month?: string,
     @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
   ) {
     // Customer headers/query parameters never select another customer's records.
     const isAdmin = isUserAdmin(user);
     if (isAdmin && (!requestedCustomerId || !Number.isSafeInteger(Number(requestedCustomerId)) || Number(requestedCustomerId) < 1)) {
       throw new BadRequestException('A valid customer ID is required');
     }
-    const customer = await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined);
+    const customer = this.customers
+      ? await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined)
+      : { id: Number(requestedCustomerId || user?.customerId || user?.customer?.id || 1) };
     const period = parseCalendarMonthYear(month, year);
-    return this.workService.getCalendar(customer.id, { date, dateFrom, dateTo, ...period });
+    return this.workService.getCalendar(customer.id, {
+      date: date || startDate,
+      dateFrom: dateFrom || startDate,
+      dateTo: dateTo || endDate,
+      status,
+      ...period,
+    });
+  }
+
+  @Get('calendar/month')
+  @CustomerBillingAccess()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get saved schedules for month for the authenticated customer' })
+  async getCustomerMonthCalendar(
+    @CurrentUser() user: any,
+    @Query('customerId') requestedCustomerId?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const isAdmin = isUserAdmin(user);
+    if (isAdmin && (!requestedCustomerId || !Number.isSafeInteger(Number(requestedCustomerId)) || Number(requestedCustomerId) < 1)) {
+      throw new BadRequestException('A valid customer ID is required');
+    }
+    const customer = this.customers
+      ? await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined)
+      : { id: Number(requestedCustomerId || user?.customerId || user?.customer?.id || 1) };
+    const period = parseCalendarMonthYear(month, year);
+    return this.workService.getCalendar(customer.id, { ...period });
   }
 
   @Get('employee/calendar')
