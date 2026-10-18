@@ -56,7 +56,7 @@ export class AuthService {
     try {
       await this.prisma.$transaction(async (tx) => {
         // Serialize registrations across all accepted representations of a mobile number.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${phone}))`;
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${phone}))::text`;
         const existing = await tx.user.findFirst({ where: { OR: [
           { email: { equals: email, mode: 'insensitive' } },
           { phone: { in: phones } },
