@@ -29,6 +29,7 @@ export class EmployeeController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
+  @ApiQuery({ name: 'eligibleForTeamId', required: false, description: 'Filter active candidates eligible to join this team, excluding existing members' })
   @ApiQuery({ name: 'bpoOnly', required: false, description: 'Filter only BPO eligible employees' })
   async findAll(
     @CurrentUser() user: any,
@@ -44,6 +45,7 @@ export class EmployeeController {
     @Query('limit') limit?: string,
     @Query('excludeAdmins') excludeAdmins?: string,
     @Query('bpoOnly') bpoOnly?: string,
+    @Query('eligibleForTeamId') eligibleForTeamId?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
@@ -63,6 +65,7 @@ export class EmployeeController {
       limit: limit ? parseInt(limit, 10) : 50,
       excludeAdmins: excludeAdmins !== 'false',
       bpoOnly: bpoOnly === 'true',
+      eligibleForTeamId: eligibleForTeamId === undefined ? undefined : Number(eligibleForTeamId),
     });
   }
 

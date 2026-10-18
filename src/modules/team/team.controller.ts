@@ -155,20 +155,37 @@ return undefined;
     return this.teamService.update(targetCustomerId, id, dto);
   }
 
+  @Get(':id/dependencies')
+  @ApiOperation({ summary: 'Get dependencies of a team before deletion' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getDependencies(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
+    return this.teamService.getDependencies(targetCustomerId, id);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate or delete team' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'permanent', required: false, type: Boolean })
+  @ApiQuery({ name: 'reassignToTeamId', required: false, type: Number })
   async remove(
     @Param('id') id: string,
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: any,
     @Query('customerId') customerIdQuery?: string,
     @Query('permanent') permanent?: string,
+    @Query('reassignToTeamId') reassignToTeamId?: string,
+    @Body('reassignToTeamId') bodyReassignToTeamId?: string | number,
   ) {
     const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
     const isPermanent = permanent !== 'false';
-    return this.teamService.remove(targetCustomerId, id, isPermanent);
+    const effectiveReassignId = reassignToTeamId || bodyReassignToTeamId;
+    return this.teamService.remove(targetCustomerId, id, isPermanent, effectiveReassignId);
   }
 
   @Post(':id/members')

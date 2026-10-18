@@ -25,11 +25,21 @@ describe('TeamService - Functional End-to-End Team Management', () => {
     },
     work: {
       updateMany: jest.fn(),
+      count: jest.fn(),
+    },
+    customer: {
+      updateMany: jest.fn(),
+      count: jest.fn(),
+    },
+    commission: {
+      updateMany: jest.fn(),
+      count: jest.fn(),
     },
     employee: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
     },
+    $executeRawUnsafe: jest.fn().mockResolvedValue(1),
     $transaction: jest.fn((callback) => callback(mockPrismaService)),
   };
 
@@ -267,8 +277,81 @@ describe('TeamService - Functional End-to-End Team Management', () => {
         where: { teamId: 1 },
         data: { teamId: null },
       });
+      expect(mockPrismaService.customer.updateMany).toHaveBeenCalledWith({
+        where: { assignedTeamId: 1 },
+        data: { assignedTeamId: null },
+      });
       expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(mockPrismaService.employee.delete).toBeUndefined();
+    });
+
+    it('should reassign members, works, and customers to target team before deleting', async () => {
+      mockPrismaService.team.findFirst.mockImplementation(({ where }: any) => {
+        if (where.id === 1) {
+          return { id: 1, name: 'Old Team', customerId: 101, _count: { members: 2, works: 3, assignedCustomers: 1 } };
+        }
+        if (where.id === 2) {
+          return { id: 2, name: 'Target Team', customerId: 101, isActive: true };
+        }
+        return null;
+      });
+      mockPrismaService.teamMember.findMany.mockImplementation(({ where }: any) => {
+        if (where.teamId === 1) {
+          return [{ id: 1, teamId: 1, employeeId: 10, role: 'MEMBER' }, { id: 2, teamId: 1, employeeId: 11, role: 'LEADER' }];
+        }
+        if (where.teamId === 2) {
+          return [{ id: 3, teamId: 2, employeeId: 10, role: 'MEMBER' }]; // already a member
+        }
+        return [];
+      });
+      mockPrismaService.team.delete.mockResolvedValue({ id: 1 });
+
+      const res = await service.remove(101, 1, true, 2);
+
+      expect(res.success).toBe(true);
+      expect(res.message).toContain('reassigned to "Target Team"');
+      expect(mockPrismaService.teamMember.createMany).toHaveBeenCalledWith({
+        data: [{ teamId: 2, employeeId: 11, role: 'LEADER' }],
+        skipDuplicates: true,
+      });
+      expect(mockPrismaService.work.updateMany).toHaveBeenCalledWith({
+        where: { teamId: 1 },
+        data: { teamId: 2 },
+      });
+      expect(mockPrismaService.customer.updateMany).toHaveBeenCalledWith({
+        where: { assignedTeamId: 1 },
+        data: { assignedTeamId: 2 },
+      });
+      expect(mockPrismaService.teamMember.deleteMany).toHaveBeenCalledWith({ where: { teamId: 1 } });
+      expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    });
+
+    it('should return dependency counts with getDependencies', async () => {
+      mockPrismaService.team.findFirst.mockResolvedValue({
+        id: 1,
+        name: 'Alpha Team',
+        isActive: true,
+        leader: { id: 10, firstName: 'John', lastName: 'Doe', employeeCode: 'EMP-010' },
+        _count: { members: 3, works: 5 },
+      });
+      mockPrismaService.teamMember.count.mockResolvedValue(3);
+      mockPrismaService.work.count.mockResolvedValue(5);
+      mockPrismaService.customer.count.mockResolvedValue(2);
+      mockPrismaService.commission.count.mockResolvedValue(1);
+
+      const deps = await service.getDependencies(101, 1);
+      expect(deps).toEqual({
+        teamId: 1,
+        teamName: 'Alpha Team',
+        isActive: true,
+        leader: { id: 10, name: 'John Doe', employeeCode: 'EMP-010' },
+        memberCount: 3,
+        workCount: 5,
+        customerCount: 2,
+        commissionCount: 1,
+        hasDependencies: true,
+        canDelete: true,
+      });
     });
   });
 

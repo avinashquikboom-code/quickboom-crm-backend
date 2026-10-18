@@ -107,11 +107,11 @@ export class TaskService {
   private async buildMyTaskOwnership(employee: { id: number; userId: number | null; departmentId: number | null }) {
     const [memberships, ledTeams] = await Promise.all([
       this.prisma.teamMember.findMany({
-        where: { employeeId: employee.id },
+        where: { employeeId: employee.id, team: { isActive: true } },
         select: { teamId: true },
       }),
       this.prisma.team.findMany({
-        where: { leaderId: employee.id },
+        where: { leaderId: employee.id, isActive: true },
         select: { id: true },
       }),
     ]);
@@ -122,34 +122,10 @@ export class TaskService {
       ]),
     ];
 
-    let teammateIds: number[] = [];
-    if (teamIds.length > 0) {
-      const members = await this.prisma.teamMember.findMany({
-        where: { teamId: { in: teamIds } },
-        select: { employeeId: true },
-      });
-      teammateIds = [
-        ...new Set(
-          members
-            .map((m) => m.employeeId)
-            .filter((id) => id !== employee.id),
-        ),
-      ];
-    }
-
+    // Task.employeeId is an Employee FK; assignedToId is a User FK.
+    // A shared department/team is not a direct assignment of this task.
     const orOwnership: any[] = [{ employeeId: employee.id }];
-    if (employee.userId) {
-      orOwnership.push({ assignedToId: employee.userId });
-    }
-    if (teammateIds.length > 0) {
-      orOwnership.push({ employeeId: { in: teammateIds } });
-    }
-    if (employee.departmentId) {
-      orOwnership.push({
-        employeeId: null,
-        departmentId: employee.departmentId,
-      });
-    }
+    if (employee.userId) orOwnership.push({ assignedToId: employee.userId });
 
     return { orOwnership, teamIds };
   }
@@ -869,32 +845,17 @@ export class TaskService {
     teamIds: number[],
     query: { status?: string; priority?: string; search?: string },
   ) {
-    const productionTeamIds = await this.productionTeamIdsForEmployee(0, teamIds);
-    const onBpoTeam = await this.employeeOnBpoTeam(teamIds);
-    const bpoOnly = onBpoTeam && productionTeamIds.length === 0;
-    if (query.priority && query.priority !== 'ALL') return [];
-
-    let items: any[] = [];
-    try {
-      items = await this.workService.getEmployeeCalendar(employeeId, {}, { allTenantCustomers: true });
-    } catch (error: any) {
-      this.logger.warn(`Employee calendar work lookup failed: ${error?.message}`);
-      return [];
-    }
-    if (!Array.isArray(items)) return [];
+    // Calendar owns assignment/role authorization. Do not hide its failures or
+    // apply a second team-name heuristic to already-authorized records.
+    const items = await this.workService.getEmployeeCalendar(
+      employeeId, {}, { assignedOnly: true },
+    );
 
     const search = query.search?.trim().toLowerCase();
     return items
       .filter((item) => item.workType !== 'TASK')
       .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
-      .filter((item) => {
-        const teamIsBpo = this.isBpoTeamLabel(item?.team || item?.assignedTeam, null);
-        const assignedToViewer =
-          Number(item?.assignedToId) === employeeId || Number(item?.editorId) === employeeId;
-        if (assignedToViewer) return true;
-        if (bpoOnly) return teamIsBpo;
-        return !teamIsBpo;
-      })
+      .filter((item) => !query.priority || query.priority === 'ALL' || item.priority === query.priority)
       .filter((item) => {
         if (!search) return true;
         const title = String(item?.title || '').toLowerCase();
@@ -910,7 +871,7 @@ export class TaskService {
       })
       .map((item) => {
         const id = Number(item.id);
-        const customerId = Number(undefined);
+        const customerId = item.customerId == null ? null : Number(item.customerId);
         const assignedName = String(item.assignedEmployee || item.assignedToName || '').trim();
         const nameParts = assignedName ? assignedName.split(/\s+/) : [];
         return {
@@ -923,12 +884,13 @@ export class TaskService {
           scheduledAt: item.scheduledAt ?? null,
           customerName: item.customerName ?? null,
           source: 'WORK',
-
-
+          customerId: Number.isSafeInteger(customerId) ? customerId : null,
+          assignedToId: item.assignedToId ?? null,
+          editorId: item.editorId ?? null,
           title: item.title,
           description: item.notes || item.description || null,
           status: item.status,
-          priority: null,
+          priority: item.priority ?? null,
           dueAt: item.scheduledAt || item.scheduledDate || null,
           dueDate: item.scheduledAt || item.scheduledDate || null,
           scheduledDate: item.scheduledDate || null,
@@ -941,7 +903,7 @@ export class TaskService {
           employee: assignedName
             ? { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') }
             : null,
-          assignedTo: null,
+          assignedTo: item.assignedToId ? { id: item.assignedToId, firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') } : null,
           team: item.team || item.assignedTeam ? { name: item.team || item.assignedTeam } : null,
           proofs: [],
           hasProof: false,

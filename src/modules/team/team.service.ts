@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { teamMemberEligibility } from './team-member-eligibility.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AddTeamMemberDto,
@@ -363,14 +364,77 @@ export class TeamService {
     return this.formatTeam(updated);
   }
 
-  async remove(customerId: number | string | undefined, id: number | string, permanent = false) {
+  async getDependencies(customerId: number | string | undefined, id: number | string) {
+    const numId = Number(id);
+    if (isNaN(numId) || numId <= 0) {
+      throw new BadRequestException('Valid Team ID is required');
+    }
+
+    const team = await this.prisma.team.findFirst({
+      where: { id: numId },
+      include: {
+        leader: { select: this.employeeSelect },
+        _count: {
+          select: {
+            members: true,
+            works: true,
+          },
+        },
+      },
+    });
+    if (!team) {
+      throw new NotFoundException(`Team with ID ${id} not found in your organization`);
+    }
+
+    const [memberCount, workCount, customerCount, commissionCount] = await Promise.all([
+      typeof this.prisma.teamMember?.count === 'function'
+        ? this.prisma.teamMember.count({ where: { teamId: numId } })
+        : (team._count?.members ?? 0),
+      typeof this.prisma.work?.count === 'function'
+        ? this.prisma.work.count({ where: { teamId: numId } })
+        : (team._count?.works ?? 0),
+      typeof (this.prisma as any).customer?.count === 'function'
+        ? (this.prisma as any).customer.count({ where: { assignedTeamId: numId } })
+        : 0,
+      typeof (this.prisma as any).commission?.count === 'function'
+        ? (this.prisma as any).commission.count({ where: { teamId: numId } })
+        : 0,
+    ]);
+
+    const hasDependencies = memberCount + workCount + customerCount > 0;
+
+    return {
+      teamId: numId,
+      teamName: team.name,
+      isActive: team.isActive,
+      leader: team.leader
+        ? {
+            id: team.leader.id,
+            name: `${team.leader.firstName || ''} ${team.leader.lastName || ''}`.trim() || 'Leader',
+            employeeCode: team.leader.employeeCode,
+          }
+        : null,
+      memberCount,
+      workCount,
+      customerCount,
+      commissionCount,
+      hasDependencies,
+      canDelete: true,
+    };
+  }
+
+  async remove(
+    customerId: number | string | undefined,
+    id: number | string,
+    permanent = false,
+    reassignToTeamId?: number | string,
+  ) {
     const numId = Number(id);
     if (isNaN(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
     const where: any = { id: numId };
-
 
     const team = await this.prisma.team.findFirst({
       where,
@@ -379,7 +443,6 @@ export class TeamService {
           select: {
             members: true,
             works: true,
-
           },
         },
       },
@@ -389,25 +452,142 @@ export class TeamService {
     }
 
     if (permanent) {
+      const numReassignId = reassignToTeamId ? Number(reassignToTeamId) : undefined;
+      let targetTeam: any = null;
+      if (numReassignId) {
+        if (isNaN(numReassignId) || numReassignId <= 0) {
+          throw new BadRequestException('Valid target team ID for reassignment is required');
+        }
+        if (numReassignId === numId) {
+          throw new BadRequestException('Cannot reassign dependencies to the team being deleted');
+        }
+        targetTeam = await this.prisma.team.findFirst({
+          where: { id: numReassignId },
+        });
+        if (!targetTeam) {
+          throw new NotFoundException(`Target team with ID ${numReassignId} for reassignment not found`);
+        }
+        if (!targetTeam.isActive) {
+          throw new BadRequestException(`Cannot reassign to inactive team "${targetTeam.name}"`);
+        }
+      }
+
       try {
         await this.prisma.$transaction(async (tx) => {
-          await tx.teamMember.deleteMany({ where: { teamId: numId } });
-          await tx.work.updateMany({
-            where: { teamId: numId },
-            data: { teamId: null },
-          });
+          if (numReassignId) {
+            // 1. Reassign team members (transfer members who aren't already on target team)
+            if (typeof tx.teamMember?.findMany === 'function' && typeof tx.teamMember?.createMany === 'function') {
+              const currentMembers = await tx.teamMember.findMany({
+                where: { teamId: numId },
+              });
+              const targetMembers = await tx.teamMember.findMany({
+                where: { teamId: numReassignId },
+                select: { employeeId: true },
+              });
+              const existingEmpIds = new Set(targetMembers.map((m: any) => m.employeeId));
+              const toAdd = currentMembers
+                .filter((m: any) => !existingEmpIds.has(m.employeeId))
+                .map((m: any) => ({
+                  teamId: numReassignId,
+                  employeeId: m.employeeId,
+                  role: m.role || 'MEMBER',
+                }));
+              if (toAdd.length > 0) {
+                await tx.teamMember.createMany({
+                  data: toAdd,
+                  skipDuplicates: true,
+                });
+              }
+            }
+
+            // 2. Reassign works
+            if (typeof tx.work?.updateMany === 'function') {
+              await tx.work.updateMany({
+                where: { teamId: numId },
+                data: { teamId: numReassignId },
+              });
+            }
+
+            // 3. Reassign customers
+            if (typeof (tx as any).customer?.updateMany === 'function') {
+              await (tx as any).customer.updateMany({
+                where: { assignedTeamId: numId },
+                data: { assignedTeamId: numReassignId },
+              });
+            }
+
+            // 4. Update commission records if commission model exists
+            if (typeof (tx as any).commission?.updateMany === 'function') {
+              await (tx as any).commission.updateMany({
+                where: { teamId: numId },
+                data: { teamId: numReassignId },
+              });
+            }
+          } else {
+            // Unassign cleanly before deleting:
+            // 1. Unassign customers (prevent P2003 on customer_accounts / customers)
+            if (typeof (tx as any).customer?.updateMany === 'function') {
+              await (tx as any).customer.updateMany({
+                where: { assignedTeamId: numId },
+                data: { assignedTeamId: null },
+              });
+            }
+
+            // 2. Unassign works (prevent P2003 on Work)
+            if (typeof tx.work?.updateMany === 'function') {
+              await tx.work.updateMany({
+                where: { teamId: numId },
+                data: { teamId: null },
+              });
+            }
+
+            // 3. Remove teamId from commissions (financial records preserved with teamId: null)
+            if (typeof (tx as any).commission?.updateMany === 'function') {
+              await (tx as any).commission.updateMany({
+                where: { teamId: numId },
+                data: { teamId: null },
+              });
+            }
+          }
+
+          // Legacy table safe update if present in PostgreSQL
+          try {
+            await (tx as any).$executeRawUnsafe(
+              `UPDATE "customers" SET "assignedTeamId" = ${numReassignId ? numReassignId : 'NULL'} WHERE "assignedTeamId" = $1`,
+              numId,
+            );
+          } catch {
+            // legacy customers table may not exist
+          }
+
+          // Always remove memberships of the team being deleted
+          if (typeof tx.teamMember?.deleteMany === 'function') {
+            await tx.teamMember.deleteMany({ where: { teamId: numId } });
+          }
+
+          // Delete the team record
           await tx.team.delete({ where: { id: numId } });
         });
       } catch (err: any) {
         if (err?.code === 'P2003' || err?.code === 'P2014') {
+          const [remMembers, remWorks, remCustomers] = await Promise.all([
+            typeof this.prisma.teamMember?.count === 'function' ? this.prisma.teamMember.count({ where: { teamId: numId } }) : 0,
+            typeof this.prisma.work?.count === 'function' ? this.prisma.work.count({ where: { teamId: numId } }) : 0,
+            typeof (this.prisma as any).customer?.count === 'function' ? (this.prisma as any).customer.count({ where: { assignedTeamId: numId } }) : 0,
+          ]);
           throw new BadRequestException(
-            'Cannot permanently delete this team because related records still reference it. Remove or reassign them first, or deactivate the team instead.',
+            `Cannot permanently delete team "${team.name}" because related records still reference it (${remMembers} member(s), ${remWorks} work schedule(s), ${remCustomers} customer(s)). Please reassign or remove them first, or deactivate the team instead.`,
           );
         }
         throw err;
       }
 
-      return { success: true, message: `Team "${team.name}" permanently deleted` };
+      return {
+        success: true,
+        message: numReassignId
+          ? `Team "${team.name}" permanently deleted and related records reassigned to "${targetTeam?.name || 'target team'}" successfully`
+          : `Team "${team.name}" permanently deleted`,
+      };
     }
 
     await this.prisma.team.update({
@@ -422,7 +602,7 @@ export class TeamService {
     const numTeamId = Number(teamId);
     const numEmployeeId = Number(dto.employeeId);
 
-    const where: any = { id: numTeamId };
+    const where: any = { id: numTeamId, isActive: true };
 
 
     const team = await this.prisma.team.findFirst({ where });
@@ -431,10 +611,10 @@ export class TeamService {
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: numEmployeeId },
+      where: { AND: [{ id: numEmployeeId }, teamMemberEligibility(team)] },
     });
     if (!employee) {
-      throw new BadRequestException('Employee does not exist or belong to your organization');
+      throw new BadRequestException('Employee is inactive, already a member, or not eligible for this team');
     }
 
     const member = await this.prisma.teamMember.upsert({

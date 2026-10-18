@@ -9,6 +9,7 @@ import {
   forwardRef,
   Optional,
 } from '@nestjs/common';
+import { teamMemberEligibility } from '../team/team-member-eligibility.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { Prisma, AttendanceStatus } from '@prisma/client';
@@ -37,6 +38,7 @@ export interface FindAllEmployeesParams {
   limit?: number;
   excludeAdmins?: boolean;
   bpoOnly?: boolean;
+  eligibleForTeamId?: number;
 }
 
 export interface EmployeeFindOneParams {
@@ -135,6 +137,18 @@ export class EmployeeService {
           { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
         ],
       });
+    }
+
+    if (params.eligibleForTeamId !== undefined) {
+      if (!Number.isSafeInteger(params.eligibleForTeamId) || params.eligibleForTeamId < 1) {
+        throw new BadRequestException('Invalid team ID');
+      }
+      const team = await this.prisma.team.findFirst({
+        where: { id: params.eligibleForTeamId, isActive: true },
+        select: { id: true, name: true, description: true },
+      });
+      if (!team) throw new NotFoundException('Active team not found');
+      andConditions.push(teamMemberEligibility(team));
     }
 
     const isBpoRequested = params.bpoOnly === true || (department && department.toUpperCase() === 'BPO');
