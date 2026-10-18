@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'admin@quikboom.com' })
@@ -198,4 +198,34 @@ export class VerifyMobileOtpDto {
   @IsString()
   @IsNotEmpty()
   otp: string;
+}
+
+export class RegisterCustomerDto {
+  @ApiProperty()
+  @IsString()
+  @Matches(/\S/, { message: 'Business name is required' })
+  @MaxLength(200)
+  companyName: string;
+
+  @ApiProperty()
+  @IsString()
+  @Matches(/\S/, { message: 'Full name is required' })
+  @MaxLength(200)
+  fullName: string;
+
+  @ApiProperty()
+  @IsEmail()
+  @MaxLength(254)
+  email: string;
+
+  @ApiProperty({ description: '10 digit Indian mobile number, optionally prefixed by +91' })
+  @IsString()
+  @Matches(/^(?:\+?91)?[6-9]\d{9}$/, { message: 'Enter a valid Indian mobile number' })
+  mobile: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  password: string;
 }

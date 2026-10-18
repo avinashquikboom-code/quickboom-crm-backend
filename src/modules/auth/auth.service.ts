@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import {
   LoginDto,
+  RegisterCustomerDto,
 
   RegisterEmployeeDto,
   RefreshTokenDto,
@@ -40,6 +41,53 @@ export class AuthService {
     @Inject(forwardRef(() => PlanScheduleGateway))
     private planScheduleGateway?: PlanScheduleGateway,
   ) {}
+
+  async registerCustomer(dto: RegisterCustomerDto) {
+    if (Buffer.byteLength(dto.password, 'utf8') > 72) throw new BadRequestException('Password must not exceed 72 bytes');
+    const email = dto.email.trim().toLowerCase();
+    const digits = dto.mobile.replace(/\D/g, '').slice(-10);
+    const phone = '+91' + digits;
+    const phones = [digits, '91' + digits, phone];
+    const companyName = dto.companyName.trim();
+    const parts = dto.fullName.trim().split(/\s+/);
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Serialize registrations across all accepted representations of a mobile number.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${phone}))`;
+        const existing = await tx.user.findFirst({ where: { OR: [
+          { email: { equals: email, mode: 'insensitive' } },
+          { phone: { in: phones } },
+          { employee: { email: { equals: email, mode: 'insensitive' } } },
+          { employee: { phone: { in: phones } } },
+        ] }, select: { id: true } });
+        const customer = await tx.customer.findFirst({ where: { OR: [
+          { email: { equals: email, mode: 'insensitive' } },
+          { phone: { in: phones } },
+        ] }, select: { id: true } });
+        if (existing || customer) throw new ConflictException('Email or mobile is already registered. Please log in or contact support.');
+        const user = await tx.user.create({ data: {
+          email, phone, firstName, lastName, passwordHash,
+          accountType: 'CUSTOMER', isActive: true,
+        } });
+        const lead = await tx.lead.create({ data: {
+          companyName, firstName, lastName, email, phone,
+          status: 'WON', source: 'MOBILE_REGISTRATION',
+          createdFrom: 'MOBILE_APP', createdById: user.id,
+        } });
+        await tx.customer.create({ data: {
+          originLeadId: lead.id, userId: user.id, companyName,
+          firstName, lastName, email, phone, status: 'INACTIVE',
+        } });
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') throw new ConflictException('Email or mobile is already registered.');
+      throw error;
+    }
+    return { success: true, message: 'Registration successful. Please log in.' };
+  }
 
   async registerEmployee(dto: RegisterEmployeeDto) {
     const normalizedEmail = (dto.email || '').trim().toLowerCase();

@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { AuthService } from './auth.service';
 import {
   LoginDto,
-
+  RegisterCustomerDto,
   RegisterEmployeeDto,
   RefreshTokenDto,
   ForgotPasswordDto,
@@ -92,6 +92,13 @@ export class AuthController {
   @ApiOperation({ summary: 'Alias for verifying email OTP' })
   async emailVerifyOtpAlias(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyEmailOtp(dto);
+  }
+
+  @Public()
+  @Post('register/customer')
+  @ApiOperation({ summary: 'Register a customer with an inactive account' })
+  async registerCustomer(@Body() dto: RegisterCustomerDto) {
+    return this.authService.registerCustomer(dto);
   }
 
   @Public()
