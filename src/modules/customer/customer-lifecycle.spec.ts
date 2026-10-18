@@ -18,7 +18,7 @@ const lead = {
 
 describe('Won customer conversion', () => {
   it('upserts inactive customers with the original lead, without resetting existing status', async () => {
-    const tx = { customer: { upsert: jest.fn() } };
+    const tx = { customer: { upsert: jest.fn().mockResolvedValue({ id: 111, userId: null }) } };
     await convertWonLead(tx as any, lead);
     await convertWonLead(tx as any, lead);
     expect(tx.customer.upsert).toHaveBeenLastCalledWith({
@@ -37,6 +37,47 @@ describe('Won customer conversion', () => {
     tx.customer.upsert.mockClear();
     await convertWonLead(tx as any, { ...lead, status: 'NEW' });
     expect(tx.customer.upsert).not.toHaveBeenCalled();
+  });
+  it('provisions a hashed default login for a newly won customer and keeps it on retries', async () => {
+    const bcrypt = require('bcrypt');
+    const tx: any = {
+      customer: {
+        upsert: jest.fn().mockResolvedValue({ id: 112, userId: null }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockResolvedValue({ id: 52 }),
+      },
+    };
+    const eligibleLead = { ...lead, email: ' CUSTOMER@example.com ', phone: '9876543210' };
+    await convertWonLead(tx, eligibleLead);
+    const createdUser = tx.user.create.mock.calls[0][0].data;
+    expect(createdUser.email).toBe('customer@example.com');
+    expect(createdUser.phone).toBe('+919876543210');
+    expect(createdUser.accountType).toBe('CUSTOMER');
+    expect(await bcrypt.compare('123456', createdUser.passwordHash)).toBe(true);
+    expect(createdUser.passwordHash).not.toBe('123456');
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: 112 }, data: { userId: 52 } });
+
+    tx.customer.upsert.mockResolvedValue({ id: 112, userId: 52 });
+    await convertWonLead(tx, eligibleLead);
+    expect(tx.user.create).toHaveBeenCalledTimes(1);
+  });
+  it('links an existing unlinked customer login without replacing its password', async () => {
+    const tx: any = {
+      customer: {
+        upsert: jest.fn().mockResolvedValue({ id: 113, userId: null }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([{ id: 53, accountType: 'CUSTOMER', customerAccount: null, passwordHash: 'existing-hash' }]),
+        create: jest.fn(),
+      },
+    };
+    await convertWonLead(tx, { ...lead, email: 'customer@example.com' });
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: 113 }, data: { userId: 53 } });
+    expect(tx.user.create).not.toHaveBeenCalled();
   });
   it('performs the stage update and conversion in the same transaction and propagates failure', async () => {
     const tx = {

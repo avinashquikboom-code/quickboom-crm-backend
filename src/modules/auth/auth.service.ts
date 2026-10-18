@@ -15,6 +15,7 @@ import {
   VerifyMobileOtpDto,
   SendEmailOtpDto,
   VerifyOtpDto,
+  ChangeCustomerPasswordDto,
 } from './dto/auth.dto';
 import { EmployeeType,  } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
@@ -192,13 +193,32 @@ const dto = typeof emailOrDto === 'object' ? emailOrDto : { email: emailOrDto, p
     const identifier = String(dto.email || '').trim();
     const phone = identifier.replace(/\D/g, '').slice(-10);
     const phoneValues = phone.length === 10 ? [phone, '91' + phone, '+91' + phone, identifier] : [identifier];
-    const user = await this.prisma.user.findFirst({ where: { deletedAt: null, OR: [
-      { email: { equals: identifier, mode: 'insensitive' } }, { phone: { in: phoneValues } },
-      { employee: { employeeCode: { equals: identifier, mode: 'insensitive' } } },
-      { employee: { phone: { in: phoneValues } } },
-    ] }, include: { employee: { include: { designation: true, department: true } } } });
-    if (!user || !await bcrypt.compare(String(dto.password || ''), user.passwordHash)) throw new UnauthorizedException('Invalid credentials');
     const app = String((typeof emailOrDto === 'object' ? passwordOrApp || dto.appType : targetApp) || '').toUpperCase();
+    const userWhere = { where: { deletedAt: null, OR: [
+      { email: { equals: identifier, mode: 'insensitive' as const } }, { phone: { in: phoneValues } },
+      { employee: { employeeCode: { equals: identifier, mode: 'insensitive' as const } } },
+      { employee: { phone: { in: phoneValues } } },
+    ] }, include: { employee: { include: { designation: true, department: true } } } };
+    let user: any;
+    if (app === 'CUSTOMER') {
+      const candidates = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { email: { equals: identifier, mode: 'insensitive' } },
+            { phone: { in: phoneValues } },
+          ],
+        },
+        include: { employee: { include: { designation: true, department: true } } },
+      });
+      if (candidates.length !== 1 || candidates[0].accountType !== 'CUSTOMER') {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      user = candidates[0];
+    } else {
+      user = await this.prisma.user.findFirst(userWhere);
+    }
+    if (!user || !await bcrypt.compare(String(dto.password || ''), user.passwordHash)) throw new UnauthorizedException('Invalid credentials');
     if (['ADMIN', 'SUPER_ADMIN', 'COMPANY_ADMIN'].includes(app) && !['SUPER_ADMIN', 'ADMIN'].includes(user.accountType)) throw new ForbiddenException('Administrator account required');
     return this.createSessionResponse(user);
   }
@@ -259,6 +279,42 @@ const token = String(dto.refreshToken || '').trim();
     });
 
     return { message: 'Password reset successfully' };
+  }
+
+  async changeCustomerPassword(userId: number, dto: ChangeCustomerPasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: Number(userId) },
+      select: {
+        id: true,
+        accountType: true,
+        isActive: true,
+        deletedAt: true,
+        passwordHash: true,
+        customerAccount: { select: { deletedAt: true } },
+      },
+    });
+    if (
+      !user || user.accountType !== 'CUSTOMER' || !user.isActive || user.deletedAt ||
+      !user.customerAccount || user.customerAccount.deletedAt
+    ) {
+      throw new ForbiddenException('Active linked customer account required');
+    }
+    if (!await bcrypt.compare(dto.currentPassword, user.passwordHash)) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (await bcrypt.compare(dto.newPassword, user.passwordHash)) {
+      throw new BadRequestException('New password must be different from the current password');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 12);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      await tx.refreshToken.updateMany({
+        where: { userId: user.id, isRevoked: false },
+        data: { isRevoked: true },
+      });
+    });
+    return { success: true, message: 'Password changed successfully. Please sign in again.' };
   }
 
   /**

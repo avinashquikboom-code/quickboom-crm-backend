@@ -115,6 +115,18 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
+export class ChangeCustomerPasswordDto {
+  @ApiProperty({ example: '123456' })
+  @IsString()
+  @IsNotEmpty()
+  currentPassword: string;
+
+  @ApiProperty({ example: 'NewPassword123!' })
+  @IsString()
+  @MinLength(6)
+  newPassword: string;
+}
+
 export class SendEmailOtpDto {
   @ApiProperty({ example: 'admin@quickboom.com', description: 'Registered account email address' })
   @IsEmail({}, { message: 'Please provide a valid email address' })

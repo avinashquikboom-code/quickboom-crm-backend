@@ -1,4 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
+import * as bcrypt from "bcrypt";
+import { randomUUID } from "crypto";
 
 export async function convertWonLead(
   tx: Prisma.TransactionClient,
@@ -15,7 +18,7 @@ export async function convertWonLead(
   if (lead.status !== "WON") return;
   const { id, companyName, firstName, lastName, email, phone } = lead;
   // The lead update holds its row lock; unique originLeadId also protects other callers.
-  await tx.customer.upsert({
+  const customer = await tx.customer.upsert({
     where: { originLeadId: id },
     update: {},
     create: {
@@ -28,6 +31,58 @@ export async function convertWonLead(
       status: "INACTIVE",
     },
   });
+
+  // A Won Lead without usable contact details keeps its billing row but cannot
+  // receive a login until a registered email or mobile is available.
+  const normalizedEmail = lead.email?.trim().toLowerCase() || null;
+  const rawPhone = lead.phone?.trim() || null;
+  if (customer.userId || (!normalizedEmail && !rawPhone)) return;
+
+  const digits = (rawPhone || "").replace(/\D/g, "");
+  const phoneDigits = digits.length > 10 ? digits.slice(-10) : digits;
+  const loginPhone = phoneDigits.length === 10 ? `+91${phoneDigits}` : rawPhone;
+  const phoneVariants = rawPhone
+    ? Array.from(new Set([rawPhone, digits, phoneDigits, `91${phoneDigits}`, `+91${phoneDigits}`, loginPhone].filter((value): value is string => Boolean(value))))
+    : [];
+  const existingUsers = await tx.user.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        ...(normalizedEmail ? [{ email: { equals: normalizedEmail, mode: "insensitive" as const } }] : []),
+        ...(phoneVariants.length ? [{ phone: { in: phoneVariants } }] : []),
+      ],
+    },
+    include: { customerAccount: { select: { id: true } } },
+  });
+  if (existingUsers.length > 1) {
+    throw new ConflictException("Lead contact details match multiple accounts; resolve the account before marking the Lead Won");
+  }
+
+  const existingUser = existingUsers[0];
+  if (existingUser) {
+    if (existingUser.accountType !== "CUSTOMER" || (existingUser.customerAccount && existingUser.customerAccount.id !== customer.id)) {
+      throw new ConflictException("Lead contact details already belong to another account");
+    }
+    await tx.customer.update({ where: { id: customer.id }, data: { userId: existingUser.id } });
+    return;
+  }
+
+  // User.email is required by the existing schema. Phone-only Leads receive
+  // a non-deliverable address and authenticate with their registered mobile.
+  const userEmail = normalizedEmail || `customer-${randomUUID()}@login.quickboom.invalid`;
+  const passwordHash = await bcrypt.hash("123456", 12);
+  const user = await tx.user.create({
+    data: {
+      email: userEmail,
+      phone: loginPhone,
+      passwordHash,
+      firstName: firstName?.trim() || companyName,
+      lastName: lastName?.trim() || "",
+      accountType: "CUSTOMER",
+      isActive: true,
+    },
+  });
+  await tx.customer.update({ where: { id: customer.id }, data: { userId: user.id } });
 }
 
 export async function deleteCustomersForLeads(

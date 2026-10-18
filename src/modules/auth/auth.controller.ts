@@ -12,9 +12,11 @@ import {
   VerifyMobileOtpDto,
   SendEmailOtpDto,
   VerifyOtpDto,
+  ChangeCustomerPasswordDto,
 } from './dto/auth.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import { SetMetadata } from '@nestjs/common';
 
 export const Public = () => SetMetadata('isPublic', true);
@@ -179,6 +181,19 @@ export class AuthController {
   @ApiOperation({ summary: 'Reset password using OTP token' })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @CustomerBillingAccess()
+  @ApiBearerAuth()
+  @Post('customer/change-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Change password for the authenticated customer account' })
+  async changeCustomerPassword(
+    @CurrentUser() user: any,
+    @Body() dto: ChangeCustomerPasswordDto,
+  ) {
+    return this.authService.changeCustomerPassword(user.id || user.userId, dto);
   }
 
   @UseGuards(JwtAuthGuard)
