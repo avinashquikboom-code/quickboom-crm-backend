@@ -1243,7 +1243,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
    */
   async getCustomersSummaryAll() {
     const customers = await this.prisma.customer.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, lead: { deletedAt: null } },
       select: { id: true, crmCompanyId: true, userId: true },
     });
     const customerIds = customers.map(({ id }) => id);

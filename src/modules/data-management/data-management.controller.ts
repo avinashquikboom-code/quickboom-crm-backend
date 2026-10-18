@@ -60,7 +60,7 @@ export class DataManagementController {
 
   /** GET /api/v1/admin/data-management/customers/summary/all */
   @Get('customers/summary/all')
-  @ApiOperation({ summary: 'Get aggregate counts for active customer accounts and directly linked records' })
+  @ApiOperation({ summary: 'Get aggregate counts for non-deleted customer accounts and directly linked records' })
   async getCustomersSummaryAll() {
     return this.dataManagementService.getCustomersSummaryAll();
   }

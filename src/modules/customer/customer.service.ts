@@ -235,11 +235,51 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     return this.bulkRemove([id], actor, cancelSubscriptions);
   }
 
+  async getAssignedTeam(customerId: number, actor: any) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, assignedTeamId: true },
+    });
+    if (!customer) throw new NotFoundException('Customer account not found');
+    if (!customer.assignedTeamId) {
+      return {
+        id: customer.id,
+        customerId: customer.id,
+        assignedTeamId: null,
+        team: null,
+        assignedTeam: null,
+      };
+    }
+    const team = await this.prisma.team.findUnique({
+      where: { id: customer.assignedTeamId },
+      include: {
+        leader: {
+          select: { id: true, firstName: true, lastName: true, email: true, phone: true, employeeCode: true },
+        },
+        members: {
+          include: {
+            employee: {
+              select: { id: true, firstName: true, lastName: true, email: true, phone: true, employeeCode: true },
+            },
+          },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
+    });
+    return {
+      id: customer.id,
+      customerId: customer.id,
+      assignedTeamId: customer.assignedTeamId,
+      team,
+      assignedTeam: team,
+    };
+  }
+
   async assignTeam(customerId: number, teamId: number | null, actor: any) {
     if (!isUserAdmin(actor)) throw new ForbiddenException("Administrator required");
     return this.prisma.$transaction(async (tx) => {
       const customer = await tx.customer.findFirst({
-        where: { id: customerId, deletedAt: null, lead: { deletedAt: null } }, select: { id: true },
+        where: { id: customerId, deletedAt: null }, select: { id: true },
       });
       if (!customer) throw new NotFoundException("Customer account not found");
       if (teamId !== null) {
@@ -247,9 +287,35 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         if (!team) throw new NotFoundException("Active team not found");
       }
       // Assign customer access only. Existing Work and WorkTask assignees are untouched.
-      return (tx.customer as any).update({ where: { id: customerId }, data: { assignedTeamId: teamId },
-        select: { id: true, assignedTeamId: true, assignedTeam: { select: { id: true, name: true, isActive: true } } },
+      const updated = await (tx.customer as any).update({
+        where: { id: customerId },
+        data: { assignedTeamId: teamId },
+        select: {
+          id: true,
+          assignedTeamId: true,
+          assignedTeam: {
+            select: {
+              id: true,
+              name: true,
+              isActive: true,
+              leader: {
+                select: { id: true, firstName: true, lastName: true },
+              },
+              members: {
+                include: {
+                  employee: {
+                    select: { id: true, firstName: true, lastName: true },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
+      return {
+        ...updated,
+        team: updated.assignedTeam,
+      };
     });
   }
 

@@ -95,6 +95,11 @@ export class CustomerController {
   ) {
     return this.bulkDelete(user, dto, cancelQuery);
   }
+  @Get('customers/:id/assign-team')
+  getAssignedTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.getAssignedTeam(id, user);
+  }
   @Patch('customers/:id/assign-team')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
   assignTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: AssignCustomerTeamDto) {
