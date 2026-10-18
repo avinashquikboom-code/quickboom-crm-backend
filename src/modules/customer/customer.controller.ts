@@ -24,6 +24,7 @@ import {
   ArrayMaxSize,
   IsBoolean,
   IsOptional,
+  ValidateIf,
 } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -39,6 +40,12 @@ export class BulkDeleteCustomersDto {
   @IsOptional()
   @IsBoolean()
   cancelSubscriptions?: boolean;
+}
+export class LinkCustomerCompanyDto {
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt()
+  @Min(1)
+  companyId: number | null;
 }
 class CustomerAccountDto {
   @IsString() @MinLength(10) @MaxLength(128) password: string;
@@ -69,7 +76,7 @@ export class CustomerController {
     @Body() dto: BulkDeleteCustomersDto,
     @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    const cancel = dto?.cancelSubscriptions ?? (cancelQuery === 'true' || cancelQuery === '1');
+    const cancel = dto?.cancelSubscriptions ?? (cancelQuery === undefined || cancelQuery === 'true' || cancelQuery === '1');
     const ids = dto?.ids || [];
     return this.customers.bulkRemove(ids, user, cancel);
   }
@@ -83,12 +90,21 @@ export class CustomerController {
   ) {
     return this.bulkDelete(user, dto, cancelQuery);
   }
+  @Patch('customers/:id/company')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  linkCompany(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: LinkCustomerCompanyDto,
+  ) {
+    return this.customers.linkCrmCompany(id, dto.companyId, user);
+  }
   @Delete('customers/:id') remove(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    const cancel = cancelQuery === 'true' || cancelQuery === '1';
+    const cancel = cancelQuery === undefined || cancelQuery === 'true' || cancelQuery === '1';
     return this.customers.remove(id, user, cancel);
   }
   @Get('customers/:id') detail(

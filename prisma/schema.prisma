@@ -199,6 +199,8 @@ model Company {
   contacts      Contact[]
   deals         Deal[]
   visits        Visit[]
+  works         Work[]
+  billingCustomer Customer?
 
   @@index([googlePlaceId])
   @@index([deletedAt])
@@ -1364,6 +1366,7 @@ model PlanEntitlement {
 
 model Work {
   id            Int              @id @default(autoincrement())
+  companyId     Int?
   planId        Int?
   entitlementId Int?
   teamId        Int?
@@ -1389,9 +1392,11 @@ model Work {
   editor        Employee?        @relation("AssignedEditorWorks", fields: [editorId], references: [id])
   entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
   team          Team?            @relation(fields: [teamId], references: [id])
+  company       Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
   tasks         WorkTask[]
 
   @@index([teamId])
+  @@index([companyId])
   @@index([assignedToId])
   @@index([editorId])
   @@index([scheduledDate])
@@ -2665,10 +2670,12 @@ model Customer {
   email String?
   phone String?
   status CustomerLifecycleStatus @default(INACTIVE)
+  crmCompanyId Int? @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   lead Lead @relation(fields: [originLeadId], references: [id], onDelete: Restrict)
   user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+  crmCompany Company? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
   subscriptions CustomerSubscription[]
   checkouts CustomerCheckout[]
   @@index([deletedAt])

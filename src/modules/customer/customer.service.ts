@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -152,6 +153,12 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
       return {
         ...customer,
+        crmCompany: customer.crmCompanyId
+          ? await tx.company.findUnique({
+              where: { id: customer.crmCompanyId },
+              select: { id: true, name: true },
+            })
+          : null,
         customerStatus: customer.status,
         name: customer.companyName,
         originLeadId: customer.originLeadId,
@@ -207,11 +214,44 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async remove(id: number, actor: any, cancelSubscriptions = false) {
+  async remove(id: number, actor: any, cancelSubscriptions = true) {
     return this.bulkRemove([id], actor, cancelSubscriptions);
   }
 
-  async bulkRemove(rawIds: number[], actor: any, cancelSubscriptions = false) {
+  async linkCrmCompany(customerId: number, companyId: number | null, actor: any) {
+    if (!isUserAdmin(actor))
+      throw new ForbiddenException("Administrator required");
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!customer) throw new NotFoundException("Customer account not found");
+    if (companyId !== null) {
+      const company = await this.prisma.company.findFirst({
+        where: { id: companyId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!company) throw new NotFoundException("CRM company not found");
+      const linked = await this.prisma.customer.findFirst({
+        where: { crmCompanyId: companyId, NOT: { id: customerId } },
+        select: { id: true },
+      });
+      if (linked) throw new ConflictException("CRM company is already linked to another customer");
+    }
+    try {
+      return await this.prisma.customer.update({
+        where: { id: customerId },
+        data: { crmCompanyId: companyId },
+        select: { id: true, crmCompanyId: true },
+      });
+    } catch (error: any) {
+      if (error?.code === "P2002")
+        throw new ConflictException("CRM company is already linked to another customer");
+      throw error;
+    }
+  }
+
+  async bulkRemove(rawIds: number[], actor: any, cancelSubscriptions = true) {
     if (!isUserAdmin(actor))
       throw new ForbiddenException("Administrator required");
     if (
@@ -232,7 +272,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       );
       const customers = await tx.customer.findMany({
         where: { id: { in: ids } },
-        select: { id: true, userId: true, deletedAt: true },
+        select: { id: true, userId: true, deletedAt: true, crmCompanyId: true },
       });
       if (customers.length !== ids.length)
         throw new NotFoundException("One or more customers were not found");
@@ -240,6 +280,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         .filter((customer) => !customer.deletedAt)
         .map((customer) => customer.id);
       if (!liveIds.length) return { deletedCount: 0, ids: [] };
+      const crmCompanyIds = customers
+        .filter((customer) => !customer.deletedAt && customer.crmCompanyId)
+        .map((customer) => customer.crmCompanyId as number);
 
       if (cancelSubscriptions) {
         if (tx.customerSubscription?.updateMany) {
@@ -295,10 +338,56 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
           );
       }
 
+      const deletionAt = new Date();
       const result = await tx.customer.updateMany({
         where: { id: { in: liveIds }, deletedAt: null },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: deletionAt },
       });
+
+      if (crmCompanyIds.length) {
+        const contacts = await tx.contact.findMany({
+          where: { companyId: { in: crmCompanyIds } },
+          select: { id: true },
+        });
+        const contactIds = contacts.map((contact) => contact.id);
+        if (contactIds.length) {
+          await tx.invoice.deleteMany({ where: { contactId: { in: contactIds } } });
+          await tx.visit.deleteMany({ where: { contactId: { in: contactIds } } });
+          await tx.contact.updateMany({
+            where: { id: { in: contactIds }, deletedAt: null },
+            data: { deletedAt: deletionAt },
+          });
+        }
+        await tx.visit.deleteMany({ where: { companyId: { in: crmCompanyIds } } });
+        const linkedWork = await tx.work.findMany({
+          where: { companyId: { in: crmCompanyIds } },
+          select: { entitlementId: true, status: true },
+        });
+        const scheduledByEntitlement = new Map<number, number>();
+        for (const work of linkedWork) {
+          if (
+            work.entitlementId &&
+            work.status !== 'COMPLETED' &&
+            work.status !== 'CANCELLED'
+          ) {
+            scheduledByEntitlement.set(
+              work.entitlementId,
+              (scheduledByEntitlement.get(work.entitlementId) || 0) + 1,
+            );
+          }
+        }
+        for (const [entitlementId, count] of scheduledByEntitlement) {
+          await tx.planEntitlement.updateMany({
+            where: { id: entitlementId, scheduledQty: { gte: count } },
+            data: { scheduledQty: { decrement: count } },
+          });
+        }
+        await tx.work.deleteMany({ where: { companyId: { in: crmCompanyIds } } });
+        await tx.company.updateMany({
+          where: { id: { in: crmCompanyIds }, deletedAt: null },
+          data: { deletedAt: deletionAt },
+        });
+      }
       return { deletedCount: result.count, ids: liveIds };
     });
   }

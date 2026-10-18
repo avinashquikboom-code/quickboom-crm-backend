@@ -35,6 +35,26 @@ function setup(
   return { service: new CustomerService(prisma), prisma, tx };
 }
 describe('single and bulk customer soft deletion', () => {
+  it('allows administrators to set an explicit one-to-one CRM company mapping', async () => {
+    const prisma: any = {
+      customer: {
+        findFirst: jest.fn().mockResolvedValueOnce({ id: 2 }).mockResolvedValueOnce(null),
+        update: jest.fn().mockResolvedValue({ id: 2, crmCompanyId: 55 }),
+      },
+      company: { findFirst: jest.fn().mockResolvedValue({ id: 55 }) },
+    };
+    const service = new CustomerService(prisma);
+    await expect(service.linkCrmCompany(2, 55, admin)).resolves.toEqual({
+      id: 2,
+      crmCompanyId: 55,
+    });
+    expect(prisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 2 },
+      data: { crmCompanyId: 55 },
+      select: { id: true, crmCompanyId: true },
+    });
+    await expect(service.linkCrmCompany(2, 55, { id: 4, role: 'EMPLOYEE' })).rejects.toBeInstanceOf(ForbiddenException);
+  });
   it('deletes one customer using the same transaction and preserves all billing and lead records', async () => {
     const { service, prisma, tx } = setup([{ id: 2, deletedAt: null }]);
     await expect(service.remove(2, admin)).resolves.toEqual({
@@ -95,7 +115,7 @@ describe('single and bulk customer soft deletion', () => {
   it('blocks deletion when one customer has an active or pending subscription', async () => {
     const { service, tx } = setup();
     tx.customerSubscription.findFirst.mockResolvedValue({ customerId: 3 });
-    await expect(service.bulkRemove([2, 3], admin)).rejects.toThrow(
+    await expect(service.bulkRemove([2, 3], admin, false)).rejects.toThrow(
       'Cancel it before deleting',
     );
     expect(tx.customerSubscription.findFirst).toHaveBeenCalledWith(
@@ -134,10 +154,64 @@ describe('single and bulk customer soft deletion', () => {
     });
     expect(tx.customer.updateMany).toHaveBeenCalledTimes(1);
   });
+  it('deletes only CRM records explicitly linked through selected customer mappings', async () => {
+    const { service, tx } = setup([
+      { id: 2, userId: null, deletedAt: null, crmCompanyId: 55 } as any,
+      { id: 3, userId: null, deletedAt: null, crmCompanyId: null } as any,
+    ]);
+    tx.contact = { findMany: jest.fn().mockResolvedValue([{ id: 701 }, { id: 702 }]) };
+    tx.invoice = { deleteMany: jest.fn().mockResolvedValue({ count: 2 }) };
+    tx.contact.updateMany = jest.fn().mockResolvedValue({ count: 2 });
+    tx.visit = { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) };
+    tx.work = {
+      findMany: jest.fn().mockResolvedValue([
+        { entitlementId: 88, status: 'SCHEDULED' },
+        { entitlementId: 88, status: 'ASSIGNED' },
+        { entitlementId: 89, status: 'COMPLETED' },
+      ]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    tx.planEntitlement = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+    tx.company = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+
+    await expect(service.bulkRemove([2, 3], admin, true)).resolves.toEqual({
+      deletedCount: 2,
+      ids: [2, 3],
+    });
+    expect(tx.contact.findMany).toHaveBeenCalledWith({
+      where: { companyId: { in: [55] } },
+      select: { id: true },
+    });
+    expect(tx.invoice.deleteMany).toHaveBeenCalledWith({
+      where: { contactId: { in: [701, 702] } },
+    });
+    expect(tx.contact.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [701, 702] }, deletedAt: null },
+      data: { deletedAt: expect.any(Date) },
+    });
+    expect(tx.visit.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { contactId: { in: [701, 702] } },
+    });
+    expect(tx.visit.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { companyId: { in: [55] } },
+    });
+    expect(tx.work.deleteMany).toHaveBeenCalledWith({
+      where: { companyId: { in: [55] } },
+    });
+    expect(tx.planEntitlement.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.planEntitlement.updateMany).toHaveBeenCalledWith({
+      where: { id: 88, scheduledQty: { gte: 2 } },
+      data: { scheduledQty: { decrement: 2 } },
+    });
+    expect(tx.company.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [55] }, deletedAt: null },
+      data: { deletedAt: expect.any(Date) },
+    });
+  });
   it('blocks unresolved checkouts and does not partially delete the batch', async () => {
     const { service, tx } = setup();
     tx.customerCheckout.findFirst.mockResolvedValue({ customerId: 2 });
-    await expect(service.bulkRemove([2, 3], admin)).rejects.toThrow(
+    await expect(service.bulkRemove([2, 3], admin, false)).rejects.toThrow(
       'unresolved checkout',
     );
     expect(tx.customer.updateMany).not.toHaveBeenCalled();

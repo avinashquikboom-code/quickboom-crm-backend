@@ -454,6 +454,16 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
    */
   async create(scopedCustomerId: number | string, dto: CreateWorkDto) {
     const numCustomerId = Number(scopedCustomerId);
+    const companyId = dto.companyId == null ? null : Number(dto.companyId);
+    if (companyId !== null) {
+      if (!Number.isSafeInteger(companyId) || companyId < 1)
+        throw new BadRequestException('Invalid CRM company ID');
+      const company = await this.prisma.company.findFirst({
+        where: { id: companyId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!company) throw new NotFoundException('CRM company not found');
+    }
 
 
     // 2. Validate Non-working Day / Sunday Rule
@@ -587,6 +597,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
         data: {
 
 
+          companyId,
           planId: entitlement?.planId ?? null,
           entitlementId: entitlement?.id ?? null,
           teamId: resolvedTeamId,
@@ -740,6 +751,19 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     }
 
     const updateData: any = {};
+    if (dto.companyId !== undefined) {
+      const companyId = dto.companyId === null ? null : Number(dto.companyId);
+      if (companyId !== null) {
+        if (!Number.isSafeInteger(companyId) || companyId < 1)
+          throw new BadRequestException('Invalid CRM company ID');
+        const company = await this.prisma.company.findFirst({
+          where: { id: companyId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!company) throw new NotFoundException('CRM company not found');
+      }
+      updateData.companyId = companyId;
+    }
     if (dto.title !== undefined) updateData.title = dto.title;
     if (dto.notes !== undefined) updateData.notes = dto.notes;
     if (dto.outputUrl !== undefined) updateData.outputUrl = dto.outputUrl;

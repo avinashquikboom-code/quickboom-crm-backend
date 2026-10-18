@@ -3,6 +3,10 @@ import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from
 import { WorkType, WorkStatus, WorkPriority } from '@prisma/client';
 
 export class CreateWorkDto {
+  @ApiPropertyOptional({ example: 12, description: 'CRM company associated with this calendar work item' })
+  @IsOptional()
+  companyId?: number | string;
+
   @ApiProperty({ example: 'Reels Shoot for Summer Launch' })
   @IsString()
   @IsNotEmpty()
@@ -64,6 +68,10 @@ export class CreateWorkDto {
 }
 
 export class UpdateWorkDto {
+  @ApiPropertyOptional({ example: 12, description: 'CRM company associated with this calendar work item; null clears the link' })
+  @IsOptional()
+  companyId?: number | string | null;
+
   
 
   @ApiPropertyOptional({ example: 'PUR-001', description: 'Purchase reference code' })

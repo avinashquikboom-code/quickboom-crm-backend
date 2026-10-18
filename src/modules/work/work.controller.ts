@@ -233,6 +233,8 @@ export class WorkController {
     const isAdmin = isUserAdmin(user) || isUserSuperAdmin(user);
 
     if (!isAdmin) {
+      if (dto.companyId !== undefined)
+        throw new ForbiddenException('Only administrators can link calendar work to CRM companies');
       if (!employeeId) throw new ForbiddenException('Active employee profile required');
       return this.workService.create(undefined, { ...dto, teamId: undefined, assignedToId: employeeId, editorId: undefined });
     }
@@ -250,6 +252,8 @@ export class WorkController {
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
+    if (dto.companyId !== undefined && !isUserAdmin(user) && !isUserSuperAdmin(user))
+      throw new ForbiddenException('Only administrators can link calendar work to CRM companies');
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
     const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(custId, id, dto, employeeId ?? undefined);

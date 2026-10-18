@@ -23,6 +23,7 @@ describe('customer bulk delete route contract', () => {
         expect(routes.some((r: any) => r.path === path && r.methods.delete)).toBe(true);
         expect(routes.some((r: any) => r.path === path && r.methods.get)).toBe(false);
       }
+      expect(routes.some((r: any) => r.path === '/api/v1/customers/:id/company' && r.methods.patch)).toBe(true);
     } finally { await app.close(); }
   });
   it('validates real JSON bodies without coercing malformed IDs', async () => {
@@ -38,7 +39,7 @@ describe('customer bulk delete route contract', () => {
     const controller = new CustomerController(service as any);
     const actor = { id: 1, accountType: 'ADMIN' };
     await expect(controller.bulkDelete(actor, { ids: [2, 3] })).resolves.toEqual({ deletedCount: 2, ids: [2, 3] });
-    expect(service.bulkRemove).toHaveBeenLastCalledWith([2, 3], actor, false);
+    expect(service.bulkRemove).toHaveBeenLastCalledWith([2, 3], actor, true);
     await controller.bulkDeleteViaDelete(actor, { ids: [2], cancelSubscriptions: true });
     expect(service.bulkRemove).toHaveBeenLastCalledWith([2], actor, true);
   });
