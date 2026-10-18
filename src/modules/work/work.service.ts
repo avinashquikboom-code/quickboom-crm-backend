@@ -1470,25 +1470,30 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
     }
 
     const where: any = { status: { not: WorkStatus.CANCELLED } };
-    if (customer?.crmCompanyId) {
-      where.companyId = customer.crmCompanyId;
-    } else {
-      where.customerId = numCustomerId;
-    }
+    if (!customer || customer.deletedAt) throw new NotFoundException('Customer account not found');
+    where.OR = [
+      { customerId: numCustomerId, customer: { deletedAt: null, lead: { deletedAt: null } } },
+      ...(customer.crmCompanyId ? [{ customerId: null, companyId: customer.crmCompanyId,
+        company: { deletedAt: null, billingCustomer: { id: numCustomerId, deletedAt: null, lead: { deletedAt: null } } } }] : []),
+    ];
+    where.AND = [{ OR: [
+      { subscriptionId: null },
+      { subscription: { customerId: numCustomerId, checkout: { status: 'PAID' } } },
+    ] }];
 
     const activeSubForCustomer = typeof this.prisma.customerSubscription?.findFirst === 'function'
       ? await this.prisma.customerSubscription.findFirst({
           where: { customerId: numCustomerId, status: 'ACTIVE' },
-          include: { plan: true },
+          include: { plan: true, checkout: true },
           orderBy: { id: 'desc' },
         }).catch(() => null)
       : null;
 
     if (query.employeeId && !isNaN(Number(query.employeeId))) {
-      where.OR = [
+      where.AND.push({ OR: [
         { assignedToId: Number(query.employeeId) },
         { editorId: Number(query.employeeId) },
-      ];
+      ] });
     }
 
     if (query.status) where.status = query.status;
@@ -1549,6 +1554,9 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
+        customer: { include: { assignedTeam: true } },
+        subscription: { include: { plan: true, checkout: true } },
+
 
         team: {
           select: {
@@ -1620,32 +1628,8 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       return true;
     });
 
-    let totalPaidForSub = 0;
-    let isFullyPaid = true;
-    let isFirstInstallmentPaid = true;
-    let unlockThresholdDate: Date | null = null;
-
-    if (numCustomerId && activeSubForCustomer) {
-      const payments = this.prisma.paymentHistory?.findMany
-        ? await this.prisma.paymentHistory.findMany({
-            where: {  status: 'SUCCESS' },
-          })
-        : [];
-      totalPaidForSub = Array.isArray(payments)
-        ? payments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0)
-        : 0;
-      const planBasePrice = Number(activeSubForCustomer.plan?.monthlyPrice || 0);
-      const planTotalWithTax = Math.round(planBasePrice * 1.18);
-
-      isFullyPaid = totalPaidForSub >= planTotalWithTax;
-      isFirstInstallmentPaid = activeSubForCustomer.status === "ACTIVE" || totalPaidForSub > 0;
-
-      const subStartDate = new Date(activeSubForCustomer.startDate);
-      unlockThresholdDate = new Date(subStartDate.getTime() + 15 * 24 * 60 * 60 * 1000);
-    }
-
     const result = filteredItems.map((w) => {
-      const purchaseRef = null;
+      const purchaseRef = w.subscription?.checkoutId ? `PUR-${w.subscription.checkoutId}` : null;
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
@@ -1655,15 +1639,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       let isLocked = false;
       let lockMessage: string | undefined;
 
-      if (numCustomerId && activeSubForCustomer) {
-        if (!isFirstInstallmentPaid) {
-          isLocked = true;
-          lockMessage = 'Your schedule will be available after the 50% advance payment is received.';
-        } else if (!isFullyPaid && unlockThresholdDate && schedDate > unlockThresholdDate) {
-          isLocked = true;
-          lockMessage = 'The second installation schedule will be available after the remaining 50% second installment is completed.';
-        }
-      }
+
       const isSubExpired = activeSubForCustomer?.endDate ? new Date() > new Date(activeSubForCustomer.endDate) : false;
       const statusStr = (w.status || '').toString().toUpperCase();
       const canReschedule = !isLocked && (statusStr === 'SCHEDULED' || statusStr === 'PENDING') && !isSubExpired;
@@ -1696,7 +1672,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       const normalizedType = normalizeActivityType(w);
       const isEditing = ['VIDEO_EDITING', 'EDITING'].includes(w.workType);
       const actualAssignee = isEditing ? w.editor ?? w.assignedTo : w.assignedTo;
-      const workTeam = w.team ?? undefined;
+      const workTeam = w.team ?? w.customer?.assignedTeam ?? undefined;
       const member = actualAssignee && workTeam && (
         workTeam.members?.some((entry) => entry.employeeId === actualAssignee.id) ||
         workTeam.leaderId === actualAssignee.id
@@ -1708,8 +1684,8 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       const customerObj = wItem.customer || customer || { id: numCustomerId, companyName: 'Workspace', firstName: 'Customer', lastName: '' };
       const custName = [customerObj.firstName, customerObj.lastName].filter(Boolean).join(' ') || customerObj.name || customerObj.companyName || 'Customer';
       const compName = customerObj.companyName || customerObj.name || custName;
-      const resolvedPlanName = activeSubForCustomer?.plan?.name || wItem.subscription?.plan?.name || (compName ? `${compName} Plan` : 'Standard Plan');
-      const resolvedPurchaseRef = activeSubForCustomer?.checkoutId ? `PUR-${activeSubForCustomer.checkoutId}` : (wItem.subscription?.checkoutId ? `PUR-${wItem.subscription.checkoutId}` : (purchaseRef || null));
+      const resolvedPlanName = wItem.subscription?.plan?.name ?? null;
+      const resolvedPurchaseRef = purchaseRef;
       const custLoc = [
         customerObj.city || customerObj.lead?.city || wItem.company?.city,
         customerObj.state || customerObj.lead?.state || wItem.company?.state,
@@ -2020,136 +1996,31 @@ status: ${item.status}`);
    * Inactive employees and BPO-only teams are excluded.
    */
   private async activeProductionTeamIdsForEmployee(
-    employeeId: number,
-    tenantCustomerId?: number | null,
-    candidateIds?: number[],
-    strictTenant = false,
+    employeeId: number, _tenantCustomerId?: number | null,
+    _candidateIds?: number[], _strictTenant = false,
   ): Promise<number[]> {
-    const findEmp = this.prisma.employee?.findFirst ?? this.prisma.employee?.findUnique;
-    if (
-      typeof findEmp !== 'function' ||
-      typeof this.prisma.teamMember?.findMany !== 'function' ||
-      typeof this.prisma.team?.findMany !== 'function'
-    ) {
-      return [];
-    }
-
-    const employee = typeof this.prisma.employee?.findFirst === 'function'
-      ? await (this.prisma.employee as any).findFirst({
-          where: { id: employeeId },
-          select: { id: true, userId: true, customerId: true, status: true },
-        })
-      : await (this.prisma.employee as any).findUnique({
-          where: { id: employeeId },
-          select: { id: true, userId: true, customerId: true, status: true },
-        });
-    if (!employee || String(employee.status || '').toUpperCase() === 'INACTIVE') return [];
-
-    const tenantId = Number(tenantCustomerId ?? (employee as any)?.customerId ?? undefined);
-    const empIds = candidateIds && candidateIds.length > 0 ? [...candidateIds] : [employeeId];
-
-    const [memberships, ledTeams]: [any[], any[]] = await Promise.all([
-      (this.prisma.teamMember as any).findMany({
-        where: {
-          employeeId: { in: empIds },
-          team: { isActive: true },
-        },
-        select: {
-          teamId: true,
-          team: { select: { name: true, description: true, customerId: true, isActive: true } },
-        },
-      }),
-      (this.prisma.team as any).findMany({
-        where: { leaderId: { in: empIds }, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          customerId: true,
-          leader: { select: { status: true } },
-        },
-      }),
-    ]);
-
-    const rows = new Map<number, number>();
-    for (const row of memberships || []) {
-      if (row.team?.isActive === false) continue;
-      if (this.isBpoOnlyTeam(row.team?.name, row.team?.description)) continue;
-      rows.set(row.teamId, Number((row.team as any)?.customerId));
-    }
-    for (const team of ledTeams || []) {
-      if (String(team.leader?.status || '').toUpperCase() === 'INACTIVE') continue;
-      if (this.isBpoOnlyTeam(team.name, team.description)) continue;
-      rows.set(team.id, Number((team as any)?.customerId));
-    }
-
-    if (rows.size === 0) return [];
-
-    const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
-      Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
-    );
-    if (Number.isInteger(tenantId) && tenantId > 0) {
-      return sameCompany.map(([teamId]) => teamId);
-    }
-
-    return Array.from(rows.keys());
+    const ids = await this.employeeTeamIds(employeeId);
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: ids }, isActive: true },
+      select: { id: true, name: true, description: true },
+    });
+    return teams.filter(team => !this.isBpoOnlyTeam(team.name, team.description)).map(team => team.id);
   }
 
-  /**
-   * Teams this employee belongs to or leads. Customer allotment uses
-   * Customer.assignedTeamId, so BPO membership is included here. Production-only
-   * helpers keep their own BPO exclusion.
-   */
   private async employeeTeamIds(
-    employeeId: number,
-    tenantCustomerId?: number | null,
-    candidateIds?: number[],
-    strictTenant = false,
+    employeeId: number, _tenantCustomerId?: number | null,
+    _candidateIds?: number[], _strictTenant = false,
   ): Promise<number[]> {
-    if (
-      typeof this.prisma.teamMember?.findMany !== 'function' ||
-      typeof this.prisma.team?.findMany !== 'function'
-    ) {
-      return [];
-    }
-    let tenantId = Number(tenantCustomerId);
-    if (!Number.isInteger(tenantId) || tenantId <= 0) {
-      const emp = typeof this.prisma.employee?.findUnique === 'function'
-        ? await (this.prisma.employee as any).findUnique({
-            where: { id: employeeId },
-            select: { customerId: true },
-          })
-        : null;
-      if (emp?.customerId) tenantId = Number(emp.customerId);
-    }
-    const empIds = candidateIds && candidateIds.length > 0 ? candidateIds : [employeeId];
-    const [memberships, ledTeams]: [any[], any[]] = await Promise.all([
-      (this.prisma.teamMember as any).findMany({
-        where: { employeeId: { in: empIds }, team: { isActive: true } },
-        select: { teamId: true, team: { select: { isActive: true, customerId: true } } },
-      }),
-      (this.prisma.team as any).findMany({
-        where: { leaderId: { in: empIds }, isActive: true },
-        select: { id: true, customerId: true },
-      }),
-    ]);
-    const rows = new Map<number, number>();
-    for (const row of memberships || []) {
-      if (row.team?.isActive === false) continue;
-      rows.set(row.teamId, Number((row.team as any)?.customerId));
-    }
-    for (const team of ledTeams || []) {
-      rows.set(team.id, Number((team as any)?.customerId));
-    }
-    if (rows.size === 0) return [];
-
-    const sameCompany = Array.from(rows.entries()).filter(([, companyId]) =>
-      Number.isInteger(tenantId) && tenantId > 0 ? companyId === tenantId : true,
-    );
-    if (strictTenant || (Number.isInteger(tenantId) && tenantId > 0)) {
-      return sameCompany.map(([teamId]) => teamId);
-    }
-    return Array.from(rows.keys());
+    const employee = await this.prisma.employee.findUnique({ where: { id: employeeId },
+      select: { status: true, mobileLoginEnabled: true } });
+    if (!employee || employee.status !== 'ACTIVE' || !employee.mobileLoginEnabled) return [];
+    const teams = await this.prisma.team.findMany({
+      where: { isActive: true, OR: [
+        { leaderId: employeeId }, { members: { some: { employeeId } } },
+      ] },
+      select: { id: true },
+    });
+    return teams.map(team => team.id);
   }
 
   /**
@@ -2635,7 +2506,7 @@ return null; // Team must now be selected explicitly on each work item.
         ? []
         : [
             { teamId: { in: teamIds } },
-            { customer: { assignedTeamId: { in: teamIds } } },
+            { teamId: null, customer: { assignedTeamId: { in: teamIds }, assignedTeam: { isActive: true } } },
             // An explicit work team takes precedence over customer-wide team access.
             { teamId: null, company: { deletedAt: null, billingCustomer: {
               deletedAt: null, lead: { deletedAt: null }, assignedTeamId: { in: teamIds }, assignedTeam: { isActive: true },
@@ -2748,7 +2619,8 @@ return null; // Team must now be selected explicitly on each work item.
     // Intersect customer and active-record scope with assignment predicates; never replace them.
     where.AND = [
       ...(where.AND || []),
-      { customer: { deletedAt: null } },
+      { OR: [{ customerId: null }, { customer: { deletedAt: null, lead: { deletedAt: null } } }] },
+      { OR: [{ subscriptionId: null }, { subscription: { checkout: { status: 'PAID' } } }] },
       {
         OR: [{ companyId: null }, { company: { deletedAt: null, OR: [
           { billingCustomer: null },
@@ -2762,8 +2634,11 @@ return null; // Team must now be selected explicitly on each work item.
         where: { id: query.customerId, deletedAt: null, lead: { deletedAt: null } },
         select: { crmCompanyId: true },
       });
-      if (!customer?.crmCompanyId) throw new NotFoundException('Customer CRM company not found');
-      where.companyId = customer.crmCompanyId;
+      if (!customer) throw new NotFoundException('Customer not found');
+      where.AND.push({ OR: [
+        { customerId: query.customerId },
+        ...(customer.crmCompanyId ? [{ customerId: null, companyId: customer.crmCompanyId }] : []),
+      ] });
     }
 
     if (query.status) {
@@ -2905,6 +2780,9 @@ return null; // Team must now be selected explicitly on each work item.
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
+        customer: { include: { assignedTeam: true } },
+        subscription: { include: { plan: true, checkout: true } },
+
 
         company: { include: { billingCustomer: { select: { id: true, firstName: true, lastName: true, companyName: true, assignedTeamId: true, assignedTeam: { select: { id: true, name: true, isActive: true } } } } } },
         team: {
@@ -3077,9 +2955,7 @@ return null; // Team must now be selected explicitly on each work item.
       const resolvedCustomerId = custObj?.id ? String(custObj.id) : (w.customerId ? String(w.customerId) : '');
 
       const resolvedPlanName = planNames.get(Number(w.planId)) ?? null;
-      // This Work schema has no purchase/subscription link. A customer's other
-      // subscription is not evidence that it purchased this particular work.
-      const resolvedPurchaseRef = null;
+      const resolvedPurchaseRef = w.subscription?.checkoutId ? `PUR-${w.subscription.checkoutId}` : null;
 
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = assignedOnly ? null : '11:00 AM';
@@ -3112,8 +2988,8 @@ return null; // Team must now be selected explicitly on each work item.
         .join(', ') || null;
 
       const scheduleAssignee = this.productionTaskAssignee(w);
-      const customerTeam = w.teamId == null && w.company?.billingCustomer?.assignedTeam?.isActive
-        ? w.company.billingCustomer.assignedTeam : null;
+      const linkedCustomerTeam = w.customer?.assignedTeam ?? w.company?.billingCustomer?.assignedTeam;
+      const customerTeam = w.teamId == null && linkedCustomerTeam?.isActive ? linkedCustomerTeam : null;
       const employeeFields = getWorkEmployeeFields(w);
 
       const isViewerEditor =

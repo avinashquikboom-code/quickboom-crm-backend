@@ -1,3 +1,4 @@
+import { extractDeliverableQuotas, generateAllPlanWorkflowActivities } from "../../common/utils/plan-deliverable.util";
 import { Prisma } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import {
@@ -275,9 +276,47 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  // Called only by customer-locked writers; calendar reads never generate work.
+  private async ensurePurchasedSchedules(tx: Prisma.TransactionClient, customerId: number) {
+    const customer = await tx.customer.findFirst({
+      where: { id: customerId, deletedAt: null, lead: { deletedAt: null },
+        assignedTeam: { isActive: true } },
+    });
+    if (!customer) return;
+    const subscriptions = await tx.customerSubscription.findMany({
+      where: { customerId, status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
+        endDate: { gt: new Date() }, checkout: { status: "PAID" } },
+      include: { plan: true },
+    });
+    for (const sub of subscriptions) {
+      // Generation is atomic. Once present, retain its original plan dates and history.
+      if (await tx.work.count({ where: { subscriptionId: sub.id } })) continue;
+      const activities = generateAllPlanWorkflowActivities(
+        sub.activationDate ?? sub.startDate, sub.endDate,
+        extractDeliverableQuotas(sub.plan.features),
+      );
+      for (const activity of activities) {
+        const activityKey = JSON.stringify([activity.serviceName, activity.itemNumber, activity.activityType, activity.stepOrder]);
+        await tx.work.upsert({
+          where: { subscriptionId_activityKey: { subscriptionId: sub.id, activityKey } },
+          update: {},
+          create: {
+            customerId, subscriptionId: sub.id, activityKey, planId: sub.planId,
+            companyId: customer.crmCompanyId, title: activity.title,
+            description: activity.description, workType: activity.workType,
+            scheduledDate: activity.scheduledDate, scheduledTime: activity.scheduledTime,
+            status: "SCHEDULED",
+            // Team access follows Customer.assignedTeamId; no individual is invented.
+          },
+        });
+      }
+    }
+  }
+
   async assignTeam(customerId: number, teamId: number | null, actor: any) {
     if (!isUserAdmin(actor)) throw new ForbiddenException("Administrator required");
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_accounts WHERE id = ${customerId} FOR UPDATE`;
       const customer = await tx.customer.findFirst({
         where: { id: customerId, deletedAt: null }, select: { id: true },
       });
@@ -312,6 +351,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
           },
         },
       });
+      await this.ensurePurchasedSchedules(tx, customerId);
       return {
         ...updated,
         team: updated.assignedTeam,
@@ -657,10 +697,10 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       const current = await tx.customerCheckout.findUniqueOrThrow({
         where: { id: checkout.id },
       });
-      if (current.status === "PAID")
-        return tx.customerSubscription.findUnique({
-          where: { checkoutId: current.id },
-        });
+      if (current.status === "PAID") {
+        await this.ensurePurchasedSchedules(tx, current.customerId);
+        return tx.customerSubscription.findUnique({ where: { checkoutId: current.id } });
+      }
       const purchaseDate = new Date();
       const activationDate = calculateActivationDate(
         purchaseDate,
@@ -712,6 +752,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         },
       });
       await recalculateCustomer(tx, current.customerId, purchaseDate);
+      await this.ensurePurchasedSchedules(tx, current.customerId);
       return sub;
     });
   }
@@ -753,6 +794,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
             data: { status: "ACTIVE" },
           });
           await recalculateCustomer(tx, sub.customerId, now);
+          await this.ensurePurchasedSchedules(tx, sub.customerId);
           activatedCount++;
         });
       } catch (err: any) {

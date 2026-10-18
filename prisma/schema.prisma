@@ -1366,6 +1366,13 @@ model PlanEntitlement {
 }
 
 model Work {
+  customerId Int?
+  subscriptionId Int?
+  activityKey String?
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  @@unique([subscriptionId, activityKey])
+  @@index([customerId])
   id            Int              @id @default(autoincrement())
   companyId     Int?
   planId        Int?
@@ -2661,6 +2668,7 @@ enum CrmLeadStatus {
 
 // Customer billing for the current single organization. Legacy billing rows remain untouched.
 model Customer {
+  works Work[]
   deletedAt DateTime?
   id Int @id @default(autoincrement())
   originLeadId Int @unique
@@ -2692,6 +2700,7 @@ enum CustomerLifecycleStatus {
 }
 
 model CustomerSubscription {
+  works Work[]
   id Int @id @default(autoincrement())
   customerId Int
   planId Int
