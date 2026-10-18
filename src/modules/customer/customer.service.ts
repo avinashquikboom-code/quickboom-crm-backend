@@ -72,24 +72,54 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async list(user: any, search = "") {
-    const where: any = isUserAdmin(user)
-      ? { deletedAt: null, lead: { deletedAt: null } }
-      : user.employee?.id
-        ? {
-            deletedAt: null,
-            lead: {
-              deletedAt: null,
-              OR: [
-                { createdById: Number(user.id) },
-                { assignedToId: Number(user.employee.id) },
-              ],
-            },
-          }
-        : {
-            userId: Number(user.id),
-            deletedAt: null,
-            lead: { deletedAt: null },
-          };
+    // Resolve the canonical employee through the authenticated user, not a lead ID
+    // or an optional employee object in the session payload.
+    const employee = !isUserAdmin(user) && user.accountType !== "CUSTOMER"
+      ? await this.prisma.employee.findUnique({
+          where: { userId: Number(user.id) },
+          select: { id: true, status: true, mobileLoginEnabled: true },
+        })
+      : null;
+    const activeEmployee = employee?.status === "ACTIVE" && employee.mobileLoginEnabled;
+    const where: Prisma.CustomerWhereInput = {
+      deletedAt: null,
+      lead: { deletedAt: null },
+      ...(!isUserAdmin(user) ? activeEmployee ? {
+        OR: [
+          { lead: { createdById: Number(user.id) } },
+          { lead: { assignedToId: employee.id } },
+          { assignedTeam: { isActive: true, OR: [
+            { leaderId: employee.id },
+            { members: { some: { employeeId: employee.id } } },
+          ] } },
+          { works: { some: {
+            status: { not: "CANCELLED" },
+            OR: [
+              { assignedToId: employee.id },
+              { editorId: employee.id },
+              { tasks: { some: { assignedToId: employee.id } } },
+              { team: { isActive: true, OR: [
+                { leaderId: employee.id },
+                { members: { some: { employeeId: employee.id } } },
+              ] } },
+            ],
+          } } },
+          // Retained work may be linked through the customer's CRM company.
+          { crmCompany: { deletedAt: null, works: { some: {
+            customerId: null, status: { not: "CANCELLED" },
+            OR: [
+              { assignedToId: employee.id },
+              { editorId: employee.id },
+              { tasks: { some: { assignedToId: employee.id } } },
+              { team: { isActive: true, OR: [
+                { leaderId: employee.id },
+                { members: { some: { employeeId: employee.id } } },
+              ] } },
+            ],
+          } } } },
+        ],
+      } : { userId: Number(user.id) } : {}),
+    };
     if (search.trim())
       where.companyName = { contains: search.trim(), mode: "insensitive" };
     const customers = await this.prisma.customer.findMany({
