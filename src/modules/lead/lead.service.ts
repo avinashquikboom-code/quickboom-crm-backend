@@ -298,8 +298,11 @@ export class LeadService {
     this.assertCanRead(existing, user);
 
     const data: Prisma.LeadUpdateInput = {};
-    if (dto.companyName !== undefined)
-      data.companyName = dto.companyName.trim();
+    if (dto.companyName !== undefined) {
+      const trimmed = dto.companyName.trim();
+      if (!trimmed) throw new BadRequestException('Company/Business name cannot be empty');
+      data.companyName = trimmed;
+    }
     if (dto.firstName !== undefined)
       data.firstName = dto.firstName?.trim() || null;
     if (dto.lastName !== undefined)

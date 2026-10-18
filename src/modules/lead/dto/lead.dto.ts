@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 
 export class CreateLeadDto {
@@ -7,7 +7,10 @@ export class CreateLeadDto {
   @IsOptional() @IsString() @MaxLength(200) firstName?: string;
   @IsOptional() @IsString() @MaxLength(200) lastName?: string;
   @IsOptional() @IsString() @MaxLength(100) phone?: string;
-  @IsOptional() @IsEmail() email?: string;
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null && value !== undefined && value !== '')
+  @IsEmail()
+  email?: string;
   @IsOptional() @IsString() website?: string;
   @IsOptional() @IsString() address?: string;
   @IsOptional() @IsString() city?: string;
@@ -44,7 +47,10 @@ export class UpdateLeadDto {
   @IsOptional() @IsString() @MaxLength(200) firstName?: string;
   @IsOptional() @IsString() @MaxLength(200) lastName?: string;
   @IsOptional() @IsString() @MaxLength(100) phone?: string;
-  @IsOptional() @IsEmail() email?: string;
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null && value !== undefined && value !== '')
+  @IsEmail()
+  email?: string;
   @IsOptional() @IsString() website?: string;
   @IsOptional() @IsString() address?: string;
   @IsOptional() @IsString() city?: string;
