@@ -295,21 +295,18 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         sub.activationDate ?? sub.startDate, sub.endDate,
         extractDeliverableQuotas(sub.plan.features),
       );
-      for (const activity of activities) {
-        const activityKey = JSON.stringify([activity.serviceName, activity.itemNumber, activity.activityType, activity.stepOrder]);
-        await tx.work.upsert({
-          where: { subscriptionId_activityKey: { subscriptionId: sub.id, activityKey } },
-          update: {},
-          create: {
-            customerId, subscriptionId: sub.id, activityKey, planId: sub.planId,
-            companyId: customer.crmCompanyId, title: activity.title,
-            description: activity.description, workType: activity.workType,
-            scheduledDate: activity.scheduledDate, scheduledTime: activity.scheduledTime,
-            status: "SCHEDULED",
-            // Team access follows Customer.assignedTeamId; no individual is invented.
-          },
-        });
-      }
+      await tx.work.createMany({
+        skipDuplicates: true,
+        data: activities.map(activity => ({
+          customerId, subscriptionId: sub.id,
+          activityKey: JSON.stringify([activity.serviceName, activity.itemNumber, activity.activityType, activity.stepOrder]),
+          planId: sub.planId, companyId: customer.crmCompanyId,
+          title: activity.title, description: activity.description, workType: activity.workType,
+          scheduledDate: activity.scheduledDate, scheduledTime: activity.scheduledTime,
+          status: "SCHEDULED",
+          // Team visibility uses Customer.assignedTeamId; no individual is invented.
+        })),
+      });
     }
   }
 

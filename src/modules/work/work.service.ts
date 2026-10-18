@@ -1554,7 +1554,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { include: { assignedTeam: true } },
+        customer: { include: { assignedTeam: { include: { members: true } } } },
         subscription: { include: { plan: true, checkout: true } },
 
 
@@ -1633,7 +1633,7 @@ if (!employee || employee.status !== 'ACTIVE') throw new ForbiddenException('Act
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = '11:00 AM';
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
-      const planName = (activeSubForCustomer?.plan?.name ?? 'Active Plan');
+      const planName = w.subscription?.plan?.name ?? null;
 
       const schedDate = w.scheduledDate ? new Date(w.scheduledDate) : new Date();
       let isLocked = false;
@@ -2584,7 +2584,7 @@ return null; // Team must now be selected explicitly on each work item.
         OR: [
           ...directAssignment(),
           ...teamCustomerWork(authorizedTeamIds),
-          ...(allAuthorizedCustomerIds.length > 0 ? [{ customerId: { in: allAuthorizedCustomerIds } }] : []),
+          ...(allAuthorizedCustomerIds.length > 0 ? [{ teamId: null, customerId: { in: allAuthorizedCustomerIds } }] : []),
         ],
         status: { not: WorkStatus.CANCELLED },
         ...(query.teamId ? { AND: [{ OR: [
@@ -2607,7 +2607,7 @@ return null; // Team must now be selected explicitly on each work item.
         { team: { leaderId: numEmployeeId } },
       );
       if (allAuthorizedCustomerIds.length > 0) {
-        orConditions.push({ customerId: { in: allAuthorizedCustomerIds } });
+        orConditions.push({ teamId: null, customerId: { in: allAuthorizedCustomerIds } });
       }
       where = {
         OR: orConditions,
@@ -2780,7 +2780,7 @@ return null; // Team must now be selected explicitly on each work item.
       where,
       orderBy: { scheduledDate: 'asc' },
       include: {
-        customer: { include: { assignedTeam: true } },
+        customer: { include: { assignedTeam: { include: { members: true } } } },
         subscription: { include: { plan: true, checkout: true } },
 
 
@@ -3129,9 +3129,8 @@ return null; // Team must now be selected explicitly on each work item.
         if (empRecord?.userId) {
           taskOr.push({ assignedToId: empRecord.userId });
         }
-        if (authorizedTeamIds.length > 0) {
-          taskOr.push({ customer: { assignedTeamId: { in: authorizedTeamIds } } });
-        }
+        // Generic Task has no customer/team relation; only its recorded assignees
+        // grant access. Customer-team schedules are returned from Work above.
         taskWhere.OR = taskOr;
       }
 
