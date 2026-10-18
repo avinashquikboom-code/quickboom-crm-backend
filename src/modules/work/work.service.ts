@@ -3059,6 +3059,13 @@ return null; // Team must now be selected explicitly on each work item.
     const formatScheduleDate = (dateVal: any): string => this.scheduleDateKey(dateVal) || '';
 
     const uniqueItems = [...new Map(filteredItems.map((w: any) => [String(w.id), w])).values()];
+    // Work.planId is the persisted link; never infer a plan from the company name.
+    const planIds = [...new Set<number>(uniqueItems.map((work: any) => Number(work.planId))
+      .filter((id: number) => Number.isSafeInteger(id) && id > 0))];
+    const calendarPlans = planIds.length
+      ? await this.prisma.plan.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } })
+      : [];
+    const planNames = new Map(calendarPlans.map((plan) => [plan.id, plan.name]));
     const mapped = uniqueItems.map((w: any) => {
       const custObj = w.customer || w.company?.billingCustomer || w.company?.customer;
       const custName = custObj?.name ||
@@ -3069,15 +3076,10 @@ return null; // Team must now be selected explicitly on each work item.
       const compName = custObj?.companyName || custObj?.name || custName;
       const resolvedCustomerId = custObj?.id ? String(custObj.id) : (w.customerId ? String(w.customerId) : '');
 
-      const resolvedPlanName =
-        w.subscription?.plan?.name ||
-        w.plan?.name ||
-        (custObj?.companyName ? `${custObj.companyName} Plan` : null);
-
-      const resolvedPurchaseRef =
-        w.subscription?.id ? `PUR-${w.subscription.id}` :
-        w.subscription?.checkoutId ? `PUR-${w.subscription.checkoutId}` :
-        w.purchaseId ? String(w.purchaseId) : null;
+      const resolvedPlanName = planNames.get(Number(w.planId)) ?? null;
+      // This Work schema has no purchase/subscription link. A customer's other
+      // subscription is not evidence that it purchased this particular work.
+      const resolvedPurchaseRef = null;
 
       const startTime = w.scheduledTime || '10:00 AM';
       const endTime = assignedOnly ? null : '11:00 AM';
@@ -3138,15 +3140,15 @@ return null; // Team must now be selected explicitly on each work item.
         }
       }
 
-      const assignedEmpList: string[] = [];
-      if (isProductionManager) {
-        if (employeeFields.assignedEmployee) assignedEmpList.push(employeeFields.assignedEmployee);
-      } else {
-        if (employeeFields.assignedEmployee) assignedEmpList.push(employeeFields.assignedEmployee);
-        if (employeeFields.editorName && !assignedEmpList.includes(employeeFields.editorName)) {
-          assignedEmpList.push(employeeFields.editorName);
+      // Only recorded Work/WorkTask assignments belong in this list, never the team roster.
+      const assignedPeople = new Map<number, string>();
+      for (const person of [w.assignedTo, w.editor, ...(w.tasks || []).map((task: any) => task.assignedTo)]) {
+        const name = getEmployeeName(person);
+        if (person && Number.isSafeInteger(Number(person.id)) && Number(person.id) > 0 && name) {
+          assignedPeople.set(Number(person.id), name);
         }
       }
+      const assignedEmpList = [...assignedPeople.values()];
 
       const smHandler = undefined;
       const platform = smHandler?.platform || 'Instagram';
