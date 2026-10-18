@@ -113,6 +113,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async detail(user: any, id: number, scopedList = false) {
+    if (!Number.isInteger(id) || id < 1) {
+      throw new BadRequestException("Customer ID must be a positive integer");
+    }
     if (!scopedList) await this.authorize(user, id);
     return this.prisma.$transaction(async (tx) => {
       const customer = await recalculateCustomer(tx, id);
@@ -154,6 +157,10 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
       return {
         ...customer,
+        // The list and details API share the persisted customer primary key.
+        // Display codes never act as identifiers or encode an originating lead.
+        id: customer.id,
+        customerCode: `CUST-${String(customer.id).padStart(4, '0')}`,
         assignedTeam: (customer as any).assignedTeamId
           ? await tx.team.findUnique({ where: { id: (customer as any).assignedTeamId },
               select: { id: true, name: true, isActive: true, _count: { select: { members: true } } } })

@@ -1,5 +1,6 @@
 import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -97,6 +98,7 @@ export class CustomerController {
   @Patch('customers/:id/assign-team')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
   assignTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: AssignCustomerTeamDto) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     return this.customers.assignTeam(id, dto.teamId, user);
   }
   @Patch('customers/:id/company')
@@ -106,6 +108,7 @@ export class CustomerController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: LinkCustomerCompanyDto,
   ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     return this.customers.linkCrmCompany(id, dto.companyId, user);
   }
   @Delete('customers/:id') remove(
@@ -113,6 +116,7 @@ export class CustomerController {
     @Param('id', ParseIntPipe) id: number,
     @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     const cancel = cancelQuery === undefined || cancelQuery === 'true' || cancelQuery === '1';
     return this.customers.remove(id, user, cancel);
   }
@@ -120,6 +124,7 @@ export class CustomerController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     return this.customers.detail(user, id);
   }
   @Patch('customers/:id/user') link(
@@ -127,6 +132,7 @@ export class CustomerController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: LinkCustomerUserDto,
   ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     return this.customers.linkUser(id, dto.userId, user);
   }
   @Post('customers/:id/account') account(
@@ -134,6 +140,7 @@ export class CustomerController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CustomerAccountDto,
   ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
     return this.customers.createAccount(id, dto.password, user);
   }
   @Get('subscriptions/quote/:planId') quote(
