@@ -18,6 +18,7 @@ import { AccountTypes } from '../../common/decorators/account-types.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
+import { CustomerService } from '../customer/customer.service';
 import {
   ModuleResetDto,
   ResetAllDto,
@@ -35,7 +36,27 @@ import {
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
 export class DataManagementController {
-  constructor(private readonly dataManagementService: DataManagementService) {}
+  constructor(
+    private readonly dataManagementService: DataManagementService,
+    private readonly customers: CustomerService,
+  ) {}
+
+  /** GET /api/v1/admin/data-management/customers/count */
+  @Get('customers/count')
+  @ApiOperation({ summary: 'Count active customer accounts eligible for deletion' })
+  async getActiveCustomerCount(@CurrentUser() actor: any) {
+    return this.customers.countActiveCustomersForSuperAdmin(actor);
+  }
+
+  /** DELETE /api/v1/admin/data-management/customers/delete-all */
+  @Delete('customers/delete-all')
+  @ApiOperation({ summary: 'Soft-delete all active customer accounts in the authorized organization' })
+  async deleteAllCustomers(
+    @CurrentUser() actor: any,
+    @Body() dto: ResetAllCustomersDto,
+  ) {
+    return this.customers.deleteAllForSuperAdmin(actor, dto.confirmation);
+  }
 
   /**
    * GET /api/v1/admin/data-management/summary

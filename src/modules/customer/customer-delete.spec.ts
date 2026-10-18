@@ -154,6 +154,41 @@ describe('single and bulk customer soft deletion', () => {
     });
     expect(tx.customer.updateMany).toHaveBeenCalledTimes(1);
   });
+  it('requires a super administrator and exact confirmation for delete-all', async () => {
+    const prisma: any = { customer: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn() } };
+    const service = new CustomerService(prisma);
+    await expect(service.deleteAllForSuperAdmin(admin, 'DELETE ALL CUSTOMERS')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    await expect(service.deleteAllForSuperAdmin({ id: 1, role: 'SUPER_ADMIN' }, 'no')).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+  });
+  it('counts only active customer accounts for super administrators', async () => {
+    const prisma: any = { customer: { count: jest.fn().mockResolvedValue(7) } };
+    const service = new CustomerService(prisma);
+    await expect(service.countActiveCustomersForSuperAdmin({ id: 1, role: 'SUPER_ADMIN' })).resolves.toEqual({ totalCustomers: 7 });
+    expect(prisma.customer.count).toHaveBeenCalledWith({ where: { deletedAt: null } });
+  });
+  it('deletes only the active customer IDs returned in bounded batches', async () => {
+    const customerIds = Array.from({ length: 205 }, (_, index) => index + 2);
+    const prisma: any = {
+      customer: {
+        findFirst: jest.fn().mockResolvedValue({ id: 206 }),
+        findMany: jest.fn(({ where }: any) => Promise.resolve(
+          customerIds.filter((id) => id > where.id.gt && id <= where.id.lte).slice(0, 100).map((id) => ({ id })),
+        )),
+      },
+    };
+    const service = new CustomerService(prisma);
+    const bulkRemove = jest.spyOn(service, 'bulkRemove').mockImplementation(async (ids) => ({ deletedCount: ids.length, ids }));
+
+    await expect(service.deleteAllForSuperAdmin({ id: 1, role: 'SUPER_ADMIN' }, 'DELETE ALL CUSTOMERS')).resolves.toMatchObject({
+      success: true,
+      deletedCount: 205,
+    });
+    expect(bulkRemove.mock.calls.map(([ids]) => ids.length)).toEqual([100, 100, 5]);
+    expect(bulkRemove.mock.calls.flatMap(([ids]) => ids)).toEqual(customerIds);
+    expect(bulkRemove).toHaveBeenCalledWith(expect.any(Array), { id: 1, role: 'SUPER_ADMIN' }, true);
+  });
   it('deletes only CRM records explicitly linked through selected customer mappings', async () => {
     const { service, tx } = setup([
       { id: 2, userId: null, deletedAt: null, crmCompanyId: 55 } as any,

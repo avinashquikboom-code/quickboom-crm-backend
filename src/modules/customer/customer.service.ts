@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   Injectable,
   NotFoundException,
   Logger,
@@ -11,7 +12,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
-import { isUserAdmin } from "../../common/utils/account.util";
+import { isUserAdmin, isUserSuperAdmin } from "../../common/utils/account.util";
 import { subscriptionPrice } from "./billing-price.util";
 import { recalculateCustomer } from "./customer-lifecycle.util";
 import {
@@ -390,6 +391,64 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       }
       return { deletedCount: result.count, ids: liveIds };
     });
+  }
+
+  async countActiveCustomersForSuperAdmin(actor: any) {
+    if (!isUserSuperAdmin(actor))
+      throw new ForbiddenException("Super administrator required");
+    return {
+      totalCustomers: await this.prisma.customer.count({
+        where: { deletedAt: null },
+      }),
+    };
+  }
+
+  async deleteAllForSuperAdmin(actor: any, confirmation: string) {
+    if (!isUserSuperAdmin(actor))
+      throw new ForbiddenException("Super administrator required");
+    if (confirmation?.trim().toUpperCase() !== "DELETE ALL CUSTOMERS")
+      throw new BadRequestException(
+        'Confirmation mismatch. Type "DELETE ALL CUSTOMERS" to continue.',
+      );
+
+    // Freeze the target range before processing batches, so customers added
+    // during this operation are not accidentally included.
+    const highestCustomer = await this.prisma.customer.findFirst({
+      where: { deletedAt: null },
+      orderBy: { id: "desc" },
+      select: { id: true },
+    });
+    if (!highestCustomer)
+      return { success: true, deletedCount: 0, message: "No active customers to delete." };
+
+    let cursor = 0;
+    let deletedCount = 0;
+    while (cursor < highestCustomer.id) {
+      const batch = await this.prisma.customer.findMany({
+        where: { deletedAt: null, id: { gt: cursor, lte: highestCustomer.id } },
+        orderBy: { id: "asc" },
+        take: 100,
+        select: { id: true },
+      });
+      if (!batch.length) break;
+
+      const ids = batch.map((customer) => customer.id);
+      try {
+        const result = await this.bulkRemove(ids, actor, true);
+        deletedCount += result.deletedCount;
+      } catch (error: any) {
+        throw new InternalServerErrorException(
+          `Delete-all failed after ${deletedCount} customer(s). The current batch was rolled back; review the server error before retrying.`,
+        );
+      }
+      cursor = ids[ids.length - 1];
+    }
+
+    return {
+      success: true,
+      deletedCount,
+      message: `Deleted ${deletedCount} customer${deletedCount === 1 ? "" : "s"}.`,
+    };
   }
 
   async quote(planId: number, cycle = "MONTHLY") {
