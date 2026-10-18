@@ -550,14 +550,20 @@ export class TeamService {
             }
           }
 
-          // Legacy table safe update if present in PostgreSQL
-          try {
-            await (tx as any).$executeRawUnsafe(
-              `UPDATE "customers" SET "assignedTeamId" = ${numReassignId ? numReassignId : 'NULL'} WHERE "assignedTeamId" = $1`,
-              numId,
-            );
-          } catch {
-            // legacy customers table may not exist
+          // PostgreSQL aborts a transaction after a missing-table/column error.
+          // Check metadata first rather than catching a failed UPDATE.
+          const legacyColumns = await tx.$queryRaw<Array<{ exists: boolean }>>`
+            SELECT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema()
+                AND table_name = 'customers' AND column_name = 'assignedTeamId'
+            ) AS "exists"
+          `;
+          if (legacyColumns[0]?.exists) {
+            await tx.$executeRaw`
+              UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
+              WHERE "assignedTeamId" = ${numId}
+            `;
           }
 
           // Always remove memberships of the team being deleted

@@ -41,7 +41,8 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       findFirst: jest.fn(),
       findMany: jest.fn(),
     },
-    $executeRawUnsafe: jest.fn().mockResolvedValue(1),
+    $queryRaw: jest.fn().mockResolvedValue([{ exists: false }]),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: jest.fn((callback) => callback(mockPrismaService)),
   };
 
@@ -280,6 +281,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       });
       expect(mockPrismaService.team.delete).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(mockPrismaService.employee.delete).toBeUndefined();
+      expect(mockPrismaService.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('should reassign members, works, and customers to target team before deleting', async () => {
