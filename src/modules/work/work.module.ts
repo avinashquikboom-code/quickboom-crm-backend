@@ -1,3 +1,4 @@
+import { CustomerModule } from '../customer/customer.module';
 import { WorkRecordGuard } from './work-record.guard';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
@@ -10,7 +11,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [PrismaModule, JwtModule.register({}), ConfigModule, NotificationModule],
+  imports: [CustomerModule, PrismaModule, JwtModule.register({}), ConfigModule, NotificationModule],
   controllers: [WorkController],
   providers: [WorkRecordGuard, WorkService, WorkAssignmentService, PlanScheduleGateway],
   exports: [WorkService, WorkAssignmentService, PlanScheduleGateway],

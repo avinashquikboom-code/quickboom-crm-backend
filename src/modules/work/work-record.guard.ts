@@ -8,6 +8,10 @@ export class WorkRecordGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     if (isUserAdmin(req.user)) return true;
+    if (req.user?.accountType === 'CUSTOMER' && context.getHandler().name === 'getCustomerCalendar') {
+      // CustomerService.authorize and the calendar company predicate enforce ownership.
+      return true;
+    }
     const employeeId = req.user?.employee?.id;
     if (!employeeId || req.user.employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
     const workId = req.params?.id ?? req.body?.activityScheduleId;

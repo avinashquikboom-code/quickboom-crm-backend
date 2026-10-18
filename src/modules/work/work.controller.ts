@@ -1,3 +1,5 @@
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
+import { CustomerService } from '../customer/customer.service';
 import { WorkRecordGuard } from './work-record.guard';
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, Logger, UseGuards, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -20,6 +22,7 @@ export class WorkController {
 
   constructor(
     private readonly workService: WorkService,
+    private readonly customers: CustomerService,
   ) {}
 
   // ==========================================
@@ -82,6 +85,29 @@ export class WorkController {
     return this.workService.skipActivity(body.activityScheduleId);
   }
 
+  @Get('calendar')
+  @CustomerBillingAccess()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get saved schedules for the authenticated customer' })
+  async getCustomerCalendar(
+    @CurrentUser() user: any,
+    @Query('customerId') requestedCustomerId?: string,
+    @Query('date') date?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    // Customer headers/query parameters never select another customer's records.
+    const isAdmin = isUserAdmin(user);
+    if (isAdmin && (!requestedCustomerId || !Number.isSafeInteger(Number(requestedCustomerId)) || Number(requestedCustomerId) < 1)) {
+      throw new BadRequestException('A valid customer ID is required');
+    }
+    const customer = await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined);
+    const period = parseCalendarMonthYear(month, year);
+    return this.workService.getCalendar(customer.id, { date, dateFrom, dateTo, ...period });
+  }
+
   @Get('employee/calendar')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -119,7 +145,7 @@ export class WorkController {
       );
       throw new NotFoundException('No employee profile is linked to this account');
     }
-    const canViewCalendar = ['SUPER_ADMIN', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(String(user?.accountType || user?.role || '').toUpperCase());
+    const canViewCalendar = isUserAdmin(user);
     const period = parseCalendarMonthYear(month, year);
     this.logger.log(
       `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
@@ -151,7 +177,7 @@ export class WorkController {
       month: period.month,
       year: period.year,
       status,
-      
+      customerId: customerId ? Number(customerId) : undefined,
       employeeId: targetQueryEmpId,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
@@ -180,7 +206,7 @@ export class WorkController {
     if (!authEmpId) {
       return { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0, today: 0, overdue: 0 };
     }
-    const canViewCalendar = ['SUPER_ADMIN', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(String(user?.accountType || user?.role || '').toUpperCase());
+    const canViewCalendar = isUserAdmin(user);
     const period = parseCalendarMonthYear(month, year);
     return this.workService.getProductionMetrics(authEmpId, {
       
