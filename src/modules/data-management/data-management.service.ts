@@ -1239,10 +1239,108 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   /**
    * GET /api/v1/admin/data-management/customers/summary/all
-   * Returns aggregated record counts across all eligible client customers for Reset All preview
+   * Returns aggregate counts without exposing customer profile information.
    */
-  async getCustomersSummaryAll() : Promise<never> {
-throw new GoneException('Customer subscriptions and Lead functionality have been removed');
+  async getCustomersSummaryAll() {
+    const customers = await this.prisma.customer.findMany({
+      where: { deletedAt: null },
+      select: { id: true, crmCompanyId: true, userId: true },
+    });
+    const customerIds = customers.map(({ id }) => id);
+    const companyIds = [...new Set(
+      customers
+        .map(({ crmCompanyId }) => crmCompanyId)
+        .filter((id): id is number => id !== null),
+    )];
+    const customerUserIds = [...new Set(
+      customers
+        .map(({ userId }) => userId)
+        .filter((id): id is number => id !== null),
+    )];
+
+    const contacts = companyIds.length
+      ? await this.prisma.contact.findMany({
+          where: { companyId: { in: companyIds } },
+          select: { id: true },
+        })
+      : [];
+    const contactIds = contacts.map(({ id }) => id);
+    const dealScope: Prisma.DealWhereInput[] = [];
+    if (companyIds.length) dealScope.push({ companyId: { in: companyIds } });
+    if (contactIds.length) dealScope.push({ contactId: { in: contactIds } });
+    const deals = dealScope.length
+      ? await this.prisma.deal.findMany({
+          where: { OR: dealScope },
+          select: { id: true },
+        })
+      : [];
+    const dealIds = deals.map(({ id }) => id);
+
+    const visitScope: Prisma.VisitWhereInput[] = [];
+    if (companyIds.length) visitScope.push({ companyId: { in: companyIds } });
+    if (contactIds.length) visitScope.push({ contactId: { in: contactIds } });
+    if (dealIds.length) visitScope.push({ dealId: { in: dealIds } });
+    const quotationScope: Prisma.QuotationWhereInput[] = [];
+    if (contactIds.length) quotationScope.push({ contactId: { in: contactIds } });
+    if (dealIds.length) quotationScope.push({ dealId: { in: dealIds } });
+    const taskScope: Prisma.TaskWhereInput[] = [];
+    if (customerUserIds.length) {
+      taskScope.push({ createdById: { in: customerUserIds } });
+      taskScope.push({ assignedToId: { in: customerUserIds } });
+    }
+
+    const [works, tasks, visits, invoices, subscriptions, quotations, tickets] =
+      await Promise.all([
+        companyIds.length
+          ? this.prisma.work.count({ where: { companyId: { in: companyIds } } })
+          : 0,
+        taskScope.length
+          ? this.prisma.task.count({ where: { OR: taskScope } })
+          : 0,
+        visitScope.length
+          ? this.prisma.visit.count({ where: { OR: visitScope } })
+          : 0,
+        contactIds.length
+          ? this.prisma.invoice.count({ where: { contactId: { in: contactIds } } })
+          : 0,
+        customerIds.length
+          ? this.prisma.customerSubscription.count({
+              where: { customerId: { in: customerIds } },
+            })
+          : 0,
+        quotationScope.length
+          ? this.prisma.quotation.count({ where: { OR: quotationScope } })
+          : 0,
+        customerUserIds.length
+          ? this.prisma.supportTicket.count({
+              where: { createdById: { in: customerUserIds } },
+            })
+          : 0,
+      ]);
+
+    const breakdown = {
+      works,
+      tasks,
+      // MonthlySchedule has no customer/company relation in the current schema.
+      monthlySchedules: null,
+      visits,
+      invoices,
+      subscriptions,
+      contacts: contacts.length,
+      deals: deals.length,
+      quotations,
+      tickets,
+    };
+    const totalRelatedRecords = Object.values(breakdown).reduce(
+      (total, count) => total + (typeof count === 'number' ? count : 0),
+      0,
+    );
+
+    return {
+      totalCustomers: customers.length,
+      totalRelatedRecords,
+      breakdown,
+    };
   }
 
   /**

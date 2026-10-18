@@ -58,6 +58,13 @@ export class DataManagementController {
     return this.customers.deleteAllForSuperAdmin(actor, dto.confirmation);
   }
 
+  /** GET /api/v1/admin/data-management/customers/summary/all */
+  @Get('customers/summary/all')
+  @ApiOperation({ summary: 'Get aggregate counts for active customer accounts and directly linked records' })
+  async getCustomersSummaryAll() {
+    return this.dataManagementService.getCustomersSummaryAll();
+  }
+
   /**
    * GET /api/v1/admin/data-management/summary
    * Real database counts of all transactional & master records
