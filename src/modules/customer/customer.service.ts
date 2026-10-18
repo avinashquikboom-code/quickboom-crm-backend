@@ -148,6 +148,11 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
           ((s.activationDate && s.activationDate > now) || s.startDate > now) &&
           s.checkout?.status === "PAID",
       );
+      // A purchase survives expiry/cancellation; registration and pending checkout
+      // timestamps are not purchases. createdAt is saved at captured-payment confirmation.
+      const latestPurchase = subscriptions
+        .filter(subscription => subscription.checkout?.status === "PAID")
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
       const currentSub = active || pendingActivation;
       const subStatus = active
         ? "ACTIVE"
@@ -180,7 +185,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         subscriptionStartDate: currentSub?.startDate,
         subscriptionEndDate: currentSub?.endDate,
         activationDate: currentSub?.activationDate || currentSub?.startDate,
-        purchaseDate: currentSub?.createdAt,
+        purchaseDate: latestPurchase?.createdAt ?? null,
         subscriptions,
       };
     });
