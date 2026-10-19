@@ -2704,7 +2704,15 @@ return null; // Team must now be selected explicitly on each work item.
     // Intersect customer and active-record scope with assignment predicates; never replace them.
     where.AND = [
       ...(where.AND || []),
-      { customer: { deletedAt: null } },
+      // Match the customer calendar's legacy company link without requiring
+      // a direct customer FK on those same records. Assignment predicates above
+      // still determine which employee can see the work.
+      { OR: [
+        { customer: { deletedAt: null } },
+        { customerId: null, company: {
+          deletedAt: null, billingCustomer: { deletedAt: null },
+        } },
+      ] },
       { OR: [
         { subscriptionId: null },
         { subscription: { OR: [
@@ -2728,12 +2736,13 @@ return null; // Team must now be selected explicitly on each work item.
           })
         : null;
       if (typeof this.prisma.customer?.findFirst === 'function' && !customer) throw new NotFoundException('Customer not found');
-      where.customerId = query.customerId;
       if (customer?.crmCompanyId) {
         where.AND = [
           ...(where.AND || []),
           { OR: [{ customerId: query.customerId }, { customerId: null, companyId: customer.crmCompanyId }] },
         ];
+      } else {
+        where.customerId = query.customerId;
       }
     }
 
