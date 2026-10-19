@@ -369,6 +369,48 @@ export class TeamService {
     return this.formatTeam(updated);
   }
 
+  // Inspect persisted foreign keys as well as Prisma relations: legacy tables can
+  // outlive their Prisma models. Never infer that an unknown reference is safe.
+  private async additionalTeamDependencies(db: Prisma.TransactionClient, teamId: number) {
+    const columns = await db.$queryRaw<Array<{ tableName: string; columnName: string }>>`
+      SELECT DISTINCT source.relname AS "tableName", column_info.attname AS "columnName"
+      FROM pg_constraint constraint_info
+      JOIN pg_class source ON source.oid = constraint_info.conrelid
+      JOIN pg_namespace namespace ON namespace.oid = source.relnamespace
+      JOIN LATERAL unnest(constraint_info.conkey, constraint_info.confkey)
+        AS keys(source_key, target_key) ON true
+      JOIN pg_attribute column_info ON column_info.attrelid = source.oid
+        AND column_info.attnum = keys.source_key
+      JOIN pg_attribute target_column ON target_column.attrelid = constraint_info.confrelid
+        AND target_column.attnum = keys.target_key
+      WHERE constraint_info.contype = 'f'
+        AND constraint_info.confrelid = '"Team"'::regclass
+        AND namespace.nspname = current_schema() AND target_column.attname = 'id'
+      UNION
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'customers'
+        AND column_name = 'assignedTeamId'
+    `;
+    const managed = new Set(['TeamMember.teamId', 'Work.teamId', 'customer_accounts.assignedTeamId', 'commissions.teamId']);
+    const quote = (identifier: string) => '"' + identifier.replace(/"/g, '""') + '"';
+    return Promise.all(columns.filter(column => !managed.has(`${column.tableName}.${column.columnName}`)).map(async column => {
+      const rows = await db.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(*) AS count FROM ${Prisma.raw(quote(column.tableName))}
+        WHERE ${Prisma.raw(quote(column.columnName))} = ${teamId}
+      `);
+      const legacyCustomer = column.tableName === 'customers' && column.columnName === 'assignedTeamId';
+      return {
+        relation: `${column.tableName}.${column.columnName}`,
+        name: legacyCustomer ? 'Legacy Customers (including inactive records)' : `${column.tableName} (${column.columnName})`,
+        count: Number(rows[0].count),
+        blocking: !legacyCustomer && Number(rows[0].count) > 0,
+        action: legacyCustomer
+          ? 'Reassign or clear only the legacy customer team link; customer records are preserved.'
+          : 'Preserve these records. Resolve this relationship explicitly before permanent deletion, or deactivate the team.',
+      };
+    }));
+  }
+
   async getDependencies(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
     if (!Number.isSafeInteger(numId) || numId <= 0) {
@@ -406,6 +448,8 @@ export class TeamService {
         : 0,
     ]);
 
+    const additionalRecords = await this.additionalTeamDependencies(this.prisma, numId);
+    const unresolvedDependencies = additionalRecords.some(record => record.blocking);
     const relatedRecords = [
       {
         relation: 'TeamMember',
@@ -425,12 +469,16 @@ export class TeamService {
         relation: 'Work',
         name: 'Work Deliverables & Tasks',
         count: workCount,
-        blocking: false,
+        blocking: workCount > 0,
         action: workCount > 0 ? 'Reassigned to target team or preserved unassigned.' : 'None',
       },
     ];
 
-    const hasDependencies = memberCount + workCount + customerCount > 0;
+    relatedRecords.push(...additionalRecords, {
+      relation: 'Commission', name: 'Historical Commissions', count: commissionCount,
+      blocking: false, action: 'Financial records are preserved; only their team link is reassigned or cleared.',
+    });
+    const hasDependencies = memberCount + workCount + customerCount + commissionCount > 0 || additionalRecords.some(record => record.count > 0);
 
     return {
       teamId: numId,
@@ -451,12 +499,14 @@ export class TeamService {
       relatedRecords,
       hasDependencies,
       canDelete: !hasDependencies,
-      canDeleteAfterUnassign: true,
+      canDeleteAfterUnassign: !unresolvedDependencies,
+      canDeleteAfterReassign: !unresolvedDependencies,
       dependencies: [
         { category: 'members', count: memberCount, action: 'Reassign membership or remove membership; employee accounts are preserved.' },
         { category: 'works', count: workCount, action: 'Reassign or clear the team link; schedules and assignees are preserved.' },
         { category: 'customers', count: customerCount, action: 'Reassign or clear the customer team assignment.' },
         { category: 'commissions', count: commissionCount, action: 'Retained as historical financial records; does not block deletion.' },
+        ...additionalRecords.map(record => ({ category: record.relation, count: record.count, action: record.action })),
       ],
     };
   }
@@ -515,13 +565,12 @@ export class TeamService {
 
       try {
         await this.prisma.$transaction(async (tx) => {
-          try {
-            const lockIds = [numId, ...(numReassignId ? [numReassignId] : [])].sort((a, b) => a - b);
-            if (typeof (tx as any).$queryRaw === 'function') {
-              await tx.$queryRaw`SELECT id FROM "Team" WHERE id IN (${Prisma.join(lockIds)}) ORDER BY id FOR UPDATE`;
-            }
-          } catch {
-            // Safe fallback if lock is unsupported in test/mock environment
+          const lockIds = [numId, ...(numReassignId ? [numReassignId] : [])].sort((a, b) => a - b);
+          await tx.$queryRaw`SELECT id FROM "Team" WHERE id IN (${Prisma.join(lockIds)}) ORDER BY id FOR UPDATE`;
+          const additionalRecords = await this.additionalTeamDependencies(tx, numId);
+          const blockers = additionalRecords.filter(record => record.blocking);
+          if (blockers.length) {
+            throw new BadRequestException(`Cannot permanently delete team "${team.name}": ${blockers.map(record => `${record.count} record(s) in ${record.relation}`).join(', ')} still reference it. Preserve these records and resolve their team relationship first, or deactivate the team.`);
           }
           if (!await tx.team.findFirst({ where: { id: numId } })) throw new NotFoundException('Team no longer exists');
           if (numReassignId && !await tx.team.findFirst({ where: { id: numReassignId, isActive: true } })) {
@@ -614,26 +663,12 @@ export class TeamService {
             }
           }
 
-          // PostgreSQL aborts a transaction after a missing-table/column error.
-          // Check metadata first rather than catching a failed UPDATE.
-          if (typeof (tx as any).$queryRaw === 'function') {
-            try {
-              const legacyColumns = await (tx as any).$queryRaw<Array<{ exists: boolean }>>`
-                SELECT EXISTS (
-                  SELECT 1 FROM information_schema.columns
-                  WHERE table_schema = current_schema()
-                    AND table_name = 'customers' AND column_name = 'assignedTeamId'
-                ) AS "exists"
-              `;
-              if (legacyColumns[0]?.exists && typeof (tx as any).$executeRaw === 'function') {
-                await (tx as any).$executeRaw`
-                  UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
-                  WHERE "assignedTeamId" = ${numId}
-                `;
-              }
-            } catch {
-              // Ignore if raw metadata query is unsupported
-            }
+          // The same legacy relation is counted in the dependency summary.
+          if (additionalRecords.some(record => record.relation === 'customers.assignedTeamId')) {
+            await tx.$executeRaw`
+              UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
+              WHERE "assignedTeamId" = ${numId}
+            `;
           }
 
           // Always remove memberships of the team being deleted
@@ -651,8 +686,12 @@ export class TeamService {
             typeof this.prisma.work?.count === 'function' ? this.prisma.work.count({ where: { teamId: numId } }) : 0,
             typeof (this.prisma as any).customer?.count === 'function' ? (this.prisma as any).customer.count({ where: { assignedTeamId: numId } }) : 0,
           ]);
+          const additionalRecords = await this.additionalTeamDependencies(this.prisma, numId);
+          const extraDetails = additionalRecords.filter(record => record.count > 0)
+            .map(record => `${record.count} record(s) in ${record.relation}`).join(', ');
+          const constraint = typeof err?.meta?.field_name === 'string' ? err.meta.field_name : 'unknown foreign key';
           throw new BadRequestException(
-            `Cannot permanently delete team "${team.name}" because related records still reference it (${remMembers} member(s), ${remWorks} work schedule(s), ${remCustomers} customer(s)). Please reassign or remove them first, or deactivate the team instead.`,
+            `Cannot permanently delete team "${team.name}" because related records still reference it (${remMembers} member(s), ${remWorks} work schedule(s), ${remCustomers} customer(s)${extraDetails ? `, ${extraDetails}` : ''}; constraint: ${constraint}). Please reassign or remove them first, or deactivate the team instead.`,
           );
         }
         throw err;
