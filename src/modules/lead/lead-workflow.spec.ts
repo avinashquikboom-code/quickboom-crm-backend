@@ -32,6 +32,13 @@ describe('independent Lead creation and Data Capture conversion', () => {
     expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves the Google Places source on imported businesses', async () => {
+    const { service, getCapture } = setup();
+    getCapture().source = 'GOOGLE_PLACES';
+    const result = await service.importCapture(11, admin, platform);
+    expect(result.lead.source).toBe('Google Places');
+  });
+
   it('maps Google Places address components without guessing from the formatted address', async () => {
     const { service, getCapture } = setup();
     getCapture().rawData = { addressComponents: [

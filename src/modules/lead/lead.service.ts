@@ -559,7 +559,7 @@ export class LeadService {
           googlePlaceId,
           latitude: capture.latitude,
           longitude: capture.longitude,
-          source: 'DATA_CAPTURE',
+          source: ['GOOGLE_PLACES', 'GOOGLE_MAPS', 'Google Places'].includes(capture.source || '') ? 'Google Places' : 'DATA_CAPTURE',
           createdFrom,
           status: CrmLeadStatus.NEW,
           notes: capture.notes,

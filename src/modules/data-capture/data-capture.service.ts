@@ -36,6 +36,7 @@ export class DataCaptureService implements OnModuleInit {
     'places.id',
     'places.displayName',
     'places.formattedAddress',
+    'places.addressComponents',
     'places.location',
     'places.primaryType',
     'places.primaryTypeDisplayName',
@@ -666,30 +667,11 @@ try {
             `Google Places search error: ${err.response?.data?.error?.message || err.message}`,
           );
         } else {
-          allPlaces = this.generateSandboxPlaces(
-            keyword,
-            location,
-            maxAllowed,
-            String(effectiveCustomerId),
-            String(effectiveUserId),
-            jobId,
-          );
-          googleApiRequests = 1;
+          throw new HttpException('Google Places search failed. Please try again later.', HttpStatus.BAD_GATEWAY);
         }
       }
     } else {
-      this.logger.log(
-        `[Google Places API] No production API key configured. Generating realistic verified sandbox places for "${textQuery}"`,
-      );
-      allPlaces = this.generateSandboxPlaces(
-        keyword,
-        location,
-        maxAllowed,
-        String(effectiveCustomerId),
-        String(effectiveUserId),
-        jobId,
-      );
-      googleApiRequests = 1;
+      throw new HttpException('Google Places is not configured or enabled. Configure Google Maps in Integration Settings.', HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     // 5. Duplicate Detection Before Insertion
