@@ -20,6 +20,13 @@ import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { WorkPermissionService, normalizeActivityType } from './work-permission.service';
 import { NotificationService } from '../notification/notification.service';
 
+/** What isSalesOrBpoEmployee() needs to read from an Employee row. */
+const SALES_CHECK_SELECT = {
+  designation: { select: { name: true } },
+  department: { select: { name: true } },
+  user: { select: { userRoles: { select: { role: { select: { name: true } } } } } },
+} as const;
+
 @Injectable()
 export class WorkService {
   private readonly logger = new Logger(WorkService.name);
@@ -400,14 +407,22 @@ export class WorkService {
         if (activeSub) resolvedSubscriptionId = activeSub.id;
       }
 
-      // Check if customer has an assigned employee to inherit
+      // Check if customer has an assigned employee to inherit. A sales / BPO owner (the person who
+      // converted the lead) does not do the production work, so it is not inherited.
       const customerRecord = await tx.customer.findUnique({
         where: { id: numCustomerId },
-        select: { id: true, assignedEmployeeId: true },
+        select: {
+          id: true,
+          assignedEmployeeId: true,
+          assignedEmployeeRel: { select: SALES_CHECK_SELECT },
+        },
       });
+      const inheritedOwnerId = this.isSalesOrBpoEmployee(customerRecord?.assignedEmployeeRel)
+        ? null
+        : (customerRecord?.assignedEmployeeId || null);
       const resolvedAssignedToId = dto.assignedToId
         ? Number(dto.assignedToId)
-        : (customerRecord?.assignedEmployeeId || null);
+        : inheritedOwnerId;
 
       if (resolvedAssignedToId) {
         const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(
@@ -1475,8 +1490,27 @@ status: ${item.status}`);
   }
 
   /**
+   * True for sales / BPO / call-centre staff. They own the lead and the customer relationship,
+   * but they do not do the production work, so activities must not be assigned to them.
+   * Expects the employee loaded with SALES_CHECK_SELECT; anything else (null, no names) is "not sales".
+   */
+  private isSalesOrBpoEmployee(employee: any): boolean {
+    if (!employee) return false;
+    const roles = Array.isArray(employee.user?.userRoles)
+      ? employee.user.userRoles.map((r: any) => r?.role?.name || '').join(' ')
+      : '';
+    return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
+      `${employee.department?.name || ''} ${employee.designation?.name || ''} ${roles}`,
+    );
+  }
+
+  /**
    * Synchronize and assign all unassigned or team-less activities for a customer to the customer's assigned team.
    * Matches activities to team members based on their designation/specialization.
+   *
+   * Activities that were handed to the lead's sales / BPO owner (not on the team) and have not been started
+   * are moved to a team member, together with the owner's still-pending steps. Started and finished work,
+   * and people assigned by hand, are left alone.
    */
   async syncCustomerTeamWorkAssignments(
     customerId: number | string,
@@ -1516,7 +1550,13 @@ status: ${item.status}`);
       return 0;
     }
 
-    // Find all works for this customer that are not cancelled and need assignment or team update
+    // People who may already hold this team's work: the members and the leader
+    const teamPeopleIds = team.members
+      .map((m: any) => m.employeeId)
+      .concat(team.leaderId ? [team.leaderId] : []);
+
+    // Find all works for this customer that are not cancelled and need assignment or team update,
+    // or that are held by someone outside the team (checked below: only sales / BPO holders are moved)
     const unassignedWorks = await prisma.work.findMany({
       where: {
         customerId: numCustomerId,
@@ -1525,8 +1565,10 @@ status: ${item.status}`);
           { assignedToId: null },
           { teamId: null },
           { teamId: { not: numTeamId } },
+          { assignedToId: { notIn: teamPeopleIds } },
         ],
       },
+      include: { assignedTo: { select: { id: true, ...SALES_CHECK_SELECT } } },
       orderBy: { id: 'asc' },
     });
 
@@ -1537,17 +1579,35 @@ status: ${item.status}`);
     let updatedCount = 0;
     for (let i = 0; i < unassignedWorks.length; i++) {
       const work = unassignedWorks[i];
-      const assignedEmpId =
-        work.assignedToId ||
-        this.resolveTeamMemberForActivity(work, team.members, team.leaderId, i);
+      const { assignedTo: previousAssignee, ...workRow } = work as any;
+
+      const heldBySalesOwner =
+        !!workRow.assignedToId &&
+        !teamPeopleIds.includes(workRow.assignedToId) &&
+        this.isSalesOrBpoEmployee(previousAssignee) &&
+        (workRow.status === WorkStatus.SCHEDULED || workRow.status === WorkStatus.ASSIGNED);
+
+      const teamPick = this.resolveTeamMemberForActivity(workRow, team.members, team.leaderId, i);
+      const assignedEmpId = heldBySalesOwner
+        ? teamPick || workRow.assignedToId
+        : workRow.assignedToId || teamPick;
 
       const newStatus =
-        work.status === WorkStatus.SCHEDULED && assignedEmpId
+        workRow.status === WorkStatus.SCHEDULED && assignedEmpId
           ? WorkStatus.ASSIGNED
-          : work.status;
+          : workRow.status;
+
+      // Nothing to change (e.g. someone outside the team who was assigned by hand)
+      if (
+        workRow.teamId === numTeamId &&
+        workRow.assignedToId === assignedEmpId &&
+        workRow.status === newStatus
+      ) {
+        continue;
+      }
 
       await prisma.work.update({
-        where: { id: work.id },
+        where: { id: workRow.id },
         data: {
           teamId: numTeamId,
           assignedToId: assignedEmpId,
@@ -1558,9 +1618,17 @@ status: ${item.status}`);
       if (assignedEmpId) {
         // Also ensure tasks are associated with the employee
         await prisma.workTask.updateMany({
-          where: { workId: work.id, assignedToId: null },
+          where: { workId: workRow.id, assignedToId: null },
           data: { assignedToId: assignedEmpId },
         });
+
+        if (heldBySalesOwner && assignedEmpId !== workRow.assignedToId) {
+          // Steps still waiting on the sales owner follow the work; steps already moved on stay as they are
+          await prisma.workTask.updateMany({
+            where: { workId: workRow.id, assignedToId: workRow.assignedToId, status: TaskStatus.PENDING },
+            data: { assignedToId: assignedEmpId },
+          });
+        }
       }
 
       updatedCount++;
@@ -2326,7 +2394,7 @@ assignedEmployee: ${item.assignedEmployee}`);
     if (subscriptionId && !isNaN(Number(subscriptionId)) && Number(subscriptionId) > 0) {
       targetSub = await this.prisma.customerSubscription.findUnique({
         where: { id: Number(subscriptionId) },
-        include: { plan: true, customer: true },
+        include: { plan: true, customer: { include: { assignedEmployeeRel: { select: SALES_CHECK_SELECT } } } },
       });
     }
 
@@ -2334,7 +2402,7 @@ assignedEmployee: ${item.assignedEmployee}`);
       targetSub = await this.prisma.customerSubscription.findFirst({
         where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
         orderBy: { createdAt: 'desc' },
-        include: { plan: true, customer: true },
+        include: { plan: true, customer: { include: { assignedEmployeeRel: { select: SALES_CHECK_SELECT } } } },
       });
     }
 
@@ -2481,6 +2549,11 @@ assignedEmployee: ${item.assignedEmployee}`);
       const existingTitles = new Set(existingWorks.map((w) => w.title.toLowerCase().trim()));
       const createdItems: any[] = [];
 
+      // The customer's own employee is only used as the assignee when they are not sales / BPO staff
+      const ownerEmployeeId = this.isSalesOrBpoEmployee(targetSub.customer?.assignedEmployeeRel)
+        ? null
+        : (targetSub.customer?.assignedEmployeeId || null);
+
       // Resolve team info if customer is assigned to a team
       const assignedTeamId = targetSub.customer?.assignedTeamId || null;
       let teamMembers: any[] = [];
@@ -2518,8 +2591,11 @@ assignedEmployee: ${item.assignedEmployee}`);
 
         const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
 
+        // A lead-converted customer's owner is the sales / BPO employee who won the lead. That person
+        // does not produce the content, so the activity goes to the production team (or stays
+        // unassigned until a team is set, then syncCustomerTeamWorkAssignments hands it out).
         const assignedEmpId =
-          targetSub.customer?.assignedEmployeeId ||
+          ownerEmployeeId ||
           (assignedTeamId
             ? this.resolveTeamMemberForActivity(act, teamMembers, teamLeaderId, totalCreated)
             : null);
