@@ -312,15 +312,31 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       where: { id: customerId, deletedAt: null, lead: { deletedAt: null },
         assignedTeam: { isActive: true } },
     });
-    if (!customer) return;
+    if (!customer) {
+      const current = await tx.customer.findUnique({
+        where: { id: customerId },
+        select: { deletedAt: true, assignedTeamId: true, originLeadId: true },
+      });
+      this.logger.warn(
+        `[CAL_TRACE] ensurePurchasedSchedules skipped customer=${customerId} reason=no_active_team_or_deleted ` +
+        `assignedTeamId=${current?.assignedTeamId ?? null} deleted=${Boolean(current?.deletedAt)} originLeadId=${current?.originLeadId ?? null}`,
+      );
+      return;
+    }
     const subscriptions = await tx.customerSubscription.findMany({
       where: { customerId, status: { in: ["ACTIVE", "PENDING_ACTIVATION"] },
         endDate: { gt: new Date() }, checkout: { status: "PAID" } },
       include: { plan: true },
     });
+    this.logger.log(
+      `[CAL_TRACE] ensurePurchasedSchedules customer=${customerId} team=${customer.assignedTeamId} eligibleSubscriptions=${subscriptions.length}`,
+    );
     for (const sub of subscriptions) {
       // Generation is atomic. Once present, retain its original plan dates and history.
-      if (await tx.work.count({ where: { subscriptionId: sub.id } })) continue;
+      if (await tx.work.count({ where: { subscriptionId: sub.id } })) {
+        this.logger.log(`[CAL_TRACE] work already generated customer=${customerId} subscription=${sub.id}`);
+        continue;
+      }
       const activities = generateAllPlanWorkflowActivities(
         sub.activationDate ?? sub.startDate, sub.endDate,
         extractDeliverableQuotas(sub.plan.features),
@@ -337,6 +353,9 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
           // Team visibility uses Customer.assignedTeamId; no individual is invented.
         })),
       });
+      this.logger.log(
+        `[CAL_TRACE] work generated customer=${customerId} subscription=${sub.id} plan=${sub.planId} team=${customer.assignedTeamId} activities=${activities.length}`,
+      );
     }
   }
 

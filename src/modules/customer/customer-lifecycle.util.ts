@@ -1,7 +1,9 @@
 import { Prisma } from "@prisma/client";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
+
+const logger = new Logger("CustomerLifecycle");
 
 export async function convertWonLead(
   tx: Prisma.TransactionClient,
@@ -36,6 +38,9 @@ export async function convertWonLead(
   // receive a login until a registered email or mobile is available.
   const normalizedEmail = lead.email?.trim().toLowerCase() || null;
   const rawPhone = lead.phone?.trim() || null;
+  logger.log(
+    `[CAL_TRACE] convertWonLead lead=${id} customer=${customer.id} assignedTeamId=${customer.assignedTeamId ?? null} hasUser=${Boolean(customer.userId)}`,
+  );
   if (customer.userId || (!normalizedEmail && !rawPhone)) return;
 
   const digits = (rawPhone || "").replace(/\D/g, "");

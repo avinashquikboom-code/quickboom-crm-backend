@@ -3591,7 +3591,7 @@ afterFilter: ${result.length}`);
     );
 
     this.logger.log(
-      `[EMPLOYEE_CALENDAR_DEBUG] ` +
+      `[CAL_TRACE] [EMPLOYEE_CALENDAR_DEBUG] ` +
       `authUserId=${empRecord?.userId ?? 'none'} ` +
       `resolvedEmployeeId=${numEmployeeId} ` +
       `employeeCode=${empRecord?.employeeCode ?? 'none'} ` +
