@@ -24,54 +24,6 @@ import { WorkAssignmentService, normalizeActivityType } from './work-assignment.
 import { workMatchesDesignation, workTypesForDesignation } from './calendar-query.util';
 import { NotificationService } from '../notification/notification.service';
 
-type WorkEmployee = {
-  id: number;
-  firstName?: string | null;
-  lastName?: string | null;
-};
-
-const isPlatformAdminEmployee = (employee?: any): boolean => {
-  if (!employee) return false;
-  const fullName = `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim().toLowerCase();
-  if (fullName === 'super admin' || fullName === 'admin') return true;
-  return false;
-};
-
-const getEmployeeName = (employee?: WorkEmployee | null): string | null => {
-  if (!employee) return null;
-  return `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() || null;
-};
-
-const getWorkEmployeeFields = (work: {
-  workType: string;
-  assignedTo?: WorkEmployee | null;
-  editor?: WorkEmployee | null;
-  assignedToId?: number | null;
-  editorId?: number | null;
-}) => {
-  const isEditing = work.workType === 'VIDEO_EDITING' || work.workType === 'EDITING';
-  const hasLoadedRelations = Boolean(work.assignedTo || work.editor);
-  const rawAssignedId = hasLoadedRelations && isEditing
-    ? (work.editorId ?? work.assignedToId)
-    : work.assignedToId;
-  const responsibleEmployee = isEditing
-    ? work.editor ?? work.assignedTo
-    : work.assignedTo;
-  const responsibleName = getEmployeeName(responsibleEmployee);
-  const editorName = getEmployeeName(work.editor);
-
-  const finalAssignedToId = responsibleEmployee?.id ?? (rawAssignedId != null ? Number(rawAssignedId) : null);
-  const finalEditorId = work.editor?.id ?? (work.editorId != null ? Number(work.editorId) : null);
-
-  return {
-    assignedToId: finalAssignedToId,
-    assignedEmployee: responsibleName,
-    assignedToName: responsibleName,
-    editorId: finalEditorId,
-    editorName: editorName,
-  };
-};
-
 @Injectable()
 export class WorkService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WorkService.name);
@@ -579,40 +531,54 @@ return undefined;
             },
           },
         });
-        const teamLabel = `${team?.name || ''} ${team?.description || ''}`.toUpperCase();
-        if (team && !teamLabel.includes('BPO') && (team.members || []).length > 0) {
-          const eligibleMemberIds = await this.eligibleProductionMemberIds(
-            { workType: dto.workType, title: dto.title, description: dto.description },
-            team.members,
-            undefined,
-          );
-          if (eligibleMemberIds.length > 0) {
-            resolvedAssignedToId = eligibleMemberIds[0];
-          }
+      }
 
-          // If this is a video/reel activity, also match an eligible editor
-          const isReelOrVideo =
-            dto.workType === WorkType.REEL ||
-            dto.workType === WorkType.REELS_SHOOT ||
-            dto.workType === WorkType.SHOOT ||
-            dto.workType === WorkType.EDITING ||
-            (dto.title && /reel|shoot|video|edit/i.test(dto.title));
-          if (isReelOrVideo && !resolvedEditorId) {
-            const editorEligibleIds = await this.eligibleProductionMemberIds(
-              { workType: WorkType.EDITING, title: 'Video Editing' },
-              team.members,
-              undefined,
-            );
-            if (editorEligibleIds.length > 0) {
-              resolvedEditorId = editorEligibleIds[0];
-            }
-          }
+      // Check remaining quota: remaining = totalQty - (usedQty + scheduledQty)
+      const remaining = entitlement.totalQty - (entitlement.usedQty + entitlement.scheduledQty);
+      if (remaining <= 0) {
+        throw new BadRequestException(
+          `No ${serviceName} quota remaining in your current plan. (${entitlement.totalQty} total, ${entitlement.usedQty} used, ${entitlement.scheduledQty} scheduled).`,
+        );
+      }
+
+      // Reserve 1 quota unit (SCHEDULED -> RESERVED)
+      await tx.planEntitlement.update({
+        where: { id: entitlement.id },
+        data: { scheduledQty: { increment: 1 } },
+      });
+
+      // Resolve Purchase (Subscription)
+      let resolvedSubscriptionId: number | null = null;
+      if (dto.subscriptionId) {
+        const sub = await tx.customerSubscription.findUnique({
+          where: { id: Number(dto.subscriptionId) },
+        });
+        if (sub) resolvedSubscriptionId = sub.id;
+      } else if (dto.purchaseId) {
+        const parsed = Number(dto.purchaseId.replace(/\D/g, ''));
+        if (!isNaN(parsed) && parsed > 0) {
+          const sub = await tx.customerSubscription.findUnique({
+            where: { id: parsed },
+          });
+          if (sub) resolvedSubscriptionId = sub.id;
         }
       }
-
-      if (dto.workType === WorkType.EDITING && resolvedEditorId) {
-        resolvedAssignedToId = resolvedEditorId;
+      if (!resolvedSubscriptionId) {
+        const activeSub = await tx.customerSubscription.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (activeSub) resolvedSubscriptionId = activeSub.id;
       }
+
+      // Check if customer has an assigned employee to inherit
+      const customerRecord = await tx.customer.findUnique({
+        where: { id: numCustomerId },
+        select: { id: true, assignedEmployeeId: true },
+      });
+      const resolvedAssignedToId = dto.assignedToId
+        ? Number(dto.assignedToId)
+        : (customerRecord?.assignedEmployeeId || null);
 
       if (resolvedAssignedToId) {
         const perm = await this.workPermissionService.getEmployeeActivityTypes(
@@ -1937,321 +1903,10 @@ status: ${item.status}`);
     return leaderId || null;
   }
 
-  private isPlatformAdmin(person?: { user?: { accountType?: string } | null } | null): boolean {
-    return ['SUPER_ADMIN', 'ADMIN'].includes(person?.user?.accountType || '');
-  }
-
-  private isSalesOrBpoEmployee(employee: any): boolean {
-    const roles = Array.isArray(employee?.user?.userRoles)
-      ? employee.user.userRoles.map((r: any) => r?.role?.name || r?.role || r?.name || '').join(' ')
-      : '';
-    const userRole = employee?.user?.role || employee?.user?.accountType || '';
-    return /BPO|SALES|TELECALL|TELESELL|CALL CENTER|CALL CENTRE/i.test(
-      `${employee?.department?.name || ''} ${employee?.designation?.name || ''} ${roles} ${userRole}`,
-    );
-  }
-
-  private async eligibleProductionMemberIds(
-    act: { workType?: string; title?: string; description?: string; serviceName?: string },
-    members: Array<{
-      employeeId: number;
-      employee?: {
-        id: number;
-        customerId?: number | null;
-        status?: string | null;
-        designation?: { name?: string | null } | null;
-        department?: { name?: string | null } | null;
-        user?: { accountType?: string } | null;
-      } | null;
-    }>,
-    teamCustomerId?: number | null,
-  ): Promise<number[]> {
-    const normalizedType = normalizeActivityType(act);
-    const activeMembers = (members || []).filter((member) => {
-      const employeeId = Number(member.employeeId || member.employee?.id);
-      if (!Number.isInteger(employeeId) || employeeId <= 0) return false;
-      const status = String(member.employee?.status || 'ACTIVE').toUpperCase();
-      if (
-        status === 'INACTIVE' ||
-        this.isSalesOrBpoEmployee(member.employee) ||
-        this.isPlatformAdmin(member.employee)
-      ) {
-        return false;
-      }
-      if (
-        teamCustomerId &&
-        (member.employee as any)?.customerId &&
-        Number((member.employee as any).customerId) !== Number(teamCustomerId)
-      ) {
-        return false;
-      }
-      const designation = String(member.employee?.designation?.name || '').toUpperCase();
-      if (
-        designation.includes('PRODUCTION MANAGER') ||
-        designation.includes('PRODUCTION_MANAGER') ||
-        designation.includes('PROD MGR') ||
-        designation.includes('PRODUCTION LEAD')
-      ) {
-        return false;
-      }
-      return true;
-    });
-    const designationMatchIds = new Set(
-      this.membersMatchingActivity(act, activeMembers as any).map((member) =>
-        Number(member.employeeId || member.employee?.id),
-      ),
-    );
-
-    if (this.workPermissionService && typeof (this.workPermissionService as any).getEmployeeActivityTypes === 'function') {
-      for (const member of activeMembers) {
-        const empId = Number(member.employeeId || member.employee?.id);
-        if (!designationMatchIds.has(empId)) {
-          try {
-            const perm = await (this.workPermissionService as any).getEmployeeActivityTypes(empId);
-            const hasExact = perm?.allowedTypes?.has(normalizedType) ||
-              (normalizedType === 'REEL_EDIT' && (perm?.allowedTypes?.has('EDITING') || perm?.allowedTypes?.has('VIDEO_EDITING'))) ||
-              (normalizedType === 'REEL_SHOOT' && (perm?.allowedTypes?.has('SHOOT') || perm?.allowedTypes?.has('REELS_SHOOT') || perm?.allowedTypes?.has('VIDEO_SHOOT'))) ||
-              (normalizedType === 'POST_DESIGN' && (perm?.allowedTypes?.has('GRAPHIC_DESIGN') || perm?.allowedTypes?.has('DESIGN'))) ||
-              (normalizedType === 'STORY_DESIGN' && (perm?.allowedTypes?.has('GRAPHIC_DESIGN') || perm?.allowedTypes?.has('DESIGN')));
-            if (hasExact || perm?.isFullAccess) {
-              designationMatchIds.add(empId);
-            }
-          } catch {}
-        }
-      }
-    }
-
-    const eligible = activeMembers
-      .map((member) => Number(member.employeeId || member.employee?.id))
-      .filter((employeeId) => designationMatchIds.has(employeeId));
-
-    return eligible;
-  }
-
-  /**
-   * Check if a team is purely a BPO-telecalling team and not a production team.
-   */
-  private isBpoOnlyTeam(name?: string | null, description?: string | null): boolean {
-    const label = `${name || ''} ${description || ''}`.toUpperCase();
-    return label.includes('BPO') && !label.includes('PRODUCTION');
-  }
-
-  /**
-   * Active production teams for this employee, scoped to their company.
-   * Inactive employees and BPO-only teams are excluded.
-   */
-  private async activeProductionTeamIdsForEmployee(
-    employeeId: number, _tenantCustomerId?: number | null,
-    _candidateIds?: number[], _strictTenant = false,
-  ): Promise<number[]> {
-    const ids = await this.employeeTeamIds(employeeId);
-    if (ids.length === 0) return [];
-    const teams = typeof this.prisma.team?.findMany === 'function'
-      ? await this.prisma.team.findMany({
-          where: { id: { in: ids }, isActive: true },
-          select: { id: true, name: true, description: true },
-        })
-      : [];
-    if (teams.length === 0) return ids;
-    const nonBpo = teams.filter(team => !this.isBpoOnlyTeam(team.name, team.description)).map(team => team.id);
-    return nonBpo.length > 0 ? nonBpo : ids;
-  }
-
-  private async employeeTeamIds(
-    employeeId: number, _tenantCustomerId?: number | null,
-    _candidateIds?: number[], _strictTenant = false,
-  ): Promise<number[]> {
-    const employee = typeof this.prisma.employee?.findUnique === 'function'
-      ? await (this.prisma.employee as any).findUnique({
-          where: { id: employeeId },
-          select: { status: true, mobileLoginEnabled: true, customerId: true },
-        })
-      : null;
-    if (employee && (String(employee.status).toUpperCase() === 'INACTIVE' || employee.mobileLoginEnabled === false)) {
-      return [];
-    }
-    const tenantCustomerId = _tenantCustomerId ?? (employee as any)?.customerId;
-    const teamIdsFromMembers = typeof this.prisma.teamMember?.findMany === 'function'
-      ? (await (this.prisma.teamMember as any).findMany({
-          where: { employeeId, ...(this.prisma.team ? { team: { isActive: true } } : {}) },
-          select: { teamId: true, team: { select: { id: true, isActive: true, customerId: true } } },
-        }))
-        .filter((tm: any) => {
-          if (tm.team) {
-            if (tm.team.isActive === false) return false;
-            if (tenantCustomerId && tm.team.customerId && tm.team.customerId !== tenantCustomerId) return false;
-          }
-          return true;
-        })
-        .map((tm: any) => tm.teamId)
-      : [];
-    const teamIdsFromTeams = typeof this.prisma.team?.findMany === 'function'
-      ? (await this.prisma.team.findMany({
-          where: { isActive: true, OR: [
-            { leaderId: employeeId }, { members: { some: { employeeId } } },
-          ] },
-          select: { id: true },
-        })).map((team: any) => team.id)
-      : [];
-    return [...new Set([...teamIdsFromMembers, ...teamIdsFromTeams])];
-  }
-
-  /**
-   * When the employee has no TeamMember row, the teams already stored on
-   * their work still identify the production team whose customers they can view.
-   */
-  private async productionTeamIdsFromEmployeeWorks(
-    employeeId: number,
-    candidateIds?: number[],
-  ): Promise<number[]> {
-    if (typeof this.prisma.work?.findMany !== 'function') return [];
-    const viewerIds = candidateIds && candidateIds.length > 0 ? candidateIds : [employeeId];
-
-    const orConds: any[] = [
-      { assignedToId: employeeId },
-      { editorId: employeeId },
-      { tasks: { some: { assignedToId: employeeId } } },
-
-    ];
-    for (const cid of viewerIds) {
-      if (cid !== employeeId) {
-        orConds.push(
-          { assignedToId: cid },
-          { editorId: cid },
-          { tasks: { some: { assignedToId: cid } } },
-
-        );
-      }
-    }
-
-    const works = await this.prisma.work.findMany({
-      where: {
-        status: { not: WorkStatus.CANCELLED },
-        OR: orConds,
-      },
-      select: {
-        team: { select: { id: true, name: true, description: true, isActive: true } },
-
-      },
-    });
-    const ids = new Set<number>();
-    const keep = (team?: { id?: number; name?: string | null; description?: string | null; isActive?: boolean | null } | null) => {
-      if (!team?.id || team.isActive === false) return;
-      if (this.isBpoOnlyTeam(team.name, team.description)) return;
-      ids.add(team.id);
-    };
-    for (const work of works) {
-      keep(work.team);
-      keep(undefined);
-    }
-    return Array.from(ids);
-  }
-
-  private async customerIdsAssignedToTeams(teamIds: number[]): Promise<number[]> {
-    if (teamIds.length === 0) return [];
-    const customers = typeof this.prisma.customer?.findMany === 'function'
-      ? await this.prisma.customer.findMany({
-          where: {
-            assignedTeamId: { in: teamIds },
-            deletedAt: null,
-            OR: [
-              { assignedTeamId: null },
-              { assignedTeam: { isActive: true } },
-            ],
-          },
-          select: { id: true },
-        })
-      : [];
-    return customers.map((customer) => customer.id);
-  }
-
-  /**
-   * Calendar day stored on the work row. Customer and employee calendars both
-   * use this value so a task is not moved onto the date the user happens to open.
-   */
-  private scheduleDateKey(value: any): string | null {
-    if (!value) return null;
-    let parsed: Date;
-    if (value instanceof Date) {
-      parsed = value;
-    } else {
-      parsed = new Date(value);
-      if (Number.isNaN(parsed.getTime())) {
-        const raw = String(value);
-        const datePart = raw.includes('T') ? raw.split('T')[0] : raw.split(' ')[0];
-        if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
-        return null;
-      }
-    }
-    // Offset UTC to Indian Standard Time (+05:30) for consistent date matching
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istDate = new Date(parsed.getTime() + istOffsetMs);
-    return istDate.toISOString().split('T')[0];
-  }
-
-  /**
-   * Assigned Staff is the employee stored on this work who belongs to the
-   * production team. The lead owner, customer owner, and current viewer are
-   * not used when they are not a member of that team.
-   */
-  private productionTaskAssignee(w: any): { id: number | null; name: string; teamName: string | null } {
-    const team = w.team || undefined || null;
-    const teamName = team?.name || null;
-    const memberIds = new Set<number>(
-      (team?.members || [])
-        .map((member: any) => Number(member.employeeId))
-        .filter((id: number) => Number.isInteger(id) && id > 0),
-    );
-    const personName = (person?: { firstName?: string | null; lastName?: string | null } | null) =>
-      `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
-
-    const isTaskAssignee = (person?: any, requireTeam = true) => {
-      const id = Number(person?.id);
-      if (!Number.isInteger(id) || id <= 0) return false;
-      if (this.isPlatformAdmin(person) || this.isSalesOrBpoEmployee(person)) return false;
-      if (requireTeam && memberIds.size > 0 && !memberIds.has(id)) return false;
-      return true;
-    };
-
-    const candidates = [
-      w.assignedTo,
-      ...(w.tasks || []).map((task: any) => task.assignedTo),
-      w.editor,
-    ];
-    const stored = candidates.find((person) => isTaskAssignee(person, true));
-    if (stored) {
-      return { id: Number(stored.id), name: personName(stored) || 'Not assigned', teamName };
-    }
-    return { id: null, name: 'Not assigned', teamName };
-  }
-
   /**
    * Synchronize and assign all unassigned or team-less activities for a customer to the customer's assigned team.
-   * Matches production activities using each active member's configured work permissions.
+   * Matches activities to team members based on their designation/specialization.
    */
-  /** Reuse recorded production-team assignments; never guess a default team. */
-  async resolveCustomerProductionTeam(customerId: number, txClient?: any): Promise<number | null> {
-return null; // Team must now be selected explicitly on each work item.
-  }
-
-  private async fillMissingWorkTaskAssignments(work: any, data: any, team: any, prisma: any): Promise<void> {
-    for (const task of work.tasks || []) {
-      if (task.assignedToId != null || task.status !== TaskStatus.PENDING) continue;
-      const title = String(task.title || '').toLowerCase();
-      const type = /edit|color|grad/.test(title) ? WorkType.EDITING
-        : /upload|publish|social media/.test(title) ? WorkType.UPLOADING
-        : /content|asset.*prep/.test(title) ? WorkType.CONTENT_WRITING
-        : /shoot|camera/.test(title) ? WorkType.SHOOT : work.workType;
-      const ids = await this.eligibleProductionMemberIds({ workType: type, title: task.title }, team.members, undefined);
-      const owner = type === WorkType.EDITING ? data.editorId || work.editorId : data.assignedToId || work.assignedToId;
-      const employeeId = ids.includes(owner) ? owner : ids[0];
-      if (employeeId) await prisma.workTask.updateMany({
-        where: { id: task.id, assignedToId: null, status: TaskStatus.PENDING },
-        data: { assignedToId: employeeId },
-      });
-    }
-  }
-
   async syncCustomerTeamWorkAssignments(
     customerId: number | string,
     teamId: number | string,
@@ -2294,19 +1949,24 @@ return null; // Team must now be selected explicitly on each work item.
       return 0;
     }
 
-    // Find all works for this customer that are not cancelled and need assignment or team update
+    // People who may already hold this team's work: the members and the leader
+    const teamPeopleIds = team.members
+      .map((m: any) => m.employeeId)
+      .concat(team.leaderId ? [team.leaderId] : []);
+
+    // Find all works for this customer that are not cancelled and need assignment or team update,
+    // or that are held by someone outside the team (checked below: only sales / BPO holders are moved)
     const unassignedWorks = await prisma.work.findMany({
       where: {
         ...(numCustomerId ? { customerId: numCustomerId } : {}),
         status: { not: WorkStatus.CANCELLED },
-        OR: options?.onlyMissing ? [
-          { assignedToId: null }, { editorId: null }, { teamId: null },
-          { tasks: { some: { assignedToId: null, status: TaskStatus.PENDING } } },
-        ] : [
-          { assignedToId: null }, { teamId: null }, { teamId: { not: numTeamId } },
-          { status: { in: [WorkStatus.SCHEDULED, WorkStatus.ASSIGNED] } },
+        OR: [
+          { assignedToId: null },
+          { teamId: null },
+          { teamId: { not: numTeamId } },
         ],
       },
+      include: { assignedTo: { select: { id: true, ...SALES_CHECK_SELECT } } },
       orderBy: { id: 'asc' },
       include: { ...(options?.onlyMissing ? { tasks: true } : {}), assignedTo: { select: { department: true, designation: true, user: { select: { id: true, accountType: true } } } } },
     });
@@ -2319,80 +1979,32 @@ return null; // Team must now be selected explicitly on each work item.
     let roleAssignmentIndex = 0;
 
     let updatedCount = 0;
-    for (const work of unassignedWorks) {
-      if (options?.onlyMissing && work.teamId != null && work.teamId !== numTeamId) continue;
-      const data: { teamId?: number; assignedToId?: number; editorId?: number; status?: WorkStatus } = {};
-      if (work.teamId !== numTeamId) data.teamId = numTeamId;
+    for (let i = 0; i < unassignedWorks.length; i++) {
+      const work = unassignedWorks[i];
+      const assignedEmpId =
+        work.assignedToId ||
+        this.resolveTeamMemberForActivity(work, team.members, team.leaderId, i);
 
-      const eligibleMemberIds = !isBpoTeam
-        ? await this.eligibleProductionMemberIds(work, team.members, undefined)
-        : [];
-      if (!isBpoTeam && (options?.onlyMissing ? work.assignedToId == null : !eligibleMemberIds.includes(Number(work.assignedToId)))) {
-        const matchedEmployeeId = eligibleMemberIds.length > 0
-          ? eligibleMemberIds[roleAssignmentIndex % eligibleMemberIds.length]
-          : null;
-        if (matchedEmployeeId) {
-          data.assignedToId = matchedEmployeeId;
-          if (work.status === WorkStatus.SCHEDULED) data.status = WorkStatus.ASSIGNED;
-          roleAssignmentIndex++;
-        }
-      }
+      const newStatus =
+        work.status === WorkStatus.SCHEDULED && assignedEmpId
+          ? WorkStatus.ASSIGNED
+          : work.status;
 
-      const isReelOrVideo =
-        work.workType === WorkType.REEL ||
-        work.workType === WorkType.REELS_SHOOT ||
-        work.workType === WorkType.EDITING ||
-        work.workType === WorkType.VIDEO_EDITING ||
-        (work.title && /reel|shoot|video|edit/i.test(work.title));
-      if (!isBpoTeam && isReelOrVideo) {
-        const editorIds = await this.eligibleProductionMemberIds(
-          { workType: WorkType.EDITING, title: 'Video Editing' }, team.members, undefined,
-        );
-        if (editorIds.length > 0 && (options?.onlyMissing ? work.editorId == null : !editorIds.includes(Number(work.editorId)))) data.editorId = editorIds[0];
-      }
+      await prisma.work.update({
+        where: { id: work.id },
+        data: {
+          teamId: numTeamId,
+          assignedToId: assignedEmpId,
+          status: newStatus,
+        },
+      });
 
-      if (options?.onlyMissing && !isBpoTeam) await this.fillMissingWorkTaskAssignments(work, data, team, prisma);
-      if (Object.keys(data).length === 0) continue;
-
-      const previousAssigneeId = work.assignedToId;
-      const previousPerson = work.assignedTo || (team.members || []).find((member: any) => member.employeeId === previousAssigneeId)?.employee;
-      if (options?.onlyMissing && typeof prisma.work.updateMany === 'function') {
-        const unchangedFields = Object.fromEntries(Object.keys(data).map((key) => [key, work[key] ?? null]));
-        const updated = await prisma.work.updateMany({ where: { id: work.id, ...unchangedFields }, data });
-        if (updated.count === 0) continue;
-      } else {
-        await prisma.work.update({ where: { id: work.id }, data });
-      }
-
-      if (!options?.onlyMissing && data.assignedToId && previousAssigneeId && (this.isSalesOrBpoEmployee(previousPerson) || this.isPlatformAdmin(previousPerson))) {
-        // Correct only pending workflow steps owned by the misplaced BPO owner.
-        // Editing steps use the eligible production editor; completed work is preserved.
-        const editStep = { OR: ['edit', 'color', 'grade'].map((text) => ({ title: { contains: text, mode: 'insensitive' } })) };
-        const editorId = data.editorId || work.editorId;
-        if (editorId) {
-          await prisma.workTask.updateMany({
-            where: { workId: work.id, assignedToId: previousAssigneeId, status: TaskStatus.PENDING, AND: [editStep] },
-            data: { assignedToId: editorId },
-          });
-        }
+      if (assignedEmpId) {
+        // Also ensure tasks are associated with the employee
         await prisma.workTask.updateMany({
-          where: { workId: work.id, assignedToId: previousAssigneeId, status: TaskStatus.PENDING, ...(editorId ? { NOT: editStep } : {}) },
-          data: { assignedToId: data.assignedToId },
-        });
-      }
-
-      if (data.assignedToId) {
-        if (!options?.onlyMissing) await prisma.workTask.updateMany({
           where: { workId: work.id, assignedToId: null },
-          data: { assignedToId: data.assignedToId },
+          data: { assignedToId: assignedEmpId },
         });
-        if (this.notificationService?.sendWorkAssignmentNotification) {
-          this.notificationService
-            .sendWorkAssignmentNotification(data.assignedToId, { ...work, ...data }, false)
-            .catch((err: any) => {
-              this.logger.warn(`Failed to dispatch work assignment notification: ${err?.message}`);
-            });
-        }
       }
 
       updatedCount++;
@@ -3870,43 +3482,268 @@ status: ${item.status}`);
    * Resolve canonical Employee ID from any identifier (Employee ID, User ID, or Employee Code).
    * Ensures User ID vs Employee ID mismatches are correctly resolved across calendars and assignment.
    */
-  async resolveCanonicalEmployeeId(idOrCode: any, customerId?: number): Promise<number | null> {
-    if (idOrCode == null) return null;
-    if (typeof idOrCode === 'object') {
-      return this.resolveEmployeeIdForUser(idOrCode);
+  async generatePlanSchedules(customerId: number | string, subscriptionId?: number | string) {
+    const numCustomerId = Number(customerId);
+    if (!numCustomerId || isNaN(numCustomerId)) {
+      throw new BadRequestException('Valid customer context required');
     }
-    const strVal = String(idOrCode).trim();
-    if (!strVal) return null;
 
-    const numVal = Number(strVal);
-    if (Number.isInteger(numVal) && numVal > 0) {
-      // 1. Direct Employee ID match
-      const byEmpId = await this.prisma.employee.findUnique({
-        where: { id: numVal },
-        select: { id: true },
+    // 1. Resolve target subscription
+    let targetSub: any = null;
+    if (subscriptionId && !isNaN(Number(subscriptionId)) && Number(subscriptionId) > 0) {
+      targetSub = await this.prisma.customerSubscription.findUnique({
+        where: { id: Number(subscriptionId) },
+        include: { plan: true, customer: true },
       });
-      if (byEmpId?.id) return byEmpId.id;
+    }
 
-      // 2. Check if numVal is actually a User ID linked to an Employee
-      const byUserId = await this.prisma.employee.findFirst({
-        where: { userId: numVal },
-        select: { id: true },
+    if (!targetSub) {
+      targetSub = await this.prisma.customerSubscription.findFirst({
+        where: { customerId: numCustomerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true, customer: true },
       });
-      if (byUserId?.id) return byUserId.id;
     }
 
-    // 3. Match by employeeCode
-    const codeWhere: any = {
-      employeeCode: { equals: strVal, mode: 'insensitive' },
-    };
-    if (customerId && Number.isInteger(Number(customerId))) {
-
+    if (!targetSub || !targetSub.plan) {
+      return {
+        success: false,
+        message: 'Cannot generate schedules. No active or valid subscription found.',
+        createdCount: 0,
+        schedules: [],
+      };
     }
-    const byCode = await this.prisma.employee.findFirst({
-      where: codeWhere,
-      select: { id: true },
+
+    const now = new Date();
+    const isExpired = targetSub.status === SubscriptionStatus.EXPIRED || (targetSub.endDate ? now > new Date(targetSub.endDate) : false);
+    if (isExpired && targetSub.status !== SubscriptionStatus.ACTIVE) {
+      return {
+        success: false,
+        message: 'Cannot generate schedules. Subscription is expired.',
+        createdCount: 0,
+        schedules: [],
+      };
+    }
+
+    // 2. Extract All Deliverable Quotas dynamically from purchased plan / custom features
+    const effectiveFeatures = targetSub.customFeatures || targetSub.plan.features || [];
+    let deliverableQuotas = extractDeliverableQuotas(effectiveFeatures);
+
+    // Fallback: If no quotas found, check generic reel count
+    if (deliverableQuotas.length === 0) {
+      const reelCount = extractReelCount(effectiveFeatures);
+      if (reelCount > 0) {
+        deliverableQuotas.push({
+          serviceName: 'Reels',
+          totalQty: reelCount,
+          workType: WorkType.REEL,
+        });
+      }
+    }
+
+    if (deliverableQuotas.length === 0) {
+      return {
+        success: true,
+        message: 'No deliverable quotas configured in purchased plan.',
+        createdCount: 0,
+        schedules: [],
+      };
+    }
+
+    // 1. Get the actual purchase/subscription start date from backend/database
+    const rawPurchaseDate = targetSub.createdAt
+      ? new Date(targetSub.createdAt)
+      : (targetSub.startDate ? new Date(targetSub.startDate) : new Date());
+
+    const pYear = rawPurchaseDate.getUTCFullYear();
+    const pMonth = rawPurchaseDate.getUTCMonth();
+    const pDay = rawPurchaseDate.getUTCDate();
+    const purchaseDateStr = `${pYear}-${String(pMonth + 1).padStart(2, '0')}-${String(pDay).padStart(2, '0')}`;
+
+    // 2. Calculate: scheduleStartDate = purchaseDate + 2 calendar days
+    let scheduleStartDate: Date;
+    if (targetSub.startDate) {
+      const subStart = new Date(targetSub.startDate);
+      const subStartStr = `${subStart.getUTCFullYear()}-${String(subStart.getUTCMonth() + 1).padStart(2, '0')}-${String(subStart.getUTCDate()).padStart(2, '0')}`;
+      if (subStartStr !== purchaseDateStr) {
+        // targetSub.startDate is already an advanced schedule start date
+        scheduleStartDate = subStart;
+      } else {
+        // targetSub.startDate equals purchaseDate -> strictly advance by 2 calendar days
+        scheduleStartDate = new Date(Date.UTC(pYear, pMonth, pDay + 2, 10, 0, 0, 0));
+      }
+    } else {
+      scheduleStartDate = new Date(Date.UTC(pYear, pMonth, pDay + 2, 10, 0, 0, 0));
+    }
+
+    const sYear = scheduleStartDate.getUTCFullYear();
+    const sMonth = scheduleStartDate.getUTCMonth();
+    const sDay = scheduleStartDate.getUTCDate();
+    const scheduleStartDateStr = `${sYear}-${String(sMonth + 1).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
+
+    let endDate = targetSub.endDate ? new Date(targetSub.endDate) : new Date(scheduleStartDate.getTime() + 30 * 86400000);
+    if (endDate <= scheduleStartDate) {
+      endDate = new Date(Date.UTC(sYear, sMonth + 1, sDay, 23, 59, 59, 999));
+    }
+    const endDateStr = `${endDate.getUTCFullYear()}-${String(endDate.getUTCMonth() + 1).padStart(2, '0')}-${String(endDate.getUTCDate()).padStart(2, '0')}`;
+
+    // 3. Generate the plan activities starting from scheduleStartDate
+    const planActivities = generateAllPlanWorkflowActivities(scheduleStartDate, endDate, deliverableQuotas);
+
+    this.logger.log(
+      `[PLAN_SCHEDULE]\npurchaseDate: ${purchaseDateStr}\nscheduleStartDate: ${scheduleStartDateStr}\nactivePlanId: ${targetSub.planId || targetSub.id}\ngeneratedActivities: ${planActivities.length}`,
+    );
+
+    let totalCreated = 0;
+
+    const allGeneratedWorks = await this.prisma.$transaction(async (tx) => {
+      // 1. Sync or provision PlanEntitlements for all quotas
+      const entitlementMap = new Map<string, number>();
+
+      for (const q of deliverableQuotas) {
+        let entitlement = await tx.planEntitlement.findFirst({
+          where: { customerId: numCustomerId, serviceName: q.serviceName },
+        });
+
+        if (entitlement) {
+          entitlement = await tx.planEntitlement.update({
+            where: { id: entitlement.id },
+            data: {
+              planId: targetSub.planId,
+              totalQty: q.totalQty,
+              validUntil: endDate,
+            },
+          });
+        } else {
+          entitlement = await tx.planEntitlement.create({
+            data: {
+              customerId: numCustomerId,
+              planId: targetSub.planId,
+              serviceName: q.serviceName,
+              totalQty: q.totalQty,
+              usedQty: 0,
+              scheduledQty: 0,
+              validUntil: endDate,
+            },
+          });
+        }
+        entitlementMap.set(q.serviceName.toLowerCase(), entitlement.id);
+      }
+
+      // 2. Query existing non-cancelled works for this subscription to ensure strict IDEMPOTENCY
+      const existingWorks = await tx.work.findMany({
+        where: {
+          customerId: numCustomerId,
+          subscriptionId: targetSub.id,
+          status: { not: WorkStatus.CANCELLED },
+        },
+        orderBy: { id: 'asc' },
+      });
+
+      // If full set of activities already generated for this subscription, do NOT duplicate
+      if (existingWorks.length >= planActivities.length) {
+        return existingWorks;
+      }
+
+      const existingTitles = new Set(existingWorks.map((w) => w.title.toLowerCase().trim()));
+      const createdItems: any[] = [];
+
+      // Resolve team info if customer is assigned to a team
+      const assignedTeamId = targetSub.customer?.assignedTeamId || null;
+      let teamMembers: any[] = [];
+      let teamLeaderId: number | null = null;
+      if (assignedTeamId) {
+        const team = await tx.team.findUnique({
+          where: { id: assignedTeamId },
+          include: {
+            members: {
+              include: {
+                employee: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    designation: { select: { name: true } },
+                    department: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (team) {
+          teamLeaderId = team.leaderId;
+          teamMembers = team.members;
+        }
+      }
+
+      for (const act of planActivities) {
+        // Idempotency: Skip if activity with this title already exists for this subscription
+        if (existingTitles.has(act.title.toLowerCase().trim())) {
+          continue;
+        }
+
+        const entId = entitlementMap.get(act.serviceName.toLowerCase()) || null;
+
+        const assignedEmpId =
+          targetSub.customer?.assignedEmployeeId ||
+          (assignedTeamId
+            ? this.resolveTeamMemberForActivity(act, teamMembers, teamLeaderId, totalCreated)
+            : null);
+
+        const createdWork = await tx.work.create({
+          data: {
+            customerId: numCustomerId,
+            subscriptionId: targetSub.id,
+            planId: targetSub.planId,
+            entitlementId: entId,
+            teamId: assignedTeamId,
+            assignedToId: assignedEmpId,
+            workType: act.workType,
+            title: act.title,
+            description: act.description,
+            scheduledDate: act.scheduledDate,
+            scheduledTime: act.scheduledTime,
+            priority: 'MEDIUM',
+            status: assignedEmpId ? WorkStatus.ASSIGNED : WorkStatus.SCHEDULED,
+          },
+        });
+
+        // Attach workflow task tracking with assigned employee
+        await tx.workTask.createMany({
+          data: [
+            { workId: createdWork.id, title: `1. Asset & Content Preparation`, stepOrder: 1, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
+            { workId: createdWork.id, title: `2. Review & Client Approval`, stepOrder: 2, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
+            { workId: createdWork.id, title: `3. Final Deliverable Execution`, stepOrder: 3, status: TaskStatus.PENDING, assignedToId: assignedEmpId },
+          ],
+        });
+
+        createdItems.push(createdWork);
+        totalCreated++;
+      }
+
+      // Update entitlement scheduled counts
+      for (const q of deliverableQuotas) {
+        const entId = entitlementMap.get(q.serviceName.toLowerCase());
+        if (entId) {
+          const activeCount = await tx.work.count({
+            where: {
+              customerId: numCustomerId,
+              subscriptionId: targetSub.id,
+              entitlementId: entId,
+              status: { not: WorkStatus.CANCELLED },
+            },
+          });
+
+          await tx.planEntitlement.update({
+            where: { id: entId },
+            data: { scheduledQty: Math.min(activeCount, q.totalQty) },
+          });
+        }
+      }
+
+      return [...existingWorks, ...createdItems];
     });
-    if (byCode?.id) return byCode.id;
 
     return null;
   }
