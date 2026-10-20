@@ -1,23 +1,29 @@
 name: Build & Deploy (ECR → EC2)
 
-# Auto-trigger: every push to main runs build + deploy.
+# Auto-deploy: every push to the `production` branch builds the image and deploys the API.
+# main does not deploy: the copy of this file on main only builds, because main's database
+# migrations do not apply to the live database yet.
 # (Also manually runnable from the Actions tab.)
 on:
   push:
-    branches: [main]
+    branches: [production]
   workflow_dispatch:
 
 concurrency:
-  # Never let two deploys run at once; cancel an in-flight one on a newer push.
-  group: deploy-production
-  cancel-in-progress: true
+  # Never let two deploys run at once. A newer push waits for the running one
+  # instead of cancelling it: cancelling mid-deploy could leave the API container stopped.
+  # Own group name on purpose: the older copy of this file on main uses "deploy-production"
+  # with cancel-in-progress: true, so a push to main must not share a group with a deploy.
+  group: deploy-production-api
+  cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-south-1
-  # Must match API_ECR_REPOSITORY in deploy/docker/config.sh on the server.
+  # Must match the backend image name in config.sh on the server (BACKEND_IMAGE).
   ECR_REPOSITORY: qcrm-admin-backend
-  # Path on the server where deploy/docker/ was copied by hand (see deploy/README.md).
+  # Server folder with the deploy scripts (symlink to /var/www/qbapp/deploy; see /var/www/qbapp/README.md).
   DEPLOY_DIR: /var/www/qbapp.online
+  # The container this workflow deploys and checks.
+  API_CONTAINER: quikboom-api
 
 jobs:
   build-and-deploy:
@@ -34,7 +40,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: ecr-login
@@ -68,20 +74,51 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ---- Deploy over SSH --------------------------------------------------
-      # Rewrite the API_IMAGE_TAG line in the server's already-present
-      # config.sh (deploy/ is copied there by hand, not synced by CI — see
-      # deploy/README.md), then run backend.sh — ONLY the API container.
-      # admin.sh (admin panel) is untouched by this workflow.
-      - name: Add SSH key
+      # On the server, `./deploy.sh backend` pulls this commit's image, applies the
+      # database migrations and restarts ONLY the API container. Then this step checks
+      # that the container really runs this image and is healthy, and fails otherwise,
+      # so a green run means "deployed". The admin panel (admin.sh) is not touched.
+      # The server has its own AWS login for ECR; no AWS keys are sent.
+      # EXPECT_ECR_REGISTRY: the server refuses to deploy if its config.sh pulls from a
+      # different registry than the one this workflow just pushed to.
+      - name: Deploy API container on EC2
+        timeout-minutes: 15
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          IMAGE_TAG: ${{ steps.meta.outputs.sha_tag }}
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
+          set -euo pipefail
+          HOST="$(printf '%s' "$EC2_HOST" | tr -d '[:space:]')"
+          SSH_USER="$(printf '%s' "$EC2_USER" | tr -d '[:space:]')"
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$HOST" "DEPLOY_DIR='$DEPLOY_DIR' CONTAINER='$API_CONTAINER' IMAGE_TAG='$IMAGE_TAG' EXPECT_ECR_REGISTRY='$ECR_REGISTRY' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          chmod +x ./*.sh
+          IMAGE_TAG="$IMAGE_TAG" EXPECT_ECR_REGISTRY="$EXPECT_ECR_REGISTRY" ./deploy.sh backend </dev/null
+          for _ in $(seq 1 30); do
+            image="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
+            state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER" 2>/dev/null || true)"
+            if [ "${image##*:}" = "$IMAGE_TAG" ] && { [ "$state" = healthy ] || [ "$state" = running ]; }; then
+              echo "OK: $CONTAINER runs $image ($state)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "FAILED: $CONTAINER is '$image' ($state), expected tag $IMAGE_TAG" >&2
+          docker logs --tail 40 "$CONTAINER" >&2 || true
+          exit 1
+          REMOTE
 
       - name: Deploy summary
         if: always()
         run: |
-          echo "### Deploy result" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Deploy result: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image: \`${{ steps.meta.outputs.image_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${GITHUB_SHA::12}\`" >> "$GITHUB_STEP_SUMMARY"
